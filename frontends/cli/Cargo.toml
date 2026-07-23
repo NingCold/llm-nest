@@ -1,0 +1,17 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "llmn"
+path = "src/main.rs"
+
+[dependencies]
+chat = { path = "../../features/chat" }
+
+anyhow.workspace = true
+futures-util.workspace = true
+indicatif.workspace = true
+rustyline.workspace = true
+tokio.workspace = true

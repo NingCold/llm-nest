@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.gguf
+*.bin
+*.model
+
+# Config
+config/llmn.toml
+
+# Opencode
+.opencode/

@@ -1,0 +1,26 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+config.workspace = true
+toml.workspace = true
+provider = { path = "../provider", package = "provider" }
+
+common = { path = "../common" }
+
+[dev-dependencies]
+temp-env = "0.3"
+serial_test = "3"

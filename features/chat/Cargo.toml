@@ -1,0 +1,15 @@
+[package]
+name = "chat"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+runtime = { path = "../../crates/runtime" }
+provider = { path = "../../crates/provider" }
+common = { path = "../../crates/common" }
+
+anyhow.workspace = true
+futures-util.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio.workspace = true
+tracing.workspace = true

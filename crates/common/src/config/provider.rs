@@ -52,9 +52,33 @@ impl Display for ProviderId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ApiKey {
+    Direct(String),
+    FromEnv { env: String },
+}
+
+impl ApiKey {
+    pub fn resolve(&self) -> std::result::Result<String, ConfigError> {
+        match self {
+            ApiKey::Direct(key) => Ok(key.clone()),
+            ApiKey::FromEnv { env } => {
+                std::env::var(env).map_err(|_| ConfigError::MissingEnvVar(env.clone()))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub protocol: Protocol,
-    pub api_key: String,
+    pub api_key: ApiKey,
     pub base_url: String,
     pub models: HashMap<ModelId, ModelConfig>,
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ConfigError {
+    #[error("Environment variable `{0}` is not set")]
+    MissingEnvVar(String),
 }

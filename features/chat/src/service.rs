@@ -13,9 +13,10 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::event::ChatEvent;
 
+#[derive(Clone)]
 pub struct ChatService {
     runtime: Arc<Runtime>,
-    current_session: RwLock<Option<SessionId>>,
+    current_session: Arc<RwLock<Option<SessionId>>>,
 }
 
 impl ChatService {
@@ -27,7 +28,7 @@ impl ChatService {
             .build()?;
         Ok(Self {
             runtime: Arc::new(runtime),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -148,7 +149,7 @@ mod tests {
         let mut providers = HashMap::new();
         providers.insert(ProviderId::new("test"), ProviderConfig {
             protocol: common::config::Protocol::OpenAI,
-            api_key: "sk-test".into(),
+            api_key: common::config::ApiKey::Direct("sk-test".into()),
             base_url: "https://api.openai.com".into(),
             models,
         });
@@ -160,7 +161,7 @@ mod tests {
     async fn chat_service_new_session() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let id = svc.new_session(Some("test session".into())).await.unwrap();
         assert_eq!(svc.current_session().await, Some(id));
@@ -170,7 +171,7 @@ mod tests {
     async fn chat_service_new_session_then_list() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let id = svc.new_session(None).await.unwrap();
         let sessions = svc.list_sessions().await.unwrap();
@@ -181,7 +182,7 @@ mod tests {
     async fn chat_service_switch_session_by_id() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let id = svc.new_session(None).await.unwrap();
         let switched = svc.switch_session(&id.to_string()).await.unwrap();
@@ -193,7 +194,7 @@ mod tests {
     async fn chat_service_switch_session_by_title() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let id = svc.new_session(Some("my-session".into())).await.unwrap();
         let switched = svc.switch_session("my-session").await.unwrap();
@@ -205,7 +206,7 @@ mod tests {
     async fn chat_service_switch_nonexistent() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let switched = svc.switch_session("nonexistent").await.unwrap();
         assert!(!switched);
@@ -215,7 +216,7 @@ mod tests {
     async fn chat_service_chat_stream_needs_active_session() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let result = svc.chat_stream("hello".into(), ChatOptions::default()).await;
         assert!(result.is_err());
@@ -225,7 +226,7 @@ mod tests {
     async fn chat_service_delete_session() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let id = svc.new_session(None).await.unwrap();
         svc.delete_session(&id.to_string()).await.unwrap();
@@ -237,7 +238,7 @@ mod tests {
     async fn chat_service_rename_session() {
         let svc = ChatService {
             runtime: make_test_runtime(),
-            current_session: RwLock::new(None),
+            current_session: Arc::new(RwLock::new(None)),
         };
         let id = svc.new_session(None).await.unwrap();
         svc.rename_session(&id.to_string(), "new title".into()).await.unwrap();

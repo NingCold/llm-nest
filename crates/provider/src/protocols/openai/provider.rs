@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use common::{ChatChunk, ChatRequest, ChatResponse, config::ProviderConfig};
+use common::{ChatChunk, ChatRequest, ChatResponse};
 use futures_util::Stream;
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
         ProviderError,
         Result
     },
+    factory::ResolvedProviderConfig,
     protocols::openai::{
         chat::Response,
         convert, error::ErrorResponse,
@@ -20,12 +21,12 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct OpenAIProvider {
     client: reqwest::Client,
-    config: ProviderConfig,
+    config: ResolvedProviderConfig,
     url: String,
 }
 
 impl OpenAIProvider {
-    pub fn new(config: ProviderConfig) -> Result<Self> {
+    pub fn new(config: ResolvedProviderConfig) -> Result<Self> {
         let client = reqwest::Client::builder()
             .build()?;
 

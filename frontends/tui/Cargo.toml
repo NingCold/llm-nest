@@ -1,0 +1,23 @@
+[package]
+name = "tui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "llmnt"
+path = "src/main.rs"
+
+[dependencies]
+chat = { path = "../../features/chat" }
+
+anyhow.workspace = true
+crossterm = "0.29"
+futures-util.workspace = true
+ratatui = "0.30"
+tokio = { workspace = true, features = ["rt", "macros", "sync"] }
+tokio-util = "0.7"
+textwrap = "0.16"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+unicode-width = "0.2"

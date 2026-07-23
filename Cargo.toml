@@ -8,6 +8,7 @@ members = [
     "crates/storage",
     "features/chat",
     "frontends/cli",
+    "frontends/tui",
 ]
 
 [workspace.package]

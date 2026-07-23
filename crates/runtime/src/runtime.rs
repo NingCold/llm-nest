@@ -314,7 +314,7 @@ mod tests {
             ProviderId::new("test"),
             ProviderConfig {
                 protocol: common::config::Protocol::OpenAI,
-                api_key: "sk-test".into(),
+                api_key: common::config::ApiKey::Direct("sk-test".into()),
                 base_url: "https://api.openai.com".into(),
                 models: {
                     let mut m = HashMap::new();
@@ -462,7 +462,7 @@ mod tests {
             ProviderId::new("test"),
             ProviderConfig {
                 protocol: common::config::Protocol::OpenAI,
-                api_key: "sk-test".into(),
+                api_key: common::config::ApiKey::Direct("sk-test".into()),
                 base_url: "https://api.openai.com".into(),
                 models,
             },

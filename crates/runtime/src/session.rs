@@ -105,3 +105,70 @@ impl Session {
         self.updated_at
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_new_with_title() {
+        let session = Session::new(Some("Test".into()));
+        assert_eq!(session.title(), Some("Test"));
+        assert!(session.messages().is_empty());
+    }
+
+    #[test]
+    fn session_new_without_title() {
+        let session = Session::new(None);
+        assert_eq!(session.title(), None);
+    }
+
+    #[test]
+    fn session_rename() {
+        let mut session = Session::new(None);
+        session.set_title("New Name");
+        assert_eq!(session.title(), Some("New Name"));
+    }
+
+    #[test]
+    fn session_push_message() {
+        let mut session = Session::new(None);
+        session.push(Message::user("hello"));
+        assert_eq!(session.messages().len(), 1);
+        assert_eq!(session.messages()[0].content, "hello");
+    }
+
+    #[test]
+    fn session_with_system_prompt() {
+        let mut session = Session::with_system_prompt("you are helpful");
+        assert!(session.has_system_prompt());
+        assert_eq!(session.system_prompt(), Some("you are helpful"));
+
+        session.set_system_prompt("updated prompt");
+        assert_eq!(session.system_prompt(), Some("updated prompt"));
+    }
+
+    #[test]
+    fn session_metadata() {
+        let mut session = Session::new(None);
+        session.set_metadata("key1", "value1");
+        assert_eq!(session.get_metadata("key1"), Some("value1"));
+
+        session.remove_metadata("key1");
+        assert_eq!(session.get_metadata("key1"), None);
+    }
+
+    #[test]
+    fn session_id_is_stable() {
+        let session = Session::new(Some("id".into()));
+        let id = session.id();
+        let retrieved = session.id();
+        assert_eq!(id, retrieved);
+    }
+
+    #[test]
+    fn session_timestamps() {
+        let session = Session::new(None);
+        assert!(session.created_at() <= session.updated_at());
+    }
+}

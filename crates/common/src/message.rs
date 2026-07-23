@@ -39,3 +39,46 @@ impl Message {
         Self::new(Role::Developer, content)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_new_sets_role_and_content() {
+        let msg = Message::new(Role::User, "hello");
+        assert_eq!(msg.role, Role::User);
+        assert_eq!(msg.content, "hello");
+    }
+
+    #[test]
+    fn message_system_constructor() {
+        let msg = Message::system("system prompt");
+        assert_eq!(msg.role, Role::System);
+        assert_eq!(msg.content, "system prompt");
+    }
+
+    #[test]
+    fn message_user_constructor() {
+        let msg = Message::user("user message");
+        assert_eq!(msg.role, Role::User);
+    }
+
+    #[test]
+    fn message_assistant_constructor() {
+        let msg = Message::assistant("assistant reply");
+        assert_eq!(msg.role, Role::Assistant);
+    }
+
+    #[test]
+    fn message_developer_constructor() {
+        let msg = Message::developer("developer instruction");
+        assert_eq!(msg.role, Role::Developer);
+    }
+
+    #[test]
+    fn message_accepts_string_slice_and_string() {
+        let _ = Message::user("&str");
+        let _ = Message::user(String::from("String"));
+    }
+}

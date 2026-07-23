@@ -1,4 +1,4 @@
-use common::{ChatChunk, ChatRequest, ChatResponse};
+use common::{ChatRequest, ChatResponse};
 
 use crate::error::{ProviderError, Result};
 
@@ -33,32 +33,9 @@ impl TryFrom<chat::Response> for ChatResponse {
             ))?;
 
         Ok(Self {
-            message: choice.message.into(),
-            usage: resp.usage.map(Into::into),
+            message: choice.message,
+            usage: resp.usage,
         })
     }
 }
 
-impl TryFrom<chat::StreamResponse> for ChatChunk {
-    type Error = ProviderError;
-
-    fn try_from(
-        resp: chat::StreamResponse,
-    ) -> Result<Self> {
-        let choice = resp
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                ProviderError::InvalidResponse(
-                    "No choices returned".into()
-                )
-            })?;
-
-        if let Some(content) = choice.delta.content {
-            return Ok(ChatChunk::Delta { content });
-        }
-
-        Ok(ChatChunk::Done)
-    }
-}

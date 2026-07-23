@@ -74,7 +74,7 @@ impl OpenAIProvider {
         }
 
         let chat_response: Response = response.json().await?;
-        Ok(chat_response.try_into()?)
+        chat_response.try_into()
     }
 
     async fn send_request_stream(

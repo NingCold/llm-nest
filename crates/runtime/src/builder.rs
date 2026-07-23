@@ -71,7 +71,7 @@ impl RuntimeBuilder {
         };
 
         let state = self.state.unwrap_or_default();
-        let event_bus = self.event_bus.unwrap_or_else(EventBus::new);
+        let event_bus = self.event_bus.unwrap_or_default();
 
         Ok(Runtime::new(state, event_bus, provider_mgr))
     }

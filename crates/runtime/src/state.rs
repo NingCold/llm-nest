@@ -76,3 +76,54 @@ impl Default for RuntimeState {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_empty_on_new() {
+        let state = RuntimeState::new();
+        assert!(state.is_empty());
+        assert_eq!(state.len(), 0);
+    }
+
+    #[test]
+    fn state_insert_and_get() {
+        let mut state = RuntimeState::new();
+        let session = Session::new(Some("s1".into()));
+        let id = session.id();
+        state.insert(session);
+        assert!(state.exists(&id));
+        assert_eq!(state.len(), 1);
+        assert!(state.get(&id).is_some());
+    }
+
+    #[test]
+    fn state_remove() {
+        let mut state = RuntimeState::new();
+        let session = Session::new(None);
+        let id = session.id();
+        state.insert(session);
+        let removed = state.remove(&id);
+        assert!(removed.is_some());
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn state_remove_nonexistent() {
+        let mut state = RuntimeState::new();
+        let result = state.remove(&SessionId::new());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn state_iter() {
+        let mut state = RuntimeState::new();
+        let s1 = Session::new(Some("a".into()));
+        let s2 = Session::new(Some("b".into()));
+        state.insert(s1);
+        state.insert(s2);
+        assert_eq!(state.iter().count(), 2);
+    }
+}

@@ -87,21 +87,21 @@ impl ChatService {
 
     pub async fn switch_session(&self, target: &str) -> Result<bool> {
         // try UUID match first
-        if let Ok(id) = SessionId::from_str(target) {
-            if self.runtime.get_session(&id).await.is_some() {
-                *self.current_session.write().await = Some(id);
-                return Ok(true);
-            }
+        if let Ok(id) = SessionId::from_str(target)
+            && self.runtime.get_session(&id).await.is_some()
+        {
+            *self.current_session.write().await = Some(id);
+            return Ok(true);
         }
 
         // try title match
         let ids = self.runtime.list_sessions().await;
         for id in &ids {
-            if let Some(session) = self.runtime.get_session(id).await {
-                if session.title() == Some(target) {
-                    *self.current_session.write().await = Some(*id);
-                    return Ok(true);
-                }
+            if let Some(session) = self.runtime.get_session(id).await
+                && session.title() == Some(target)
+            {
+                *self.current_session.write().await = Some(*id);
+                return Ok(true);
             }
         }
 
@@ -132,5 +132,117 @@ impl ChatService {
             .with_context(|| format!("invalid session id: {}", id))?;
         self.runtime.delete_session(sid).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use common::config::{ModelConfig, ProviderConfig, ProviderId, ModelId};
+    use runtime::config::RuntimeConfig;
+
+    fn make_test_runtime() -> Arc<Runtime> {
+        let mut models = HashMap::new();
+        models.insert(ModelId::new("gpt-4"), ModelConfig { model: "gpt-4".into(), display_name: None });
+        let mut providers = HashMap::new();
+        providers.insert(ProviderId::new("test"), ProviderConfig {
+            protocol: common::config::Protocol::OpenAI,
+            api_key: "sk-test".into(),
+            base_url: "https://api.openai.com".into(),
+            models,
+        });
+        let config = RuntimeConfig { providers };
+        Arc::new(Runtime::from_config(config).unwrap())
+    }
+
+    #[tokio::test]
+    async fn chat_service_new_session() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let id = svc.new_session(Some("test session".into())).await.unwrap();
+        assert_eq!(svc.current_session().await, Some(id));
+    }
+
+    #[tokio::test]
+    async fn chat_service_new_session_then_list() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let id = svc.new_session(None).await.unwrap();
+        let sessions = svc.list_sessions().await.unwrap();
+        assert!(sessions.iter().any(|(sid, _)| sid == &id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn chat_service_switch_session_by_id() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let id = svc.new_session(None).await.unwrap();
+        let switched = svc.switch_session(&id.to_string()).await.unwrap();
+        assert!(switched);
+        assert_eq!(svc.current_session().await, Some(id));
+    }
+
+    #[tokio::test]
+    async fn chat_service_switch_session_by_title() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let id = svc.new_session(Some("my-session".into())).await.unwrap();
+        let switched = svc.switch_session("my-session").await.unwrap();
+        assert!(switched);
+        assert_eq!(svc.current_session().await, Some(id));
+    }
+
+    #[tokio::test]
+    async fn chat_service_switch_nonexistent() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let switched = svc.switch_session("nonexistent").await.unwrap();
+        assert!(!switched);
+    }
+
+    #[tokio::test]
+    async fn chat_service_chat_stream_needs_active_session() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let result = svc.chat_stream("hello".into(), ChatOptions::default()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_service_delete_session() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let id = svc.new_session(None).await.unwrap();
+        svc.delete_session(&id.to_string()).await.unwrap();
+        let sessions = svc.list_sessions().await.unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chat_service_rename_session() {
+        let svc = ChatService {
+            runtime: make_test_runtime(),
+            current_session: RwLock::new(None),
+        };
+        let id = svc.new_session(None).await.unwrap();
+        svc.rename_session(&id.to_string(), "new title".into()).await.unwrap();
+        let sessions = svc.list_sessions().await.unwrap();
+        let entry = sessions.iter().find(|(sid, _)| sid == &id.to_string()).unwrap();
+        assert_eq!(entry.1, "new title");
     }
 }

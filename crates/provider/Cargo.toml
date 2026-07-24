@@ -13,3 +13,4 @@ futures-util.workspace = true
 async-trait.workspace = true
 
 common = { path = "../common" }
+llm = { path = "../llm" }

@@ -1,6 +1,7 @@
 use std::time::Instant;
 
-use chat::{ChatEvent, ChatService, Role};
+use common::Role;
+use runtime::runtime::Runtime;
 
 #[derive(Debug, PartialEq)]
 pub enum InputMode {
@@ -9,7 +10,9 @@ pub enum InputMode {
 }
 
 pub enum UserEvent {
-    Chat(ChatEvent),
+    Chat(events::ChatEvent),
+    Status(String),
+    SessionSwitched(common::SessionId),
     Input(InputEvent),
 }
 
@@ -75,9 +78,9 @@ impl RenderCache {
 }
 
 pub struct App {
-    pub svc: ChatService,
-    pub sessions: Vec<(String, String)>,
-    pub cur_session: Option<String>,
+    pub runtime: Runtime,
+    pub sessions: Vec<(common::SessionId, String)>,
+    pub cur_session: Option<common::SessionId>,
     pub messages: Vec<Message>,
     pub input: String,
     pub cursor: usize,
@@ -98,9 +101,9 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(svc: ChatService) -> Self {
+    pub fn new(runtime: Runtime) -> Self {
         Self {
-            svc,
+            runtime,
             sessions: Vec::new(),
             cur_session: None,
             messages: Vec::new(),
@@ -136,10 +139,16 @@ impl App {
     }
 
     pub async fn refresh_sessions(&mut self) {
-        if let Ok(sessions) = self.svc.list_sessions().await {
-            self.sessions = sessions;
+        let ids = self.runtime.list_sessions().await;
+        let mut sessions = Vec::new();
+        for id in &ids {
+            let title = self.runtime.get_session(id).await
+                .and_then(|s| s.title().map(String::from))
+                .unwrap_or_default();
+            sessions.push((*id, title));
         }
-        self.cur_session = self.svc.current_session().await.map(|id| id.to_string());
+        self.sessions = sessions;
+        self.cur_session = self.cur_session.or_else(|| ids.first().copied());
     }
 
     pub fn add_message(&mut self, role: Role, content: impl Into<String>) {

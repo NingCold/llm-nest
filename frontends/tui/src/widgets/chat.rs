@@ -1,4 +1,4 @@
-use chat::Role;
+use common::Role;
 use ratatui::{
     Frame,
     layout::Rect,

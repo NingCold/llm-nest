@@ -1,29 +1,26 @@
-use common::{ChatRequest, ChatResponse};
-
-use crate::error::{ProviderError, Result};
-
+use crate::ProviderRequest;
+use crate::error::ProviderError;
 use super::chat;
 
 pub fn to_real_request(
-    req: ChatRequest,
+    req: ProviderRequest,
 ) -> chat::Request {
     chat::Request {
-        model: req.options.model.to_string(),
+        model: req.model,
         messages: req.messages,
-        temperature: req.options.temperature,
-        max_tokens: req.options.max_tokens,
-        top_p: req.options.top_p,
-        stream: req.options.stream,
+        temperature: req.parameters.temperature,
+        max_tokens: req.parameters.max_tokens,
+        top_p: req.parameters.top_p,
+        stream: req.parameters.stream,
     }
 }
 
-impl TryFrom<chat::Response> for ChatResponse {
+impl TryFrom<chat::Response> for crate::ProviderResponse {
     type Error = ProviderError;
 
     fn try_from(
         resp: chat::Response,
-    ) -> Result<Self> {
-
+    ) -> Result<Self, Self::Error> {
         let choice = resp
             .choices
             .into_iter()
@@ -38,4 +35,3 @@ impl TryFrom<chat::Response> for ChatResponse {
         })
     }
 }
-

@@ -1,0 +1,12 @@
+[package]
+name = "llm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+
+common = { path = "../common" }

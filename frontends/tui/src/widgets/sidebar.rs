@@ -17,7 +17,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 .as_ref()
                 .map_or(" ", |c| if c == id { "\u{25b8} " } else { "  " });
             let label = if title.is_empty() {
-                format!("{}{}", marker, &id[..8])
+                format!("{}{}", marker, &id.to_string()[..8])
             } else {
                 format!("{}{}", marker, title)
             };

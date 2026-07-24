@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use chat::ChatFeature;
 use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
@@ -10,18 +12,22 @@ use crate::app::{App, InputEvent, UserEvent};
 use crate::event::handle_event;
 use crate::ui;
 
-pub async fn run(mut app: App) -> Result<()> {
+pub async fn run(mut app: App, chat_feature: Arc<ChatFeature>) -> Result<()> {
     let mut terminal = ratatui::init();
     crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
 
-    let res = run_loop(&mut terminal, &mut app).await;
+    let res = run_loop(&mut terminal, &mut app, chat_feature).await;
 
     crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)?;
     ratatui::restore();
     res
 }
 
-async fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+async fn run_loop(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    chat_feature: Arc<ChatFeature>,
+) -> Result<()> {
     let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<UserEvent>();
     let cancel = CancellationToken::new();
 
@@ -97,7 +103,7 @@ async fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
         tokio::select! {
             biased;
             Some(uevt) = evt_rx.recv() => {
-                handle_event(app, uevt, &evt_tx);
+                handle_event(app, uevt, &evt_tx, chat_feature.clone());
             }
             _ = redraw_timer.tick() => {
                 if app.waiting {

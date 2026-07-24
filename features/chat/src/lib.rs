@@ -1,7 +1,3 @@
-mod event;
-mod service;
+mod feature;
 
-pub use event::ChatEvent;
-pub use service::ChatService;
-
-pub use common::{ChatOptions, Role};
+pub use feature::ChatFeature;

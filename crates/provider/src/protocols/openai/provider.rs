@@ -1,21 +1,17 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use common::{ChatChunk, ChatRequest, ChatResponse};
 use futures_util::Stream;
+use llm::LlmChunk;
 
 use crate::{
-    error::{
-        ProviderError,
-        Result
-    },
+    error::{ProviderError, Result},
     factory::ResolvedProviderConfig,
     protocols::openai::{
-        chat::Response,
-        convert, error::ErrorResponse,
-        sse::OpenAIStream
+        chat::Response, convert, error::ErrorResponse, sse::OpenAIStream,
     },
-    traits::Provider
+    traits::Provider,
+    ProviderRequest, ProviderResponse,
 };
 
 #[derive(Debug, Clone)]
@@ -27,26 +23,13 @@ pub struct OpenAIProvider {
 
 impl OpenAIProvider {
     pub fn new(config: ResolvedProviderConfig) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .build()?;
-
+        let client = reqwest::Client::builder().build()?;
         let url = format!("{}/chat/completions", config.base_url);
-        Ok(Self {
-            client,
-            config,
-            url,
-        })
+        Ok(Self { client, config, url })
     }
 
-    async fn send_request(
-        &self,
-        req: ChatRequest,
-    ) -> Result<ChatResponse> {
-
-        let request =
-            convert::to_real_request(
-                req,
-            );
+    async fn send_request(&self, req: ProviderRequest) -> Result<ProviderResponse> {
+        let request = convert::to_real_request(req);
         let response = self
             .client
             .post(&self.url)
@@ -71,7 +54,7 @@ impl OpenAIProvider {
                     kind: None,
                     code: None,
                 }),
-            }
+            };
         }
 
         let chat_response: Response = response.json().await?;
@@ -80,8 +63,8 @@ impl OpenAIProvider {
 
     async fn send_request_stream(
         &self,
-        req: ChatRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk>> + Send>>> {
+        req: ProviderRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmChunk>> + Send>>> {
         let mut request = convert::to_real_request(req);
         request.stream = true;
         let response = self
@@ -96,45 +79,35 @@ impl OpenAIProvider {
             let status = response.status();
             let body = response.text().await?;
             return match serde_json::from_str::<ErrorResponse>(&body) {
-                Ok(err) => Err(
-                    ProviderError::ApiError {
-                        status,
-                        message: err.error.message,
-                        kind: Some(err.error.kind),
-                        code: err.error.code,
-                    }
-                ),
-
-                Err(_) => Err(
-                    ProviderError::ApiError {
-                        status,
-                        message: body,
-                        kind: None,
-                        code: None,
-                    }
-                )
-            }
+                Ok(err) => Err(ProviderError::ApiError {
+                    status,
+                    message: err.error.message,
+                    kind: Some(err.error.kind),
+                    code: err.error.code,
+                }),
+                Err(_) => Err(ProviderError::ApiError {
+                    status,
+                    message: body,
+                    kind: None,
+                    code: None,
+                }),
+            };
         }
 
-        Ok(Box::pin(
-            OpenAIStream::new(response)
-        ))
+        Ok(Box::pin(OpenAIStream::new(response)))
     }
 }
 
 #[async_trait]
 impl Provider for OpenAIProvider {
-    async fn chat(
-        &self,
-        req: ChatRequest,
-    ) -> Result<ChatResponse> {
+    async fn complete(&self, req: ProviderRequest) -> Result<ProviderResponse> {
         self.send_request(req).await
     }
 
-    async fn chat_stream(
+    async fn complete_stream(
         &self,
-        req: ChatRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk>> + Send>>> {
+        req: ProviderRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmChunk>> + Send>>> {
         self.send_request_stream(req).await
     }
 }

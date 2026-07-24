@@ -1,6 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,6 +54,27 @@ impl fmt::Display for RequestId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MessageId(Uuid);
+
+impl MessageId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for MessageId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for MessageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +117,21 @@ mod tests {
         let id = RequestId::new();
         let s = id.to_string();
         assert!(!s.is_empty());
-        assert_eq!(s.len(), 36); // UUID with hyphens
+        assert_eq!(s.len(), 36);
+    }
+
+    #[test]
+    fn message_id_new_is_unique() {
+        let a = MessageId::new();
+        let b = MessageId::new();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn message_id_display() {
+        let id = MessageId::new();
+        let s = id.to_string();
+        assert!(!s.is_empty());
+        assert_eq!(s.len(), 36);
     }
 }

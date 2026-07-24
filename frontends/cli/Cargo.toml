@@ -9,9 +9,15 @@ path = "src/main.rs"
 
 [dependencies]
 chat = { path = "../../features/chat" }
+events = { path = "../../crates/events" }
+runtime = { path = "../../crates/runtime" }
+llm = { path = "../../crates/llm" }
+common = { path = "../../crates/common" }
 
 anyhow.workspace = true
 futures-util.workspace = true
 indicatif.workspace = true
 rustyline.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true

@@ -1,24 +1,25 @@
-use common::{ChatOptions, RequestId, SessionId};
+use common::SessionId;
 
 #[derive(Debug, Clone)]
 pub enum Command {
-    SendMessage {
-        session_id: SessionId,
-        request_id: RequestId,
-        content: String,
-        options: ChatOptions,
-    },
-
-    CreateSession{
+    CreateSession {
         title: Option<String>,
     },
-
     RenameSession {
         session_id: SessionId,
         title: String,
     },
-
     DeleteSession {
         session_id: SessionId,
+    },
+    CompactSession {
+        session_id: SessionId,
+    },
+    ExportSession {
+        session_id: SessionId,
+        path: String,
+    },
+    ImportSession {
+        path: String,
     },
 }

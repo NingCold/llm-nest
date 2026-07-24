@@ -1,21 +1,39 @@
+use std::sync::Arc;
 use std::time::Instant;
 
-use chat::{ChatEvent, ChatOptions, Role};
+use chat::ChatFeature;
+use common::Role;
 use crossterm::event::KeyCode;
+use events::ChatEvent;
 use futures_util::StreamExt;
+use llm::{GenerationOptions, ModelSelection};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::app::{App, InputEvent, InputMode, UserEvent};
 use crate::command;
 
-pub fn handle_event(app: &mut App, uevt: UserEvent, evt_tx: &mpsc::UnboundedSender<UserEvent>) {
+pub fn handle_event(
+    app: &mut App,
+    uevt: UserEvent,
+    evt_tx: &mpsc::UnboundedSender<UserEvent>,
+    chat_feature: Arc<ChatFeature>,
+) {
     match uevt {
+        UserEvent::Status(msg) => {
+            app.status = msg;
+            app.mark_dirty();
+        }
+        UserEvent::SessionSwitched(sid) => {
+            app.cur_session = Some(sid);
+            app.mark_dirty();
+        }
         UserEvent::Chat(event) => match event {
-            ChatEvent::ResponseDelta { content } => {
+            ChatEvent::Delta { content, .. } => {
                 app.update_last_message_content(&content);
                 app.mark_dirty();
             }
-            ChatEvent::ResponseFinished => {
+            ChatEvent::Finished { .. } => {
                 let elapsed = app.thinking_start.map(|t| t.elapsed()).unwrap_or_default();
                 app.waiting = false;
                 app.thinking_start = None;
@@ -27,17 +45,18 @@ pub fn handle_event(app: &mut App, uevt: UserEvent, evt_tx: &mpsc::UnboundedSend
                     "chat stream finished",
                 );
             }
-            ChatEvent::Info(msg) => {
-                app.status = msg;
-                app.mark_dirty();
-            }
-            ChatEvent::Error { message } => {
+            ChatEvent::Error { error, .. } => {
                 app.waiting = false;
                 app.thinking_start = None;
-                app.status = format!("Error: {}", message);
+                app.status = format!("Error: {}", error);
                 app.mark_dirty();
             }
-            _ => {}
+            ChatEvent::Cancelled { .. } => {
+                app.waiting = false;
+                app.thinking_start = None;
+                app.status = "Cancelled".into();
+                app.mark_dirty();
+            }
         },
         UserEvent::Input(ievt) => {
             match ievt {
@@ -78,35 +97,54 @@ pub fn handle_event(app: &mut App, uevt: UserEvent, evt_tx: &mpsc::UnboundedSend
                                     app.scroll = 0;
 
                                     let tx = evt_tx.clone();
-                                    let svc = app.svc.clone();
+                                    let session_id = app.cur_session;
+                                    let chat = chat_feature.clone();
+                                    let rt = app.runtime.clone();
                                     tokio::spawn(async move {
-                                        tracing::debug!(target: "tui::chat", "sending chat request");
-                                        match svc
-                                            .chat_stream(
+                                        let sid = match session_id {
+                                            Some(id) => id,
+                                            None => {
+                                                let id = rt.create_session(None).await;
+                                                let _ = tx.send(UserEvent::Status(format!(
+                                                    "Created new session: {}",
+                                                    id
+                                                )));
+                                                id
+                                            }
+                                        };
+
+                                        let cancel = CancellationToken::new();
+                                        let mut stream = match chat
+                                            .chat(
+                                                sid,
                                                 input,
-                                                ChatOptions {
+                                                ModelSelection {
+                                                    provider: "chatecnu".into(),
+                                                    model: "ecnu-max".into(),
+                                                },
+                                                GenerationOptions {
                                                     stream: true,
                                                     ..Default::default()
                                                 },
+                                                cancel,
                                             )
                                             .await
                                         {
-                                            Ok(mut stream) => {
-                                                tracing::debug!(target: "tui::chat", "chat stream started");
-                                                while let Some(event) = stream.next().await {
-                                                    tracing::trace!(target: "tui::chat", "chat event: {event:?}");
-                                                    if tx.send(UserEvent::Chat(event)).is_err() {
-                                                        break;
-                                                    }
-                                                }
-                                                tracing::debug!(target: "tui::chat", "chat stream ended");
-                                            }
+                                            Ok(s) => s,
                                             Err(e) => {
-                                                tracing::error!(target: "tui::chat", "chat request failed: {e}");
-                                                let _ =
-                                                    tx.send(UserEvent::Chat(ChatEvent::Error {
-                                                        message: e.to_string(),
-                                                    }));
+                                                let _ = tx.send(UserEvent::Chat(
+                                                    ChatEvent::Error {
+                                                        message_id: common::MessageId::new(),
+                                                        error: e.to_string(),
+                                                    },
+                                                ));
+                                                return;
+                                            }
+                                        };
+
+                                        while let Some(event) = stream.next().await {
+                                            if tx.send(UserEvent::Chat(event)).is_err() {
+                                                return;
                                             }
                                         }
                                     });

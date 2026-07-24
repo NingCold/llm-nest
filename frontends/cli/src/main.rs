@@ -1,27 +1,41 @@
 mod command;
 
 use std::io::{self, Write};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use chat::{ChatEvent, ChatOptions, ChatService};
+use events::ChatEvent;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+use llm::{GenerationOptions, ModelSelection};
 use rustyline::DefaultEditor;
+use runtime::runtime::Runtime;
+use tokio_util::sync::CancellationToken;
 
 use command::Command;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let svc = ChatService::from_config("config/llmn.toml")?;
-    let mut rl = DefaultEditor::new()?;
+    let runtime = Runtime::from_config("config/llmn.toml")?;
 
-    let _session = svc.new_session(None).await?;
+    let chat = Arc::new(chat::ChatFeature::new());
+    runtime.register_feature(chat.clone()).await;
+    runtime.initialize_features().await?;
+
+    let sessions = runtime.list_sessions().await;
+    let mut session_id = if sessions.is_empty() {
+        runtime.create_session(None).await
+    } else {
+        sessions[0]
+    };
 
     println!("==============================");
     println!("         LLM Nest Chat");
     println!("      Type /help for help");
     println!("==============================");
+
+    let mut rl = DefaultEditor::new()?;
 
     loop {
         let input = rl.readline("You>")?;
@@ -34,61 +48,81 @@ async fn main() -> Result<()> {
         if let Some(cmd) = Command::parse(&input) {
             match cmd {
                 Command::New => {
-                    svc.new_session(None).await?;
-                    println!("新会话已创建");
+                    let id = runtime.create_session(None).await;
+                    session_id = id;
+                    println!("已创建新会话");
                 }
-
+                Command::Switch { target } => {
+                    if let Ok(id) = target.parse::<common::SessionId>() {
+                        if runtime.get_session(&id).await.is_some() {
+                            session_id = id;
+                            println!("已切换到: {}", target);
+                            continue;
+                        }
+                    }
+                    let ids = runtime.list_sessions().await;
+                    let mut found = false;
+                    for id in &ids {
+                        if let Some(s) = runtime.get_session(id).await {
+                            if s.title() == Some(target.as_str()) {
+                                session_id = *id;
+                                println!("已切换到: {}", target);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !found {
+                        println!("未找到会话: {}", target);
+                    }
+                }
+                Command::Rename { title } => {
+                    runtime.rename_session(session_id, title).await?;
+                    println!("已重命名");
+                }
+                Command::Delete { id } => {
+                    if let Ok(sid) = id.parse::<common::SessionId>() {
+                        runtime.delete_session(sid).await?;
+                        println!("已删除: {}", id);
+                    }
+                }
                 Command::List => {
-                    let sessions = svc.list_sessions().await?;
+                    let sessions = runtime.list_sessions().await;
                     if sessions.is_empty() {
                         println!("没有会话");
                     } else {
-                        let cur = svc.current_session().await;
-                        for (id, title) in &sessions {
-                            let marker = cur.as_ref().map_or(" ", |c| {
-                                if c.to_string() == *id { "*" } else { " " }
-                            });
+                        for id in &sessions {
+                            let marker = if *id == session_id { "*" } else { " " };
+                            let title = runtime
+                                .get_session(id)
+                                .await
+                                .and_then(|s| s.title().map(String::from))
+                                .unwrap_or_default();
                             println!(" {} {}  {}", marker, id, title);
                         }
                     }
                 }
-
-                Command::Switch { target } => {
-                    let found = svc.switch_session(&target).await?;
-                    if found {
-                        println!("已切换到: {}", target);
-                    } else {
-                        println!("未找到会话: {}", target);
-                    }
-                }
-
-                Command::Rename { title } => {
-                    let cur = svc.current_session().await
-                        .ok_or_else(|| anyhow::anyhow!("没有活跃会话"))?;
-                    svc.rename_session(&cur.to_string(), title).await?;
-                    println!("已重命名");
-                }
-
-                Command::Delete { id } => {
-                    svc.delete_session(&id).await?;
-                    println!("已删除: {}", id);
-                }
-
                 Command::Help => {
                     println!("{}", Command::help_text());
                 }
-
-                Command::Quit => {
-                    break;
-                }
+                Command::Quit => return Ok(()),
             }
             continue;
         }
 
-        let mut stream = svc.chat_stream(input, ChatOptions {
+        let model = ModelSelection {
+            provider: "chatecnu".into(),
+            model: "ecnu-max".into(),
+        };
+        let options = GenerationOptions {
             stream: true,
             ..Default::default()
-        }).await?;
+        };
+
+        let cancel = CancellationToken::new();
+        let mut stream = chat
+            .chat(session_id, input, model, options, cancel.clone())
+            .await?;
 
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(ProgressStyle::with_template("{spinner} {msg}")?);
@@ -109,9 +143,7 @@ async fn main() -> Result<()> {
         let mut has_content = false;
         while let Some(event) = stream.next().await {
             match event {
-                ChatEvent::ResponseStarted => {
-                }
-                ChatEvent::ResponseDelta { content } => {
+                ChatEvent::Delta { content, .. } => {
                     if !has_content {
                         spinner_handle.abort();
                         spinner.finish_and_clear();
@@ -120,26 +152,27 @@ async fn main() -> Result<()> {
                     print!("{}", content);
                     io::stdout().flush()?;
                 }
-                ChatEvent::ResponseFinished => {
+                ChatEvent::Finished { .. } => {
                     if !has_content {
                         spinner_handle.abort();
                         spinner.finish_and_clear();
                     }
                     println!();
                 }
-                ChatEvent::Info(msg) => {
+                ChatEvent::Error { error, .. } => {
                     spinner_handle.abort();
                     spinner.finish_and_clear();
-                    println!("\n[{}]", msg);
+                    eprintln!("\nError: {}", error);
                 }
-                ChatEvent::Error { message } => {
+                ChatEvent::Cancelled { .. } => {
                     spinner_handle.abort();
                     spinner.finish_and_clear();
-                    eprintln!("\nError: {}", message);
                 }
             }
         }
+        if !has_content {
+            spinner_handle.abort();
+            spinner.finish_and_clear();
+        }
     }
-
-    Ok(())
 }

@@ -4,10 +4,15 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+events = { path = "../../crates/events" }
 runtime = { path = "../../crates/runtime" }
 common = { path = "../../crates/common" }
+llm = { path = "../../crates/llm" }
 
 anyhow.workspace = true
 futures-util.workspace = true
-tokio-stream = { version = "0.1", features = ["sync"] }
+serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util.workspace = true

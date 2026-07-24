@@ -1,20 +1,19 @@
 use std::{fmt::Debug, pin::Pin};
 
 use async_trait::async_trait;
-use common::{ChatChunk, ChatRequest, ChatResponse};
 use futures_util::Stream;
+use llm::LlmChunk;
 
 use crate::error::Result;
+use crate::ProviderRequest;
+use crate::ProviderResponse;
 
 #[async_trait]
 pub trait Provider: Send + Sync + Debug {
-    async fn chat(
-        &self,
-        req: ChatRequest
-    ) -> Result<ChatResponse>;
+    async fn complete(&self, req: ProviderRequest) -> Result<ProviderResponse>;
 
-    async fn chat_stream(
+    async fn complete_stream(
         &self,
-        req: ChatRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk>> + Send>>>;
+        req: ProviderRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmChunk>> + Send>>>;
 }

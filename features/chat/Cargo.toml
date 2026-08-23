@@ -6,8 +6,8 @@ edition.workspace = true
 [dependencies]
 events = { path = "../../crates/events" }
 runtime = { path = "../../crates/runtime" }
-common = { path = "../../crates/common" }
-llm = { path = "../../crates/llm" }
+common.workspace = true
+ai-client.workspace = true
 
 anyhow.workspace = true
 futures-util.workspace = true

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use ai_client::ModelSelection;
 use chrono::{DateTime, Utc};
-use common::{Message, Role, SessionId};
+use common::{ContentPart, Message, Role, SessionId};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -9,6 +10,9 @@ pub struct Session {
     title: Option<String>,
     messages: Vec<Message>,
     metadata: HashMap<String, String>,
+    /// Model selection this session remembers; `None` means "use the global
+    /// default at request time".
+    model: Option<ModelSelection>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -20,6 +24,7 @@ impl Session {
             title,
             messages: Vec::new(),
             metadata: HashMap::new(),
+            model: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -44,13 +49,32 @@ impl Session {
         self.updated_at = Utc::now();
     }
 
+    /// The model selection this session remembers, if any.
+    pub fn model(&self) -> Option<&ModelSelection> {
+        self.model.as_ref()
+    }
+
+    /// Remember a model selection for this session.
+    pub fn set_model(&mut self, model: ModelSelection) {
+        self.model = Some(model);
+        self.updated_at = Utc::now();
+    }
+
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
 
     pub fn system_prompt(&self) -> Option<&str> {
         self.messages.first().and_then(|msg| {
-            (msg.role == Role::System).then_some(msg.content.as_str())
+            (msg.role == Role::System).then(|| {
+                msg.content
+                    .iter()
+                    .find_map(|part| match part {
+                        ContentPart::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("")
+            })
         })
     }
 
@@ -61,14 +85,15 @@ impl Session {
     }
 
     pub fn set_system_prompt(&mut self, prompt: impl Into<String>) {
-        let prompt = prompt.into();
+        let prompt = ContentPart::Text(prompt.into());
 
         match self.messages.first_mut() {
             Some(msg) if msg.role == Role::System => {
-                msg.content = prompt;
+                msg.content = vec![prompt];
             }
             _ => {
-                self.messages.insert(0, Message::new(Role::System, &prompt));
+                self.messages
+                    .insert(0, Message::new(Role::System, vec![prompt]));
             }
         }
         self.updated_at = Utc::now();
@@ -106,6 +131,35 @@ impl Session {
     }
 }
 
+impl Session {
+    /// Full persisted snapshot of this session.
+    pub fn to_record(&self) -> storage::SessionRecord {
+        storage::SessionRecord {
+            version: storage::SessionRecord::VERSION,
+            id: self.id,
+            title: self.title.clone(),
+            messages: self.messages.clone(),
+            metadata: self.metadata.clone(),
+            model: self.model.clone(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+
+    /// Rebuild a session from a persisted snapshot.
+    pub fn from_record(record: storage::SessionRecord) -> Self {
+        Self {
+            id: record.id,
+            title: record.title,
+            messages: record.messages,
+            metadata: record.metadata,
+            model: record.model,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,7 +189,7 @@ mod tests {
         let mut session = Session::new(None);
         session.push(Message::user("hello"));
         assert_eq!(session.messages().len(), 1);
-        assert_eq!(session.messages()[0].content, "hello");
+        assert_eq!(session.messages()[0].text(), "hello");
     }
 
     #[test]

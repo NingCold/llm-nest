@@ -13,7 +13,11 @@ mod tests {
 
     #[test]
     fn usage_serde_roundtrip() {
-        let usage = Usage { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 };
+        let usage = Usage {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+        };
         let json = serde_json::to_string(&usage).unwrap();
         let deserialized: Usage = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.prompt_tokens, 10);

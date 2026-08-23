@@ -2,15 +2,15 @@
 resolver = "2"
 members = [
     "crates/common",
-    "crates/llm",
+    "crates/ai-client",
     "crates/events",
     "crates/runtime",
-    "crates/provider",
     "crates/tools",
     "crates/storage",
     "features/chat",
     "frontends/cli",
     "frontends/tui",
+    "frontends/tauri/src-tauri",
 ]
 
 [workspace.package]
@@ -20,6 +20,7 @@ edition = "2024"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
@@ -33,3 +34,12 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[workspace.dependencies.common]
+path = "crates/common"
+
+[workspace.dependencies.ai-client]
+path = "crates/ai-client"
+
+[workspace.dependencies.storage]
+path = "crates/storage"

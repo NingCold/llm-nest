@@ -5,6 +5,12 @@ pub enum Command {
     Rename { title: String },
     Delete { id: String },
     List,
+    Models,
+    Model { target: String },
+    Effort { level: Option<String> },
+    Current,
+    Reload,
+    Refresh { provider: String },
     Help,
     Quit,
 }
@@ -28,6 +34,21 @@ impl Command {
                 id: parts.get(1).unwrap_or(&"").to_string(),
             }),
             "list" => Some(Command::List),
+            "models" => Some(Command::Models),
+            "model" => Some(Command::Model {
+                target: parts.get(1).unwrap_or(&"").trim().to_string(),
+            }),
+            "effort" => Some(Command::Effort {
+                level: parts
+                    .get(1)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            }),
+            "current" => Some(Command::Current),
+            "reload" => Some(Command::Reload),
+            "refresh" => Some(Command::Refresh {
+                provider: parts.get(1).unwrap_or(&"").trim().to_string(),
+            }),
             "help" => Some(Command::Help),
             "quit" => Some(Command::Quit),
             "exit" => Some(Command::Quit),
@@ -45,6 +66,14 @@ LLM Nest (llmn) 命令
   /rename <标题>     重命名当前会话
   /delete <id>       删除指定会话
   /list              列出所有会话
+  /models            列出所有可用模型
+  /model <provider/model>
+                     切换到指定模型（也支持裸模型名，跨 provider 唯一匹配时可用）
+  /effort <off|low|medium|high|max>
+                     设置当前模型的 reasoning effort（无参时显示当前值）
+  /current           显示当前模型的 provider / model / effort
+  /reload            重新加载 config/llmn.toml（文件改动也会自动热更新）
+  /refresh <provider> 从该 provider 的 GET /models 拉取新模型并写回 config/llmn.toml
   /help              显示此帮助
   /quit              退出程序
 

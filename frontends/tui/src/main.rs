@@ -14,7 +14,7 @@ use runtime::runtime::Runtime;
 
 fn main() -> Result<()> {
     let _guard = logging::init_logging();
-    let runtime = Runtime::from_config("config/llmn.toml")?;
+    let runtime = Runtime::from_config_persistent("config/llmn.toml", storage::default_data_dir())?;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         let chat = Arc::new(ChatFeature::new());
@@ -22,6 +22,7 @@ fn main() -> Result<()> {
         runtime.initialize_features().await?;
 
         let mut app = app::App::new(runtime);
+        app.model = app.runtime.default_model().await;
         app.refresh_sessions().await;
         runner::run(app, chat).await
     })

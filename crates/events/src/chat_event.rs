@@ -8,6 +8,12 @@ pub enum ChatEvent {
         message_id: MessageId,
         content: String,
     },
+    /// A fragment of the model's thinking chain (shown dimmed by frontends;
+    /// never part of the stored assistant message).
+    ReasoningDelta {
+        message_id: MessageId,
+        content: String,
+    },
     Finished {
         message_id: MessageId,
     },

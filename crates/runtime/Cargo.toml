@@ -13,10 +13,11 @@ chrono.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 toml.workspace = true
-provider = { path = "../provider", package = "provider" }
-llm = { path = "../llm" }
-
-common = { path = "../common" }
+toml_edit = "0.22"
+notify = "7"
+common.workspace = true
+ai-client.workspace = true
+storage.workspace = true
 
 [dev-dependencies]
 temp-env = "0.3"

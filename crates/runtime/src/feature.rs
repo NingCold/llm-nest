@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use llm::LlmClient;
+use ai_client::AiClient;
 use tokio::sync::RwLock;
 
 use crate::error::Result;
@@ -17,7 +17,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[derive(Clone)]
 pub struct FeatureContext {
     pub sessions: Arc<RwLock<SessionManager>>,
-    pub llm: Arc<dyn LlmClient>,
+    pub llm: Arc<AiClient>,
     pub events: EventBus<RuntimeEvent>,
 }
 

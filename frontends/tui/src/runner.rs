@@ -5,12 +5,16 @@ use anyhow::Result;
 use chat::ChatFeature;
 use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
 use ratatui::DefaultTerminal;
+use runtime::config::ConfigWatchEvent;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::{App, InputEvent, UserEvent};
 use crate::event::handle_event;
 use crate::ui;
+
+/// Configuration document this binary loads at startup and hot-reloads.
+pub const CONFIG_PATH: &str = "config/llmn.toml";
 
 pub async fn run(mut app: App, chat_feature: Arc<ChatFeature>) -> Result<()> {
     let mut terminal = ratatui::init();
@@ -30,6 +34,28 @@ async fn run_loop(
 ) -> Result<()> {
     let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<UserEvent>();
     let cancel = CancellationToken::new();
+
+    // Hot reload: file edits are re-applied automatically; failures keep the
+    // running configuration and surface as a status message.
+    let watch_rt = Arc::new(app.runtime.clone());
+    let watch_evt = evt_tx.clone();
+    let (cfg_tx, mut cfg_rx) = mpsc::unbounded_channel::<ConfigWatchEvent>();
+    if let Err(err) = runtime::config::spawn_config_watcher(watch_rt, CONFIG_PATH, cfg_tx) {
+        tracing::warn!(target: "tui::config", error = %err, "config watcher failed to start");
+    }
+    tokio::spawn(async move {
+        while let Some(event) = cfg_rx.recv().await {
+            let message = match event {
+                ConfigWatchEvent::Reloaded => {
+                    "配置已热更新。若当前模型不可用，用 /models 查看后 /model 切换。".to_string()
+                }
+                ConfigWatchEvent::Failed(error) => {
+                    format!("配置重载失败，保留旧配置: {error}")
+                }
+            };
+            let _ = watch_evt.send(UserEvent::Status(message));
+        }
+    });
 
     let input_tx = evt_tx.clone();
     let cancel_clone = cancel.clone();

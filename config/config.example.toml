@@ -1,8 +1,136 @@
+# LLM Nest 配置示例
+#
+# 模型路由面板（Pi/DSH 风格核心版）支持字段：
+#   provider 级：
+#     - protocol      : 可选；wire 协议（openai / openai_responses / anthropic / gemini / ollama）。
+#                       缺省时若 provider id 命中内置目录则用其协议，否则报错
+#     - api_key       : 必填；直填或 { env = "VAR" }
+#     - base_url      : 可选；缺省时若 provider id 命中内置目录则用其 base_url，否则报错
+#     - default_model : 可选；本 provider 的默认模型（模型 key 或 wire 名），
+#                       未配置时回退内置默认，再回退首个模型
+#     - headers       : 附加到该 route 每个请求的自定义头（OpenAI 兼容协议生效）
+#     - timeout_ms    : 单请求超时（毫秒，含流式读取）；0 会被拒绝
+#   模型级：
+#     - context_window / max_tokens : 能力信息（仅展示，不隐式钳制请求）
+#     - reasoning     : { levels = [...], format = "..." }
+#                       levels: off / low / medium / high / max
+#                       format: "openai-effort" | "deepseek-thinking" | "deepseek-effort"
+#                               | "anthropic-thinking" | "gemini-thinking"
+#                       未配置则视为不支持 reasoning，请求带 effort 会被路由拒绝并列出支持级别
+#     - protocol      : 可选；模型级协议覆盖——该模型改用此协议发送（provider 内共享
+#                       key/base_url/headers），适用于"同端点多协议"的网关（如 opencode zen）
+#
+# 内置 provider 目录（catalog.rs）：deepseek / openai / gemini / kimi / zhipu / anthropic /
+# xai / minimax / mimo / openrouter / opencode-zen / opencode-go / siliconflow / tokenrhythm /
+# chatecnu 等。命中内置目录的 provider 可以只写 api_key，其余全部缺省回退：
+#
+#   [providers.deepseek]
+#   api_key = { env = "DEEPSEEK_API_KEY" }
+#
+# 未命中内置目录的自定义 provider 必须显式写 protocol + base_url + models。
+
 [providers.openai]
 protocol = "openai"
 api_key = "YOUR-API-KEY"
 base_url = "https://api.openai.com/v1/"
+default_model = "gpt-5.6-sol"
+# headers = { X-Custom = "value" }
+# timeout_ms = 30000
 
 [providers.openai.models.gpt-5.6-sol]
 model = "gpt-5.6-sol"
 display_name = "GPT 5.6 sol"
+# context_window = 131072
+# max_tokens = 16384
+# reasoning = { levels = ["low", "medium", "high"], format = "openai-effort" }
+
+# 内置目录缺省回退示例：只写 api_key，protocol/base_url/models/默认模型全部来自内置目录
+# [providers.deepseek]
+# api_key = { env = "DEEPSEEK_API_KEY" }
+
+# 同 provider 多协议示例：默认 openai，个别模型覆盖为 openai_responses
+# [providers.gateway]
+# protocol = "openai"
+# api_key = { env = "GATEWAY_API_KEY" }
+# base_url = "https://gateway.example/v1"
+# default_model = "chat"
+#
+# [providers.gateway.models.chat]
+# model = "chat-model"
+#
+# [providers.gateway.models.resp]
+# model = "resp-model"
+# protocol = "openai_responses"   # 该模型走 Responses API，其余走 chat completions
+
+# DeepSeek 示例（reasoning 走 thinking 参数）
+# [providers.deepseek]
+# protocol = "openai"
+# api_key = { env = "DEEPSEEK_API_KEY" }
+# base_url = "https://api.deepseek.com"
+# default_model = "chat"
+#
+# [providers.deepseek.models.chat]
+# model = "deepseek-chat"
+#
+# [providers.deepseek.models.reasoner]
+# model = "deepseek-reasoner"
+# reasoning = { levels = ["low", "high"], format = "deepseek-thinking" }
+
+# ChatECNU / ecnu-max 示例（思考模式：thinking 开关 + reasoning_effort 强度，
+# 官方文档 https://developer.ecnu.edu.cn/vitepress/llm/thinking.html）
+# [providers.chatecnu]
+# protocol = "openai"
+# api_key = { env = "CHATECNU_API_KEY" }
+# base_url = "https://chat.ecnu.edu.cn/open/api/v1/"
+#
+# [providers.chatecnu.models.ecnu-max]
+# model = "ecnu-max"
+# reasoning = { levels = ["off", "low", "high", "max"], format = "deepseek-effort" }
+
+# Anthropic Messages API 示例（认证走 x-api-key + anthropic-version；
+# max_tokens 必填——未设置时取模型声明的 max_tokens，缺省 4096；
+# system/developer 消息自动折叠进顶层 system 字段）
+# [providers.anthropic]
+# protocol = "anthropic"
+# api_key = { env = "ANTHROPIC_API_KEY" }
+# base_url = "https://api.anthropic.com/v1"
+# default_model = "sonnet"
+#
+# [providers.anthropic.models.sonnet]
+# model = "claude-sonnet-4-5"
+# max_tokens = 16384
+# reasoning = { levels = ["low", "high"], format = "anthropic-thinking", budget_tokens = 4096 }
+
+# OpenAI Responses API 示例（wire: {base}/responses，消息走 input，
+# 上限 max_output_tokens，reasoning 走 reasoning: { effort }）
+# [providers.oai-responses]
+# protocol = "openai_responses"
+# api_key = { env = "OPENAI_API_KEY" }
+# base_url = "https://api.openai.com/v1"
+# default_model = "gpt5"
+#
+# [providers.oai-responses.models.gpt5]
+# model = "gpt-5"
+# reasoning = { levels = ["low", "medium", "high"], format = "openai-effort" }
+
+# Gemini API 示例（模型名在 URL 路径；assistant 角色为 model；
+# reasoning 走 thinkingConfig.thinkingBudget，0=off）
+# [providers.gemini]
+# protocol = "gemini"
+# api_key = { env = "GEMINI_API_KEY" }
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
+# default_model = "pro"
+#
+# [providers.gemini.models.pro]
+# model = "gemini-2.5-pro"
+# reasoning = { levels = ["low", "medium", "high"], format = "gemini-thinking", budget_tokens = 4096 }
+
+# Ollama 示例（Ollama 自带 OpenAI 兼容端点，复用 chat completions 协议）
+# [providers.ollama]
+# protocol = "ollama"
+# api_key = "not-needed"
+# base_url = "http://localhost:11434/v1"
+# default_model = "llama"
+#
+# [providers.ollama.models.llama]
+# model = "llama3.1"

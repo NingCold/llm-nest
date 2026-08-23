@@ -11,8 +11,9 @@ path = "src/main.rs"
 chat = { path = "../../features/chat" }
 events = { path = "../../crates/events" }
 runtime = { path = "../../crates/runtime" }
-llm = { path = "../../crates/llm" }
-common = { path = "../../crates/common" }
+ai-client.workspace = true
+common.workspace = true
+storage.workspace = true
 
 anyhow.workspace = true
 crossterm = "0.29"

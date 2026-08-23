@@ -1,0 +1,16 @@
+[package]
+name = "ai-client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+toml.workspace = true
+tokio.workspace = true

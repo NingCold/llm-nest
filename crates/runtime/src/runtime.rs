@@ -1,44 +1,196 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use ai_client::AiClient;
+use ai_client::ModelInfo;
+use ai_client::ModelSelection;
+use ai_client::ResolvedSelection;
 use common::{Message, SessionId};
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 
 use crate::command::Command;
 use crate::error::{Result, RuntimeError};
 use crate::event::RuntimeEvent;
 use crate::event_bus::EventBus;
 use crate::feature::{Feature, FeatureContext, FeatureRegistry};
-use crate::llm_service::RuntimeLlmClient;
-use crate::model_router::ModelRouter;
-use crate::provider_manager::ProviderManager;
 use crate::session::Session;
 use crate::session_manager::SessionManager;
 
 #[derive(Clone)]
 pub struct Runtime {
     sessions: Arc<RwLock<SessionManager>>,
-    llm: Arc<dyn llm::LlmClient>,
+    llm: Arc<AiClient>,
     event_bus: EventBus<RuntimeEvent>,
     features: Arc<RwLock<FeatureRegistry>>,
+    /// Config document path, when the runtime was created via
+    /// [`Runtime::from_config`]; used to auto-reload before a `/refresh` of a
+    /// provider that is not yet in the in-memory snapshot.
+    pub(crate) config_path: Option<PathBuf>,
 }
 
 impl Runtime {
     pub fn new(
         sessions: SessionManager,
         event_bus: EventBus<RuntimeEvent>,
-        provider_mgr: Arc<ProviderManager>,
+        llm: Arc<AiClient>,
     ) -> Self {
         let sessions = Arc::new(RwLock::new(sessions));
-        let router = Arc::new(ModelRouter::new(provider_mgr));
-        let llm = Arc::new(RuntimeLlmClient::new(router));
 
         Self {
             sessions,
             llm,
             event_bus,
             features: Arc::new(RwLock::new(FeatureRegistry::new())),
+            config_path: None,
         }
+    }
+
+    pub fn llm_client(&self) -> Arc<AiClient> {
+        self.llm.clone()
+    }
+
+    /// The default `ModelSelection` across providers, resolved through the
+    /// model router (config `default_model` > builtin default > first model).
+    pub async fn default_model(&self) -> Option<ModelSelection> {
+        self.llm.default_selection().await
+    }
+
+    /// Every effective model across providers, with capabilities and display
+    /// names, in deterministic order.
+    pub async fn list_models(&self) -> Vec<ModelInfo> {
+        self.llm.list_models().await
+    }
+
+    /// Re-apply the configuration document at `path` to a running runtime.
+    ///
+    /// The whole next configuration is loaded and validated before anything
+    /// swaps; a refused document (parse error, unknown `default_model`, empty
+    /// reasoning levels, unset key, invalid header, ...) returns the error and
+    /// the current configuration keeps serving. In-flight requests are
+    /// unaffected; the new configuration applies to the next request.
+    pub async fn reload_config(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        let config = crate::config::ConfigLoader::load(path)?;
+        self.llm.reload_config(config.providers()).await?;
+        Ok(())
+    }
+
+    /// Fetch `provider`'s model list from its own `GET /models` endpoint,
+    /// merge newly discovered models into the catalog, and **persist them
+    /// back into the config document** (in-place TOML edit; existing entries
+    /// and comments are untouched). Returns the newly added models (empty
+    /// when nothing was new).
+    ///
+    /// If `provider` is not yet in the in-memory snapshot (e.g. it was just
+    /// added to the config file and the watcher has not reloaded yet), the
+    /// config document is reloaded first and the refresh retried once.
+    pub async fn refresh_models(&self, provider: &str) -> Result<Vec<ai_client::WireModel>> {
+        let added = match self.llm.refresh_models(provider).await {
+            Ok(added) => added,
+            Err(e @ ai_client::error::AiError::ProviderNotFound(..)) => {
+                // Provider is not yet in the in-memory snapshot (e.g. just
+                // added to the config file): reload the document first,
+                // then retry once.
+                let Some(path) = self.config_path.clone() else {
+                    return Err(e.into());
+                };
+                self.reload_config(path).await?;
+                self.llm.refresh_models(provider).await?
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if !added.is_empty() {
+            if let Some(path) = &self.config_path {
+                crate::config::persist::persist_new_models(path, provider, &added)?;
+            }
+        }
+        Ok(added)
+    }
+
+    /// Strictly validate a selection against the mounted model catalog before
+    /// switching to it. Errors name the offending key and its candidates.
+    pub async fn resolve_model(&self, selection: &ModelSelection) -> Result<ResolvedSelection> {
+        match self.llm.resolve(selection).await? {
+            Some(resolved) => Ok(resolved),
+            None => Err(RuntimeError::ConfigError(
+                "no model catalog mounted; use Runtime::from_config".into(),
+            )),
+        }
+    }
+
+    /// Build and validate a selection from a frontend command target:
+    /// `provider/model`, or a bare model name resolved across providers (a
+    /// unique match only). Returns the validated selection, or an error naming
+    /// the ambiguity or the candidate list.
+    pub async fn select_model(&self, target: &str) -> Result<ModelSelection> {
+        let selection = if let Some((provider, model)) = target.split_once('/') {
+            if provider.trim().is_empty() || model.trim().is_empty() {
+                return Err(RuntimeError::ConfigError(
+                    "usage: /model <provider>/<model>".into(),
+                ));
+            }
+            ModelSelection {
+                provider: provider.trim().into(),
+                model: model.trim().into(),
+                reasoning_effort: None,
+            }
+        } else {
+            let models = self.list_models().await;
+            let matches: Vec<&ModelInfo> = models
+                .iter()
+                .filter(|mi| mi.spec.wire == target.trim())
+                .collect();
+            match matches.as_slice() {
+                [single] => ModelSelection {
+                    provider: single.provider.clone(),
+                    model: single.spec.wire.clone(),
+                    reasoning_effort: None,
+                },
+                [] => {
+                    return Err(RuntimeError::ConfigError(format!(
+                        "no model named '{target}'; use /models to list"
+                    )));
+                }
+                _ => {
+                    return Err(RuntimeError::ConfigError(format!(
+                        "'{target}' is ambiguous across providers ({}); use /model <provider>/<model>",
+                        matches
+                            .iter()
+                            .map(|m| m.provider.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
+                }
+            }
+        };
+        self.resolve_model(&selection).await?;
+        Ok(selection)
+    }
+
+    /// The effective model selection for a session: the session's remembered
+    /// selection when it has one, otherwise the global default.
+    pub async fn session_model(&self, session_id: &SessionId) -> Option<ModelSelection> {
+        let remembered = {
+            let sessions = self.sessions.read().await;
+            sessions.get_model(session_id)
+        };
+        match remembered {
+            Some(model) => Some(model),
+            None => self.default_model().await,
+        }
+    }
+
+    /// Remember a model selection on a session.
+    pub async fn set_session_model(
+        &self,
+        session_id: &SessionId,
+        selection: ModelSelection,
+    ) -> Result<()> {
+        self.sessions
+            .write()
+            .await
+            .set_model(session_id, selection)?;
+        Ok(())
     }
 
     pub fn context(&self) -> FeatureContext {
@@ -79,30 +231,24 @@ impl Runtime {
 
     // --- Session management ---
 
-    pub async fn create_session(&self, title: Option<String>) -> SessionId {
-        let id = self.sessions.write().await.create(title);
-        self.event_bus.publish(RuntimeEvent::SessionCreated { session_id: id });
-        id
+    pub async fn create_session(&self, title: Option<String>) -> Result<SessionId> {
+        let id = self.sessions.write().await.create(title)?;
+        self.event_bus
+            .publish(RuntimeEvent::SessionCreated { session_id: id });
+        Ok(id)
     }
 
     pub async fn delete_session(&self, session_id: SessionId) -> Result<()> {
-        self.sessions
-            .write()
-            .await
-            .remove(&session_id)
-            .ok_or(RuntimeError::SessionNotFound(session_id))?;
-        self.event_bus.publish(RuntimeEvent::SessionDeleted { session_id });
+        self.sessions.write().await.remove(&session_id)?;
+        self.event_bus
+            .publish(RuntimeEvent::SessionDeleted { session_id });
         Ok(())
     }
 
     pub async fn rename_session(&self, session_id: SessionId, title: String) -> Result<()> {
-        let mut sessions = self.sessions.write().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or(RuntimeError::SessionNotFound(session_id))?;
-        session.set_title(title);
-        drop(sessions);
-        self.event_bus.publish(RuntimeEvent::SessionChanged { session_id });
+        self.sessions.write().await.set_title(&session_id, title)?;
+        self.event_bus
+            .publish(RuntimeEvent::SessionChanged { session_id });
         Ok(())
     }
 
@@ -110,12 +256,22 @@ impl Runtime {
         self.sessions.read().await.get(session_id).cloned()
     }
 
+    /// All session ids, most recently updated first.
     pub async fn list_sessions(&self) -> Vec<SessionId> {
-        self.sessions.read().await.iter().map(|(id, _)| *id).collect()
+        let sessions = self.sessions.read().await;
+        let mut ids: Vec<(SessionId, chrono::DateTime<chrono::Utc>)> = sessions
+            .iter()
+            .map(|(id, s)| (*id, s.updated_at()))
+            .collect();
+        ids.sort_by_key(|(_, updated_at)| std::cmp::Reverse(*updated_at));
+        ids.into_iter().map(|(id, _)| id).collect()
     }
 
-    pub async fn push_message(&self, session_id: &SessionId, message: Message) {
-        self.sessions.write().await.push_message(session_id, message);
+    pub async fn push_message(&self, session_id: &SessionId, message: Message) -> Result<()> {
+        self.sessions
+            .write()
+            .await
+            .push_message(session_id, message)
     }
 
     pub async fn get_messages(&self, session_id: &SessionId) -> Vec<Message> {
@@ -127,7 +283,7 @@ impl Runtime {
     pub async fn execute(&self, command: Command) -> Result<()> {
         match command {
             Command::CreateSession { title } => {
-                self.create_session(title).await;
+                self.create_session(title).await?;
             }
             Command::DeleteSession { session_id } => {
                 self.delete_session(session_id).await?;
@@ -144,5 +300,433 @@ impl Runtime {
 impl std::fmt::Debug for Runtime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Runtime").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use ai_client::config::{ApiKey, ModelConfig, ModelId, Protocol, ProviderConfig, ProviderId};
+
+    use super::*;
+    use crate::builder::RuntimeBuilder;
+    use crate::config::RuntimeConfig;
+
+    fn deepseek_config() -> RuntimeConfig {
+        RuntimeConfig {
+            providers: HashMap::from([(
+                ProviderId::new("deepseek"),
+                ProviderConfig {
+                    protocol: Some(Protocol::OpenAIChat),
+                    api_key: ApiKey::Direct("test-key".into()),
+                    base_url: Some("https://api.deepseek.com".into()),
+                    models: HashMap::from([
+                        (
+                            ModelId::new("chat"),
+                            ModelConfig {
+                                model: "deepseek-chat".into(),
+                                display_name: None,
+                                context_window: None,
+                                max_tokens: None,
+                                reasoning: None,
+                                protocol: None,
+                            },
+                        ),
+                        (
+                            ModelId::new("reasoner"),
+                            ModelConfig {
+                                model: "deepseek-reasoner".into(),
+                                display_name: None,
+                                context_window: None,
+                                max_tokens: None,
+                                reasoning: None,
+                                protocol: None,
+                            },
+                        ),
+                    ]),
+                    default_model: Some("chat".into()),
+                    headers: HashMap::new(),
+                    timeout_ms: None,
+                },
+            )]),
+        }
+    }
+
+    #[tokio::test]
+    async fn builder_routes_default_model_and_catalog() {
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .build()
+            .expect("runtime builds");
+
+        // default model comes from the provider's default_model, not iteration order
+        let default = runtime.default_model().await.expect("default model");
+        assert_eq!(default.provider, "deepseek");
+        assert_eq!(default.model, "deepseek-chat");
+
+        let models = runtime.list_models().await;
+        assert_eq!(models.len(), 2);
+        assert!(models.iter().any(|m| m.spec.wire == "deepseek-chat"));
+
+        // unknown model resolution fails with diagnostics naming it
+        let err = runtime
+            .resolve_model(&ModelSelection {
+                provider: "deepseek".into(),
+                model: "ghost".into(),
+                reasoning_effort: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("deepseek/ghost"));
+        assert!(err.to_string().contains("deepseek-chat"));
+    }
+
+    #[tokio::test]
+    async fn select_model_accepts_provider_prefixed_and_bare_names() {
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .build()
+            .expect("runtime builds");
+
+        let prefixed = runtime
+            .select_model("deepseek/deepseek-reasoner")
+            .await
+            .unwrap();
+        assert_eq!(prefixed.model, "deepseek-reasoner");
+
+        // bare name resolves when unique across providers
+        let bare = runtime.select_model("deepseek-chat").await.unwrap();
+        assert_eq!(bare.model, "deepseek-chat");
+
+        // unknown name errors instead of silently switching
+        let err = runtime.select_model("ghost").await.unwrap_err();
+        assert!(err.to_string().contains("ghost"));
+    }
+
+    #[tokio::test]
+    async fn reload_config_swaps_and_keeps_old_on_failure() {
+        let dir = std::env::temp_dir().join(format!("llmn-reload-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("llmn.toml");
+        let write = |text: &str| std::fs::write(&path, text).unwrap();
+
+        write(
+            r#"
+[providers.deepseek]
+protocol = "openai"
+api_key = "test-key"
+base_url = "https://api.deepseek.com"
+default_model = "chat"
+[providers.deepseek.models.chat]
+model = "deepseek-chat"
+"#,
+        );
+        let runtime = Runtime::from_config(&path).expect("runtime builds");
+        assert_eq!(
+            runtime.default_model().await.unwrap().model,
+            "deepseek-chat"
+        );
+
+        // a second model + new default hot-swap in
+        write(
+            r#"
+[providers.deepseek]
+protocol = "openai"
+api_key = "test-key"
+base_url = "https://api.deepseek.com"
+default_model = "reasoner"
+[providers.deepseek.models.chat]
+model = "deepseek-chat"
+[providers.deepseek.models.reasoner]
+model = "deepseek-reasoner"
+"#,
+        );
+        runtime.reload_config(&path).await.expect("reload succeeds");
+        let default = runtime.default_model().await.unwrap();
+        assert_eq!(default.model, "deepseek-reasoner");
+        assert_eq!(runtime.list_models().await.len(), 2);
+
+        // a broken document is refused; the previous configuration keeps serving
+        write(
+            r#"
+[providers.deepseek]
+protocol = "openai"
+api_key = "test-key"
+base_url = "https://api.deepseek.com"
+default_model = "ghost"
+[providers.deepseek.models.chat]
+model = "deepseek-chat"
+"#,
+        );
+        let err = runtime.reload_config(&path).await.unwrap_err();
+        assert!(err.to_string().contains("default_model"));
+        assert!(err.to_string().contains("ghost"));
+        assert_eq!(
+            runtime.default_model().await.unwrap().model,
+            "deepseek-reasoner"
+        );
+        assert_eq!(runtime.list_models().await.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn refresh_auto_reloads_newly_added_provider() {
+        let dir = std::env::temp_dir().join(format!("llmn-refresh-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("llmn.toml");
+        let write = |text: &str| std::fs::write(&path, text).unwrap();
+
+        write(
+            r#"
+[providers.chatecnu]
+protocol = "openai"
+api_key = "k"
+base_url = "https://example.invalid/v1"
+[providers.chatecnu.models.m]
+model = "m"
+"#,
+        );
+        let runtime = Runtime::from_config(&path).expect("runtime builds");
+
+        // a brand-new provider lands in the config file while the runtime is
+        // running (no watcher in this test): refresh of a provider that is
+        // not in the in-memory snapshot must auto-reload the document first.
+        write(
+            r#"
+[providers.mine]
+protocol = "openai"
+api_key = "k"
+base_url = "http://127.0.0.1:9/v1"
+[providers.mine.models.m]
+model = "m"
+"#,
+        );
+        // After the auto-reload the provider exists, so the retry reaches the
+        // network layer (unreachable port) instead of "provider not found".
+        let err = runtime.refresh_models("mine").await.unwrap_err();
+        match err {
+            RuntimeError::AiError(ai_client::error::AiError::Reqwest(_)) => {}
+            other => panic!("expected network error after auto-reload, got {other:?}"),
+        }
+
+        // a provider absent from the config entirely still errors as unknown
+        let err = runtime.refresh_models("ghost").await.unwrap_err();
+        assert!(matches!(
+            err,
+            RuntimeError::AiError(ai_client::error::AiError::ProviderNotFound(..))
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn session_remembers_model_and_falls_back_to_default() {
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .build()
+            .expect("runtime builds");
+
+        let sid_a = runtime.create_session(None).await.unwrap();
+        let sid_b = runtime.create_session(None).await.unwrap();
+
+        // no remembered selection yet → global default
+        assert_eq!(
+            runtime.session_model(&sid_a).await.unwrap().model,
+            "deepseek-chat"
+        );
+
+        // remember a per-session selection; the other session is unaffected
+        let selected = ModelSelection {
+            provider: "deepseek".into(),
+            model: "deepseek-reasoner".into(),
+            reasoning_effort: None,
+        };
+        runtime
+            .set_session_model(&sid_a, selected.clone())
+            .await
+            .expect("set_session_model");
+        assert_eq!(
+            runtime.session_model(&sid_a).await.unwrap().model,
+            "deepseek-reasoner"
+        );
+        assert_eq!(
+            runtime.session_model(&sid_b).await.unwrap().model,
+            "deepseek-chat"
+        );
+
+        // unknown session errors
+        let ghost = common::SessionId::new();
+        assert!(
+            runtime
+                .set_session_model(&ghost, selected.clone())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn persistence_survives_runtime_restart() {
+        let dir = std::env::temp_dir().join(format!("llmn-persist-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // "first process": create, chat, rename, remember a model
+        {
+            let runtime = RuntimeBuilder::new()
+                .config(deepseek_config())
+                .storage_dir(&dir)
+                .build()
+                .expect("runtime builds");
+            let sid = runtime
+                .create_session(Some("persisted".into()))
+                .await
+                .expect("create");
+            runtime
+                .push_message(&sid, common::Message::user("hello"))
+                .await
+                .expect("push user");
+            runtime
+                .push_message(&sid, common::Message::assistant("hi there"))
+                .await
+                .expect("push assistant");
+            let selected = ModelSelection {
+                provider: "deepseek".into(),
+                model: "deepseek-reasoner".into(),
+                reasoning_effort: None,
+            };
+            runtime
+                .set_session_model(&sid, selected)
+                .await
+                .expect("set model");
+            runtime
+                .rename_session(sid, "renamed".into())
+                .await
+                .expect("rename");
+        } // runtime dropped, like a process exit
+
+        // "second process": everything is reloaded from the store
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .storage_dir(&dir)
+            .build()
+            .expect("runtime rebuilds");
+        let sessions = runtime.list_sessions().await;
+        assert_eq!(sessions.len(), 1);
+        let s = runtime.get_session(&sessions[0]).await.expect("session");
+        assert_eq!(s.title(), Some("renamed"));
+        assert_eq!(s.messages().len(), 2);
+        assert_eq!(s.messages()[0].text(), "hello");
+        assert_eq!(s.messages()[1].text(), "hi there");
+        assert_eq!(
+            runtime.session_model(&sessions[0]).await.unwrap().model,
+            "deepseek-reasoner"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn persistence_delete_removes_session_from_store() {
+        let dir = std::env::temp_dir().join(format!("llmn-persist-delete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let runtime = RuntimeBuilder::new()
+                .config(deepseek_config())
+                .storage_dir(&dir)
+                .build()
+                .expect("runtime builds");
+            let sid = runtime.create_session(None).await.expect("create");
+            runtime
+                .push_message(&sid, common::Message::user("a"))
+                .await
+                .expect("push");
+            runtime.delete_session(sid).await.expect("delete");
+        }
+
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .storage_dir(&dir)
+            .build()
+            .expect("runtime rebuilds");
+        assert!(runtime.list_sessions().await.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn persistence_failure_fails_create_and_leaves_memory_unchanged() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Real store whose saves fail after the first one (create ok, then disk full).
+        struct FlakyStore {
+            inner: storage::FileSessionStore,
+            saves: AtomicUsize,
+        }
+        impl storage::SessionStore for FlakyStore {
+            fn save_session(&self, record: &storage::SessionRecord) -> storage::Result<()> {
+                if self
+                    .saves
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                        (n > 0).then(|| n - 1)
+                    })
+                    .is_err()
+                {
+                    return Err(storage::StorageError::Io(std::io::Error::other(
+                        "disk full",
+                    )));
+                }
+                self.inner.save_session(record)
+            }
+            fn load_sessions(&self) -> storage::Result<Vec<storage::SessionRecord>> {
+                self.inner.load_sessions()
+            }
+            fn delete_session(&self, id: &common::SessionId) -> storage::Result<()> {
+                self.inner.delete_session(id)
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("llmn-persist-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = std::sync::Arc::new(FlakyStore {
+            inner: storage::FileSessionStore::new(&dir).expect("store"),
+            saves: AtomicUsize::new(1),
+        });
+
+        let mut manager = SessionManager::from_store(store).expect("load");
+        let sid = manager.create(Some("t".into())).expect("first save ok");
+        assert_eq!(manager.get_messages(&sid).len(), 0);
+
+        // A failed write surfaces the error and leaves the session unchanged.
+        let err = manager
+            .push_message(&sid, common::Message::user("boom"))
+            .expect_err("second save fails");
+        assert!(err.to_string().contains("disk full"));
+        assert_eq!(manager.get_messages(&sid).len(), 0);
+        assert_eq!(manager.get(&sid).unwrap().title(), Some("t"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn list_sessions_orders_most_recent_first() {
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .build()
+            .expect("runtime builds");
+
+        let a = runtime.create_session(None).await.unwrap();
+        let b = runtime.create_session(None).await.unwrap();
+        assert_eq!(runtime.list_sessions().await, vec![b, a]);
+
+        // touching the older session moves it to the front
+        runtime
+            .push_message(&a, common::Message::user("x"))
+            .await
+            .unwrap();
+        assert_eq!(runtime.list_sessions().await, vec![a, b]);
     }
 }

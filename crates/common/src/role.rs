@@ -1,14 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     System,
@@ -33,8 +25,14 @@ mod tests {
     #[test]
     fn role_variants() {
         assert_eq!(serde_json::to_string(&Role::System).unwrap(), "\"system\"");
-        assert_eq!(serde_json::to_string(&Role::Assistant).unwrap(), "\"assistant\"");
+        assert_eq!(
+            serde_json::to_string(&Role::Assistant).unwrap(),
+            "\"assistant\""
+        );
         assert_eq!(serde_json::to_string(&Role::Tool).unwrap(), "\"tool\"");
-        assert_eq!(serde_json::to_string(&Role::Developer).unwrap(), "\"developer\"");
+        assert_eq!(
+            serde_json::to_string(&Role::Developer).unwrap(),
+            "\"developer\""
+        );
     }
 }

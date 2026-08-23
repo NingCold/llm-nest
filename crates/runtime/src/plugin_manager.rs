@@ -16,7 +16,9 @@ pub struct PluginManager {
 
 impl PluginManager {
     pub fn new() -> Self {
-        Self { plugins: HashMap::new() }
+        Self {
+            plugins: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, plugin: Box<dyn Plugin>) -> anyhow::Result<()> {

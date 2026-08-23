@@ -61,6 +61,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &mut App) {
                     lines.push(Line::from(Span::raw(text.clone())));
                 }
             }
+            CachedLine::Reasoning(text) => {
+                // 思维链：浅色（dim）+ 斜体，与正文区分。
+                lines.push(Line::from(Span::styled(
+                    text.clone(),
+                    Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+                )));
+            }
             CachedLine::Spacer => {
                 lines.push(Line::from(""));
             }

@@ -4,7 +4,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(Uuid);
 
 impl SessionId {
@@ -103,6 +103,14 @@ mod tests {
     fn session_id_invalid_from_str() {
         let result = "not-a-uuid".parse::<SessionId>();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn session_id_serde_roundtrip() {
+        let id = SessionId::new();
+        let json = serde_json::to_string(&id).unwrap();
+        let parsed: SessionId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, parsed);
     }
 
     #[test]

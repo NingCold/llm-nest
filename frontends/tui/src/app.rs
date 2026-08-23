@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use ai_client::ModelSelection;
 use common::Role;
 use runtime::runtime::Runtime;
 
@@ -13,6 +14,7 @@ pub enum UserEvent {
     Chat(events::ChatEvent),
     Status(String),
     SessionSwitched(common::SessionId),
+    ModelSwitched(ModelSelection),
     Input(InputEvent),
 }
 
@@ -25,11 +27,15 @@ pub enum InputEvent {
 pub struct Message {
     pub role: Role,
     pub content: String,
+    /// Thinking chain of this message, rendered dimmed (not part of content).
+    pub reasoning: String,
 }
 
 pub enum CachedLine {
     Role(Role),
     Content(String),
+    /// Thinking chain fragment, rendered dimmed.
+    Reasoning(String),
     Spacer,
 }
 
@@ -70,6 +76,11 @@ impl RenderCache {
                     self.lines.push(CachedLine::Content(line.into_owned()));
                 }
             }
+            if !msg.reasoning.is_empty() {
+                for line in textwrap::wrap(&msg.reasoning, &opts) {
+                    self.lines.push(CachedLine::Reasoning(line.into_owned()));
+                }
+            }
             self.lines.push(CachedLine::Spacer);
         }
         self.width = width;
@@ -81,6 +92,9 @@ pub struct App {
     pub runtime: Runtime,
     pub sessions: Vec<(common::SessionId, String)>,
     pub cur_session: Option<common::SessionId>,
+    /// Currently selected model; `None` until initialized from the router
+    /// default (falls back to the runtime default at chat time).
+    pub model: Option<ModelSelection>,
     pub messages: Vec<Message>,
     pub input: String,
     pub cursor: usize,
@@ -106,6 +120,7 @@ impl App {
             runtime,
             sessions: Vec::new(),
             cur_session: None,
+            model: None,
             messages: Vec::new(),
             input: String::new(),
             cursor: 0,
@@ -122,6 +137,12 @@ impl App {
                 "/rename <title>",
                 "/delete <id>",
                 "/list",
+                "/models",
+                "/model <provider/model>",
+                "/effort <off|low|medium|high|max>",
+                "/current",
+                "/reload",
+                "/refresh <provider>",
                 "/help",
                 "/quit",
             ],
@@ -142,7 +163,10 @@ impl App {
         let ids = self.runtime.list_sessions().await;
         let mut sessions = Vec::new();
         for id in &ids {
-            let title = self.runtime.get_session(id).await
+            let title = self
+                .runtime
+                .get_session(id)
+                .await
                 .and_then(|s| s.title().map(String::from))
                 .unwrap_or_default();
             sessions.push((*id, title));
@@ -155,6 +179,7 @@ impl App {
         self.messages.push(Message {
             role,
             content: content.into(),
+            reasoning: String::new(),
         });
         self.layout_generation += 1;
     }
@@ -167,6 +192,13 @@ impl App {
     pub fn update_last_message_content(&mut self, content: &str) {
         if let Some(last) = self.messages.last_mut() {
             last.content.push_str(content);
+            self.layout_generation += 1;
+        }
+    }
+
+    pub fn update_last_message_reasoning(&mut self, content: &str) {
+        if let Some(last) = self.messages.last_mut() {
+            last.reasoning.push_str(content);
             self.layout_generation += 1;
         }
     }

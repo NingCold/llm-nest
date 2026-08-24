@@ -2,5 +2,11 @@
 name = "tools"
 version.workspace = true
 edition.workspace = true
+description = "Tool execution layer: Tool trait, ToolRegistry, and built-in tools (called by ChatFeature's agent loop)"
 
 [dependencies]
+common = { path = "../../crates/common" }
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

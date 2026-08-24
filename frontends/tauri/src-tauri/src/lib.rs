@@ -67,6 +67,7 @@ pub fn run() {
             commands::init_app,
             commands::chat,
             commands::cancel_chat,
+            commands::get_messages,
             commands::new_session,
             commands::delete_session,
             commands::rename_session,

@@ -1,23 +1,77 @@
 use super::chat;
-use super::chat::{Request, ThinkingParam};
+use super::chat::{FunctionDecl, Request, ThinkingParam, ToolDecl};
 use crate::error::{AiError, Result};
 use crate::reasoning::{ReasoningEffort, ReasoningFormat};
 use crate::request::ChatRequest;
 use crate::response::ProviderResponse;
+use common::{ContentPart, Message, Role};
 
 pub fn to_real_request(req: &ChatRequest) -> Request {
     let mut request = Request {
         model: req.selection.model.clone(),
-        messages: req.messages.clone(),
+        messages: req.messages.iter().map(wire_message).collect(),
         temperature: req.options.temperature,
         max_tokens: req.options.max_tokens,
         top_p: req.options.top_p,
         stream: req.options.stream,
         reasoning_effort: None,
         thinking: None,
+        tools: req
+            .tools
+            .iter()
+            .map(|t| ToolDecl {
+                typ: "function".into(),
+                function: FunctionDecl {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                },
+            })
+            .collect(),
     };
     apply_reasoning(req, &mut request);
     request
+}
+
+/// Wire form of one message. Tool results are OpenAI `role: "tool"`
+/// messages (`content` + `tool_call_id`); assistant messages that carried
+/// tool calls get the OpenAI `tool_calls` top-level array (with text content
+/// flattened to a string); everything else uses the shared wire form.
+fn wire_message(m: &Message) -> serde_json::Value {
+    if m.role == Role::Tool {
+        let result = m.content.iter().find_map(|part| match part {
+            ContentPart::ToolResult(tr) => Some(tr),
+            _ => None,
+        });
+        return serde_json::json!({
+            "role": "tool",
+            "content": result.map(|r| r.content.as_str()).unwrap_or(""),
+            "tool_call_id": result.map(|r| r.id.as_str()).unwrap_or(""),
+        });
+    }
+
+    let calls: Vec<serde_json::Value> = m
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::ToolCall(tc) => Some(serde_json::json!({
+                "id": tc.id,
+                "type": "function",
+                "function": { "name": tc.name, "arguments": tc.arguments }
+            })),
+            _ => None,
+        })
+        .collect();
+    if calls.is_empty() {
+        return m.to_wire_value();
+    }
+
+    // OpenAI assistant messages with tool calls: string content + tool_calls.
+    serde_json::json!({
+        "role": "assistant",
+        "content": m.text(),
+        "tool_calls": calls,
+    })
 }
 
 /// Map the routed reasoning effort to this protocol's wire spelling. The
@@ -87,7 +141,7 @@ impl TryFrom<chat::Response> for ProviderResponse {
         Ok(Self {
             message,
             reasoning,
-            usage: resp.usage,
+            usage: resp.usage.map(common::Usage::from),
         })
     }
 }
@@ -157,6 +211,7 @@ mod tests {
             },
             messages: vec![Message::user("hi")],
             options: GenerationOptions::default(),
+            tools: Vec::new(),
             resolved: None,
         }
     }
@@ -290,5 +345,16 @@ mod tests {
         let resp: super::chat::Response = serde_json::from_str(json).unwrap();
         let provider: ProviderResponse = resp.try_into().unwrap();
         assert_eq!(provider.reasoning, None);
+    }
+
+    #[test]
+    fn non_stream_usage_normalizes_cached_tokens() {
+        let json = r#"{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":3}}}"#;
+        let resp: super::chat::Response = serde_json::from_str(json).unwrap();
+        let provider: ProviderResponse = resp.try_into().unwrap();
+        let usage = provider.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.cached_tokens, 3);
     }
 }

@@ -9,15 +9,14 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use super::convert;
+use super::stream::ResponsesStream;
 use crate::ai_provider::AiProvider;
 use crate::config::Protocol;
 use crate::error::{AiError, Result};
 use crate::protocols::openai::error::ErrorResponse;
-use crate::protocols::sse::SseDataStream;
 use crate::request::ChatRequest;
 use crate::response::ProviderResponse;
 use crate::stream::ChatStream;
@@ -108,13 +107,10 @@ impl OpenAIResponsesProvider {
         if !response.status().is_success() {
             return Err(Self::error_from_response(response).await);
         }
-        let stream = SseDataStream::new(response).filter_map(|payload| async {
-            match payload {
-                Ok(data) => convert::parse_event(&data).transpose(),
-                Err(err) => Some(Err(err)),
-            }
-        });
-        Ok(ChatStream::new(stream))
+        // ResponsesStream assembles streamed function_call items
+        // (output_item.added / function_call_arguments.delta|done /
+        // output_item.done) into ChatChunk::ToolCall before the terminal Done.
+        Ok(ChatStream::new(ResponsesStream::new(response)))
     }
 
     async fn error_from_response(response: reqwest::Response) -> AiError {

@@ -18,6 +18,7 @@ notify = "7"
 common.workspace = true
 ai-client.workspace = true
 storage.workspace = true
+tools = { path = "../tools" }
 
 [dev-dependencies]
 temp-env = "0.3"

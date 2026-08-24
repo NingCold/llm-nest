@@ -21,6 +21,7 @@ futures-util.workspace = true
 uuid.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
+base64.workspace = true
 
 chat = { path = "../../../features/chat" }
 runtime = { path = "../../../crates/runtime" }

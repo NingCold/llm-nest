@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ai_client::ModelSelection;
-use common::SessionId;
+use common::{Feedback, Role, SessionId};
 use storage::SessionStore;
 
 use crate::error::{Result, RuntimeError};
@@ -156,6 +156,34 @@ impl SessionManager {
             .cloned()
             .ok_or(RuntimeError::SessionNotFound(*session_id))?;
         next.set_title(title);
+        self.persist(&next)?;
+        self.sessions.insert(*session_id, next);
+        Ok(())
+    }
+
+    /// Set feedback (up/down) on the `idx`-th user/assistant message of a
+    /// session — the same indexing the GUI message ids use (`m-{i}`) — and
+    /// persist it. `None` clears the feedback. Unknown index errors.
+    pub fn set_message_feedback(
+        &mut self,
+        session_id: &SessionId,
+        idx: usize,
+        feedback: Option<Feedback>,
+    ) -> Result<()> {
+        let mut next = self
+            .sessions
+            .get(session_id)
+            .cloned()
+            .ok_or(RuntimeError::SessionNotFound(*session_id))?;
+        let target = next
+            .messages_mut()
+            .iter_mut()
+            .filter(|m| matches!(m.role, Role::User | Role::Assistant))
+            .nth(idx)
+            .ok_or(RuntimeError::ConfigError(format!(
+                "message index {idx} out of range for session {session_id}"
+            )))?;
+        target.feedback = feedback;
         self.persist(&next)?;
         self.sessions.insert(*session_id, next);
         Ok(())

@@ -1,0 +1,345 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github-dark.css";
+@import "katex/dist/katex.min.css";
+
+@source "./";
+
+/* Class-based dark mode (toggle `.dark` on <html>) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --animate-caret-blink: caret-blink 1s step-end infinite;
+  --animate-fade-up: fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-breathe: breathe 2.4s ease-in-out infinite;
+  --animate-spin-slow: spin 2.4s linear infinite;
+  --animate-pulse-dot: pulse-dot 1.3s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.8s linear infinite;
+
+  @keyframes caret-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.6;
+    }
+    50% {
+      transform: scale(1.35);
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+}
+
+/*
+ * 语义色令牌 → Tailwind v4 颜色工具类（bg-card / bg-popover / text-muted-foreground …）
+ * 不加这个映射这些工具类不会生成，元素会透明（弹层文字透出背景、卡片无底色）。
+ * @theme inline 让工具类内联引用 var(--xxx)，从而跟随 .dark 切换。
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-border: var(--sidebar-border);
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #a1a1aa;
+  --sidebar: #f7f7f8;
+  --sidebar-foreground: #27272a;
+  --sidebar-muted: #a1a1aa;
+  --sidebar-border: #e4e4e7;
+  --code-bg: #0d1117;
+  --code-border: #21262d;
+  --destructive: #dc2626;
+  --success: #16a34a;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: #0c0c0e;
+  --foreground: #fafafa;
+  --card: #141416;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --muted: #1f1f23;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --border: #26262b;
+  --input: #3f3f46;
+  --ring: #52525b;
+  --sidebar: #17171a;
+  --sidebar-foreground: #d4d4d8;
+  --sidebar-muted: #71717a;
+  --sidebar-border: #242428;
+  --code-bg: #0d1117;
+  --code-border: #23272e;
+  --destructive: #ef4444;
+  --success: #22c55e;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  ::selection {
+    background-color: color-mix(in srgb, var(--ring) 30%, transparent);
+  }
+
+  /* Thin scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent)
+      transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(
+      in srgb,
+      var(--muted-foreground) 30%,
+      transparent
+    );
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* ---------- Markdown typography (rendered by react-markdown) ---------- */
+  .md {
+    font-size: 0.9375rem;
+    line-height: 1.75;
+    color: var(--foreground);
+    word-break: break-word;
+  }
+  .md > *:first-child {
+    margin-top: 0;
+  }
+  .md > *:last-child {
+    margin-bottom: 0;
+  }
+  .md h1,
+  .md h2,
+  .md h3,
+  .md h4 {
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 1.4em 0 0.6em;
+    line-height: 1.35;
+  }
+  .md h1 {
+    font-size: 1.5em;
+  }
+  .md h2 {
+    font-size: 1.3em;
+  }
+  .md h3 {
+    font-size: 1.12em;
+  }
+  .md h4 {
+    font-size: 1em;
+  }
+  .md p {
+    margin: 0.65em 0;
+  }
+  .md ul,
+  .md ol {
+    margin: 0.65em 0;
+    padding-left: 1.5em;
+  }
+  .md ul {
+    list-style: disc;
+  }
+  .md ol {
+    list-style: decimal;
+  }
+  .md li {
+    margin: 0.3em 0;
+  }
+  .md li::marker {
+    color: var(--muted-foreground);
+  }
+  .md li > ul,
+  .md li > ol {
+    margin: 0.2em 0;
+  }
+  .md strong {
+    font-weight: 650;
+  }
+  .md em {
+    font-style: italic;
+  }
+  .md blockquote {
+    margin: 0.8em 0;
+    padding: 0.15em 1em;
+    border-left: 3px solid var(--border);
+    color: #52525b;
+    background: var(--muted);
+    border-radius: 0 0.5rem 0.5rem 0;
+  }
+  .dark .md blockquote {
+    color: #a1a1aa;
+  }
+  .md a {
+    color: var(--foreground);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--ring);
+    text-decoration-thickness: 1px;
+  }
+  .md a:hover {
+    text-decoration-color: currentColor;
+  }
+  .md hr {
+    margin: 1.4em 0;
+    border-top: 1px solid var(--border);
+  }
+  .md table {
+    margin: 0.9em 0;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875em;
+  }
+  .md th {
+    background: var(--muted);
+    font-weight: 600;
+    text-align: left;
+  }
+  .md th,
+  .md td {
+    padding: 0.45em 0.8em;
+    border: 1px solid var(--border);
+  }
+  .md code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 0.3rem;
+    padding: 0.12em 0.38em;
+  }
+  .md pre {
+    margin: 0;
+    overflow-x: auto;
+  }
+  .md pre code {
+    display: block;
+    padding: 0.95em 1.1em;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: #e6edf3;
+    font-size: 0.86em;
+    line-height: 1.7;
+  }
+  .md pre code::-webkit-scrollbar {
+    height: 6px;
+  }
+  .md .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.3em 0;
+  }
+
+  /* ---------- Mermaid 图表 ---------- */
+  .mermaid-svg svg {
+    max-width: 100% !important;
+    height: auto;
+    margin: 0 auto;
+    display: block;
+    background: transparent !important;
+  }
+  .mermaid-svg {
+    overflow-x: auto;
+  }
+}

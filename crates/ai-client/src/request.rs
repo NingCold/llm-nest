@@ -12,7 +12,13 @@ pub struct ModelSelection {
     /// Provider-owned model id (wire name or configuration key).
     pub model: String,
     /// Provider-neutral reasoning effort; absent leaves provider default behavior.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `alias` 让前端 camelCase 字段（reasoningEffort）也能反序列化；
+    /// 序列化仍输出 reasoning_effort（存储/配置格式不变）。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "reasoningEffort"
+    )]
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -21,6 +27,9 @@ pub struct ChatRequest {
     pub selection: ModelSelection,
     pub messages: Vec<Message>,
     pub options: GenerationOptions,
+    /// Tools the model may call; converted by each protocol to its own wire
+    /// declaration. Empty = no tool calling.
+    pub tools: Vec<common::ToolDefinition>,
     /// Routing result filled by the client before dispatch; `None` on the
     /// legacy (manually registered provider) path, which skips reasoning wire
     /// mapping. Not part of serialization.

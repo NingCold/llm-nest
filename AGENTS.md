@@ -177,8 +177,16 @@ model / delete）先落盘成功再改内存，写失败内存不变、错误上
 - `FileSessionStore`：每会话一个 JSON 文件 `<dir>/<session-id>.json`（`SessionRecord` DTO，
   `version: 1`），**原子写**（同目录临时文件 + rename，崩溃不截断）；`load_sessions` 跳过非 `.json`
   文件，损坏文件启动即报错（fail-fast，错误带文件路径）
-- 持久化格式：title / messages（复用 `Message` 的 serde）/ metadata / model（`ModelSelection`）/
-  created_at / updated_at；`Session ↔ SessionRecord` 转换在 `runtime::session`
+- 持久化格式：title / messages（复用 `Message` 的 serde，含 `reasoning` 思维链与
+  `ContentPart::ToolCall`/`ToolResult` 工具调用/结果块，均无损往返）/ metadata / model
+  （`ModelSelection`）/ created_at / updated_at；`Session ↔ SessionRecord` 转换在 `runtime::session`；
+  旧文件零迁移（`reasoning` 字段 serde default）
+- 思维链链路：流式 `ReasoningDelta` 边转发前端边收集，`Done` 时以 `Message::assistant_with_reasoning`
+  存入；`web-server`/tauri 的 `get_messages` 把 `Message.reasoning` 映射进 `GuiMessage.reasoning`，
+  Web 前端 `StoredMessage.reasoning` + ThinkingBlock 刷新后直接渲染（前端零改动）
+- 工具调用：工具**执行**流程尚未实现（`crates/tools` 仍为 stub），本次仅落地消息表示与持久化——
+  工具执行层实现时把 `ToolCall`/`ToolResult` 映射到各协议 wire（openai tool_calls / anthropic
+  tool_use / gemini functionCall）即可，历史已无损可存
 - `Runtime::list_sessions` 按 `updated_at` 倒序——重启后 CLI 自动恢复最近会话
 - 存储层同步实现（小 JSON 写入微秒级，无需 async）；`SessionId` 已支持 serde（uuid serde feature）
 
@@ -254,8 +262,8 @@ impl ChatFeature {
 pub enum ChatEvent {
     Started { message_id: MessageId },
     Delta { message_id: MessageId, content: String },
-    ReasoningDelta { message_id: MessageId, content: String }, // 思维链，前端浅色显示、不入历史
-    Finished { message_id: MessageId },
+    ReasoningDelta { message_id: MessageId, content: String }, // 思维链，前端浅色显示、随消息持久化
+    Finished { message_id: MessageId, usage: Option<Usage>, timings: Option<MessageTimings> },
     Error { message_id: MessageId, error: String },
     Cancelled { message_id: MessageId },
 }
@@ -263,8 +271,24 @@ pub enum ChatEvent {
 
 ChatEvent 定义在 `events` crate 中，前端只依赖 `events` + `common` 即可消费事件，无需依赖 `features/chat`。
 流式链路：SSE `delta.reasoning_content` → `ChatChunk::ReasoningDelta` → `ChatEvent::ReasoningDelta`；
-CLI 用 ANSI dim（`\x1b[2m`）打印，TUI 用 `CachedLine::Reasoning`（Gray + DIM）渲染。思维链不写入
-会话历史（providers 允许无工具调用时省略回传）。
+CLI 用 ANSI dim（`\x1b[2m`）打印，TUI 用 `CachedLine::Reasoning`（Gray + DIM）渲染。思维链**随 assistant
+消息一起持久化**（`Message.reasoning`，见会话持久化小节）——刷新/重启后可再次显示；回传 provider 时
+被剥离（`Message::to_wire()`），不污染请求。
+
+### 用量与计时
+
+- `common::Usage`：prompt/completion/total + `cached_tokens`（serde default 零迁移；各协议 convert 归一化：
+  openai `prompt_tokens_details.cached_tokens`、anthropic `cache_read + cache_creation`、gemini
+  `cachedContentTokenCount`、responses `input_tokens_details.cached_tokens`）
+- `common::MessageTimings`：`ttft_ms`（请求开始→首个 token）、`reasoning_ms`（请求开始→首个正文，思考阶段）、
+  `total_ms`；`ChatFeature` 在流循环内计时，`ChatChunk::Done { usage }` 时一并持久化到 assistant 消息
+  （`Message.created_at/thinking_ms/usage/timings`）并随 `ChatEvent::Finished { usage, timings }` 下发
+- 流式 usage 捕获：openai 独立尾块（空 choices + usage）/ finish_reason 块、responses `response.completed`、
+  anthropic `message_delta`、gemini 末块 `usageMetadata` → `ChatChunk::Done { usage }`
+- `Message::to_wire()`：role/content 保留、展示元数据（reasoning/created_at/thinking_ms/usage/timings）剥离，
+  请求侧只用 wire 形式（`ChatFeature` 构建 `ChatRequest.messages` 时 map）
+- GUI 透传：web-server/tauri 的 `GuiMessage` 增加 `createdAt/thinkingMs/usage/timings`（camelCase，
+  skip_serializing_if None）；会话级聚合（状态栏）由前端从消息级数据求和
 
 ### Command — 前端命令
 

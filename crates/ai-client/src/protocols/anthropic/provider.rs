@@ -10,14 +10,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use super::convert;
+use super::stream::AnthropicStream;
 use crate::ai_provider::AiProvider;
 use crate::config::Protocol;
 use crate::error::{AiError, Result};
-use crate::protocols::sse::SseDataStream;
 use crate::request::ChatRequest;
 use crate::response::ProviderResponse;
 use crate::stream::ChatStream;
@@ -118,13 +117,9 @@ impl AnthropicProvider {
         if !response.status().is_success() {
             return Err(Self::error_from_response(response).await);
         }
-        let stream = SseDataStream::new(response).filter_map(|payload| async {
-            match payload {
-                Ok(data) => convert::parse_event(&data).transpose(),
-                Err(err) => Some(Err(err)),
-            }
-        });
-        Ok(ChatStream::new(stream))
+        // AnthropicStream assembles streamed tool_use blocks (content_block
+        // start/delta/stop) into ChatChunk::ToolCall before the terminal Done.
+        Ok(ChatStream::new(AnthropicStream::new(response)))
     }
 
     /// Anthropic error body: `{ "type": "error", "error": { "type", "message" } }`.

@@ -19,6 +19,8 @@ pub struct FeatureContext {
     pub sessions: Arc<RwLock<SessionManager>>,
     pub llm: Arc<AiClient>,
     pub events: EventBus<RuntimeEvent>,
+    /// Tools the chat feature may call during its agent loop.
+    pub tools: Arc<tools::ToolRegistry>,
 }
 
 pub trait Feature: Send + Sync {

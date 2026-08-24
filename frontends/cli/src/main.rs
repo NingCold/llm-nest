@@ -152,12 +152,13 @@ async fn main() -> Result<()> {
                                 .as_ref()
                                 .map(|c| {
                                     format!(
-                                        " [reasoning: {}]",
+                                        " [reasoning: {} · {}]",
                                         c.levels
                                             .iter()
                                             .map(|l| l.as_wire())
                                             .collect::<Vec<_>>()
-                                            .join("/")
+                                            .join("/"),
+                                        c.format.as_wire()
                                     )
                                 })
                                 .unwrap_or_default();
@@ -317,7 +318,14 @@ async fn main() -> Result<()> {
 
         let cancel = CancellationToken::new();
         let mut stream = chat
-            .chat(session_id, input, model, options, cancel.clone())
+            .chat(
+                session_id,
+                input,
+                Vec::new(),
+                model,
+                options,
+                cancel.clone(),
+            )
             .await?;
 
         let spinner = ProgressBar::new_spinner();
@@ -386,6 +394,31 @@ async fn main() -> Result<()> {
                     spinner_handle.abort();
                     spinner.finish_and_clear();
                     eprintln!("\nError: {}", error);
+                }
+                ChatEvent::ToolCall { name, arguments, .. } => {
+                    if reasoning_active {
+                        print!("\x1b[0m");
+                        reasoning_active = false;
+                    }
+                    spinner_handle.abort();
+                    spinner.finish_and_clear();
+                    println!("\n[tool] {} {arguments}", name);
+                }
+                ChatEvent::ToolResult {
+                    name,
+                    content,
+                    is_error,
+                    duration_ms,
+                    ..
+                } => {
+                    let ms = duration_ms
+                        .map(|d| format!(" ({}ms)", d))
+                        .unwrap_or_default();
+                    if is_error {
+                        println!("[tool] {name} error: {content}{ms}");
+                    } else {
+                        println!("[tool] {name} -> {content}{ms}");
+                    }
                 }
                 ChatEvent::Cancelled { .. } => {
                     if reasoning_active {

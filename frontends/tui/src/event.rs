@@ -69,6 +69,26 @@ pub fn handle_event(
                 app.status = format!("Error: {}", error);
                 app.mark_dirty();
             }
+            ChatEvent::ToolCall { name, arguments: _arguments, .. } => {
+                app.status = format!("调用工具 {name} …");
+                app.mark_dirty();
+            }
+            ChatEvent::ToolResult {
+                name,
+                content,
+                is_error,
+                duration_ms,
+                ..
+            } => {
+                if is_error {
+                    app.status = format!("工具 {name} 失败：{content}");
+                } else if let Some(ms) = duration_ms {
+                    app.status = format!("工具 {name} 完成（{ms}ms）");
+                } else {
+                    app.status = format!("工具 {name} 完成");
+                }
+                app.mark_dirty();
+            }
             ChatEvent::Cancelled { .. } => {
                 app.waiting = false;
                 app.thinking_start = None;
@@ -165,6 +185,7 @@ pub fn handle_event(
                                             .chat(
                                                 sid,
                                                 input,
+                                                Vec::new(),
                                                 model,
                                                 GenerationOptions {
                                                     stream: true,

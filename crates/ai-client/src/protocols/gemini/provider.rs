@@ -13,6 +13,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use super::convert;
 use crate::ai_provider::AiProvider;
+use crate::chunk::ChatChunk;
 use crate::config::Protocol;
 use crate::error::{AiError, Result};
 use crate::protocols::sse::SseDataStream;
@@ -113,11 +114,16 @@ impl GeminiProvider {
         if !response.status().is_success() {
             return Err(Self::error_from_response(response).await);
         }
-        let stream = SseDataStream::new(response).filter_map(|payload| async {
-            match payload {
-                Ok(data) => convert::parse_event(&data).transpose(),
-                Err(err) => Some(Err(err)),
-            }
+        // parse_event yields Vec<ChatChunk>: text deltas, functionCall
+        // ToolCalls (possibly several per chunk), and the terminal Done.
+        let stream = SseDataStream::new(response).flat_map(|payload| {
+            let items: Vec<Result<ChatChunk>> = match payload {
+                Ok(data) => convert::parse_event(&data)
+                    .map(|chunks| chunks.into_iter().map(Ok).collect())
+                    .unwrap_or_else(|e| vec![Err(e)]),
+                Err(err) => vec![Err(err)],
+            };
+            futures_util::stream::iter(items)
         });
         Ok(ChatStream::new(stream))
     }

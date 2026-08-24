@@ -15,6 +15,20 @@ use futures_util::Stream;
 
 use crate::error::Result;
 
+/// Position and separator length of the next frame boundary in `buf`.
+///
+/// Most servers separate events with a blank line `\n\n`; Gemini's
+/// `streamGenerateContent?alt=sse` uses CRLF (`\r\n\r\n`). Both are accepted;
+/// the earliest boundary wins.
+fn find_frame_boundary(buf: &str) -> Option<(usize, usize)> {
+    let lf = buf.find("\n\n").map(|i| (i, 2));
+    let crlf = buf.find("\r\n\r\n").map(|i| (i, 4));
+    match (lf, crlf) {
+        (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+        (a, b) => a.or(b),
+    }
+}
+
 /// One `data:` payload extracted from an SSE byte stream.
 pub struct SseDataStream {
     inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
@@ -41,9 +55,9 @@ impl Stream for SseDataStream {
             return Poll::Ready(None);
         }
         loop {
-            if let Some(index) = self.buffer.find("\n\n") {
+            if let Some((index, sep_len)) = find_frame_boundary(&self.buffer) {
                 let event = self.buffer[..index].to_string();
-                self.buffer = self.buffer[index + 2..].to_string();
+                self.buffer = self.buffer[index + sep_len..].to_string();
                 for line in event.lines() {
                     if let Some(data) = line.strip_prefix("data:") {
                         let payload = data.trim().to_string();
@@ -110,5 +124,20 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(items[0].contains("message_start"));
         assert!(items[1].contains("text_delta"));
+    }
+
+    #[tokio::test]
+    async fn frames_crlf_separated_payloads() {
+        // Gemini's streamGenerateContent uses \r\n\r\n between events.
+        let body = "data: {\"a\":1}\r\n\r\ndata: {\"b\":2}\r\n\r\n";
+        let stream = SseDataStream {
+            inner: Box::pin(futures_util::stream::iter(vec![Ok(bytes::Bytes::from(
+                body.as_bytes().to_vec(),
+            ))])),
+            buffer: String::new(),
+            finished: false,
+        };
+        let items: Vec<String> = stream.map(|r| r.unwrap()).collect().await;
+        assert_eq!(items, vec!["{\"a\":1}".to_string(), "{\"b\":2}".to_string()]);
     }
 }

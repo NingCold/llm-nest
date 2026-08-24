@@ -61,6 +61,19 @@ pub enum ReasoningFormat {
     GeminiThinking,
 }
 
+impl ReasoningFormat {
+    /// Config spelling of this format, shown by `/models`.
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            ReasoningFormat::OpenAIEffort => "openai-effort",
+            ReasoningFormat::DeepSeekThinking => "deepseek-thinking",
+            ReasoningFormat::DeepSeekEffort => "deepseek-effort",
+            ReasoningFormat::AnthropicThinking => "anthropic-thinking",
+            ReasoningFormat::GeminiThinking => "gemini-thinking",
+        }
+    }
+}
+
 /// Declared reasoning support of one model: which neutral levels it accepts
 /// and how they reach the wire. `levels` must be non-empty (validated when the
 /// model catalog is built).

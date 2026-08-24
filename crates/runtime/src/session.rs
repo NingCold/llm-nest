@@ -64,6 +64,10 @@ impl Session {
         &self.messages
     }
 
+    pub fn messages_mut(&mut self) -> &mut Vec<Message> {
+        &mut self.messages
+    }
+
     pub fn system_prompt(&self) -> Option<&str> {
         self.messages.first().and_then(|msg| {
             (msg.role == Role::System).then(|| {

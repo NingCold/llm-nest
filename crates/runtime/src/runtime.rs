@@ -23,6 +23,9 @@ pub struct Runtime {
     llm: Arc<AiClient>,
     event_bus: EventBus<RuntimeEvent>,
     features: Arc<RwLock<FeatureRegistry>>,
+    /// Tools available to features (chat agent loop). Pre-registered with
+    /// built-ins; call [`Runtime::register_tool`] to add more.
+    tools: Arc<tools::ToolRegistry>,
     /// Config document path, when the runtime was created via
     /// [`Runtime::from_config`]; used to auto-reload before a `/refresh` of a
     /// provider that is not yet in the in-memory snapshot.
@@ -42,8 +45,14 @@ impl Runtime {
             llm,
             event_bus,
             features: Arc::new(RwLock::new(FeatureRegistry::new())),
+            tools: Arc::new(tools::ToolRegistry::with_builtins()),
             config_path: None,
         }
+    }
+
+    /// Register a tool available to the chat agent loop (after built-ins).
+    pub fn register_tool(&self, tool: Arc<dyn tools::Tool>) {
+        self.tools.register(tool);
     }
 
     pub fn llm_client(&self) -> Arc<AiClient> {
@@ -198,6 +207,7 @@ impl Runtime {
             sessions: self.sessions.clone(),
             llm: self.llm.clone(),
             events: self.event_bus.clone(),
+            tools: self.tools.clone(),
         }
     }
 
@@ -250,6 +260,21 @@ impl Runtime {
         self.event_bus
             .publish(RuntimeEvent::SessionChanged { session_id });
         Ok(())
+    }
+
+    /// Set feedback (up/down) on the `idx`-th user/assistant message of a
+    /// session (same indexing as GUI message ids) and persist it. `None`
+    /// clears the feedback.
+    pub async fn set_message_feedback(
+        &self,
+        session_id: SessionId,
+        idx: usize,
+        feedback: Option<common::Feedback>,
+    ) -> Result<()> {
+        self.sessions
+            .write()
+            .await
+            .set_message_feedback(&session_id, idx, feedback)
     }
 
     pub async fn get_session(&self, session_id: &SessionId) -> Option<Session> {
@@ -624,6 +649,134 @@ model = "m"
             runtime.session_model(&sessions[0]).await.unwrap().model,
             "deepseek-reasoner"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn persistence_keeps_reasoning_and_tool_parts() {
+        use common::{ContentPart, Role, ToolCall};
+
+        let dir = std::env::temp_dir().join(format!("llmn-persist-rt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let runtime = RuntimeBuilder::new()
+                .config(deepseek_config())
+                .storage_dir(&dir)
+                .build()
+                .expect("runtime builds");
+            let sid = runtime.create_session(None).await.expect("create");
+            // reasoning persists as part of the assistant message
+            runtime
+                .push_message(
+                    &sid,
+                    common::Message::assistant_with_reasoning("answer", "think think"),
+                )
+                .await
+                .expect("push with reasoning");
+            // tool call/result parts persist as part of the content
+            runtime
+                .push_message(
+                    &sid,
+                    common::Message {
+                        role: Role::Assistant,
+                        content: vec![
+                            ContentPart::Text("calling".into()),
+                            ContentPart::ToolCall(ToolCall {
+                                id: "call_1".into(),
+                                name: "web_search".into(),
+                                arguments: r#"{"query":"rust"}"#.into(),
+                            }),
+                        ],
+                        reasoning: None,
+                        created_at: None,
+                        thinking_ms: None,
+                        usage: None,
+                        timings: None,
+                        feedback: None,
+                    },
+                )
+                .await
+                .expect("push with tool call");
+        }
+
+        let runtime = RuntimeBuilder::new()
+            .config(deepseek_config())
+            .storage_dir(&dir)
+            .build()
+            .expect("runtime rebuilds");
+        let s = runtime
+            .get_session(&runtime.list_sessions().await[0])
+            .await
+            .expect("session");
+        assert_eq!(s.messages().len(), 2);
+        assert_eq!(s.messages()[0].reasoning(), Some("think think"));
+        assert_eq!(s.messages()[0].text(), "answer");
+        assert!(matches!(
+            s.messages()[1].content[1],
+            ContentPart::ToolCall(ref tc) if tc.name == "web_search"
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn feedback_persists_across_restart_and_clears() {
+        let dir =
+            std::env::temp_dir().join(format!("llmn-persist-feedback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let runtime = RuntimeBuilder::new()
+                .config(deepseek_config())
+                .storage_dir(&dir)
+                .build()
+                .expect("runtime builds");
+            let sid = runtime.create_session(None).await.expect("create session");
+            runtime
+                .push_message(&sid, common::Message::user("hi"))
+                .await
+                .expect("push user");
+            runtime
+                .push_message(&sid, common::Message::assistant("yo"))
+                .await
+                .expect("push assistant");
+            // idx 1 = the assistant message (user/assistant indexing)
+            runtime
+                .set_message_feedback(sid, 1, Some(common::Feedback::Up))
+                .await
+                .expect("set feedback");
+            let s = runtime.get_session(&sid).await.expect("session");
+            assert_eq!(s.messages()[1].feedback, Some(common::Feedback::Up));
+        };
+
+        // restart: feedback survives
+        {
+            let runtime = RuntimeBuilder::new()
+                .config(deepseek_config())
+                .storage_dir(&dir)
+                .build()
+                .expect("runtime builds");
+            let sid = runtime.list_sessions().await[0];
+            let s = runtime.get_session(&sid).await.expect("session");
+            assert_eq!(s.messages()[1].feedback, Some(common::Feedback::Up));
+
+            // clear it
+            runtime
+                .set_message_feedback(sid, 1, None)
+                .await
+                .expect("clear feedback");
+            let s = runtime.get_session(&sid).await.expect("session");
+            assert_eq!(s.messages()[1].feedback, None);
+
+            // out-of-range index errors
+            let err = runtime
+                .set_message_feedback(sid, 99, Some(common::Feedback::Down))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("out of range"));
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

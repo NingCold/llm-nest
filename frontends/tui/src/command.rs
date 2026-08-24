@@ -135,12 +135,13 @@ pub fn handle_command(app: &mut App, cmd: String, evt_tx: &mpsc::UnboundedSender
                     .as_ref()
                     .map(|c| {
                         format!(
-                            "  [reasoning: {}]",
+                            "  [reasoning: {} · {}]",
                             c.levels
                                 .iter()
                                 .map(|l| l.as_wire())
                                 .collect::<Vec<_>>()
-                                .join("/")
+                                .join("/"),
+                            c.format.as_wire()
                         )
                     })
                     .unwrap_or_default();

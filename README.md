@@ -120,7 +120,25 @@ api_key = { env = "DEEPSEEK_API_KEY" }
   切换前经路由校验该模型是否支持，无效级别会列出该模型实际支持的级别）、`/current`（显示当前 provider / model / effort）；
   未知 provider/model/effort 会报错并列出候选。
 - **思维链显示**：模型返回的 reasoning_content（DeepSeek/ecnu-max/kimi/glm 等）会实时显示——CLI 用浅色（dim）
-  打印，TUI 用浅色+斜体渲染；思维链只展示、不写入会话历史（官方语义：无工具调用时可省略回传）。
+  打印，TUI 用浅色+斜体渲染；思维链随消息持久化（刷新后可再次显示），但不会回传给 provider。
+- **用量与计时（后端提供，前端渲染）**：`/models` 显示每个模型的能力时带上 wire 格式
+  （如 `[reasoning: off/low/high/max · deepseek-effort]`）；每次回复后端持久化并随事件下发：
+  - `Usage`：prompt/completion/total + **cached_tokens**（缓存命中，各 provider 归一化：openai
+    `prompt_tokens_details.cached_tokens`、anthropic `cache_read + cache_creation`、gemini
+    `cachedContentTokenCount`；缓存命中率 = cached / (prompt + cached)，前端算）
+  - `MessageTimings`：`ttft_ms`（请求开始→首个 token）、`reasoning_ms`（请求开始→首个正文，即思考阶段）、
+    `total_ms`（请求开始→流结束）
+  - 消息级 `created_at` / `thinking_ms` / `usage` / `timings` 随 assistant 消息持久化，
+    `ChatEvent::Finished` 实时携带 `usage` + `timings`；GUI 消息（web-server/tauri）原样透传，
+    会话级聚合（状态栏的轮数/LLM 用时/平均速度等）由前端从历史+实时数据求和
+- **附件无损持久化**：持久化格式与 wire 格式分离——`ContentPart::Image/File` 的二进制以 base64 直存
+  （`{type:"image"/"file", mime, data}`），刷新/重启后无损还原；`Message::to_wire_value()` 才转成
+  provider 的 `image_url` data URL（旧持久化文件里的 `image_url` 块也会被还原）；GUI 消息带
+  `attachments`（dataUrl 数组）供前端渲染缩略图/附件回显
+- **feedback 持久化**：`Message.feedback`（up/down，serde default 零迁移）+ GUI 透传；
+  更新接口：`PATCH /api/sessions/{id}/messages/{idx}`（body `{"feedback":"up"|"down"|null}`）/
+  tauri `set_message_feedback(sessionId, idx, feedback)`（idx 与 GUI 消息 id `m-{i}` 的索引一致，
+  按 user/assistant 过滤后计数）
 - **模型清单自动刷新**：`/refresh <provider>` 调用该 provider 的 `GET /models` 拉取最新模型，合并进内存目录
   并**写回 config/llmn.toml**（toml_edit 定点插入，只往该 provider 的 models 表补缺失条目，注释/格式/其他
   内容不动）；`/refresh` 无新模型时输出提示。底层接口：`Runtime::refresh_models`（返回新增模型列表）。

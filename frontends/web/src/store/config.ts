@@ -13,6 +13,8 @@ interface ConfigStore {
   init: () => Promise<void>
   setModel: (model: ModelSelection) => void
   updateConfig: (partial: Partial<GuiConfig>) => void
+  /** 供应商管理写回后刷新列表（来自后端返回） */
+  setProviders: (providers: ProviderInfo[]) => void
 }
 
 export const useConfigStore = create<ConfigStore>((set, get) => ({
@@ -52,4 +54,6 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
     set({ config: newConfig })
     getApi().then((api) => api.setConfig(newConfig))
   },
+
+  setProviders: (providers) => set({ providers }),
 }))

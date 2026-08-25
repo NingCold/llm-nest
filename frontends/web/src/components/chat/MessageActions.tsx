@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Check, Copy, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react"
+import { Check, CircleHelp, Copy, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react"
 import { useChatStore, type Feedback, type Message } from "@/store/chat"
 import {
   cacheHitRate,
@@ -51,10 +51,12 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
   const { usage, timings, createdAt } = message
   const hasStats = !!usage || !!timings
   const totalMs = timings?.totalMs
+  // 消耗量 = 输入 + 输出（本次回复的总 token 数）
   const tokensTotal =
     usage && (usage.promptTokens || usage.completionTokens)
       ? usage.promptTokens + usage.completionTokens
-      : undefined
+      : 0
+  const hasTokens = !!usage
 
   return (
     <div className="group/actions relative">
@@ -95,20 +97,23 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
           {usage && totalMs ? (
             <span>{formatTokenSpeed(usage.completionTokens, totalMs)}</span>
           ) : null}
-          {tokensTotal ? (
-            <span
-              className="cursor-help border-b border-dotted border-muted-foreground/40"
-              title={
-                usage
-                  ? `输入 ${usage.promptTokens} · 输出 ${usage.completionTokens}${
-                      usage.cachedTokens
-                        ? ` · 缓存命中 ${cacheHitRate(usage.cachedTokens, usage.promptTokens)}`
-                        : ""
-                    }`
-                  : undefined
-              }
-            >
-              消耗 {tokensTotal} tokens
+          {hasTokens ? (
+            <span className="inline-flex items-center gap-1">
+              <span>消耗 {tokensTotal} tokens</span>
+              {/* 小圆圈问号：悬停查看本次回复的输入/输出/缓存命中 */}
+              <span className="group/help relative inline-flex">
+                <CircleHelp
+                  aria-label="查看本次回复的 token 明细"
+                  className="h-3.5 w-3.5 cursor-help text-muted-foreground/40 transition-colors hover:text-muted-foreground/70"
+                />
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-normal text-popover-foreground shadow-md opacity-0 transition-opacity duration-150 group-hover/help:opacity-100"
+                >
+                  输入 {usage.promptTokens} · 输出 {usage.completionTokens} · 缓存命中{" "}
+                  {cacheHitRate(usage.cachedTokens, usage.promptTokens)}
+                </span>
+              </span>
             </span>
           ) : null}
         </div>

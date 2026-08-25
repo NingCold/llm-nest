@@ -6,6 +6,9 @@ import type {
   GuiConfig,
   GuiEvent,
   MessageFeedback,
+  ProviderDraft,
+  ProviderInfo,
+  ProviderTemplate,
   SessionSummary,
   StoredMessage,
 } from "./types"
@@ -182,6 +185,21 @@ export const httpApi: ChatApi = {
     await req(
       `/sessions/${encodeURIComponent(sessionId)}/messages/${Number.isFinite(idx) ? idx : -1}`,
       jsonInit("PATCH", { feedback }),
+    )
+  },
+
+  async listProviderTemplates(): Promise<ProviderTemplate[]> {
+    return req<ProviderTemplate[]>("/providers/templates")
+  },
+
+  async addProvider(draft: ProviderDraft): Promise<ProviderInfo[]> {
+    return req<ProviderInfo[]>("/providers", jsonInit("POST", draft))
+  },
+
+  async deleteProvider(id: string): Promise<ProviderInfo[]> {
+    return req<ProviderInfo[]>(
+      `/providers/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
     )
   },
 }

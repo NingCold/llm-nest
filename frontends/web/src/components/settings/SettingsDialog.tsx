@@ -7,6 +7,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { ProviderManager } from "@/components/settings/ProviderManager"
 import { useConfigStore } from "@/store/config"
 import { useUiStore } from "@/store/ui"
 import { initials } from "@/lib/format"
@@ -53,6 +54,9 @@ export function SettingsDialog() {
               </p>
             </div>
           </div>
+
+          {/* 模型供应商（添加/编辑/删除，DSH ui-settings-models 风格） */}
+          <ProviderManager />
 
           {/* Appearance */}
           <div className="space-y-2.5">

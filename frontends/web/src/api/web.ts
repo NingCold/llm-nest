@@ -5,7 +5,11 @@ import type {
   ChatEventHandler,
   GuiConfig,
   GuiAttachment,
+  GuiTimings,
+  GuiUsage,
+  ProviderDraft,
   ProviderInfo,
+  ProviderTemplate,
   SessionSummary,
 } from "./types"
 import { useUiStore } from "@/store/ui"
@@ -30,12 +34,16 @@ export interface DemoMessage {
   thinkingMs?: number
   feedback?: "up" | "down" | null
   attachments?: GuiAttachment[]
+  usage?: GuiUsage
+  timings?: GuiTimings
   createdAt: number
 }
 
 interface DemoDB {
   sessions: SessionSummary[]
   messages: Record<string, DemoMessage[]>
+  /** 演示供应商列表（可从设置里添加/删除，持久化） */
+  providers: ProviderInfo[]
 }
 
 /* ---------------- canned demo content ---------------- */
@@ -275,7 +283,12 @@ function loadDB(): DemoDB {
       localStorage.removeItem(CFG_KEY)
     }
     const raw = localStorage.getItem(DB_KEY)
-    if (raw) return JSON.parse(raw) as DemoDB
+    if (raw) {
+      const db = JSON.parse(raw) as DemoDB
+      // 旧版本数据无 providers 字段：回退内置演示供应商
+      db.providers ??= PROVIDERS
+      return db
+    }
   } catch {
     /* fall through to seed */
   }
@@ -348,6 +361,7 @@ function seedDB(): DemoDB {
       mk("s-demo-6", "项目周报模板", 26 * D),
     ],
     messages: { "s-demo-1": demoMessages },
+    providers: PROVIDERS,
   }
 }
 
@@ -399,7 +413,7 @@ function chunkText(text: string): string[] {
 export const webApi: ChatApi = {
   async init(): Promise<AppInit> {
     const db = loadDB()
-    const providers = PROVIDERS
+    const providers = db.providers
     const config = loadConfig()
     const sessions = [...db.sessions].sort(
       (a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt),
@@ -441,6 +455,7 @@ export const webApi: ChatApi = {
 
     const reasoningEnabled =
       useUiStore.getState().reasoningEffort !== "off"
+    const streamStart = Date.now()
     const thinkingStart = Date.now()
     let reasoning = ""
     let content = ""
@@ -487,6 +502,22 @@ export const webApi: ChatApi = {
       return
     }
 
+    // 演示用量/计时（与服务端同构，供状态栏与消息统计展示）
+    const promptTokens = Math.max(32, Math.round(params.input.length / 2) + 56)
+    const completionTokens = Math.max(1, Math.round(content.length / 2))
+    const cachedTokens = Math.floor(promptTokens * 0.4)
+    const usage: GuiUsage = {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens,
+      cachedTokens,
+    }
+    const timings: GuiTimings = {
+      ttftMs: reasoningEnabled ? thinkingMs : Math.round(400 + Math.random() * 600),
+      ...(reasoningEnabled ? { reasoningMs: thinkingMs } : {}),
+      totalMs: Date.now() - streamStart,
+    }
+
     const assistantMsg: DemoMessage = {
       id: msgId,
       role: "assistant",
@@ -494,6 +525,8 @@ export const webApi: ChatApi = {
       reasoning: reasoningEnabled ? reasoning : undefined,
       status: "done",
       thinkingMs: reasoningEnabled ? thinkingMs : undefined,
+      usage,
+      timings,
       createdAt: Date.now(),
     }
     messages.push(assistantMsg)
@@ -513,7 +546,7 @@ export const webApi: ChatApi = {
     db.messages[sessionId] = messages
     saveDB(db)
 
-    onEvent({ type: "finished", messageId: msgId })
+    onEvent({ type: "finished", messageId: msgId, usage, timings })
   },
 
   async cancelChat(sessionId: string): Promise<void> {
@@ -579,5 +612,46 @@ export const webApi: ChatApi = {
       msg.feedback = feedback
       saveDB(db)
     }
+  },
+
+  async listProviderTemplates(): Promise<ProviderTemplate[]> {
+    // 演示：内置 PROVIDERS 本身就是模板（协议 openai、模型即清单）
+    return PROVIDERS.map((p) => ({
+      id: p.id,
+      displayName: p.displayName,
+      protocol: "openai",
+      baseUrl: "",
+      apiKeyEnv: `${p.id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`,
+      defaultModel: p.models[0]?.id ?? "",
+      models: p.models.map((m) => ({ id: m.id, displayName: m.displayName })),
+    }))
+  },
+
+  async addProvider(draft: ProviderDraft): Promise<ProviderInfo[]> {
+    const db = loadDB()
+    const existing = db.providers.find((p) => p.id === draft.id)
+    const info: ProviderInfo = {
+      id: draft.id,
+      displayName: draft.id,
+      models: (draft.models ?? []).map((m) => ({
+        id: m.model ?? m.id,
+        displayName: m.displayName ?? m.model ?? m.id,
+      })),
+    }
+    if (existing) {
+      existing.displayName = info.displayName
+      existing.models = info.models
+    } else {
+      db.providers.push(info)
+    }
+    saveDB(db)
+    return db.providers
+  },
+
+  async deleteProvider(id: string): Promise<ProviderInfo[]> {
+    const db = loadDB()
+    db.providers = db.providers.filter((p) => p.id !== id)
+    saveDB(db)
+    return db.providers
   },
 }

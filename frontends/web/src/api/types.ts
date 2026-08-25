@@ -49,6 +49,32 @@ export interface ChatApi {
     messageId: string,
     feedback: MessageFeedback,
   ): Promise<void>
+  /** 内置目录的供应商模板（DSH 风格"已知路由"） */
+  listProviderTemplates(): Promise<ProviderTemplate[]>
+  /** 创建/更新供应商（upsert），返回刷新后的供应商列表 */
+  addProvider(draft: ProviderDraft): Promise<ProviderInfo[]>
+  /** 删除供应商，返回刷新后的供应商列表 */
+  deleteProvider(id: string): Promise<ProviderInfo[]>
+}
+
+/** 内置目录模板：选中后自动填充协议/端点/模型，只需补 key */
+export interface ProviderTemplate {
+  id: string
+  displayName: string
+  protocol: string
+  baseUrl: string
+  apiKeyEnv: string
+  defaultModel: string
+  models: { id: string; displayName: string }[]
+}
+
+/** 供应商表单提交（camelCase wire；protocol/baseUrl/apiKey 缺省 = 保持不变） */
+export interface ProviderDraft {
+  id: string
+  protocol?: string
+  baseUrl?: string
+  apiKey?: string
+  models?: { id: string; model?: string; displayName?: string }[]
 }
 
 export interface StoredMessage {

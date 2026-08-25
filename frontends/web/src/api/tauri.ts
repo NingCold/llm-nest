@@ -10,6 +10,9 @@ import type {
   SessionSummary as SessionSummaryRaw,
   GuiConfig,
   MessageFeedback,
+  ProviderDraft,
+  ProviderInfo,
+  ProviderTemplate,
   StoredMessage,
 } from "./types"
 
@@ -175,5 +178,17 @@ export const tauriApi: ChatApi = {
       idx: Number.isFinite(idx) ? idx : -1,
       feedback,
     })
+  },
+
+  async listProviderTemplates(): Promise<ProviderTemplate[]> {
+    throw new Error("桌面模式暂不支持在线添加供应商")
+  },
+
+  async addProvider(_draft: ProviderDraft): Promise<ProviderInfo[]> {
+    throw new Error("桌面模式暂不支持在线添加供应商")
+  },
+
+  async deleteProvider(_id: string): Promise<ProviderInfo[]> {
+    throw new Error("桌面模式暂不支持在线添加供应商")
   },
 }

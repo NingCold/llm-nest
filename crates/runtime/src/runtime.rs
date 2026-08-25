@@ -116,6 +116,32 @@ impl Runtime {
         Ok(added)
     }
 
+    /// Persist and hot-apply a provider written from the web settings
+    /// (create or update). Only the form's fields (protocol / base_url /
+    /// api_key / models) change; other document fields are preserved. Fails
+    /// without touching anything when the runtime has no config document
+    /// (in-memory runtime), and the whole next config is validated by
+    /// `reload_config` before it swaps — a bad provider keeps the old one.
+    pub async fn upsert_provider(
+        &self,
+        draft: &crate::config::persist::ProviderDraft,
+    ) -> Result<()> {
+        let path = self.config_path.clone().ok_or_else(|| {
+            RuntimeError::ConfigError("no config document to persist to (in-memory runtime)".into())
+        })?;
+        crate::config::persist::persist_provider(&path, draft)?;
+        self.reload_config(&path).await
+    }
+
+    /// Remove a provider from the config document and hot-apply the change.
+    pub async fn remove_provider(&self, id: &str) -> Result<()> {
+        let path = self.config_path.clone().ok_or_else(|| {
+            RuntimeError::ConfigError("no config document to persist to (in-memory runtime)".into())
+        })?;
+        crate::config::persist::persist_remove_provider(&path, id)?;
+        self.reload_config(&path).await
+    }
+
     /// Strictly validate a selection against the mounted model catalog before
     /// switching to it. Errors name the offending key and its candidates.
     pub async fn resolve_model(&self, selection: &ModelSelection) -> Result<ResolvedSelection> {

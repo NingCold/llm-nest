@@ -84,6 +84,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
     let inTok = 0
     let outTok = 0
     let cached = 0
+    let hasUsage = false
     let steps = 0
     for (const m of sessionMessages) {
       if (m.role === "tool" || m.tools?.some((t) => t.kind === "call")) steps++
@@ -99,6 +100,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
         ttftCount++
       }
       if (m.usage) {
+        hasUsage = true
         inTok += m.usage.promptTokens ?? 0
         outTok += m.usage.completionTokens ?? 0
         cached += m.usage.cachedTokens ?? 0
@@ -119,6 +121,9 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
       inTok,
       outTok,
       rate,
+      // 没有任何一条消息带 usage（provider 未返回/演示数据缺失）时用 "-"，
+      // 避免把"没有数据"误显示成"消耗了 0 token"
+      hasUsage,
       hasData: sessionMessages.length > 0,
     }
   }, [sessionMessages])
@@ -440,9 +445,14 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
             <Sep />
             <span
               className="cursor-help border-b border-dotted border-muted-foreground/30"
-              title={`输入 ${sessionStats.inTok} · 输出 ${sessionStats.outTok} · 缓存命中 ${sessionStats.rate}`}
+              title={
+                sessionStats.hasUsage
+                  ? `输入 ${sessionStats.inTok} · 输出 ${sessionStats.outTok} · 缓存命中 ${sessionStats.rate}`
+                  : "后端未返回 token 用量"
+              }
             >
-              输入 {sessionStats.inTok} · 输出 {sessionStats.outTok} · 缓存{" "}
+              输入 {sessionStats.hasUsage ? sessionStats.inTok : "-"} · 输出{" "}
+              {sessionStats.hasUsage ? sessionStats.outTok : "-"} · 缓存{" "}
               {sessionStats.rate}
             </span>
           </p>

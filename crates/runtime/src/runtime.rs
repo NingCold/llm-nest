@@ -687,6 +687,7 @@ model = "m"
                                 id: "call_1".into(),
                                 name: "web_search".into(),
                                 arguments: r#"{"query":"rust"}"#.into(),
+                                thought_signature: None,
                             }),
                         ],
                         reasoning: None,

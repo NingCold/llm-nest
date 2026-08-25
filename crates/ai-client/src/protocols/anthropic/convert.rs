@@ -257,6 +257,7 @@ pub fn to_provider_response(resp: Response) -> Result<ProviderResponse> {
                             .input
                             .unwrap_or_else(|| serde_json::json!({}))
                             .to_string(),
+                        thought_signature: None,
                     }));
                 }
             }
@@ -285,10 +286,7 @@ pub enum StreamEvent {
         name: String,
     },
     /// `input_json_delta` fragment of the tool arguments.
-    ToolUseDelta {
-        index: u32,
-        partial_json: String,
-    },
+    ToolUseDelta { index: u32, partial_json: String },
     /// `content_block_stop`: the tool block at `index` is complete.
     ToolUseStop { index: u32 },
     /// `message_delta` (carries final usage) / `message_stop`.
@@ -601,7 +599,10 @@ mod tests {
         }
         let delta = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"a\":6}"}}"#;
         match parse_event(delta).unwrap() {
-            Some(StreamEvent::ToolUseDelta { index, partial_json }) => {
+            Some(StreamEvent::ToolUseDelta {
+                index,
+                partial_json,
+            }) => {
                 assert_eq!(index, 1);
                 assert_eq!(partial_json, r#"{"a":6}"#);
             }
@@ -627,7 +628,10 @@ mod tests {
         let wire = to_request(&req);
         assert_eq!(wire.tools.len(), 1);
         assert_eq!(wire.tools[0].name, "add");
-        assert_eq!(wire.tools[0].input_schema["properties"]["a"]["type"], "number");
+        assert_eq!(
+            wire.tools[0].input_schema["properties"]["a"]["type"],
+            "number"
+        );
         // no tools → field absent
         let wire = to_request(&request_with(vec![Message::user("hi")], None));
         assert!(wire.tools.is_empty());
@@ -646,6 +650,7 @@ mod tests {
                             id: "toolu_1".into(),
                             name: "add".into(),
                             arguments: r#"{"a":6,"b":4}"#.into(),
+                            thought_signature: None,
                         }),
                     ],
                     reasoning: None,

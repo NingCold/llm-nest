@@ -27,10 +27,7 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with validated JSON arguments. Defaults to the
     /// synchronous [`Tool::run_sync`]; override for async tools (e.g.
     /// network calls).
-    fn run<'a>(
-        &'a self,
-        args: Value,
-    ) -> BoxFuture<'a, Result<Value, ToolError>> {
+    fn run<'a>(&'a self, args: Value) -> BoxFuture<'a, Result<Value, ToolError>> {
         Box::pin(async move { self.run_sync(args) })
     }
 

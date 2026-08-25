@@ -16,6 +16,10 @@ pub enum ChatChunk {
         /// Raw JSON arguments as a string (may be partial only if the stream
         /// ended mid-call).
         arguments: String,
+        /// Gemini thought signature (`thoughtSignature`): must be echoed back
+        /// on the assistant functionCall part in the next request. `None` for
+        /// protocols without the mechanism.
+        thought_signature: Option<String>,
     },
     /// Stream end. Carries the turn's token usage when the protocol reports
     /// it on a terminal event (OpenAI final chunk / `response.completed`,

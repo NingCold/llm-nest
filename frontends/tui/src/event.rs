@@ -69,7 +69,11 @@ pub fn handle_event(
                 app.status = format!("Error: {}", error);
                 app.mark_dirty();
             }
-            ChatEvent::ToolCall { name, arguments: _arguments, .. } => {
+            ChatEvent::ToolCall {
+                name,
+                arguments: _arguments,
+                ..
+            } => {
                 app.status = format!("调用工具 {name} …");
                 app.mark_dirty();
             }

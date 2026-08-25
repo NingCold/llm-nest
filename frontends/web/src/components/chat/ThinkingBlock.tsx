@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Brain, ChevronDown } from "lucide-react"
 import { formatThinking } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -11,16 +11,20 @@ interface ThinkingBlockProps {
 
 /**
  * 可折叠的「思考过程」卡片：浅灰背景、展开/折叠箭头、思考耗时。
- * 默认折叠；思考流式输出期间自动展开；完成后不自动收起（折叠也不消失，
- * 标题行始终在，可随时手动展开/折叠查看完整思考内容）。
+ * 自动跟随生成阶段：思考流式输出期间展开（live 预览），正文开始输出
+ * （thinkingMs 被置上）或消息完成后自动收起；用户手动切换过一次后不再
+ * 自动干预（尊重用户选择）。标题行始终在，可随时手动展开/折叠。
  */
 export function ThinkingBlock({ reasoning, thinkingMs, isStreaming }: ThinkingBlockProps) {
   const [open, setOpen] = useState(false)
+  const userToggled = useRef(false)
 
-  // 流式开始时确保展开；完成后保持当前状态（不强制收起）
+  // 阶段跟随：思考中（流式且无正文耗时、有思考内容）→ 展开；正文输出/完成 → 收起
   useEffect(() => {
-    if (isStreaming) setOpen(true)
-  }, [isStreaming])
+    if (userToggled.current) return
+    const thinkingNow = isStreaming === true && thinkingMs == null && reasoning.length > 0
+    setOpen(thinkingNow)
+  }, [isStreaming, thinkingMs, reasoning])
 
   const live = isStreaming && !thinkingMs
 
@@ -28,7 +32,10 @@ export function ThinkingBlock({ reasoning, thinkingMs, isStreaming }: ThinkingBl
     <div className="mb-2.5 overflow-hidden rounded-xl border border-border bg-muted/50">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          userToggled.current = true
+          setOpen((v) => !v)
+        }}
         className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-accent/50"
       >
         <Brain className="h-4 w-4 shrink-0 text-muted-foreground" />

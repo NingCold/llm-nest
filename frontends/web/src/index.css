@@ -195,6 +195,14 @@
 }
 
 @layer components {
+  /* ---------- Chat feed ---------- */
+  /* 虚拟化消息流禁用浏览器滚动锚定：流式期间思考卡片展开/收起、markdown 渲染
+     等"视口上方内容高度变化"不应触发浏览器自动滚屏——否则浏览器补偿性上滚会
+     被"吸底跟随"误判为用户上翻而停止跟随（08-24 实测定位） */
+  .overflow-anchor-none {
+    overflow-anchor: none;
+  }
+
   /* ---------- Markdown typography (rendered by react-markdown) ---------- */
   .md {
     font-size: 0.9375rem;

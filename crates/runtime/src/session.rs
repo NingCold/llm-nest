@@ -135,6 +135,32 @@ impl Session {
     }
 }
 
+/// Max characters of an auto-generated session title (derived from the
+/// session's first user question). Longer input is cut at a character
+/// boundary and gets a trailing ellipsis, which is not counted against the
+/// limit.
+pub const AUTO_TITLE_MAX_CHARS: usize = 30;
+
+/// Derive a session title from the first user question: leading/trailing
+/// whitespace is stripped, inner whitespace runs (including newlines) collapse
+/// to a single space, and the result is truncated to [`AUTO_TITLE_MAX_CHARS`]
+/// characters with a trailing `…` when cut. Returns `None` when nothing usable
+/// remains (empty or whitespace-only input), so the session simply keeps no
+/// title.
+pub fn derive_session_title(input: &str) -> Option<String> {
+    let collapsed: String = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    let mut chars = collapsed.chars();
+    let head: String = chars.by_ref().take(AUTO_TITLE_MAX_CHARS).collect();
+    if chars.next().is_some() {
+        Some(format!("{head}…"))
+    } else {
+        Some(head)
+    }
+}
+
 impl Session {
     /// Full persisted snapshot of this session.
     pub fn to_record(&self) -> storage::SessionRecord {
@@ -228,5 +254,44 @@ mod tests {
     fn session_timestamps() {
         let session = Session::new(None);
         assert!(session.created_at() <= session.updated_at());
+    }
+
+    #[test]
+    fn derive_title_short_input_unchanged() {
+        assert_eq!(
+            derive_session_title("6+4 等于多少").unwrap(),
+            "6+4 等于多少"
+        );
+    }
+
+    #[test]
+    fn derive_title_collapses_whitespace_and_newlines() {
+        assert_eq!(
+            derive_session_title("  你好，\n\n  请计算 6+4  ").unwrap(),
+            "你好， 请计算 6+4"
+        );
+    }
+
+    #[test]
+    fn derive_title_truncates_long_input_with_ellipsis() {
+        let long = "请帮我详细解释一下量子力学的基本原理和它在现代科技中的应用场景";
+        let title = derive_session_title(long).unwrap();
+        assert_eq!(title.chars().count(), AUTO_TITLE_MAX_CHARS + 1);
+        assert!(title.ends_with('…'));
+        // The cut is at a char boundary: the prefix is exactly the first N chars.
+        let expected: String = long.chars().take(AUTO_TITLE_MAX_CHARS).collect();
+        assert_eq!(title, format!("{expected}…"));
+    }
+
+    #[test]
+    fn derive_title_exact_limit_gets_no_ellipsis() {
+        let s = "a".repeat(AUTO_TITLE_MAX_CHARS);
+        assert_eq!(derive_session_title(&s).unwrap(), s);
+    }
+
+    #[test]
+    fn derive_title_empty_or_whitespace_is_none() {
+        assert_eq!(derive_session_title(""), None);
+        assert_eq!(derive_session_title("   \n\t  "), None);
     }
 }

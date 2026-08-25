@@ -114,17 +114,47 @@ impl GeminiProvider {
         if !response.status().is_success() {
             return Err(Self::error_from_response(response).await);
         }
-        // parse_event yields Vec<ChatChunk>: text deltas, functionCall
-        // ToolCalls (possibly several per chunk), and the terminal Done.
-        let stream = SseDataStream::new(response).flat_map(|payload| {
-            let items: Vec<Result<ChatChunk>> = match payload {
-                Ok(data) => convert::parse_event(&data)
-                    .map(|chunks| chunks.into_iter().map(Ok).collect())
-                    .unwrap_or_else(|e| vec![Err(e)]),
-                Err(err) => vec![Err(err)],
-            };
-            futures_util::stream::iter(items)
-        });
+        // parse_event yields Vec<ChatChunk>: text/reasoning deltas, functionCall
+        // ToolCalls (possibly several per chunk), and a terminal Done only on
+        // the LAST frame (finishReason / usage-only). Gemini rides usageMetadata
+        // on every frame, so a premature Done would kill the stream at frame 1.
+        // unfold keeps a pending queue and appends a synthetic final Done if the
+        // body ends without one (abnormal termination still closes the turn).
+        let stream = futures_util::stream::unfold(
+            (
+                SseDataStream::new(response),
+                std::collections::VecDeque::new(),
+                false,
+            ),
+            |(mut sse, mut pending, mut done_seen)| async move {
+                loop {
+                    if let Some(item) = pending.pop_front() {
+                        return Some((item, (sse, pending, done_seen)));
+                    }
+                    if done_seen {
+                        return None;
+                    }
+                    match sse.next().await {
+                        Some(Ok(data)) => match convert::parse_event(&data) {
+                            Ok(chunks) => {
+                                if chunks.iter().any(|c| matches!(c, ChatChunk::Done { .. })) {
+                                    done_seen = true;
+                                }
+                                pending.extend(chunks.into_iter().map(Ok));
+                            }
+                            Err(err) => pending.push_back(Err(err)),
+                        },
+                        Some(Err(err)) => pending.push_back(Err(err)),
+                        None => {
+                            // Body ended without a terminal frame: close with
+                            // a bare Done so the turn always finishes cleanly.
+                            done_seen = true;
+                            pending.push_back(Ok(ChatChunk::Done { usage: None }));
+                        }
+                    }
+                }
+            },
+        );
         Ok(ChatStream::new(stream))
     }
 

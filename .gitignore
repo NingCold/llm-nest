@@ -29,3 +29,8 @@ config/llmn.toml
 
 # Opencode
 .opencode/
+
+# Local environment (secrets) — loaded at startup by runtime::config::env
+.env
+
+STATE.md

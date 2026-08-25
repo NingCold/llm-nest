@@ -454,6 +454,7 @@ version = "0.1.0"
 dependencies = [
  "ai-client",
  "anyhow",
+ "async-trait",
  "common",
  "events",
  "futures-util",

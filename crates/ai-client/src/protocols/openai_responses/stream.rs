@@ -57,7 +57,10 @@ impl ResponsesStream {
     }
 
     fn take_pending(&mut self, output_index: u32) -> Option<PendingCall> {
-        let pos = self.pending.iter().position(|p| p.output_index == output_index)?;
+        let pos = self
+            .pending
+            .iter()
+            .position(|p| p.output_index == output_index)?;
         Some(self.pending.remove(pos))
     }
 }
@@ -101,7 +104,10 @@ impl Stream for ResponsesStream {
                             });
                             continue;
                         }
-                        Some(StreamEvent::FunctionCallDelta { output_index, delta }) => {
+                        Some(StreamEvent::FunctionCallDelta {
+                            output_index,
+                            delta,
+                        }) => {
                             if let Some(p) = self
                                 .pending
                                 .iter_mut()
@@ -111,7 +117,10 @@ impl Stream for ResponsesStream {
                             }
                             continue;
                         }
-                        Some(StreamEvent::FunctionCallDone { output_index, arguments }) => {
+                        Some(StreamEvent::FunctionCallDone {
+                            output_index,
+                            arguments,
+                        }) => {
                             if let Some(p) = self
                                 .pending
                                 .iter_mut()
@@ -148,6 +157,7 @@ impl Stream for ResponsesStream {
                                 id: call.call_id,
                                 name: call.name,
                                 arguments: call.arguments,
+                                thought_signature: None,
                             })));
                         }
                         Some(StreamEvent::Done { usage }) => {
@@ -162,11 +172,13 @@ impl Stream for ResponsesStream {
                                     id: p.call_id,
                                     name: p.name,
                                     arguments: p.arguments,
+                                    thought_signature: None,
                                 })
                                 .collect();
                             self.queued.extend(calls);
-                            self.queued
-                                .push_back(ChatChunk::Done { usage: usage.clone() });
+                            self.queued.push_back(ChatChunk::Done {
+                                usage: usage.clone(),
+                            });
                             if let Some(chunk) = self.queued.pop_front() {
                                 return Poll::Ready(Some(Ok(chunk)));
                             }
@@ -250,7 +262,12 @@ mod tests {
         let chunks: Vec<ChatChunk> = stream.map(|r| r.unwrap()).collect().await;
         assert_eq!(chunks.len(), 2);
         match &chunks[0] {
-            ChatChunk::ToolCall { id, name, arguments } => {
+            ChatChunk::ToolCall {
+                id,
+                name,
+                arguments,
+                ..
+            } => {
                 assert_eq!(id, "call_1");
                 assert_eq!(name, "add");
                 // done carries the canonical (spaced) arguments
@@ -309,7 +326,7 @@ mod tests {
         let chunks: Vec<ChatChunk> = stream.map(|r| r.unwrap()).collect().await;
         assert!(matches!(
             &chunks[0],
-            ChatChunk::ToolCall { id, name, arguments } if id == "call_9" && name == "add" && arguments == r#"{"a":1}"#
+            ChatChunk::ToolCall { id, name, arguments, .. } if id == "call_9" && name == "add" && arguments == r#"{"a":1}"#
         ));
     }
 }

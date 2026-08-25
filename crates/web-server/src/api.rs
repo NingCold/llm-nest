@@ -580,10 +580,12 @@ fn chat_event_to_gui(event: ChatEvent, wire_msg_id: &str) -> (GuiEvent, bool) {
         ChatEvent::Finished { usage, timings, .. } => {
             (GuiEvent::finished(wire_msg_id, usage, timings), true)
         }
-        ChatEvent::ToolCall { id, name, arguments, .. } => (
-            GuiEvent::tool_call(wire_msg_id, id, name, arguments),
-            false,
-        ),
+        ChatEvent::ToolCall {
+            id,
+            name,
+            arguments,
+            ..
+        } => (GuiEvent::tool_call(wire_msg_id, id, name, arguments), false),
         ChatEvent::ToolResult {
             id,
             name,
@@ -618,7 +620,9 @@ fn messages_to_gui(session: &runtime::session::Session) -> Vec<GuiMessage> {
             content: m.text(),
             reasoning: m.reasoning().map(str::to_string),
             status: "done".into(),
-            created_at: m.created_at,
+            // Persisted `created_at` is Unix seconds; the frontend contract
+            // (formatMessageTime / Date) is epoch milliseconds.
+            created_at: m.created_at.map(|s| s * 1000),
             thinking_ms: m.thinking_ms,
             usage: m.usage.clone(),
             timings: m.timings,
@@ -777,4 +781,34 @@ async fn cleanup(
 ) {
     let mut map = cancel_map.lock().await;
     map.remove(key);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::Message;
+
+    /// Regression: the persisted `created_at` is Unix seconds, but the wire
+    /// contract (frontend `formatMessageTime` / `Date`) is epoch milliseconds.
+    /// The old pass-through made reloaded messages render as 1970 timestamps
+    /// (e.g. 00:33:07 instead of 00:02:27 +8h).
+    #[test]
+    fn messages_to_gui_converts_created_at_seconds_to_millis() {
+        let mut session = runtime::session::Session::new(None);
+        let mut assistant = Message::assistant("hi");
+        assistant.created_at = Some(1_787_587_347); // 2026-08-25 00:02:27 +08
+        session.push(assistant);
+
+        let gui = messages_to_gui(&session);
+        assert_eq!(gui[0].created_at, Some(1_787_587_347_000));
+    }
+
+    /// Messages without a persisted timestamp stay `None` (frontend falls back).
+    #[test]
+    fn messages_to_gui_keeps_missing_created_at_as_none() {
+        let mut session = runtime::session::Session::new(None);
+        session.push(Message::user("hello"));
+        let gui = messages_to_gui(&session);
+        assert!(gui[0].created_at.is_none());
+    }
 }

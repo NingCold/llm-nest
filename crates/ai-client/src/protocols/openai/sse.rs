@@ -58,7 +58,11 @@ impl OpenAIStream {
                 if let Some(name) = fragment.function.as_ref().and_then(|f| f.name.as_ref()) {
                     existing.name = name.clone();
                 }
-                if let Some(args) = fragment.function.as_ref().and_then(|f| f.arguments.as_ref()) {
+                if let Some(args) = fragment
+                    .function
+                    .as_ref()
+                    .and_then(|f| f.arguments.as_ref())
+                {
                     existing.arguments.push_str(args);
                 }
             }
@@ -172,10 +176,13 @@ impl Stream for OpenAIStream {
                                     id: c.id,
                                     name: c.name,
                                     arguments: c.arguments,
+                                    thought_signature: None,
                                 })
                                 .collect();
                             self.queued.extend(calls);
-                            self.queued.push_back(ChatChunk::Done { usage: usage.clone() });
+                            self.queued.push_back(ChatChunk::Done {
+                                usage: usage.clone(),
+                            });
                             if let Some(chunk) = self.queued.pop_front() {
                                 return Poll::Ready(Some(Ok(chunk)));
                             }

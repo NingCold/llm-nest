@@ -24,9 +24,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let provider = args.next().unwrap_or_else(|| "chatecnu".into());
     let model = args.next().unwrap_or_else(|| "ecnu-max".into());
-    let prompt = args.next().unwrap_or_else(|| {
-        "请调用 add 工具计算 6+4，然后告诉我结果。".to_string()
-    });
+    let prompt = args
+        .next()
+        .unwrap_or_else(|| "请调用 add 工具计算 6+4，然后告诉我结果。".to_string());
     let config = args.next().unwrap_or_else(|| "config/llmn.toml".into());
 
     println!("== provider={provider} model={model}");
@@ -60,7 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut final_text = String::new();
     while let Some(ev) = stream.next().await {
         match ev {
-            ChatEvent::ToolCall { name, arguments, .. } => {
+            ChatEvent::ToolCall {
+                name, arguments, ..
+            } => {
                 saw_call = true;
                 println!("[tool_call] {name} {arguments}");
             }
@@ -82,9 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("{content}");
             }
             ChatEvent::ReasoningDelta { content, .. } => print!("〔{content}〕"),
-            ChatEvent::Finished {
-                usage, timings, ..
-            } => {
+            ChatEvent::Finished { usage, timings, .. } => {
                 saw_finish = true;
                 println!();
                 println!("[finished] usage={usage:?} timings={timings:?}");

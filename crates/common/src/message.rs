@@ -22,6 +22,12 @@ pub struct ToolCall {
     pub name: String,
     /// JSON arguments for the call.
     pub arguments: String,
+    /// Gemini thought signature (`thoughtSignature`, 3.x / Gemma 4): the API
+    /// REQUIRES echoing it back on the assistant functionCall part in the next
+    /// request, otherwise the tool round-trip is rejected. Other protocols
+    /// never set it (serde default keeps legacy records loadable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,12 +257,18 @@ fn serialize_block(part: &ContentPart) -> serde_json::Value {
             "mime": mime.clone(),
             "data": base64::engine::general_purpose::STANDARD.encode(data),
         }),
-        ContentPart::ToolCall(tc) => serde_json::json!({
-            "type": "tool_call",
-            "id": tc.id,
-            "name": tc.name,
-            "arguments": tc.arguments,
-        }),
+        ContentPart::ToolCall(tc) => {
+            let mut v = serde_json::json!({
+                "type": "tool_call",
+                "id": tc.id,
+                "name": tc.name,
+                "arguments": tc.arguments,
+            });
+            if let Some(ts) = &tc.thought_signature {
+                v["thought_signature"] = ts.as_str().into();
+            }
+            v
+        }
         ContentPart::ToolResult(tr) => serde_json::json!({
             "type": "tool_result",
             "id": tr.id,
@@ -403,15 +415,16 @@ where
                         id: b.get("id")?.as_str()?.to_string(),
                         name: b.get("name")?.as_str()?.to_string(),
                         arguments: b.get("arguments")?.as_str()?.to_string(),
+                        thought_signature: b
+                            .get("thought_signature")
+                            .and_then(|v| v.as_str().map(str::to_string)),
                     })),
                     "tool_result" => Some(ContentPart::ToolResult(ToolResult {
                         id: b.get("id")?.as_str()?.to_string(),
                         name: b.get("name")?.as_str()?.to_string(),
                         content: b.get("content")?.as_str()?.to_string(),
                         is_error: b.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false),
-                        duration_ms: b
-                            .get("duration_ms")
-                            .and_then(|v| v.as_u64()),
+                        duration_ms: b.get("duration_ms").and_then(|v| v.as_u64()),
                     })),
                     // unknown blocks stay dropped (lossy by design)
                     _ => None,
@@ -584,6 +597,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "web_search".into(),
                     arguments: r#"{"query":"rust"}"#.into(),
+                    thought_signature: Some("sig-echo".into()),
                 }),
             ],
             reasoning: Some("need to search".into()),
@@ -606,6 +620,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "web_search".into(),
                 arguments: r#"{"query":"rust"}"#.into(),
+                thought_signature: Some("sig-echo".into()),
             })
         );
 

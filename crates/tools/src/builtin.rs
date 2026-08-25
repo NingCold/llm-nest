@@ -1,6 +1,6 @@
 //! Built-in tools registered by default in [`super::ToolRegistry::with_builtins`].
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::tool::{Tool, ToolError};
 
@@ -13,8 +13,7 @@ impl Tool for Echo {
     }
 
     fn description(&self) -> String {
-        "Echoes the given text back verbatim. Use to verify tool calling works."
-            .to_string()
+        "Echoes the given text back verbatim. Use to verify tool calling works.".to_string()
     }
 
     fn parameters(&self) -> Value {

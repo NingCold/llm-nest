@@ -16,3 +16,6 @@ serde.workspace = true
 tokio.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true

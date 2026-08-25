@@ -500,9 +500,12 @@ export const webApi: ChatApi = {
 
     const session = db.sessions.find((s) => s.id === sessionId)
     if (session) {
+      // 与后端 ChatFeature 的自动标题规则一致：首个问题折叠空白后
+      // 截断到 30 字符（超出加省略号）。
       if (session.title === "新对话" || !session.title) {
+        const collapsed = params.input.trim().replace(/\s+/g, " ")
         session.title =
-          params.input.trim().slice(0, 24) + (params.input.length > 24 ? "…" : "")
+          collapsed.slice(0, 30) + (collapsed.length > 30 ? "…" : "")
       }
       session.updatedAt = new Date().toISOString()
       session.messageCount = messages.length

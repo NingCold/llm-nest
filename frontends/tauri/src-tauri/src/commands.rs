@@ -265,8 +265,8 @@ impl GuiEvent {
     }
 }
 
-/// 历史消息 DTO：后端存储的 common::Message 没有 id/时间戳，id 由索引
-/// 生成（会话内稳定），created_at 留空由前端兜底。
+/// 历史消息 DTO：后端存储的 common::Message 没有 id，id 由索引生成（会话内
+/// 稳定）；created_at 为 epoch 毫秒（由持久化的 Unix 秒换算）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiMessage {
@@ -277,6 +277,7 @@ pub struct GuiMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     pub status: String,
+    /// Epoch milliseconds (converted from the persisted Unix-seconds value).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     /// Thinking phase duration in milliseconds (persisted per message).
@@ -544,10 +545,12 @@ fn chat_event_to_gui(event: ChatEvent, wire_msg_id: &str) -> (GuiEvent, bool) {
         ChatEvent::Finished { usage, timings, .. } => {
             (GuiEvent::finished(wire_msg_id, usage, timings), true)
         }
-        ChatEvent::ToolCall { id, name, arguments, .. } => (
-            GuiEvent::tool_call(wire_msg_id, id, name, arguments),
-            false,
-        ),
+        ChatEvent::ToolCall {
+            id,
+            name,
+            arguments,
+            ..
+        } => (GuiEvent::tool_call(wire_msg_id, id, name, arguments), false),
         ChatEvent::ToolResult {
             id,
             name,
@@ -584,7 +587,9 @@ fn messages_to_gui(session: &runtime::session::Session) -> Vec<GuiMessage> {
             content: m.text(),
             reasoning: m.reasoning().map(str::to_string),
             status: "done".into(),
-            created_at: m.created_at,
+            // Persisted `created_at` is Unix seconds; the frontend contract
+            // (formatMessageTime / Date) is epoch milliseconds.
+            created_at: m.created_at.map(|s| s * 1000),
             thinking_ms: m.thinking_ms,
             usage: m.usage.clone(),
             timings: m.timings,
@@ -886,6 +891,8 @@ mod tests {
         session.push(Message::user("hello"));
         let mut assistant = Message::assistant("world");
         assistant.feedback = Some(common::Feedback::Down);
+        // Persisted value is Unix seconds; the wire value must be ms.
+        assistant.created_at = Some(1_787_587_347);
         session.push(assistant);
         session.push(Message::new(
             Role::Tool,
@@ -905,6 +912,8 @@ mod tests {
         assert!(gui[0].created_at.is_none());
         // feedback transparently passes through
         assert_eq!(gui[1].feedback, Some(common::Feedback::Down));
+        // created_at: persisted Unix seconds → wire epoch milliseconds
+        assert_eq!(gui[1].created_at, Some(1_787_587_347_000));
         // tool-role messages are kept and carry their blocks in `tools`
         assert_eq!(gui[2].role, "tool");
         assert!(gui[2].tools.is_empty());

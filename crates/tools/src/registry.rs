@@ -40,18 +40,22 @@ impl ToolRegistry {
         let map = self.tools.read().expect("registry lock poisoned");
         let mut names: Vec<_> = map.keys().copied().collect();
         names.sort_unstable();
-        names
-            .into_iter()
-            .map(|n| map[n].definition())
-            .collect()
+        names.into_iter().map(|n| map[n].definition()).collect()
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.read().expect("registry lock poisoned").get(name).cloned()
+        self.tools
+            .read()
+            .expect("registry lock poisoned")
+            .get(name)
+            .cloned()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tools.read().expect("registry lock poisoned").is_empty()
+        self.tools
+            .read()
+            .expect("registry lock poisoned")
+            .is_empty()
     }
 
     pub fn len(&self) -> usize {

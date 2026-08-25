@@ -395,7 +395,9 @@ async fn main() -> Result<()> {
                     spinner.finish_and_clear();
                     eprintln!("\nError: {}", error);
                 }
-                ChatEvent::ToolCall { name, arguments, .. } => {
+                ChatEvent::ToolCall {
+                    name, arguments, ..
+                } => {
                     if reasoning_active {
                         print!("\x1b[0m");
                         reasoning_active = false;

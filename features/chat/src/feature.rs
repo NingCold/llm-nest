@@ -78,23 +78,51 @@ impl ChatFeature {
             Message::new(Role::User, parts)
         };
         user_msg.created_at = Some(now_secs());
-        if let Err(e) = ctx
-            .sessions
-            .write()
-            .await
-            .push_message(&session_id, user_msg)
+
         {
-            let (tx, rx) = mpsc::channel::<ChatEvent>(64);
-            let msg = format!("Failed to persist message: {e}");
-            tokio::spawn(async move {
-                let _ = tx
-                    .send(ChatEvent::Error {
-                        message_id,
-                        error: msg,
-                    })
-                    .await;
+            let mut sessions = ctx.sessions.write().await;
+
+            // Auto-title: an untitled session's first user question becomes
+            // its title (capped length). Runs before the message write so a
+            // title persistence failure aborts like any other write-through
+            // failure — nothing half-persisted, nothing silently lost.
+            // A session keeps its title once set (user-renamed or already
+            // auto-titled), and later questions never re-title it.
+            let first_question = sessions.get(&session_id).is_some_and(|s| {
+                s.title().is_none() && s.messages().iter().all(|m| m.role == Role::System)
             });
-            return Ok(ReceiverStream::new(rx));
+            if first_question
+                && let Some(title) = runtime::session::derive_session_title(&input)
+                && let Err(e) = sessions.set_title(&session_id, title)
+            {
+                drop(sessions);
+                let (tx, rx) = mpsc::channel::<ChatEvent>(64);
+                let msg = format!("Failed to persist session title: {e}");
+                tokio::spawn(async move {
+                    let _ = tx
+                        .send(ChatEvent::Error {
+                            message_id,
+                            error: msg,
+                        })
+                        .await;
+                });
+                return Ok(ReceiverStream::new(rx));
+            }
+
+            if let Err(e) = sessions.push_message(&session_id, user_msg) {
+                drop(sessions);
+                let (tx, rx) = mpsc::channel::<ChatEvent>(64);
+                let msg = format!("Failed to persist message: {e}");
+                tokio::spawn(async move {
+                    let _ = tx
+                        .send(ChatEvent::Error {
+                            message_id,
+                            error: msg,
+                        })
+                        .await;
+                });
+                return Ok(ReceiverStream::new(rx));
+            }
         }
 
         let (tx, rx) = mpsc::channel::<ChatEvent>(64);
@@ -195,11 +223,17 @@ impl ChatFeature {
                                         return;
                                     }
                                 }
-                                Some(Ok(ChatChunk::ToolCall { id, name, arguments })) => {
+                                Some(Ok(ChatChunk::ToolCall {
+                                    id,
+                                    name,
+                                    arguments,
+                                    thought_signature,
+                                })) => {
                                     iter_tool_calls.push(ToolCall {
                                         id,
                                         name,
                                         arguments,
+                                        thought_signature,
                                     });
                                 }
                                 Some(Ok(ChatChunk::Done { usage })) => {
@@ -288,12 +322,7 @@ impl ChatFeature {
                     if !iter_content.is_empty() {
                         parts.push(ContentPart::Text(iter_content.clone()));
                     }
-                    parts.extend(
-                        iter_tool_calls
-                            .iter()
-                            .cloned()
-                            .map(ContentPart::ToolCall),
-                    );
+                    parts.extend(iter_tool_calls.iter().cloned().map(ContentPart::ToolCall));
                     let mut assistant = Message::new(Role::Assistant, parts);
                     if !iter_reasoning.is_empty() {
                         assistant.reasoning = Some(iter_reasoning.clone());
@@ -406,5 +435,151 @@ impl runtime::feature::Feature for ChatFeature {
             *self.ctx.write().await = None;
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ai_client::{AiProvider, ChatRequest, ChatStream, ProviderId, ProviderResponse};
+    use runtime::event_bus::EventBus;
+    use runtime::runtime::Runtime;
+    use runtime::session_manager::SessionManager;
+
+    /// Minimal provider: answers every turn with a plain "42" and no tools.
+    struct FakeProvider;
+
+    #[async_trait::async_trait]
+    impl AiProvider for FakeProvider {
+        fn id(&self) -> String {
+            "fake".into()
+        }
+
+        fn supported_protocols(&self) -> &[ai_client::Protocol] {
+            &[]
+        }
+
+        async fn complete(&self, _req: ChatRequest) -> ai_client::Result<ProviderResponse> {
+            Ok(ProviderResponse {
+                message: Message::assistant("42"),
+                reasoning: None,
+                usage: None,
+            })
+        }
+
+        async fn complete_stream(&self, _req: ChatRequest) -> ai_client::Result<ChatStream> {
+            Ok(ChatStream::new(futures_util::stream::iter(vec![
+                Ok(ChatChunk::Delta {
+                    content: "42".into(),
+                }),
+                Ok(ChatChunk::Done { usage: None }),
+            ])))
+        }
+    }
+
+    /// Build an in-memory runtime with the fake provider pre-registered.
+    /// `AiClient::register` takes a blocking lock, so it must run outside the
+    /// async context (hence `block_in_place` on a multi-thread runtime).
+    fn test_runtime() -> Runtime {
+        tokio::task::block_in_place(|| {
+            let llm = Arc::new(ai_client::AiClient::new());
+            llm.register(ProviderId::new("fake"), Arc::new(FakeProvider));
+            Runtime::new(SessionManager::new(), EventBus::new(), llm)
+        })
+    }
+
+    fn selection() -> ModelSelection {
+        ModelSelection {
+            provider: "fake".into(),
+            model: "m".into(),
+            reasoning_effort: None,
+        }
+    }
+
+    /// Run one full user turn and wait for the stream to settle.
+    async fn run_turn(chat: &Arc<ChatFeature>, sid: common::SessionId, input: &str) {
+        let cancel = CancellationToken::new();
+        let mut stream = chat
+            .chat(
+                sid,
+                input.to_string(),
+                vec![],
+                selection(),
+                GenerationOptions::default(),
+                cancel,
+            )
+            .await
+            .unwrap();
+        while let Some(ev) = stream.next().await {
+            if matches!(
+                ev,
+                ChatEvent::Finished { .. } | ChatEvent::Error { .. } | ChatEvent::Cancelled { .. }
+            ) {
+                break;
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn first_question_becomes_session_title() {
+        let rt = test_runtime();
+        let chat = Arc::new(ChatFeature::new());
+        rt.register_feature(chat.clone()).await;
+        rt.initialize_features().await.unwrap();
+
+        let sid = rt.create_session(None).await.unwrap();
+        run_turn(&chat, sid, "帮我计算 6+4 等于多少？").await;
+
+        let session = rt.get_session(&sid).await.unwrap();
+        assert_eq!(session.title(), Some("帮我计算 6+4 等于多少？"));
+        // The question itself is still persisted as the first message.
+        assert_eq!(session.messages().len(), 2);
+        assert_eq!(session.messages()[0].text(), "帮我计算 6+4 等于多少？");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn long_first_question_is_truncated() {
+        let rt = test_runtime();
+        let chat = Arc::new(ChatFeature::new());
+        rt.register_feature(chat.clone()).await;
+        rt.initialize_features().await.unwrap();
+
+        let long = "请帮我详细解释一下量子力学的基本原理和它在现代科技中的应用场景";
+        let sid = rt.create_session(None).await.unwrap();
+        run_turn(&chat, sid, long).await;
+
+        let session = rt.get_session(&sid).await.unwrap();
+        let title = session.title().expect("auto title");
+        assert!(title.ends_with('…'));
+        assert!(title.chars().count() <= runtime::session::AUTO_TITLE_MAX_CHARS + 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn existing_title_is_never_overwritten() {
+        let rt = test_runtime();
+        let chat = Arc::new(ChatFeature::new());
+        rt.register_feature(chat.clone()).await;
+        rt.initialize_features().await.unwrap();
+
+        let sid = rt.create_session(Some("我的标题".into())).await.unwrap();
+        run_turn(&chat, sid, "第一个问题").await;
+
+        let session = rt.get_session(&sid).await.unwrap();
+        assert_eq!(session.title(), Some("我的标题"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn later_questions_do_not_retitle() {
+        let rt = test_runtime();
+        let chat = Arc::new(ChatFeature::new());
+        rt.register_feature(chat.clone()).await;
+        rt.initialize_features().await.unwrap();
+
+        let sid = rt.create_session(None).await.unwrap();
+        run_turn(&chat, sid, "第一个问题").await;
+        run_turn(&chat, sid, "第二个问题，内容更长，也不应该覆盖标题").await;
+
+        let session = rt.get_session(&sid).await.unwrap();
+        assert_eq!(session.title(), Some("第一个问题"));
     }
 }

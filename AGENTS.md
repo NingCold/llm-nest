@@ -327,6 +327,13 @@ reasoning = { levels = [...], format = "openai-effort" }  # 可选能力声明
 protocol = "openai_responses"  # 可选：模型级协议覆盖（缺省继承 provider 协议）
 ```
 
+- **分层 `.env` 加载**（`runtime::config::env`，DSH `loadLayeredEnv` 同款）：`ConfigLoader::load`
+  启动时把可选 `.env` 填进进程环境（只填缺失项，**环境变量优先、永不被覆盖**）——`{ env = "VAR" }`
+  的 key 不必事先 export。层级：进程环境 > `<config 目录>/.env`（项目层，如 `config/.env`，
+  gitignored）> `<llmn 数据目录>/.env`（用户层）；文件缺失静默，读失败/格式错误仅 stderr 警告
+  不阻止启动。示例见 `config/.env.example`。语法：`KEY=VALUE`、`export ` 前缀、`#` 注释、
+  单/双引号（双引号支持 `\n \r \t \" \\`）、无引号值支持 ` #` 行内注释
+
 - **内置 provider 目录**（`ai_client::catalog::BUILTIN_PROVIDERS`）：deepseek / openai / gemini / kimi /
   zhipu / anthropic / xai / minimax / mimo / openrouter / opencode-zen / opencode-go / siliconflow /
   tokenrhythm / chatecnu。命中内置目录的 provider 可只写 `api_key`（protocol/base_url/模型清单/默认模型

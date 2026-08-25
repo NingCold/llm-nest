@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use ai_client::catalog::builtin_provider;
 
 use crate::{
-    config::runtime::RuntimeConfig,
+    config::{env::load_env_for_config, runtime::RuntimeConfig},
     error::{Result, RuntimeError},
 };
 
@@ -11,6 +11,11 @@ pub struct ConfigLoader;
 
 impl ConfigLoader {
     pub fn load(path: impl AsRef<Path>) -> Result<RuntimeConfig> {
+        // DSH-style layered `.env`: fill env gaps from `<config dir>/.env` and
+        // `<llmn data dir>/.env` so `{ env = "KEY" }` references resolve without
+        // the caller pre-exporting them. Ambient variables always win; missing
+        // files are fine; problems are warned, never fatal.
+        load_env_for_config(path.as_ref(), &|line| eprintln!("llmn: .env: {line}"));
         let text = fs::read_to_string(path)?;
         let config = toml::from_str(&text)?;
         Self::validate(&config)?;

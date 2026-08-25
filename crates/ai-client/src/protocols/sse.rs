@@ -138,6 +138,9 @@ mod tests {
             finished: false,
         };
         let items: Vec<String> = stream.map(|r| r.unwrap()).collect().await;
-        assert_eq!(items, vec!["{\"a\":1}".to_string(), "{\"b\":2}".to_string()]);
+        assert_eq!(
+            items,
+            vec!["{\"a\":1}".to_string(), "{\"b\":2}".to_string()]
+        );
     }
 }

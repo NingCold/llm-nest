@@ -16,40 +16,55 @@ use crate::response::ProviderResponse;
 pub struct Part {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Thinking marker: `{text, thought: true}` is the model's chain-of-thought
+    /// (Gemma 4 / Gemini 2.5 thinking), not the visible answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function_call: Option<FunctionCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function_response: Option<FunctionResponse>,
+    /// Gemini 3.x / Gemma 4 thought signature: REQUIRED on the assistant
+    /// `functionCall` part when echoing it back in the next request, else the
+    /// API rejects the tool round-trip. Sibling of `functionCall` on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 impl Part {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: Some(text.into()),
+            thought: None,
             function_call: None,
             function_response: None,
+            thought_signature: None,
         }
     }
 
     pub fn function_call(name: impl Into<String>, args: serde_json::Value) -> Self {
         Self {
             text: None,
+            thought: None,
             function_call: Some(FunctionCall {
                 name: name.into(),
                 args,
             }),
             function_response: None,
+            thought_signature: None,
         }
     }
 
     pub fn function_response(name: impl Into<String>, response: serde_json::Value) -> Self {
         Self {
             text: None,
+            thought: None,
             function_call: None,
             function_response: Some(FunctionResponse {
                 name: name.into(),
                 response,
             }),
+            thought_signature: None,
         }
     }
 }
@@ -159,6 +174,9 @@ pub struct Response {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Candidate {
     pub content: Option<Content>,
+    /// Terminal marker of the LAST frame (`STOP` / `MAX_TOKENS` / `SAFETY` …).
+    #[serde(rename = "finishReason", default)]
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -204,11 +222,18 @@ pub fn to_request(req: &ChatRequest) -> Request {
                     .iter()
                     .filter_map(|part| match part {
                         ContentPart::Text(t) if !t.is_empty() => Some(Part::text(t.clone())),
-                        ContentPart::ToolCall(tc) => Some(Part::function_call(
-                            &tc.name,
-                            serde_json::from_str(&tc.arguments)
-                                .unwrap_or_else(|_| serde_json::json!({})),
-                        )),
+                        ContentPart::ToolCall(tc) => {
+                            // Gemini 3.x / Gemma 4: the echoed functionCall
+                            // part MUST carry the original thoughtSignature,
+                            // or the API rejects the tool round-trip.
+                            let mut part = Part::function_call(
+                                &tc.name,
+                                serde_json::from_str(&tc.arguments)
+                                    .unwrap_or_else(|_| serde_json::json!({})),
+                            );
+                            part.thought_signature = tc.thought_signature.clone();
+                            Some(part)
+                        }
                         _ => None,
                     })
                     .collect();
@@ -258,19 +283,21 @@ pub fn to_request(req: &ChatRequest) -> Request {
         generation_config: Some(generation_config),
         // Gemini expects a single `tools` element whose functionDeclarations
         // list carries ALL declarations.
-        tools: (!req.tools.is_empty()).then(|| {
-            vec![ToolDecl {
-                function_declarations: req
-                    .tools
-                    .iter()
-                    .map(|t| FunctionDecl {
-                        name: t.name.clone(),
-                        description: t.description.clone(),
-                        parameters: t.parameters.clone(),
-                    })
-                    .collect(),
-            }]
-        }).unwrap_or_default(),
+        tools: (!req.tools.is_empty())
+            .then(|| {
+                vec![ToolDecl {
+                    function_declarations: req
+                        .tools
+                        .iter()
+                        .map(|t| FunctionDecl {
+                            name: t.name.clone(),
+                            description: t.description.clone(),
+                            parameters: t.parameters.clone(),
+                        })
+                        .collect(),
+                }]
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -302,19 +329,26 @@ fn thinking(req: &ChatRequest) -> Option<ThinkingConfig> {
 
 /// Non-streaming response → provider response: concatenate the first
 /// candidate's text parts and map `functionCall` parts to tool-call content
-/// parts, remap usage token names.
+/// parts, remap usage token names. `thought: true` text parts become the
+/// chain-of-thought (`ProviderResponse.reasoning`), not visible content.
 pub fn to_provider_response(resp: Response) -> Result<ProviderResponse> {
     let mut parts: Vec<ContentPart> = Vec::new();
+    let mut reasoning = String::new();
     if let Some(content) = resp.candidates.into_iter().next().and_then(|c| c.content) {
         for part in content.parts {
             if let Some(text) = part.text {
-                parts.push(ContentPart::Text(text));
+                if part.thought == Some(true) {
+                    reasoning.push_str(&text);
+                } else {
+                    parts.push(ContentPart::Text(text));
+                }
             }
-            if let Some(fc) = part.function_call {
+            if let Some(fc) = &part.function_call {
                 parts.push(ContentPart::ToolCall(ToolCall {
                     id: gemini_call_id(),
-                    name: fc.name,
+                    name: fc.name.clone(),
                     arguments: fc.args.to_string(),
+                    thought_signature: part.thought_signature.clone(),
                 }));
             }
         }
@@ -322,15 +356,17 @@ pub fn to_provider_response(resp: Response) -> Result<ProviderResponse> {
     let usage = resp.usage_metadata.map(Usage::from);
     Ok(ProviderResponse {
         message: Message::new(Role::Assistant, parts),
-        reasoning: None,
+        reasoning: (!reasoning.is_empty()).then_some(reasoning),
         usage,
     })
 }
 
 /// One SSE payload → chunks. `[DONE]` closes the stream; candidate content
-/// parts stream text deltas and `functionCall` parts (complete objects, one
-/// chunk each in practice); the final chunk carries `usageMetadata` and
-/// closes the stream; an `error` object surfaces as a stream error.
+/// parts stream text deltas (`thought: true` parts become `ReasoningDelta`)
+/// and `functionCall` parts (complete objects, one chunk each in practice);
+/// `usageMetadata` rides on **every** frame, so `Done` is only emitted on a
+/// terminal frame — one carrying `finishReason`, or a usage-only frame with
+/// no candidates; an `error` object surfaces as a stream error.
 pub fn parse_event(data: &str) -> Result<Vec<ChatChunk>> {
     if data.trim() == "[DONE]" {
         return Ok(vec![ChatChunk::Done { usage: None }]);
@@ -356,29 +392,43 @@ pub fn parse_event(data: &str) -> Result<Vec<ChatChunk>> {
     }
     let mut chunks = Vec::new();
     let mut text = String::new();
-    if let Some(candidate) = event.candidates.and_then(|mut c| c.drain(..).next())
-        && let Some(content) = candidate.content
-    {
-        for part in content.parts {
-            if let Some(t) = part.text {
-                text.push_str(&t);
+    let mut reasoning = String::new();
+    let first_candidate = event.candidates.as_deref().and_then(|c| c.first());
+    if let Some(content) = first_candidate.and_then(|c| c.content.as_ref()) {
+        for part in &content.parts {
+            if let Some(t) = part.text.as_deref() {
+                if part.thought == Some(true) {
+                    reasoning.push_str(t);
+                } else {
+                    text.push_str(t);
+                }
             }
-            if let Some(fc) = part.function_call {
+            if let Some(fc) = &part.function_call {
                 chunks.push(ChatChunk::ToolCall {
                     id: gemini_call_id(),
-                    name: fc.name,
+                    name: fc.name.clone(),
                     arguments: fc.args.to_string(),
+                    thought_signature: part.thought_signature.clone(),
                 });
             }
         }
     }
+    if !reasoning.is_empty() {
+        chunks.push(ChatChunk::ReasoningDelta { content: reasoning });
+    }
     if !text.is_empty() {
         chunks.push(ChatChunk::Delta { content: text });
     }
-    // Terminal chunk: usageMetadata (possibly alongside final content).
-    if let Some(usage) = event.usage_metadata {
+    // Terminal only on the last frame: finishReason, or a usage-only frame
+    // with no candidates. Every intermediate frame also carries usageMetadata
+    // (Gemini behavior), so usage alone must NOT close the stream.
+    let terminal = first_candidate
+        .and_then(|c| c.finish_reason.as_ref())
+        .is_some()
+        || event.candidates.as_deref().map_or(true, |c| c.is_empty());
+    if terminal {
         chunks.push(ChatChunk::Done {
-            usage: Some(Usage::from(usage)),
+            usage: event.usage_metadata.map(Usage::from),
         });
     }
     Ok(chunks)
@@ -526,8 +576,51 @@ mod tests {
             parse_event("[DONE]").unwrap()[0],
             ChatChunk::Done { usage: _ }
         ));
-        // empty candidate chunks are skipped
-        assert!(parse_event(r#"{"candidates":[]}"#).unwrap().is_empty());
+        // a candidates-less frame is the terminal signal (usage-only close)
+        assert!(matches!(
+            parse_event(r#"{"candidates":[]}"#).unwrap()[0],
+            ChatChunk::Done { usage: _ }
+        ));
+    }
+
+    #[test]
+    fn thought_parts_stream_as_reasoning_not_content() {
+        // Gemma 4 / Gemini 2.5 thinking: `{text, thought: true}` parts.
+        let json = r#"{"candidates":[{"content":{"parts":[
+            {"text":"先想一下","thought":true},
+            {"text":"再想一步","thought":true},
+            {"text":"可见答案是 10"}
+        ]}}]}"#;
+        let chunks = parse_event(json).unwrap();
+        assert_eq!(chunks.len(), 2, "reasoning delta + content delta");
+        match &chunks[0] {
+            ChatChunk::ReasoningDelta { content } => {
+                assert_eq!(content, "先想一下再想一步");
+            }
+            other => panic!("expected ReasoningDelta, got {other:?}"),
+        }
+        match &chunks[1] {
+            ChatChunk::Delta { content } => assert_eq!(content, "可见答案是 10"),
+            other => panic!("expected Delta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_stream_thought_goes_to_reasoning_field() {
+        let json = r#"{"candidates":[{"content":{"parts":[
+            {"text":"推理过程","thought":true},
+            {"text":"最终回答"}
+        ]}}]}"#;
+        let resp: Response = serde_json::from_str(json).unwrap();
+        let provider = to_provider_response(resp).unwrap();
+        assert_eq!(provider.reasoning.as_deref(), Some("推理过程"));
+        assert_eq!(provider.message.text(), "最终回答");
+        // plain text without the thought marker stays visible content
+        let json = r#"{"candidates":[{"content":{"parts":[{"text":"普通文本"}]}}]}"#;
+        let resp: Response = serde_json::from_str(json).unwrap();
+        let provider = to_provider_response(resp).unwrap();
+        assert_eq!(provider.reasoning, None);
+        assert_eq!(provider.message.text(), "普通文本");
     }
 
     #[test]
@@ -547,15 +640,48 @@ mod tests {
     }
 
     #[test]
+    fn intermediate_usage_frames_do_not_close_the_stream() {
+        // Gemini rides usageMetadata on EVERY frame; only finishReason (or a
+        // usage-only empty-candidates frame) marks the end. This was the bug
+        // that killed real streams at frame 1 (completion_tokens stayed 0).
+        let mid = r#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],
+            "usageMetadata":{"promptTokenCount":86,"candidatesTokenCount":14,"totalTokenCount":100}}"#;
+        let chunks = parse_event(mid).unwrap();
+        assert_eq!(chunks.len(), 1, "no Done on an intermediate frame");
+        assert!(matches!(&chunks[0], ChatChunk::Delta { content } if content == "hi"));
+        assert!(!chunks.iter().any(|c| matches!(c, ChatChunk::Done { .. })));
+
+        // the last frame carries finishReason → Done with usage
+        let last = r#"{"candidates":[{"content":{"parts":[{"text":""}]},"finishReason":"STOP"}],
+            "usageMetadata":{"promptTokenCount":86,"candidatesTokenCount":16,"totalTokenCount":143}}"#;
+        let chunks = parse_event(last).unwrap();
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            ChatChunk::Done { usage: Some(u) } => {
+                assert_eq!(u.completion_tokens, 16);
+                assert_eq!(u.total_tokens, 143);
+            }
+            other => panic!("expected Done with usage, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn stream_parse_function_call_parts() {
-        let json = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"add","args":{"a":6,"b":4}}}]}}]}"#;
+        // with thoughtSignature (Gemini 3.x / Gemma 4)
+        let json = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"add","args":{"a":6,"b":4}},"thoughtSignature":"sig-abc"}]}}]}"#;
         let chunks = parse_event(json).unwrap();
         assert_eq!(chunks.len(), 1);
         match &chunks[0] {
-            ChatChunk::ToolCall { id, name, arguments } => {
+            ChatChunk::ToolCall {
+                id,
+                name,
+                arguments,
+                thought_signature,
+            } => {
                 assert!(id.starts_with("gemini_"));
                 assert_eq!(name, "add");
                 assert_eq!(arguments, r#"{"a":6,"b":4}"#);
+                assert_eq!(thought_signature.as_deref(), Some("sig-abc"));
             }
             other => panic!("expected ToolCall, got {other:?}"),
         }
@@ -580,6 +706,7 @@ mod tests {
                             id: "gemini_7".into(),
                             name: "add".into(),
                             arguments: r#"{"a":6,"b":4}"#.into(),
+                            thought_signature: Some("sig-xyz".into()),
                         }),
                     ],
                     reasoning: None,
@@ -638,6 +765,8 @@ mod tests {
         let fc = model_parts[1].function_call.as_ref().unwrap();
         assert_eq!(fc.name, "add");
         assert_eq!(fc.args["a"], 6);
+        // the echoed functionCall part carries the original thoughtSignature
+        assert_eq!(model_parts[1].thought_signature.as_deref(), Some("sig-xyz"));
         let fr = wire.contents[2].parts[0]
             .function_response
             .as_ref()

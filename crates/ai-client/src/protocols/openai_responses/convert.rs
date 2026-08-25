@@ -106,11 +106,7 @@ impl From<ResponseUsage> for Usage {
 pub fn to_request(req: &ChatRequest) -> Request {
     Request {
         model: req.selection.model.clone(),
-        input: req
-            .messages
-            .iter()
-            .flat_map(wire_input)
-            .collect(),
+        input: req.messages.iter().flat_map(wire_input).collect(),
         temperature: req.options.temperature,
         max_output_tokens: req.options.max_tokens,
         top_p: req.options.top_p,
@@ -216,6 +212,7 @@ pub fn to_provider_response(resp: Response) -> Result<ProviderResponse> {
                         id: call_id,
                         name,
                         arguments: item.arguments.unwrap_or_default(),
+                        thought_signature: None,
                     }));
                 }
             }
@@ -247,7 +244,10 @@ pub enum StreamEvent {
     /// fragments).
     FunctionCallDelta { output_index: u32, delta: String },
     /// `response.function_call_arguments.done` (complete arguments string).
-    FunctionCallDone { output_index: u32, arguments: String },
+    FunctionCallDone {
+        output_index: u32,
+        arguments: String,
+    },
     /// `response.output_item.done` with the complete `function_call` item.
     FunctionCallFlush {
         output_index: u32,
@@ -327,18 +327,18 @@ pub fn parse_event(data: &str) -> Result<Option<StreamEvent>> {
                 arguments: item.arguments.unwrap_or_default(),
             }))
         }
-        "response.function_call_arguments.delta" => Ok(event
-            .delta
-            .map(|d| StreamEvent::FunctionCallDelta {
+        "response.function_call_arguments.delta" => {
+            Ok(event.delta.map(|d| StreamEvent::FunctionCallDelta {
                 output_index: event.output_index.unwrap_or(0),
                 delta: d,
-            })),
-        "response.function_call_arguments.done" => Ok(event
-            .arguments
-            .map(|a| StreamEvent::FunctionCallDone {
+            }))
+        }
+        "response.function_call_arguments.done" => {
+            Ok(event.arguments.map(|a| StreamEvent::FunctionCallDone {
                 output_index: event.output_index.unwrap_or(0),
                 arguments: a,
-            })),
+            }))
+        }
         "response.output_item.done" => {
             let item = match event.item {
                 Some(i) if i.typ == "function_call" => i,
@@ -355,9 +355,7 @@ pub fn parse_event(data: &str) -> Result<Option<StreamEvent>> {
             }))
         }
         "response.completed" | "response.incomplete" | "response.failed" => {
-            let usage = event
-                .usage
-                .or_else(|| event.response.and_then(|r| r.usage));
+            let usage = event.usage.or_else(|| event.response.and_then(|r| r.usage));
             Ok(Some(StreamEvent::Done {
                 usage: usage.map(Usage::from),
             }))
@@ -534,7 +532,12 @@ mod tests {
     fn parses_function_call_stream_events() {
         let added = r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","status":"in_progress","call_id":"call_1","name":"add","arguments":""}}"#;
         match parse_event(added).unwrap() {
-            Some(StreamEvent::FunctionCallStart { output_index, call_id, name, .. }) => {
+            Some(StreamEvent::FunctionCallStart {
+                output_index,
+                call_id,
+                name,
+                ..
+            }) => {
                 assert_eq!(output_index, 1);
                 assert_eq!(call_id, "call_1");
                 assert_eq!(name, "add");
@@ -543,7 +546,10 @@ mod tests {
         }
         let delta = r#"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"a\":"}"#;
         match parse_event(delta).unwrap() {
-            Some(StreamEvent::FunctionCallDelta { output_index, delta }) => {
+            Some(StreamEvent::FunctionCallDelta {
+                output_index,
+                delta,
+            }) => {
                 assert_eq!(output_index, 1);
                 assert_eq!(delta, r#"{"a":"#);
             }
@@ -552,11 +558,19 @@ mod tests {
         let arg_done = r#"{"type":"response.function_call_arguments.done","output_index":1,"arguments":"{\"a\":6}"}"#;
         assert!(matches!(
             parse_event(arg_done).unwrap(),
-            Some(StreamEvent::FunctionCallDone { output_index: 1, .. })
+            Some(StreamEvent::FunctionCallDone {
+                output_index: 1,
+                ..
+            })
         ));
         let item_done = r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":"add","arguments":"{\"a\":6}"}}"#;
         match parse_event(item_done).unwrap() {
-            Some(StreamEvent::FunctionCallFlush { output_index, call_id, name, arguments }) => {
+            Some(StreamEvent::FunctionCallFlush {
+                output_index,
+                call_id,
+                name,
+                arguments,
+            }) => {
                 assert_eq!(output_index, 1);
                 assert_eq!(call_id, "call_1");
                 assert_eq!(name, "add");
@@ -613,6 +627,7 @@ mod tests {
                             id: "call_1".into(),
                             name: "add".into(),
                             arguments: r#"{"a":6,"b":4}"#.into(),
+                            thought_signature: None,
                         }),
                     ],
                     reasoning: None,

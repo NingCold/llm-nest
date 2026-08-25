@@ -96,7 +96,10 @@ impl Stream for AnthropicStream {
                             });
                             continue;
                         }
-                        Some(StreamEvent::ToolUseDelta { index, partial_json }) => {
+                        Some(StreamEvent::ToolUseDelta {
+                            index,
+                            partial_json,
+                        }) => {
                             if let Some(p) = self.pending.iter_mut().find(|p| p.index == index) {
                                 p.input.push_str(&partial_json);
                             }
@@ -108,6 +111,7 @@ impl Stream for AnthropicStream {
                                     id: p.id,
                                     name: p.name,
                                     arguments: p.input,
+                                    thought_signature: None,
                                 })));
                             }
                             continue;
@@ -124,11 +128,13 @@ impl Stream for AnthropicStream {
                                     id: p.id,
                                     name: p.name,
                                     arguments: p.input,
+                                    thought_signature: None,
                                 })
                                 .collect();
                             self.queued.extend(calls);
-                            self.queued
-                                .push_back(ChatChunk::Done { usage: usage.clone() });
+                            self.queued.push_back(ChatChunk::Done {
+                                usage: usage.clone(),
+                            });
                             if let Some(chunk) = self.queued.pop_front() {
                                 return Poll::Ready(Some(Ok(chunk)));
                             }
@@ -170,7 +176,12 @@ mod tests {
         let chunks: Vec<ChatChunk> = stream.map(|r| r.unwrap()).collect().await;
         assert_eq!(chunks.len(), 2);
         match &chunks[0] {
-            ChatChunk::ToolCall { id, name, arguments } => {
+            ChatChunk::ToolCall {
+                id,
+                name,
+                arguments,
+                ..
+            } => {
                 assert_eq!(id, "toolu_1");
                 assert_eq!(name, "add");
                 assert_eq!(arguments, r#"{"a":6,"b":4}"#);

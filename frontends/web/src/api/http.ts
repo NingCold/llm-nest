@@ -23,7 +23,7 @@ import { toGuiTimings, toGuiUsage } from "./normalize"
 const BASE = "/api"
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init)
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers).entries()), "X-LLMN-Client": "1" } })
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -41,7 +41,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 function jsonInit(method: string, body: unknown): RequestInit {
   return {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-LLMN-Client": "1" },
     body: JSON.stringify(body),
   }
 }
@@ -71,44 +71,36 @@ async function streamChat(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ""
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const frame = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      const evt = parseFrame(frame)
-      if (evt) {
-        // wire 归一化：后端 usage/timings 是 snake_case，转 camelCase
-        if (evt.type === "finished") {
-          onEvent({
-            ...evt,
-            ...(toGuiUsage(evt.usage) ? { usage: toGuiUsage(evt.usage) } : {}),
-            ...(toGuiTimings(evt.timings) ? { timings: toGuiTimings(evt.timings) } : {}),
-          })
-        } else {
-          onEvent(evt)
-        }
-        if (evt.type === "finished" || evt.type === "error" || evt.type === "cancelled") {
-          return
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) throw new Error("连接在完成事件之前结束，请重试")
+      buf += decoder.decode(value, { stream: true })
+      let idx: number
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, idx)
+        buf = buf.slice(idx + 2)
+        const evt = parseFrame(frame)
+        if (evt) {
+          // wire 归一化：后端 usage/timings 是 snake_case，转 camelCase
+          if (evt.type === "finished") {
+            onEvent({
+              ...evt,
+              ...(toGuiUsage(evt.usage) ? { usage: toGuiUsage(evt.usage) } : {}),
+              ...(toGuiTimings(evt.timings) ? { timings: toGuiTimings(evt.timings) } : {}),
+            })
+          } else {
+            onEvent(evt)
+          }
+          if (evt.type === "finished" || evt.type === "error" || evt.type === "cancelled") {
+            return
+          }
         }
       }
     }
-  }
-}
-
-/** 探测后端是否可用（不可用时前端回退到演示适配器） */
-export async function backendAvailable(): Promise<boolean> {
-  try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 1500)
-    const res = await fetch(`${BASE}/init`, { signal: ctrl.signal })
-    clearTimeout(timer)
-    return res.ok
-  } catch {
-    return false
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
 }
 
@@ -128,6 +120,7 @@ export const httpApi: ChatApi = {
         temperature: params.temperature,
         maxTokens: params.maxTokens ?? null,
         attachments: params.attachments ?? [],
+        edit: params.edit ?? null,
       },
       onEvent,
     )
@@ -145,7 +138,7 @@ export const httpApi: ChatApi = {
     return raw.map((m) => ({
       ...m,
       role: m.role === "assistant" ? "assistant" : m.role === "tool" ? "tool" : "user",
-      status: "done",
+      status: m.status ?? "done",
       createdAt: m.createdAt ?? now,
       // wire 归一化：usage/timings 字段名 snake_case → camelCase
       ...(toGuiUsage(m.usage) ? { usage: toGuiUsage(m.usage) } : {}),
@@ -180,11 +173,11 @@ export const httpApi: ChatApi = {
     sessionId: string,
     messageId: string,
     feedback: MessageFeedback,
+    revision: string,
   ): Promise<void> {
-    const idx = Number(messageId.replace(/^m-/, ""))
     await req(
-      `/sessions/${encodeURIComponent(sessionId)}/messages/${Number.isFinite(idx) ? idx : -1}`,
-      jsonInit("PATCH", { feedback }),
+      `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+      jsonInit("PATCH", { feedback, revision }),
     )
   },
 

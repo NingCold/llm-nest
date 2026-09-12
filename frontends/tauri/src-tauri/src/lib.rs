@@ -37,6 +37,7 @@ fn find_config_path() -> Result<PathBuf, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    runtime::worker_entry();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -51,7 +52,18 @@ pub fn run() {
             let rt = runtime.clone();
             tauri::async_runtime::block_on(async move {
                 rt.register_feature(chat_clone).await;
-                rt.initialize_features().await.map_err(|e| e.to_string())
+                rt.initialize_features().await.map_err(|e| e.to_string())?;
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                runtime::config::watcher::spawn_config_watcher(rt, config_path, tx)
+                    .map_err(|e| e.to_string())?;
+                tauri::async_runtime::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        if let runtime::config::watcher::ConfigWatchEvent::Failed(error) = event {
+                            eprintln!("config reload failed: {error}");
+                        }
+                    }
+                });
+                Ok::<(), String>(())
             })?;
 
             let state = AppState {
@@ -68,6 +80,7 @@ pub fn run() {
             commands::chat,
             commands::cancel_chat,
             commands::get_messages,
+            commands::set_message_feedback,
             commands::new_session,
             commands::delete_session,
             commands::rename_session,

@@ -96,6 +96,7 @@ impl OpenAIProvider {
     async fn send_request_stream(&self, req: ChatRequest) -> Result<ChatStream> {
         let mut request = convert::to_real_request(&req);
         request.stream = true;
+        request.stream_options = Some(serde_json::json!({"include_usage": true}));
         let response = self
             .client
             .post(&self.url)

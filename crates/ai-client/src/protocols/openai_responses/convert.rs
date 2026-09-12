@@ -105,7 +105,7 @@ impl From<ResponseUsage> for Usage {
 /// Build the wire request from a routed chat request.
 pub fn to_request(req: &ChatRequest) -> Request {
     Request {
-        model: req.selection.model.clone(),
+        model: req.wire_model().to_string(),
         input: req.messages.iter().flat_map(wire_input).collect(),
         temperature: req.options.temperature,
         max_output_tokens: req.options.max_tokens,
@@ -255,7 +255,7 @@ pub enum StreamEvent {
         name: String,
         arguments: String,
     },
-    /// `response.completed` / `response.incomplete` / `response.failed` /
+    /// Successful `response.completed` /
     /// `[DONE]` — stream end.
     Done { usage: Option<Usage> },
 }
@@ -288,6 +288,8 @@ pub fn parse_event(data: &str) -> Result<Option<StreamEvent>> {
     }
     #[derive(Deserialize)]
     struct ResponseSummary {
+        error: Option<EventError>,
+        incomplete_details: Option<serde_json::Value>,
         #[serde(default)]
         usage: Option<ResponseUsage>,
     }
@@ -354,7 +356,18 @@ pub fn parse_event(data: &str) -> Result<Option<StreamEvent>> {
                 arguments: item.arguments.unwrap_or_default(),
             }))
         }
-        "response.completed" | "response.incomplete" | "response.failed" => {
+        "response.failed" | "response.incomplete" => Err(AiError::StreamError(format!(
+            "{}: {}",
+            event.typ,
+            event
+                .response
+                .and_then(|r| r
+                    .error
+                    .and_then(|e| e.message)
+                    .or_else(|| r.incomplete_details.map(|d| d.to_string())))
+                .unwrap_or_else(|| "response did not complete".into())
+        ))),
+        "response.completed" => {
             let usage = event.usage.or_else(|| event.response.and_then(|r| r.usage));
             Ok(Some(StreamEvent::Done {
                 usage: usage.map(Usage::from),
@@ -636,6 +649,8 @@ mod tests {
                     usage: None,
                     timings: None,
                     feedback: None,
+                    interruption: None,
+                    id: Some(common::MessageId::new()),
                 },
                 Message {
                     role: Role::Tool,
@@ -652,6 +667,8 @@ mod tests {
                     usage: None,
                     timings: None,
                     feedback: None,
+                    interruption: None,
+                    id: Some(common::MessageId::new()),
                 },
             ],
             options: GenerationOptions::default(),

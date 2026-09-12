@@ -45,6 +45,8 @@ pub struct Request {
     pub top_p: Option<f32>,
     #[serde(default)]
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<serde_json::Value>,
     /// OpenAI `reasoning_effort` parameter (`low`/`medium`/`high`/`max`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,

@@ -18,13 +18,15 @@ import type {
 
 /** Rust `GuiMessage` 的 wire 形态（字段 camelCase） */
 interface GuiMessageRaw {
+  revision?: string
   id: string
   role: string
   content: string
   /** 持久化的思维链（随 assistant 消息保存） */
   reasoning?: string | null
   thinkingMs?: number | null
-  status: string
+  status: StoredMessage["status"]
+  error?: string
   createdAt?: number | null
   feedback?: MessageFeedback
   attachments?: import("./types").GuiAttachment[]
@@ -40,8 +42,11 @@ export const tauriApi: ChatApi = {
   },
 
   async chat(params: ChatParams, onEvent: ChatEventHandler) {
+    let resolveDone!: () => void
+    const done = new Promise<void>((resolve) => { resolveDone = resolve })
     const unlisten = await listen<GuiEventRaw>("chat-event", (event) => {
       const payload = event.payload as Record<string, unknown>
+      if (String(payload.messageId ?? "") !== params.messageId) return
       const type = String(payload.type ?? "")
       const content =
         payload.content !== null && payload.content !== undefined
@@ -99,34 +104,39 @@ export const tauriApi: ChatApi = {
       } as import("./types").GuiEvent
       onEvent(guiEvent)
       if (type === "finished" || type === "error" || type === "cancelled") {
-        unlisten()
+        resolveDone()
       }
     })
-    await invoke("chat", {
-      params: {
-        sessionId: params.sessionId,
-        messageId: params.messageId ?? "",
-        input: params.input,
-        model: params.model,
-        temperature: params.temperature,
-        maxTokens: params.maxTokens ?? null,
-        attachments: params.attachments ?? [],
-      },
-    })
+    try {
+      await invoke("chat", {
+        params: {
+          sessionId: params.sessionId,
+          messageId: params.messageId ?? "",
+          input: params.input,
+          model: params.model,
+          temperature: params.temperature,
+          maxTokens: params.maxTokens ?? null,
+          attachments: params.attachments ?? [],
+          edit: params.edit ?? null,
+        },
+      })
+      await done
+    } finally { unlisten() }
   },
 
   async cancelChat(sessionId: string) {
-    await invoke("cancel_chat", { session_id: sessionId })
+    await invoke("cancel_chat", { sessionId: sessionId })
   },
 
   async getMessages(sessionId: string): Promise<StoredMessage[]> {
     const raw = await invoke<GuiMessageRaw[]>("get_messages", {
-      session_id: sessionId,
+      sessionId: sessionId,
     })
     // 后端历史消息无真实时间戳（createdAt 为 null）时用加载时刻兜底
     const now = Date.now()
     return raw.map((m) => ({
       id: m.id,
+      revision: m.revision,
       role: m.role === "assistant" ? "assistant" : m.role === "tool" ? "tool" : "user",
       content: m.content,
       ...(m.reasoning ? { reasoning: m.reasoning } : {}),
@@ -138,7 +148,8 @@ export const tauriApi: ChatApi = {
       ...(m.usage ? { usage: toGuiUsage(m.usage) } : {}),
       ...(m.timings ? { timings: toGuiTimings(m.timings) } : {}),
       ...(m.tools && m.tools.length > 0 ? { tools: m.tools } : {}),
-      status: "done",
+      status: m.status ?? "done",
+      error: m.error,
       createdAt: m.createdAt ?? now,
     }))
   },
@@ -154,11 +165,11 @@ export const tauriApi: ChatApi = {
   },
 
   async deleteSession(id: string) {
-    await invoke("delete_session", { session_id: id })
+    await invoke("delete_session", { sessionId: id })
   },
 
   async renameSession(id: string, title: string) {
-    await invoke("rename_session", { session_id: id, title })
+    await invoke("rename_session", { sessionId: id, title })
   },
 
   async setConfig(config: GuiConfig) {
@@ -169,13 +180,13 @@ export const tauriApi: ChatApi = {
     sessionId: string,
     messageId: string,
     feedback: MessageFeedback,
+    revision: string,
   ) {
-    // StoredMessage.id 为 `m-{idx}`（后端生成，user/assistant 过滤后索引），
-    // 与后端 set_message_feedback 的 idx 语义一致
-    const idx = Number(messageId.replace(/^m-/, ""))
+    // Persisted IDs plus the loaded revision prevent stale-page mutations.
     await invoke("set_message_feedback", {
-      session_id: sessionId,
-      idx: Number.isFinite(idx) ? idx : -1,
+      sessionId: sessionId,
+      messageId,
+      revision,
       feedback,
     })
   },

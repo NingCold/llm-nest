@@ -425,3 +425,25 @@ runner::run(app, chat).await?;
   2. 暴露业务方法
   3. 前端通过 `Arc<Feature>` 直接调用
   4. 事件通过 `RuntimeEvent::Feature` 广播
+
+
+## 2026-09-12 中断与工具执行补充（以此处为准）
+
+- `Message.interruption: Option<Interruption>` 保存 `Cancelled` / `Failed(String)`；旧记录缺字段默认 None，`to_wire` 剥离此元数据。
+- ChatFeature 先完成中断历史保存，再发送终止事件；取消、EOF、provider 错误、消费端断开均走这一收尾。部分正文/思考链保留，空响应也保存状态。构建下一次请求时过滤带 interruption 的消息。
+- `SessionManager::finish_interrupted_turn` 以一次写穿透保存补齐未回答的 ToolCall（失败 ToolResult）和中断消息；写失败内存不变。此机制不提供崩溃检查点或工具副作用回滚。
+- `Tool::run` 现在必须显式实现，并遵守非阻塞、可丢弃的异步执行契约。`run_sync` 仅作为内置短计算的辅助方法，不再自动回退调用。
+- `ToolRegistry::run` 默认 30 秒协作式超时，捕获 unwind panic，返回 JSON 限制 64 KiB；`run_with_timeout` 可指定时限。不能抢占不 yield 的代码，也不能撤销已发生的外部副作用。Shell/文件等高风险工具仍需进程隔离和权限设计。
+- Web/Tauri 历史接口透传 status/error；Web SSE 消费端断开时主动取消上游。
+
+
+## 四项可靠性修复（2026-09-12，以此节为准）
+
+- `FileSessionStore` 打开目录中的 `.llmn.lock` 并持有 OS 排他文件锁，第二个独立实例报错。不要删除运行中的锁文件。进程退出/被杀后 OS 自动释放，不使用容易遗留的 PID 锁文件。当前选择单写者模式，不支持多个独立 Runtime 同写目录。
+- `Message.id: Option<MessageId>`：新消息创建 UUID，旧会话缺 ID 时由存储加载器补齐并立即原子写回；重复 ID 报错。`to_wire()` 剥离 ID。GUI 返回真实 ID，编辑用 userId，反馈用 messageId + revision；旧索引反馈 API 已移除。
+- `Session.run` / `SessionRecord.run` 保存最近一次 `RunCheckpoint { id, status, partial }`。开始 run 与 user 消息同一事务，流式每 500ms 检查并保存变化的 draft，工具调用/结果沿用同步写穿透。成功答案和 Succeeded 同一事务。
+- 启动加载发现 Running 时，使用 draft 补回中断消息、为未完成工具调用补失败结果并标记 Interrupted。恢复幂等，不自动重放工具，也不是从 provider token 游标续传。最多保留最近一个 RunCheckpoint，不是完整运行审计日志。
+- 默认 echo/add 通过当前宿主程序的 `--llmn-tool-worker` 子进程执行；CLI/TUI/Web/Tauri 在加载配置/存储前处理 worker 入口。worker 只允许这两个编译内置工具，无 Shell/任意可执行路径入口，不继承 API Key 环境变量。
+- Windows worker 加入 Job Object：关闭 Job 杀进程、最多 1 个进程、256 MiB committed memory、10 秒用户态 CPU；30 秒墙钟超时仍在 Registry，输入输出各 64 KiB。Job 配置/挂载失败时不发送任务、不回退进程内执行。
+- 主机代码若确需信任进程内插件，必须显式使用 `Runtime::register_trusted_tool` / `ToolRegistry::register_trusted_in_process`，这会绕过进程隔离；模型不能修改注册表。不要把它用于不可信插件。
+- 标准库 File::try_lock 要求 Rust 1.89+；本机以 Rust 1.97 验证。

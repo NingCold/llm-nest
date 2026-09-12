@@ -72,6 +72,7 @@ pub struct ModelInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
+    pub model: Option<ModelSelection>,
     pub id: String,
     pub title: String,
     pub created_at: String,
@@ -92,6 +93,8 @@ pub struct GuiAttachment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiChatParams {
+    #[serde(default)]
+    pub edit: Option<runtime::session_manager::ChatEdit>,
     pub session_id: String,
     /// 前端预创建的 assistant 消息 id；后端事件统一用它，保证流式追加能
     /// 落到前端 store 里对应的消息上（后端 ChatEvent 的 message_id 是
@@ -270,6 +273,7 @@ impl GuiEvent {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiMessage {
+    pub revision: String,
     pub id: String,
     pub role: String,
     pub content: String,
@@ -277,6 +281,7 @@ pub struct GuiMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     pub status: String,
+    pub error: Option<String>,
     /// Epoch milliseconds (converted from the persisted Unix-seconds value).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
@@ -350,6 +355,9 @@ pub async fn chat(
     let cancel = tokio_util::sync::CancellationToken::new();
     {
         let mut map = state.cancel_map.lock().await;
+        if map.contains_key(&params.session_id) {
+            return Err("a chat is already running for this session".into());
+        }
         map.insert(params.session_id.clone(), cancel.clone());
     }
 
@@ -377,21 +385,21 @@ pub async fn chat(
         };
 
         let mut stream = match chat
-            .chat(
+            .chat_with_edit(
                 session_id,
                 input,
                 attachments,
                 model,
                 options,
                 cancel.clone(),
+                params.edit,
             )
             .await
         {
             Ok(s) => s,
             Err(e) => {
+                cancel_map.lock().await.remove(&session_key);
                 let _ = app_clone.emit("chat-event", GuiEvent::error(&wire_msg_id, e.to_string()));
-                let mut map = cancel_map.lock().await;
-                map.remove(&session_key);
                 return;
             }
         };
@@ -400,14 +408,18 @@ pub async fn chat(
         // 预创建的 id（前端 store 按它定位流式消息）。
         while let Some(event) = stream.next().await {
             let (gui, is_terminal) = chat_event_to_gui(event, &wire_msg_id);
-            let _ = app_clone.emit("chat-event", gui);
             if is_terminal {
+                cancel_map.lock().await.remove(&session_key);
+                let _ = app_clone.emit("chat-event", gui);
+                return;
+            }
+            if app_clone.emit("chat-event", gui).is_err() {
                 break;
             }
         }
 
-        let mut map = cancel_map.lock().await;
-        map.remove(&session_key);
+        cancel.cancel();
+        cancel_map.lock().await.remove(&session_key);
     });
 
     Ok(())
@@ -415,8 +427,8 @@ pub async fn chat(
 
 #[tauri::command]
 pub async fn cancel_chat(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let mut map = state.cancel_map.lock().await;
-    if let Some(token) = map.remove(&session_id) {
+    let map = state.cancel_map.lock().await;
+    if let Some(token) = map.get(&session_id) {
         token.cancel();
     }
     Ok(())
@@ -486,7 +498,8 @@ pub async fn rename_session(
 pub async fn set_message_feedback(
     state: State<'_, AppState>,
     session_id: String,
-    idx: usize,
+    message_id: String,
+    revision: String,
     feedback: Option<common::Feedback>,
 ) -> Result<(), String> {
     let id = session_id
@@ -494,7 +507,7 @@ pub async fn set_message_feedback(
         .map_err(|e| format!("invalid id: {}", e))?;
     state
         .runtime
-        .set_message_feedback(id, idx, feedback)
+        .feedback_by_id(id, &message_id, &revision, feedback)
         .await
         .map_err(|e| e.to_string())
 }
@@ -574,9 +587,9 @@ fn messages_to_gui(session: &runtime::session::Session) -> Vec<GuiMessage> {
         .messages()
         .iter()
         .filter(|m| matches!(m.role, Role::User | Role::Assistant | Role::Tool))
-        .enumerate()
-        .map(|(i, m)| GuiMessage {
-            id: format!("m-{i}"),
+        .map(|m| GuiMessage {
+            revision: session.updated_at().to_rfc3339(),
+            id: m.id.expect("stored messages have IDs").to_string(),
             role: match m.role {
                 Role::User => "user",
                 Role::Assistant => "assistant",
@@ -586,7 +599,16 @@ fn messages_to_gui(session: &runtime::session::Session) -> Vec<GuiMessage> {
             .to_string(),
             content: m.text(),
             reasoning: m.reasoning().map(str::to_string),
-            status: "done".into(),
+            status: match &m.interruption {
+                Some(common::Interruption::Cancelled) => "cancelled",
+                Some(common::Interruption::Failed(_)) => "error",
+                None => "done",
+            }
+            .into(),
+            error: match &m.interruption {
+                Some(common::Interruption::Failed(error)) => Some(error.clone()),
+                _ => None,
+            },
             // Persisted `created_at` is Unix seconds; the frontend contract
             // (formatMessageTime / Date) is epoch milliseconds.
             created_at: m.created_at.map(|s| s * 1000),
@@ -671,6 +693,7 @@ fn ext_for_mime(mime: &str) -> &str {
 
 fn to_summary(session: &runtime::session::Session) -> SessionSummary {
     SessionSummary {
+        model: session.model().cloned(),
         id: session.id().to_string(),
         title: session.title().unwrap_or("Untitled").to_string(),
         created_at: session.created_at().to_rfc3339(),

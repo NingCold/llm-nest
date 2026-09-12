@@ -33,14 +33,19 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
     }
   }
 
-  /** 乐观更新本地反馈并持久化到后端（失败静默，刷新后以服务端为准） */
+  /** 按消息 ID 和版本保存反馈；失败回滚，成功同步新版本 */
   const toggleFeedback = (fb: Feedback) => {
+    if (!message.revision) return
     const next = message.feedback === fb ? null : fb
     setFeedback(sessionId, message.id, next)
     void getApi()
-      .then((a) => a.setMessageFeedback(sessionId, message.id, next))
+      .then(async (a) => {
+        await a.setMessageFeedback(sessionId, message.id, next, message.revision!)
+        const stored = await a.getMessages(sessionId)
+        if (!useChatStore.getState().isStreaming) useChatStore.getState().hydrateSession(sessionId, stored)
+      })
       .catch(() => {
-        /* 持久化失败不打断交互 */
+        setFeedback(sessionId, message.id, message.feedback ?? null)
       })
   }
 

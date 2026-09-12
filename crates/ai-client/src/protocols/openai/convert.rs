@@ -8,12 +8,13 @@ use common::{ContentPart, Message, Role};
 
 pub fn to_real_request(req: &ChatRequest) -> Request {
     let mut request = Request {
-        model: req.selection.model.clone(),
+        model: req.wire_model().to_string(),
         messages: req.messages.iter().map(wire_message).collect(),
         temperature: req.options.temperature,
         max_tokens: req.options.max_tokens,
         top_p: req.options.top_p,
         stream: req.options.stream,
+        stream_options: None,
         reasoning_effort: None,
         thinking: None,
         tools: req

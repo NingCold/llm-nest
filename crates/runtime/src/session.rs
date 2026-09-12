@@ -6,6 +6,7 @@ use common::{ContentPart, Message, Role, SessionId};
 
 #[derive(Debug, Clone)]
 pub struct Session {
+    pub run: Option<common::RunCheckpoint>,
     id: SessionId,
     title: Option<String>,
     messages: Vec<Message>,
@@ -21,6 +22,7 @@ impl Session {
     pub fn new(title: Option<String>) -> Self {
         Self {
             id: SessionId::new(),
+            run: None,
             title,
             messages: Vec::new(),
             metadata: HashMap::new(),
@@ -130,6 +132,10 @@ impl Session {
         self.created_at
     }
 
+    pub fn touch(&mut self) {
+        self.updated_at = Utc::now();
+    }
+
     pub fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
@@ -166,6 +172,7 @@ impl Session {
     pub fn to_record(&self) -> storage::SessionRecord {
         storage::SessionRecord {
             version: storage::SessionRecord::VERSION,
+            run: self.run.clone(),
             id: self.id,
             title: self.title.clone(),
             messages: self.messages.clone(),
@@ -180,6 +187,7 @@ impl Session {
     pub fn from_record(record: storage::SessionRecord) -> Self {
         Self {
             id: record.id,
+            run: record.run,
             title: record.title,
             messages: record.messages,
             metadata: record.metadata,

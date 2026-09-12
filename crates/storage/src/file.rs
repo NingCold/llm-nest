@@ -14,6 +14,7 @@ use crate::store::SessionStore;
 /// ignored by `load_sessions` (its extension is `.tmp`).
 pub struct FileSessionStore {
     dir: PathBuf,
+    _lock: fs::File,
 }
 
 impl FileSessionStore {
@@ -21,7 +22,19 @@ impl FileSessionStore {
     pub fn new(dir: impl Into<PathBuf>) -> Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
-        Ok(Self { dir })
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join(".llmn.lock"))?;
+        lock.try_lock().map_err(|error| {
+            std::io::Error::other(format!(
+                "data directory is already in use ({}): {error}",
+                dir.display()
+            ))
+        })?;
+        Ok(Self { dir, _lock: lock })
     }
 
     pub fn dir(&self) -> &Path {
@@ -38,7 +51,11 @@ impl SessionStore for FileSessionStore {
         let path = self.path_for(&record.id);
         let json = serde_json::to_string_pretty(record)?;
         let tmp = self.dir.join(format!(".{}.tmp", record.id));
-        fs::write(&tmp, json)?;
+        use std::io::Write;
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&tmp, &path)?;
         Ok(())
     }
@@ -55,6 +72,25 @@ impl SessionStore for FileSessionStore {
                         path: path.clone(),
                         source,
                     })?;
+                let mut record = record;
+                let mut migrated = false;
+                let mut ids = std::collections::HashSet::new();
+                for message in &mut record.messages {
+                    if message.id.is_none() {
+                        message.id = Some(common::MessageId::new());
+                        migrated = true;
+                    }
+                    if !ids.insert(message.id) {
+                        return Err(std::io::Error::other(format!(
+                            "duplicate message ID in {}",
+                            path.display()
+                        ))
+                        .into());
+                    }
+                }
+                if migrated {
+                    self.save_session(&record)?;
+                }
                 records.push(record);
             }
         }
@@ -90,6 +126,7 @@ mod tests {
     fn record(id: SessionId, title: Option<&str>, messages: Vec<Message>) -> SessionRecord {
         SessionRecord {
             version: SessionRecord::VERSION,
+            run: None,
             id,
             title: title.map(String::from),
             messages,
@@ -206,5 +243,67 @@ mod tests {
         fs::write(dir.join(".stale.tmp"), "tmp").unwrap();
         assert!(store.load_sessions().unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn lock_child() {
+        let Some(dir) = std::env::var_os("LLMN_LOCK_CHILD") else {
+            return;
+        };
+        let store = FileSessionStore::new(PathBuf::from(dir)).unwrap();
+        fs::write(store.dir().join("ready"), b"ready").unwrap();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+    #[test]
+    fn cross_process_lock_is_released_after_kill() {
+        let dir = std::env::temp_dir().join(format!("llmn-lock-{}", SessionId::new()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "file::tests::lock_child"])
+            .env("LLMN_LOCK_CHILD", &dir)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !dir.join("ready").exists() {
+            if started.elapsed().as_secs() > 5 {
+                let _ = child.kill();
+                panic!("lock fixture did not start");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(FileSessionStore::new(&dir).is_err());
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let reopened = FileSessionStore::new(&dir).unwrap();
+        drop(reopened);
+        fs::remove_file(dir.join("ready")).unwrap();
+        fs::remove_file(dir.join(".llmn.lock")).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    fn legacy_message_ids_are_written_once() {
+        let dir = std::env::temp_dir().join(format!("llmn-ids-{}", SessionId::new()));
+        let store = FileSessionStore::new(&dir).unwrap();
+        let id = SessionId::new();
+        let mut legacy = Message::user("old");
+        legacy.id = None;
+        store.save_session(&record(id, None, vec![legacy])).unwrap();
+        let first = store.load_sessions().unwrap()[0].messages[0].id.unwrap();
+        assert_eq!(
+            store.load_sessions().unwrap()[0].messages[0].id,
+            Some(first)
+        );
+        drop(store);
+        let store = FileSessionStore::new(&dir).unwrap();
+        assert_eq!(
+            store.load_sessions().unwrap()[0].messages[0].id,
+            Some(first)
+        );
+        drop(store);
+        fs::remove_file(dir.join(format!("{id}.json"))).unwrap();
+        fs::remove_file(dir.join(".llmn.lock")).unwrap();
+        fs::remove_dir(dir).unwrap();
     }
 }

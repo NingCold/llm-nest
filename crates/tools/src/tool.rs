@@ -24,14 +24,12 @@ pub trait Tool: Send + Sync {
         }
     }
 
-    /// Execute the tool with validated JSON arguments. Defaults to the
-    /// synchronous [`Tool::run_sync`]; override for async tools (e.g.
-    /// network calls).
-    fn run<'a>(&'a self, args: Value) -> BoxFuture<'a, Result<Value, ToolError>> {
-        Box::pin(async move { self.run_sync(args) })
-    }
+    /// Execute without blocking the runtime. Implementations must yield and be
+    /// safe to drop on timeout/cancellation. Side effects are not rolled back.
+    /// Long-running blocking work belongs in a separately managed process.
+    fn run<'a>(&'a self, args: Value) -> BoxFuture<'a, Result<Value, ToolError>>;
 
-    /// Synchronous fallback used by the default `run`.
+    /// Helper for small bounded computations; never invoked implicitly.
     fn run_sync(&self, _args: Value) -> Result<Value, ToolError> {
         Err(ToolError::NotImplemented(self.name().to_string()))
     }

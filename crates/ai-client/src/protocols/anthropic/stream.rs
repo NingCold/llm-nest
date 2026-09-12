@@ -35,6 +35,7 @@ pub struct AnthropicStream {
     /// Flushed tool calls waiting to be yielded.
     queued: VecDeque<ChatChunk>,
     finished: bool,
+    usage: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AnthropicStream {
@@ -53,6 +54,7 @@ impl AnthropicStream {
             pending: Vec::new(),
             queued: VecDeque::new(),
             finished: false,
+            usage: Default::default(),
         }
     }
 
@@ -78,6 +80,22 @@ impl Stream for AnthropicStream {
         loop {
             match self.inner.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(payload))) => {
+                    // Input/cache counters arrive in message_start; message_delta
+                    // updates only fields present. Wait for message_stop to finish.
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) {
+                        let kind = value["type"].as_str().unwrap_or("");
+                        let usage = if kind == "message_start" {
+                            &value["message"]["usage"]
+                        } else {
+                            &value["usage"]
+                        };
+                        if let Some(fields) = usage.as_object() {
+                            self.usage.extend(fields.clone());
+                        }
+                        if kind == "message_delta" {
+                            continue;
+                        }
+                    }
                     let parsed = match convert::parse_event(&payload) {
                         Ok(p) => p,
                         Err(err) => return Poll::Ready(Some(Err(err))),
@@ -117,6 +135,21 @@ impl Stream for AnthropicStream {
                             continue;
                         }
                         Some(StreamEvent::Done { usage }) => {
+                            let usage = if self.usage.is_empty() {
+                                usage
+                            } else {
+                                match serde_json::from_value::<convert::ResponseUsage>(
+                                    serde_json::Value::Object(self.usage.clone()),
+                                ) {
+                                    Ok(value) => Some(value.into()),
+                                    Err(error) => {
+                                        self.finished = true;
+                                        return Poll::Ready(Some(Err(
+                                            crate::error::AiError::StreamError(error.to_string()),
+                                        )));
+                                    }
+                                }
+                            };
                             self.finished = true;
                             // Flush any tool calls that ended without a
                             // content_block_stop, then the terminal chunk.
@@ -172,6 +205,7 @@ mod tests {
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"6,\"b\":4}"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
             r#"{"type":"message_delta","usage":{"input_tokens":10,"output_tokens":3}}"#,
+            r#"{"type":"message_stop"}"#,
         ]);
         let chunks: Vec<ChatChunk> = stream.map(|r| r.unwrap()).collect().await;
         assert_eq!(chunks.len(), 2);
@@ -223,9 +257,21 @@ mod tests {
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_3","name":"add","input":{}}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}"#,
             r#"{"type":"message_delta","usage":{"input_tokens":4,"output_tokens":1}}"#,
+            r#"{"type":"message_stop"}"#,
         ]);
         let chunks: Vec<ChatChunk> = stream.map(|r| r.unwrap()).collect().await;
         assert_eq!(chunks.len(), 2);
         assert!(matches!(&chunks[0], ChatChunk::ToolCall { name, .. } if name == "add"));
+    }
+    #[tokio::test]
+    async fn merges_start_and_final_usage() {
+        let chunks: Vec<_> = stream_from(vec![
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":20,"output_tokens":0,"cache_read_input_tokens":80,"cache_creation_input_tokens":10}}}"#,
+            r#"{"type":"message_delta","usage":{"output_tokens":5}}"#,
+            r#"{"type":"message_stop"}"#,
+        ]).collect().await;
+        assert!(
+            matches!(&chunks[0], Ok(ChatChunk::Done {usage: Some(u)}) if u.prompt_tokens == 110 && u.cached_tokens == 80 && u.total_tokens == 115)
+        );
     }
 }

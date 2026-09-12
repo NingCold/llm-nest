@@ -5120,6 +5120,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

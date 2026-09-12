@@ -11,15 +11,15 @@ let uid = 0
    保证每次渲染前主题生效、且不与在飞渲染冲突。 */
 let renderChain: Promise<unknown> = Promise.resolve()
 
-function renderMermaid(code: string, theme: string, loose = false): Promise<string> {
+function renderMermaid(code: string, theme: string): Promise<string> {
   const id = `mermaid-${Date.now()}-${uid++}`
   const run = renderChain.then(() => {
     mermaid.initialize({
       startOnLoad: false,
       theme: theme === "dark" ? "dark" : "default",
       // 流式输入过程中代码不完整时 mermaid 可能 resolve 一个错误 SVG；
-      // 严格模式对 <br/> 等 HTML 也较敏感，宽松模式作为重试兜底
-      securityLevel: loose ? "loose" : "strict",
+      // 模型输出始终使用严格模式，错误时展示源码
+      securityLevel: "strict",
       fontFamily:
         'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     })
@@ -67,14 +67,8 @@ export function MermaidBlock({ code }: { code: string }) {
     renderMermaid(code, theme)
       .then((rendered) => {
         if (isErrorSvg(rendered)) {
-          // 严格模式渲染失败 → 宽松模式重试一次（放行 <br/> 等 HTML）
-          return renderMermaid(code, theme, true).then((retried) => {
-            if (isErrorSvg(retried)) {
-              commit(null, "Syntax error in text")
-            } else {
-              commit(retried, null)
-            }
-          })
+          commit(null, "Syntax error in text")
+          return
         }
         commit(rendered, null)
       })

@@ -48,6 +48,7 @@ export interface ChatApi {
     sessionId: string,
     messageId: string,
     feedback: MessageFeedback,
+    revision: string,
   ): Promise<void>
   /** 内置目录的供应商模板（DSH 风格"已知路由"） */
   listProviderTemplates(): Promise<ProviderTemplate[]>
@@ -78,6 +79,7 @@ export interface ProviderDraft {
 }
 
 export interface StoredMessage {
+  revision?: string
   id: string
   role: "user" | "assistant" | "tool"
   content: string
@@ -138,6 +140,7 @@ export interface GuiAttachment {
 }
 
 export interface SessionSummary {
+  model?: ModelSelection | null
   id: string
   title: string
   createdAt: string
@@ -176,6 +179,7 @@ export type GuiEvent =
     }
 
 export interface ChatParams {
+  edit?: { userIndex: number; userId: string; expectedMessageCount: number; expectedRevision: string }
   sessionId: string
   /** 前端预创建的 assistant 消息 id；后端事件统一用它回推 */
   messageId?: string

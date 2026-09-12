@@ -6,8 +6,8 @@ let api: ChatApi | null = null
 /**
  * 适配器选择：
  * 1. Tauri 壳（isTauri() 为真）→ tauriApi（真实 invoke）
- * 2. 浏览器且真实 HTTP 后端可用（web-server）→ httpApi（真实 ChatFeature）
- * 3. 兜底 → webApi（localStorage 演示适配器，纯前端演示）
+ * 2. 浏览器显式指定 ?demo=1 → localStorage 演示
+ * 3. 普通浏览器 → HTTP；连接失败不会生成演示回答
  */
 export async function getApi(): Promise<ChatApi> {
   if (api) return api
@@ -25,17 +25,14 @@ export async function getApi(): Promise<ChatApi> {
     /* 非 Tauri 环境（web 包未装 @tauri-apps/api 时） */
   }
 
-  // 2) 浏览器：优先真实 HTTP 后端
-  const { httpApi, backendAvailable } = await import("./http")
-  if (await backendAvailable()) {
+  if (new URLSearchParams(location.search).get("demo") === "1") {
+    const { webApi } = await import("./web")
+    api = webApi
+    useUiStore.getState().setApiMode("demo")
+  } else {
+    const { httpApi } = await import("./http")
     api = httpApi
     useUiStore.getState().setApiMode("http")
-    return api
   }
-
-  // 3) 兜底：演示适配器
-  const { webApi } = await import("./web")
-  api = webApi
-  useUiStore.getState().setApiMode("demo")
   return api
 }

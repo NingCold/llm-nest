@@ -45,19 +45,27 @@ fn find_config_path() -> Result<PathBuf, String> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    runtime::worker_entry();
     let config_path = find_config_path()?;
     let runtime = Runtime::from_config_persistent(&config_path, storage::default_data_dir())
         .map_err(|e| format!("failed to load config: {e}"))?;
     let runtime = Arc::new(runtime);
 
     let chat = Arc::new(chat::ChatFeature::new());
-    let chat_clone = chat.clone();
-    let rt = runtime.clone();
+    runtime.register_feature(chat.clone()).await;
+    runtime.initialize_features().await?;
+    let (watch_tx, mut watch_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _watcher = runtime::config::watcher::spawn_config_watcher(
+        runtime.clone(),
+        config_path.clone(),
+        watch_tx,
+    )?;
     tokio::spawn(async move {
-        rt.register_feature(chat_clone).await;
-        rt.initialize_features()
-            .await
-            .map_err(|e| eprintln!("feature init failed: {e}"))
+        while let Some(event) = watch_rx.recv().await {
+            if let runtime::config::watcher::ConfigWatchEvent::Failed(error) = event {
+                eprintln!("config reload: {error}");
+            }
+        }
     });
 
     let state = Arc::new(web_server::AppState {

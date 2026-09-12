@@ -9,3 +9,5 @@ pub mod plugin_manager;
 pub mod runtime;
 pub mod session;
 pub mod session_manager;
+
+pub use tools::process::worker_entry;

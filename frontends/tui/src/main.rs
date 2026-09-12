@@ -13,6 +13,7 @@ use chat::ChatFeature;
 use runtime::runtime::Runtime;
 
 fn main() -> Result<()> {
+    runtime::worker_entry();
     let _guard = logging::init_logging();
     let runtime = Runtime::from_config_persistent("config/llmn.toml", storage::default_data_dir())?;
     let rt = tokio::runtime::Runtime::new()?;

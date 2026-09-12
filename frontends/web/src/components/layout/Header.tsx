@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Brain,
   Globe,
@@ -15,11 +15,9 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import { useConfigStore } from "@/store/config"
 import { useSessionStore } from "@/store/session"
 import { useUiStore, clampEffort } from "@/store/ui"
-import { cn } from "@/lib/utils"
 
 const EFFORT_LABEL: Record<string, string> = {
   off: "关闭",
@@ -34,8 +32,6 @@ export function Header() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar)
   const reasoningEffort = useUiStore((s) => s.reasoningEffort)
   const setReasoningEffort = useUiStore((s) => s.setReasoningEffort)
-  const webSearchEnabled = useUiStore((s) => s.webSearchEnabled)
-  const toggleWebSearch = useUiStore((s) => s.toggleWebSearch)
   const theme = useUiStore((s) => s.theme)
   const toggleTheme = useUiStore((s) => s.toggleTheme)
 
@@ -171,13 +167,9 @@ export function Header() {
           </SelectContent>
         </Select>
 
-        <ToggleItem
-          icon={<Globe className="h-4 w-4" />}
-          label="联网搜索"
-          checked={webSearchEnabled}
-          onChange={toggleWebSearch}
-          className="hidden lg:flex"
-        />
+        <button disabled title="联网搜索尚未接入" className="hidden lg:flex items-center gap-2 text-muted-foreground opacity-50">
+          <Globe className="h-4 w-4" />联网搜索（未接入）
+        </button>
 
         <div className="mx-1.5 hidden h-5 w-px bg-border md:block" />
 
@@ -191,41 +183,5 @@ export function Header() {
         </button>
       </div>
     </header>
-  )
-}
-
-function ToggleItem({
-  icon,
-  label,
-  checked,
-  onChange,
-  className,
-}: {
-  icon: ReactNode
-  label: string
-  checked: boolean
-  onChange: () => void
-  className?: string
-}) {
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onChange}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          onChange()
-        }
-      }}
-      className={cn(
-        "flex h-9 cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-        className,
-      )}
-    >
-      {icon}
-      <span>{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} size="sm" />
-    </div>
   )
 }

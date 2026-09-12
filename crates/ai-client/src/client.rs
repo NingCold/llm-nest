@@ -251,23 +251,51 @@ impl AiClient {
             })
     }
 
-    pub async fn complete(&self, req: ChatRequest) -> Result<ProviderResponse> {
-        let resolved = self.resolve(&req.selection).await?;
+    /// Copy all routing state under the same read transaction. A run can keep
+    /// this client across tool iterations even when the live config changes.
+    pub async fn snapshot(&self) -> Self {
+        let catalog = self.catalog.read().await;
+        let routes = self.routes.read().await;
+        let configs = self.configs.read().await;
+        Self {
+            catalog: Arc::new(RwLock::new(catalog.clone())),
+            routes: Arc::new(RwLock::new(routes.clone())),
+            configs: Arc::new(RwLock::new(configs.clone())),
+            legacy: Arc::new(RwLock::new(self.legacy.read().await.clone())),
+        }
+    }
+
+    /// Install a fully validated candidate without rebuilding it after saving.
+    pub async fn install(&self, candidate: Self) {
+        let mut catalog = self.catalog.write().await;
+        let mut routes = self.routes.write().await;
+        let mut configs = self.configs.write().await;
+        *catalog = candidate.catalog.read().await.clone();
+        *routes = candidate.routes.read().await.clone();
+        *configs = candidate.configs.read().await.clone();
+    }
+
+    async fn prepare(&self, mut req: ChatRequest) -> Result<(Arc<dyn AiProvider>, ChatRequest)> {
+        let catalog = self.catalog.read().await;
+        let resolved = catalog
+            .as_ref()
+            .map(|r| r.resolve(&req.selection))
+            .transpose()?;
         let provider = match &resolved {
             Some(r) => self.route_resolved(r).await?,
             None => self.route(&req.selection).await?,
         };
-        let req = ChatRequest { resolved, ..req };
+        req.resolved = resolved;
+        Ok((provider, req))
+    }
+
+    pub async fn complete(&self, req: ChatRequest) -> Result<ProviderResponse> {
+        let (provider, req) = self.prepare(req).await?;
         provider.complete(req).await
     }
 
     pub async fn complete_stream(&self, req: ChatRequest) -> Result<ChatStream> {
-        let resolved = self.resolve(&req.selection).await?;
-        let provider = match &resolved {
-            Some(r) => self.route_resolved(r).await?,
-            None => self.route(&req.selection).await?,
-        };
-        let req = ChatRequest { resolved, ..req };
+        let (provider, req) = self.prepare(req).await?;
         provider.complete_stream(req).await
     }
 }

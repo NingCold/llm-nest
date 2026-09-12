@@ -434,6 +434,14 @@ export const webApi: ChatApi = {
 
     const db = loadDB()
     const messages = db.messages[sessionId] ?? []
+    if (params.edit) {
+      const edit = params.edit
+      const revision = db.sessions.find((s) => s.id === sessionId)?.updatedAt ?? ""
+      if (messages.length !== edit.expectedMessageCount || revision !== edit.expectedRevision || (messages[edit.userIndex]?.role !== "user" || messages[edit.userIndex]?.id !== edit.userId)) {
+        throw new Error("history changed; reload before editing")
+      }
+      messages.splice(edit.userIndex)
+    }
     // 前端预创建了 assistant 消息（store 里已有该 id），复用它的 id 保证
     // 事件能落到对应消息上；未传时自己生成（向后兼容）。
     const msgId =
@@ -555,7 +563,8 @@ export const webApi: ChatApi = {
 
   async getMessages(sessionId: string) {
     const db = loadDB()
-    return db.messages[sessionId] ?? []
+    const revision = db.sessions.find((s) => s.id === sessionId)?.updatedAt ?? ""
+    return (db.messages[sessionId] ?? []).map((m) => ({ ...m, revision }))
   },
 
   async listSessions(): Promise<SessionSummary[]> {
@@ -604,8 +613,10 @@ export const webApi: ChatApi = {
     sessionId: string,
     messageId: string,
     feedback: "up" | "down" | null,
+    revision: string,
   ): Promise<void> {
     const db = loadDB()
+    if (db.sessions.find((s) => s.id === sessionId)?.updatedAt !== revision) throw new Error("history changed; reload before feedback")
     const messages = db.messages[sessionId] ?? []
     const msg = messages.find((m) => m.id === messageId)
     if (msg) {

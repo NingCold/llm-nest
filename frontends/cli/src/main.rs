@@ -21,6 +21,7 @@ const CONFIG_PATH: &str = "config/llmn.toml";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    runtime::worker_entry();
     let runtime = Arc::new(Runtime::from_config_persistent(
         CONFIG_PATH,
         storage::default_data_dir(),
@@ -87,26 +88,26 @@ async fn main() -> Result<()> {
                     println!("已创建新会话");
                 }
                 Command::Switch { target } => {
-                    if let Ok(id) = target.parse::<common::SessionId>() {
-                        if runtime.get_session(&id).await.is_some() {
-                            session_id = id;
-                            // 会话记住的模型（无则全局默认）
-                            current = runtime.session_model(&session_id).await;
-                            println!("已切换到: {}", target);
-                            continue;
-                        }
+                    if let Ok(id) = target.parse::<common::SessionId>()
+                        && runtime.get_session(&id).await.is_some()
+                    {
+                        session_id = id;
+                        // 会话记住的模型（无则全局默认）
+                        current = runtime.session_model(&session_id).await;
+                        println!("已切换到: {}", target);
+                        continue;
                     }
                     let ids = runtime.list_sessions().await;
                     let mut found = false;
                     for id in &ids {
-                        if let Some(s) = runtime.get_session(id).await {
-                            if s.title() == Some(target.as_str()) {
-                                session_id = *id;
-                                current = runtime.session_model(&session_id).await;
-                                println!("已切换到: {}", target);
-                                found = true;
-                                break;
-                            }
+                        if let Some(s) = runtime.get_session(id).await
+                            && s.title() == Some(target.as_str())
+                        {
+                            session_id = *id;
+                            current = runtime.session_model(&session_id).await;
+                            println!("已切换到: {}", target);
+                            found = true;
+                            break;
                         }
                     }
                     if !found {

@@ -3,6 +3,16 @@ import { create } from "zustand"
 export type Theme = "dark" | "light"
 export type ApiMode = "tauri" | "http" | "demo" | null
 export type ReasoningEffort = "off" | "low" | "medium" | "high" | "max"
+export type SettingsSection = "models" | "generation" | "appearance" | "about"
+
+function routeFromHash() {
+  const [, page, section] = location.hash.replace(/^#/, "").split("/")
+  return {
+    page: page === "settings" ? "settings" as const : "chat" as const,
+    settingsSection: (["models", "generation", "appearance", "about"].includes(section)
+      ? section : "models") as SettingsSection,
+  }
+}
 
 /** 把选中的思考强度钳制到模型实际支持的级别内（模型切换后 effort 可能失效） */
 export function clampEffort(effort: string, levels?: string[]): string {
@@ -27,6 +37,11 @@ function initialTheme(): Theme {
 }
 
 interface UiStore {
+  page: "chat" | "settings"
+  settingsSection: SettingsSection
+  showSettings: (section?: SettingsSection) => void
+  showChat: () => void
+  syncRoute: () => void
   theme: Theme
   sidebarCollapsed: boolean
   /** 当前选中的思考强度（off/low/medium/high/max） */
@@ -46,6 +61,20 @@ interface UiStore {
 }
 
 export const useUiStore = create<UiStore>((set, get) => ({
+  ...routeFromHash(),
+  showSettings: (section = get().settingsSection) => {
+    set({ page: "settings", settingsSection: section })
+    location.hash = `/settings/${section}`
+  },
+  showChat: () => {
+    set({ page: "chat" })
+    location.hash = "/chat"
+  },
+  syncRoute: () => {
+    const route = routeFromHash()
+    // Going back to chat should remember the last settings category.
+    set(route.page === "settings" ? route : { page: "chat" })
+  },
   theme: initialTheme(),
   sidebarCollapsed:
     new URLSearchParams(location.search).get("sidebar") === "collapsed",

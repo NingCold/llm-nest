@@ -472,3 +472,11 @@ runner::run(app, chat).await?;
 - Release 默认从 `<storage::default_data_dir()>/llmn.toml` 读取配置；缺失时只创建一次初始 `[providers]` 文件。显式 `LLMN_CONFIG` 不存在仍报错；debug 构建可优先使用项目配置。
 - 空 providers 是有效的首次启动/删除最后一个供应商状态；模型解析仍拒绝无模型的聊天请求。不要用示例密钥或开发配置填充安装包。
 - 桌面实机验收记录与未覆盖范围见 `docs/tauri-acceptance-2026-09-13.md`。
+
+## 桌面图标、窗口与独立设置页（2026-09-13）
+
+- Web 和 Tauri 共用 `frontends/web`；`lib/desktop.ts` 在初始化前识别桌面壳。Tauri 使用无原生标题栏窗口，`WindowControls` 独立于后端启动状态。窗口 IPC 权限在 capabilities/default.json。
+- 设置路由为 `#/settings/models|generation|appearance|about`，聊天为 `#/chat`。切换页面保留 ChatView/InputBar 和设置表单，Header 需卸载以移除菜单 portal。
+- `build.rs` 必须跟踪 `icons` 目录，避免增量构建只更新窗口图标却保留 EXE 的旧 Windows 资源。安装器/卸载器使用同一 ICO。
+- 发布后运行 `scripts/verify-windows-icons.ps1` 核对实际 EXE 和安装器资源；可用 `-ArtifactPath` 检查已安装 EXE、卸载器、MSI 解包 EXE。界面截图、文件存在或 NSIS 返回 0 均不足以证明安装图标或覆盖安装正确。
+- 本轮验收与边界见 `docs/desktop-settings-acceptance-2026-09-13.md`；干净系统、缺 WebView2、MSI 系统级安装仍未验收。

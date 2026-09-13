@@ -5,6 +5,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings,
   Trash2,
   X,
 } from "lucide-react"
@@ -12,7 +13,7 @@ import { useSessionStore } from "@/store/session"
 import { useUiStore } from "@/store/ui"
 import { bucketSessions, formatRelativeTime } from "@/lib/format"
 import { BrandMark } from "@/components/BrandMark"
-import { SettingsDialog } from "@/components/settings/SettingsDialog"
+import { IS_DESKTOP } from "@/lib/desktop"
 import { cn } from "@/lib/utils"
 import type { SessionSummary } from "@/api/types"
 
@@ -147,6 +148,7 @@ export function Sidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useUiStore((s) => s.toggleSidebar)
   const apiMode = useUiStore((s) => s.apiMode)
+  const showSettings = useUiStore((s) => s.showSettings)
   const searchQuery = useUiStore((s) => s.searchQuery)
   const setSearchQuery = useUiStore((s) => s.setSearchQuery)
 
@@ -179,9 +181,9 @@ export function Sidebar() {
         )}
       >
         {/* Brand */}
-        <div className="flex items-center gap-2.5 px-4 pb-1 pt-4">
-          <BrandMark />
-          <span className="text-[15px] font-semibold tracking-tight">LLM Nest</span>
+        <div data-tauri-drag-region={IS_DESKTOP || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-4">
+          <BrandMark className="pointer-events-none" />
+          <span className="pointer-events-none text-[15px] font-semibold tracking-tight">LLM Nest</span>
         </div>
 
         {/* New chat */}
@@ -259,7 +261,9 @@ export function Sidebar() {
                   : "本地演示模式 · 数据在浏览器"}
             </p>
           </div>
-          <SettingsDialog />
+          <button type="button" onClick={() => showSettings()} aria-label="设置" title="设置" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sidebar-foreground/70 transition-colors hover:bg-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Settings className="h-4.5 w-4.5" />
+          </button>
           <button
             type="button"
             onClick={toggleSidebar}

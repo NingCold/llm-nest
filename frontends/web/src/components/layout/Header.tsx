@@ -18,6 +18,8 @@ import {
 import { useConfigStore } from "@/store/config"
 import { useSessionStore } from "@/store/session"
 import { useUiStore, clampEffort } from "@/store/ui"
+import { IS_DESKTOP } from "@/lib/desktop"
+import { cn } from "@/lib/utils"
 
 const EFFORT_LABEL: Record<string, string> = {
   off: "关闭",
@@ -74,7 +76,7 @@ export function Header() {
   }
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-3 backdrop-blur-sm">
+    <header data-tauri-drag-region={IS_DESKTOP || undefined} className={cn("relative flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-3 backdrop-blur-sm", IS_DESKTOP && "pr-[140px]")}>
       {error && <p role="alert" className="absolute top-14 left-0 z-50 max-w-full border bg-background p-3 text-sm text-red-500">{error}<button className="ml-2 underline" onClick={() => setError(null)}>关闭</button></p>}
       {/* Left: collapse + title */}
       <button
@@ -98,7 +100,7 @@ export function Header() {
 
       <div className="mx-1 h-5 w-px shrink-0 bg-border" />
 
-      <div className="group relative flex min-w-0 flex-1 items-center">
+      <div data-tauri-drag-region={IS_DESKTOP || undefined} className="group relative flex min-w-0 flex-1 items-center">
         {editing ? (
           <input
             ref={inputRef}
@@ -144,7 +146,7 @@ export function Header() {
 
       {/* Right: model + toggles */}
       <div className="flex shrink-0 items-center gap-0.5 whitespace-nowrap">
-        <ModelPicker className="hidden sm:flex" />
+        <ModelPicker className={cn("hidden sm:flex", IS_DESKTOP && "max-w-[min(18vw,14rem)]")} />
 
         <div className="mx-1.5 hidden h-5 w-px bg-border sm:block" />
 
@@ -154,9 +156,9 @@ export function Header() {
           onValueChange={setReasoningEffort}
           disabled={!reasoningLevels || reasoningLevels.length === 0}
         >
-          <SelectTrigger className="hidden h-9 w-auto gap-2 border border-transparent bg-transparent px-2.5 text-sm text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 md:flex">
+          <SelectTrigger aria-label="思考强度" className={cn("hidden h-9 w-auto gap-2 border border-transparent bg-transparent px-2.5 text-sm text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 md:flex", IS_DESKTOP && "max-lg:gap-1 max-lg:px-1.5")}>
             <Brain className="h-4 w-4 shrink-0" />
-            <span className="hidden text-muted-foreground lg:inline">思考</span>
+            <span className="hidden text-muted-foreground xl:inline">思考</span>
             <span className="font-medium text-foreground">
               {EFFORT_LABEL[effectiveEffort] ?? effectiveEffort}
             </span>
@@ -170,7 +172,7 @@ export function Header() {
           </SelectContent>
         </Select>
 
-        <button disabled aria-label="联网搜索（未接入）" title="联网搜索尚未接入" className="hidden h-9 shrink-0 items-center gap-2 px-2 text-muted-foreground opacity-50 lg:flex">
+        <button disabled aria-label="联网搜索（未接入）" title="联网搜索尚未接入" className="hidden h-9 shrink-0 items-center gap-2 px-2 text-muted-foreground opacity-50 xl:flex">
           <Globe className="h-4 w-4 shrink-0" /><span className="hidden 2xl:inline">联网搜索（未接入）</span>
         </button>
 

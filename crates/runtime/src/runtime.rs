@@ -67,6 +67,42 @@ impl Runtime {
         self.llm.default_selection().await
     }
 
+    /// Settings are read from the shared config document; stale model selections
+    /// fall back to the current catalog after a provider is removed.
+    pub async fn gui_config(&self) -> Result<crate::config::GuiConfig> {
+        let _update = self.config_updates.lock().await;
+        let saved = match &self.config_path {
+            Some(path) => crate::config::gui::read_gui(&crate::config::gui::read_document(path)?)?,
+            None => None,
+        };
+        let default = self.default_model().await.unwrap_or(ModelSelection {
+            provider: String::new(),
+            model: String::new(),
+            reasoning_effort: None,
+        });
+        let mut config = saved.unwrap_or(crate::config::GuiConfig {
+            current_model: default.clone(),
+            temperature: 0.7,
+            max_tokens: None,
+        });
+        if self.resolve_model(&config.current_model).await.is_err() {
+            config.current_model = default;
+        }
+        Ok(config)
+    }
+
+    pub async fn set_gui_config(&self, config: &crate::config::GuiConfig) -> Result<()> {
+        let _update = self.config_updates.lock().await;
+        config.validate()?;
+        self.resolve_model(&config.current_model).await?;
+        let path = self.config_path.as_ref().ok_or_else(|| {
+            RuntimeError::ConfigError("当前 Runtime 未绑定配置文件，无法保存 GUI 设置".into())
+        })?;
+        let text =
+            crate::config::gui::render_gui(&crate::config::gui::read_document(path)?, config)?;
+        crate::config::persist::atomic_write(path, &text)
+    }
+
     /// Every effective model across providers, with capabilities and display
     /// names, in deterministic order.
     pub async fn list_models(&self) -> Vec<ModelInfo> {

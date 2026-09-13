@@ -1,34 +1,28 @@
-import { useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useConfigStore } from "@/store/config"
 import { useSessionStore } from "@/store/session"
 
+let startup: Promise<void> | null = null
+function initialize() {
+  if (!startup) startup = (async () => {
+    const init = await useConfigStore.getState().init()
+    const sessions = useSessionStore.getState()
+    sessions.setSessions(init.sessions)
+    if (init.sessions.length) sessions.setCurrentSession(init.sessions[0].id)
+  })().finally(() => { startup = null })
+  return startup
+}
 export function useInit() {
-  const initConfig = useConfigStore((s) => s.init)
-  const setSessions = useSessionStore((s) => s.setSessions)
-  const setCurrentSession = useSessionStore((s) => s.setCurrentSession)
-  const sessions = useSessionStore((s) => s.sessions)
-  const config = useConfigStore((s) => s.config)
-  const configLoading = useConfigStore((s) => s.loading)
-
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt(n => n + 1), [])
   useEffect(() => {
-    ;(async () => {
-      try {
-        await initConfig()
-        const { getApi } = await import("@/api")
-        const a = await getApi()
-        const list = await a.listSessions()
-        setSessions(list)
-        if (list.length > 0) {
-          setCurrentSession(list[0].id)
-        }
-      } catch (err) {
-        console.error("[useInit] error:", err)
-      }
-    })()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  return {
-    ready: !configLoading || config !== null,
-    hasSessions: sessions.length > 0,
-  }
+    let active = true
+    setReady(false); setError(null)
+    initialize().then(() => { if (active) setReady(true) })
+      .catch(err => { if (active) setError(String(err)) })
+    return () => { active = false }
+  }, [attempt])
+  return { ready, error, retry }
 }

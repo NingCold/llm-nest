@@ -43,6 +43,8 @@ export function Header() {
   const createSession = useSessionStore((s) => s.createSession)
 
   const current = sessions.find((s) => s.id === currentSessionId)
+  const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -66,12 +68,14 @@ export function Header() {
     setEditing(false)
     const next = draft.trim()
     if (next && currentSessionId && next !== current?.title) {
-      await renameSession(currentSessionId, next)
+      try { await renameSession(currentSessionId, next); setError(null) }
+      catch (e) { setError(`重命名失败：${String(e)}`); setEditing(true) }
     }
   }
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-3 backdrop-blur-sm">
+      {error && <p role="alert" className="absolute top-14 left-0 z-50 max-w-full border bg-background p-3 text-sm text-red-500">{error}<button className="ml-2 underline" onClick={() => setError(null)}>关闭</button></p>}
       {/* Left: collapse + title */}
       <button
         type="button"
@@ -84,7 +88,8 @@ export function Header() {
 
       <button
         type="button"
-        onClick={() => void createSession()}
+        disabled={creating}
+        onClick={async () => { setCreating(true); setError(null); try { await createSession() } catch (e) { setError(`创建失败：${String(e)}`) } finally { setCreating(false) } }}
         className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="新建对话"
       >

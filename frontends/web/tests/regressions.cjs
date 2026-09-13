@@ -123,7 +123,7 @@ function seed(withTool = false) {
   assert.equal(unlistened,2);
   const {httpApi} = load('frontends/web/src/api/http.ts');
   fetchMock = async (_, init) => {
-    assert.equal(init.headers['X-LLMN-Client'],'1');
+    assert.equal(new Headers(init.headers).get('X-LLMN-Client'),'1');
     return new Response('data: {"type":"delta","content":"partial"}\n\n', {status:200});
   };
   await assert.rejects(httpApi.chat({sessionId:'s',input:'q'},()=>{}), /完成事件/);
@@ -132,6 +132,42 @@ function seed(withTool = false) {
   fetchMock = async () => new Response(JSON.stringify([{id:'persisted-1',role:'assistant',content:'partial',status:'error',error:'lost'}]));
   const history = await httpApi.getMessages('s');
   assert.equal(history[0].status,'error'); assert.equal(history[0].error,'lost');
+  const configs = [];
+  let failSave = false;
+  modules['@/api'] = {getApi: async () => ({
+    init: async () => ({config:{currentModel:{provider:'test',model:'a'},temperature:0.7},providers:[{id:'test',models:[{id:'a'},{id:'b'},{id:'c'}]}],sessions:[],version:'test'}),
+    setConfig: async config => { if (failSave) throw new Error('disk failure'); configs.push(config); }
+  })};
+  const configStore = load('frontends/web/src/store/config.ts').useConfigStore;
+  await configStore.getState().init();
+  await Promise.all([configStore.getState().updateConfig({temperature:0.2}),configStore.getState().updateConfig({maxTokens:100})]);
+  assert.equal(configs[1].temperature,0.2); assert.equal(configs[1].maxTokens,100);
+  failSave = true;
+  assert.equal(await configStore.getState().updateConfig({temperature:0.9}),false);
+  assert.equal(configStore.getState().config.temperature,0.2);
+  assert.match(configStore.getState().saveError,/disk failure/);
+  failSave = false;
+  await configStore.getState().updateConfig({temperature:0.9});
+  assert.equal(configStore.getState().saveError,null);
+  const count = configs.length;
+  configStore.getState().restoreModel({provider:'test',model:'b'});
+  assert.equal(configs.length,count); // Session recall does not save defaults.
+  configStore.getState().restoreModel();
+  assert.equal(configStore.getState().config.currentModel.model,'a');
+  // A delayed default save must not switch the user back to the previous session.
+  let releaseSave;
+  modules['@/api'] = {getApi:async () => ({setConfig:() => new Promise(resolve => {releaseSave=resolve})})};
+  const saving = configStore.getState().updateConfig({currentModel:{provider:'test',model:'b'}});
+  while (!releaseSave) await new Promise(resolve => setTimeout(resolve,0));
+  configStore.getState().restoreModel({provider:'test',model:'c'});
+  releaseSave(); await saving;
+  assert.equal(configStore.getState().config.currentModel.model,'c');
+  assert.equal(configStore.getState().savedConfig.currentModel.model,'b');
+  configStore.getState().setProviders([]); configStore.getState().restoreModel();
+  assert.equal(configStore.getState().config.currentModel.provider,'');
+  fetchMock = async (url, init) => { assert.equal(url,'/api/config'); assert.equal(init.method,'PUT'); assert.equal(new Headers(init.headers).get('X-LLMN-Client'),'1'); return new Response(null,{status:204}); };
+  await httpApi.setConfig({currentModel:{provider:'test',model:'a'},temperature:0.7});
+  console.log('PASS: GUI save ordering, failed-save rollback, session recall, delayed save, HTTP config persistence');
   console.log('PASS: Tauri event filtering, camelCase arguments, listener cleanup, HTTP terminal/EOF handling');
   console.log('PASS: regenerate across tools, edit persistence contract, rejected edit restoration, duplicate send, cancel original session, cache ratio');
 })().catch(e=>{console.error(e);process.exitCode=1});

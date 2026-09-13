@@ -447,3 +447,20 @@ runner::run(app, chat).await?;
 - Windows worker 加入 Job Object：关闭 Job 杀进程、最多 1 个进程、256 MiB committed memory、10 秒用户态 CPU；30 秒墙钟超时仍在 Registry，输入输出各 64 KiB。Job 配置/挂载失败时不发送任务、不回退进程内执行。
 - 主机代码若确需信任进程内插件，必须显式使用 `Runtime::register_trusted_tool` / `ToolRegistry::register_trusted_in_process`，这会绕过进程隔离；模型不能修改注册表。不要把它用于不可信插件。
 - 标准库 File::try_lock 要求 Rust 1.89+；本机以 Rust 1.97 验证。
+
+
+## GUI 设置与流程验收（2026-09-13）
+
+- Runtime 共用 `config::GuiConfig`，`gui_config`/`set_gui_config` 读取、校验并原子写入配置文件 `[gui]`。字段为 `temperature`、可选 `maxTokens`、`[gui.currentModel]`；会话恢复不覆盖默认模型。
+- Web 新增 `PUT /api/config`，Tauri `set_config` 和供应商管理 IPC 已实现；Tauri 模型列表来自 Runtime 合并目录。Tauri 延迟初始化，配置/目录锁错误交给 GUI 展示与重试，支持 `LLMN_CONFIG`。
+- Web Headers 必须通过 Headers.set 统一，避免同名不同大小写导致客户端头变成 `1, 1`。
+- GUI 初始化/历史失败有重试入口；历史未加载成功或模型未配置时禁止发送；设置失败保留旧值并可重试。
+- `python scripts/acceptance.py` 是离线真实链路验收（先 build web-server），每次使用独立临时配置/存储和本地模拟 provider。`--serve --dist <目录>` 保留服务供浏览器验收，Fixture 目录内的 STOP 文件用于停止。
+- 本轮结果和未覆盖范围见 `docs/acceptance-2026-09-13.md`；不要把本地模拟、Tauri check 或编译通过说成真实厂商 API / 安装包验收通过。
+
+
+## ecnu-max 真实接口验收补充（2026-09-13）
+
+- OpenAI 兼容适配器同时接收 `reasoning_content` 和 `reasoning`（流式 delta 与非流式 message）。两字段同在时选非空 reasoning_content，否则回退 reasoning，避免重复显示与 serde duplicate field 错误。
+- `scripts/live_acceptance.py` 是显式调用真实 API 的验收脚本，不属于离线测试；读取所选配置的 chatecnu 段与密钥环境变量，只写独立临时配置/会话。不会把密钥写进配置或报告。
+- 真实 chatecnu/ecnu-max 已验收普通回答、思考、工具调用、取消后继续、重启历史以及 Web GUI。结果和边界见 `docs/live-acceptance-2026-09-13.md`。

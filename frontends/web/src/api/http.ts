@@ -23,7 +23,9 @@ import { toGuiTimings, toGuiUsage } from "./normalize"
 const BASE = "/api"
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers).entries()), "X-LLMN-Client": "1" } })
+  const headers = new Headers(init?.headers)
+  headers.set("X-LLMN-Client", "1")
+  const res = await fetch(`${BASE}${path}`, { ...init, headers })
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -66,7 +68,9 @@ async function streamChat(
 ): Promise<void> {
   const res = await fetch(`${BASE}${path}`, jsonInit("POST", params))
   if (!res.ok || !res.body) {
-    throw new Error(`chat failed: ${res.status} ${res.statusText}`)
+    let detail = res.statusText
+    try { detail = (await res.json()).error || detail } catch { /* keep status */ }
+    throw new Error(`发送失败：${res.status} ${detail}`)
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -165,8 +169,8 @@ export const httpApi: ChatApi = {
     )
   },
 
-  async setConfig(_config: GuiConfig): Promise<void> {
-    // 后端无独立配置写回；模型/温度随每次 chat 请求携带
+  async setConfig(config: GuiConfig): Promise<void> {
+    await req<void>("/config", jsonInit("PUT", config))
   },
 
   async setMessageFeedback(

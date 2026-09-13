@@ -1,35 +1,14 @@
-use std::path::PathBuf;
-
-use ai_client::ModelSelection;
+use ai_client::{ModelSelection, Protocol};
 use base64::Engine;
 use common::{ContentPart, MessageTimings, Role, SessionId, Usage};
 use events::ChatEvent;
 use futures_util::StreamExt;
+use runtime::config::persist::{ProviderDraft, ProviderModelDraft};
 use runtime::runtime::Runtime;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-fn find_config_path() -> Result<PathBuf, String> {
-    let candidates = [PathBuf::from("config/llmn.toml"), {
-        let mut p = std::env::current_exe().map_err(|e| e.to_string())?;
-        p.pop();
-        p.pop();
-        p.pop();
-        p.push("config/llmn.toml");
-        p
-    }];
-    for p in &candidates {
-        if p.exists() {
-            return Ok(p.clone());
-        }
-    }
-    Err(format!(
-        "config/llmn.toml not found, tried: {:?}",
-        candidates
-    ))
-}
-
-use crate::AppState;
+use crate::BackendState;
 
 // ─── GUI data types (serializable) ───────────────────────────────────────
 
@@ -42,13 +21,7 @@ pub struct AppInit {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GuiConfig {
-    pub current_model: ModelSelection,
-    pub temperature: f32,
-    pub max_tokens: Option<u32>,
-}
+pub use runtime::config::GuiConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -329,9 +302,15 @@ pub struct GuiToolBlock {
 // ─── Commands ────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn init_app(state: State<'_, AppState>) -> Result<AppInit, String> {
+pub async fn init_app(state: State<'_, BackendState>) -> Result<AppInit, String> {
+    let state = state.get().await?;
     let sessions = build_sessions(&state.runtime).await;
-    let (providers, config) = build_providers_and_config()?;
+    let providers = build_providers(&state.runtime).await;
+    let config = state
+        .runtime
+        .gui_config()
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(AppInit {
         config,
@@ -344,9 +323,10 @@ pub async fn init_app(state: State<'_, AppState>) -> Result<AppInit, String> {
 #[tauri::command]
 pub async fn chat(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, BackendState>,
     params: GuiChatParams,
 ) -> Result<(), String> {
+    let state = state.get().await?;
     let session_id: SessionId = params
         .session_id
         .parse()
@@ -426,7 +406,8 @@ pub async fn chat(
 }
 
 #[tauri::command]
-pub async fn cancel_chat(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub async fn cancel_chat(state: State<'_, BackendState>, session_id: String) -> Result<(), String> {
+    let state = state.get().await?;
     let map = state.cancel_map.lock().await;
     if let Some(token) = map.get(&session_id) {
         token.cancel();
@@ -436,9 +417,10 @@ pub async fn cancel_chat(state: State<'_, AppState>, session_id: String) -> Resu
 
 #[tauri::command]
 pub async fn get_messages(
-    state: State<'_, AppState>,
+    state: State<'_, BackendState>,
     session_id: String,
 ) -> Result<Vec<GuiMessage>, String> {
+    let state = state.get().await?;
     let id: SessionId = session_id
         .parse()
         .map_err(|e| format!("invalid session id: {}", e))?;
@@ -451,7 +433,8 @@ pub async fn get_messages(
 }
 
 #[tauri::command]
-pub async fn new_session(state: State<'_, AppState>) -> Result<SessionSummary, String> {
+pub async fn new_session(state: State<'_, BackendState>) -> Result<SessionSummary, String> {
+    let state = state.get().await?;
     let id = state
         .runtime
         .create_session(None)
@@ -466,7 +449,11 @@ pub async fn new_session(state: State<'_, AppState>) -> Result<SessionSummary, S
 }
 
 #[tauri::command]
-pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub async fn delete_session(
+    state: State<'_, BackendState>,
+    session_id: String,
+) -> Result<(), String> {
+    let state = state.get().await?;
     let id = session_id
         .parse()
         .map_err(|e| format!("invalid id: {}", e))?;
@@ -479,10 +466,11 @@ pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> R
 
 #[tauri::command]
 pub async fn rename_session(
-    state: State<'_, AppState>,
+    state: State<'_, BackendState>,
     session_id: String,
     title: String,
 ) -> Result<(), String> {
+    let state = state.get().await?;
     let id = session_id
         .parse()
         .map_err(|e| format!("invalid id: {}", e))?;
@@ -496,12 +484,13 @@ pub async fn rename_session(
 /// Set (or clear, with `feedback: null`) the feedback on one message.
 #[tauri::command]
 pub async fn set_message_feedback(
-    state: State<'_, AppState>,
+    state: State<'_, BackendState>,
     session_id: String,
     message_id: String,
     revision: String,
     feedback: Option<common::Feedback>,
 ) -> Result<(), String> {
+    let state = state.get().await?;
     let id = session_id
         .parse()
         .map_err(|e| format!("invalid id: {}", e))?;
@@ -513,13 +502,19 @@ pub async fn set_message_feedback(
 }
 
 #[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionSummary>, String> {
+pub async fn list_sessions(state: State<'_, BackendState>) -> Result<Vec<SessionSummary>, String> {
+    let state = state.get().await?;
     Ok(build_sessions(&state.runtime).await)
 }
 
 #[tauri::command]
-pub async fn set_config(_state: State<'_, AppState>, _config: GuiConfig) -> Result<(), String> {
-    Ok(())
+pub async fn set_config(state: State<'_, BackendState>, config: GuiConfig) -> Result<(), String> {
+    let state = state.get().await?;
+    state
+        .runtime
+        .set_gui_config(&config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -714,59 +709,33 @@ async fn build_sessions(runtime: &Runtime) -> Vec<SessionSummary> {
     sessions
 }
 
-fn build_providers_and_config() -> Result<(Vec<ProviderInfo>, GuiConfig), String> {
-    let config_path = find_config_path()?;
-    let config: runtime::config::RuntimeConfig = runtime::config::ConfigLoader::load(&config_path)
-        .map_err(|e| format!("failed to load config: {}", e))?;
-
-    let mut providers = Vec::new();
-    let mut default_model = ModelSelection {
-        provider: String::new(),
-        model: String::new(),
-        reasoning_effort: None,
-    };
-
-    for (provider_id, provider_config) in &config.providers {
-        let display_name = provider_id.0.clone();
-        let mut models = Vec::new();
-
-        for (model_id, model_config) in &provider_config.models {
-            let display_name = model_config
-                .display_name
-                .clone()
-                .unwrap_or_else(|| model_id.0.clone());
-            models.push(ModelInfo {
-                id: model_id.0.clone(),
-                display_name,
-                reasoning_levels: model_config
-                    .reasoning
-                    .as_ref()
-                    .map(|r| r.levels.iter().map(|e| e.as_wire().to_string()).collect()),
-            });
-        }
-
-        if default_model.provider.is_empty() && !models.is_empty() {
-            default_model = ModelSelection {
-                provider: provider_id.0.clone(),
-                model: models[0].id.clone(),
-                reasoning_effort: None,
-            };
-        }
-
-        providers.push(ProviderInfo {
-            id: provider_id.0.clone(),
-            display_name,
-            models,
+async fn build_providers(runtime: &Runtime) -> Vec<ProviderInfo> {
+    let models = runtime.list_models().await;
+    let mut providers: Vec<ProviderInfo> = Vec::new();
+    for m in models {
+        // Group by provider; keep deterministic order (list_models is sorted).
+        let provider = match providers.iter_mut().find(|p| p.id == m.provider) {
+            Some(p) => p,
+            None => {
+                providers.push(ProviderInfo {
+                    id: m.provider.clone(),
+                    display_name: m.provider.clone(),
+                    models: Vec::new(),
+                });
+                providers.last_mut().expect("just pushed")
+            }
+        };
+        provider.models.push(ModelInfo {
+            id: m.spec.id,
+            display_name: m.spec.display_name,
+            reasoning_levels: m
+                .spec
+                .reasoning
+                .as_ref()
+                .map(|r| r.levels.iter().map(|e| e.as_wire().to_string()).collect()),
         });
     }
-
-    let gui_config = GuiConfig {
-        current_model: default_model,
-        temperature: 0.7,
-        max_tokens: None,
-    };
-
-    Ok((providers, gui_config))
+    providers
 }
 
 #[cfg(test)]
@@ -959,4 +928,193 @@ mod tests {
         assert_eq!(gui.len(), 1);
         assert_eq!(gui[0].content, "看图：");
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTemplate {
+    pub id: String,
+    pub display_name: String,
+    pub protocol: String,
+    pub base_url: String,
+    /// Conventional env var for the key, as a hint.
+    pub api_key_env: String,
+    pub default_model: String,
+    pub models: Vec<ProviderTemplateModel>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTemplateModel {
+    pub id: String,
+    pub display_name: String,
+}
+
+/// Body of `POST /api/providers` — the web settings provider form.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUpsertPayload {
+    pub id: String,
+    /// Wire protocol. Required when creating a provider the catalog does not
+    /// already describe; absent on edits keeps the stored value.
+    #[serde(default)]
+    pub protocol: Option<ai_client::Protocol>,
+    /// Endpoint override; absent/blank keeps the stored value (builtin fallback).
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Direct key to store; blank/absent keeps the existing field.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Full intended model list. `None`/empty on a catalog provider keeps the
+    /// builtin/configured models; a custom provider requires at least one.
+    #[serde(default)]
+    pub models: Option<Vec<ProviderModelPayload>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelPayload {
+    pub id: String,
+    /// Wire model name; absent = the id itself.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+fn protocol_wire(p: &Protocol) -> String {
+    serde_json::to_string(p)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_string()
+}
+/// Builtin catalog providers the settings can materialize as real routes.
+#[tauri::command]
+pub async fn provider_templates() -> Result<Vec<ProviderTemplate>, String> {
+    let templates = ai_client::catalog::BUILTIN_PROVIDERS
+        .iter()
+        .map(|e| ProviderTemplate {
+            id: e.id.to_string(),
+            display_name: e.display_name.to_string(),
+            protocol: protocol_wire(&e.protocol),
+            base_url: e.base_url.to_string(),
+            api_key_env: e.api_key_env.to_string(),
+            default_model: e.default_model.to_string(),
+            models: e
+                .models
+                .iter()
+                .map(|m| ProviderTemplateModel {
+                    id: m.id.to_string(),
+                    display_name: m.display_name.to_string(),
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(templates)
+}
+
+/// A route id usable as a TOML key and provider id: lowercase kebab.
+fn valid_provider_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Create or update a provider from the web settings form, then return the
+/// refreshed provider list. The write is validated by the model router before
+/// it swaps — an invalid provider keeps the old config and errors here.
+#[tauri::command]
+pub async fn upsert_provider(
+    state: State<'_, BackendState>,
+    payload: ProviderUpsertPayload,
+) -> Result<Vec<ProviderInfo>, String> {
+    let state = state.get().await?;
+    let id = payload.id.trim().to_string();
+    if !valid_provider_id(&id) {
+        return Err(String::from(
+            "provider id must be lowercase letters/digits/hyphens (e.g. acme-gateway)",
+        ));
+    }
+    let builtin = ai_client::catalog::builtin_provider(&id);
+    // A protocol is required only when nothing can supply one: editing an
+    // existing route or materializing a catalog entry may omit it.
+    let existing = state
+        .runtime
+        .list_models()
+        .await
+        .iter()
+        .any(|m| m.provider == id);
+    let protocol = match payload.protocol {
+        Some(p) => Some(protocol_wire(&p)),
+        None if existing || builtin.is_some() => None,
+        None => {
+            return Err(format!(
+                "provider '{id}' needs a protocol (new custom provider)"
+            ));
+        }
+    };
+    let base_url = payload.base_url.filter(|s| !s.trim().is_empty());
+    if base_url.is_none() && builtin.is_none() && !existing {
+        return Err(format!(
+            "provider '{id}' needs a base_url (not in the builtin catalog)"
+        ));
+    }
+    let api_key = payload.api_key.filter(|s| !s.trim().is_empty());
+    let models = match payload.models {
+        Some(list) if !list.is_empty() => {
+            if list.iter().any(|m| m.id.trim().is_empty()) {
+                return Err(String::from("every model needs a non-empty id"));
+            }
+            Some(
+                list.into_iter()
+                    .map(|m| {
+                        let id = m.id.trim().to_string();
+                        let wire = m
+                            .model
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or_else(|| id.clone());
+                        ProviderModelDraft {
+                            id,
+                            wire,
+                            display_name: m.display_name.filter(|s| !s.trim().is_empty()),
+                        }
+                    })
+                    .collect(),
+            )
+        }
+        // An explicit empty list only means "keep builtin/configured" — and a
+        // custom provider has no builtin to fall back on, so it must list one.
+        Some(_) if builtin.is_none() => {
+            return Err(format!("custom provider '{id}' needs at least one model"));
+        }
+        _ => None,
+    };
+    let draft = ProviderDraft {
+        id: id.clone(),
+        protocol,
+        base_url,
+        api_key,
+        models,
+    };
+    state
+        .runtime
+        .upsert_provider(&draft)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(build_providers(&state.runtime).await)
+}
+
+/// Remove a provider and return the refreshed list.
+#[tauri::command]
+pub async fn delete_provider(
+    state: State<'_, BackendState>,
+    id: String,
+) -> Result<Vec<ProviderInfo>, String> {
+    let state = state.get().await?;
+    state
+        .runtime
+        .remove_provider(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(build_providers(&state.runtime).await)
 }

@@ -15,7 +15,56 @@ pub struct AppState {
     pub cancel_map: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
+/// A failed startup is not cached. The GUI can show the actual error and retry.
+pub struct BackendState {
+    inner: Mutex<Option<Arc<AppState>>>,
+}
+impl BackendState {
+    pub async fn get(&self) -> Result<Arc<AppState>, String> {
+        let mut inner = self.inner.lock().await;
+        if let Some(state) = inner.as_ref() {
+            return Ok(state.clone());
+        }
+        let config_path = find_config_path()?;
+        let runtime = Arc::new(
+            Runtime::from_config_persistent(&config_path, storage::default_data_dir())
+                .map_err(|e| e.to_string())?,
+        );
+        let chat = Arc::new(chat::ChatFeature::new());
+        runtime.register_feature(chat.clone()).await;
+        runtime
+            .initialize_features()
+            .await
+            .map_err(|e| e.to_string())?;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        runtime::config::watcher::spawn_config_watcher(runtime.clone(), config_path, tx)
+            .map_err(|e| e.to_string())?;
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let runtime::config::watcher::ConfigWatchEvent::Failed(error) = event {
+                    eprintln!("config reload failed: {error}");
+                }
+            }
+        });
+        let state = Arc::new(AppState {
+            runtime: (*runtime).clone(),
+            chat,
+            cancel_map: Arc::new(Mutex::new(HashMap::new())),
+        });
+        *inner = Some(state.clone());
+        Ok(state)
+    }
+}
+
 fn find_config_path() -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var("LLMN_CONFIG") {
+        let path = PathBuf::from(path);
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!("LLMN_CONFIG not found: {}", path.display()))
+        };
+    }
     let candidates = [PathBuf::from("config/llmn.toml"), {
         let mut p = std::env::current_exe().map_err(|e| e.to_string())?;
         p.pop();
@@ -41,38 +90,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let config_path = find_config_path()?;
-            let runtime =
-                Runtime::from_config_persistent(&config_path, storage::default_data_dir())
-                    .map_err(|e| e.to_string())?;
-            let runtime = Arc::new(runtime);
-
-            let chat = Arc::new(chat::ChatFeature::new());
-            let chat_clone = chat.clone();
-            let rt = runtime.clone();
-            tauri::async_runtime::block_on(async move {
-                rt.register_feature(chat_clone).await;
-                rt.initialize_features().await.map_err(|e| e.to_string())?;
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                runtime::config::watcher::spawn_config_watcher(rt, config_path, tx)
-                    .map_err(|e| e.to_string())?;
-                tauri::async_runtime::spawn(async move {
-                    while let Some(event) = rx.recv().await {
-                        if let runtime::config::watcher::ConfigWatchEvent::Failed(error) = event {
-                            eprintln!("config reload failed: {error}");
-                        }
-                    }
-                });
-                Ok::<(), String>(())
-            })?;
-
-            let state = AppState {
-                runtime: (*runtime).clone(),
-                chat,
-                cancel_map: Arc::new(Mutex::new(HashMap::new())),
-            };
-            app.manage(state);
-
+            app.manage(BackendState {
+                inner: Mutex::new(None),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -86,6 +106,9 @@ pub fn run() {
             commands::rename_session,
             commands::list_sessions,
             commands::set_config,
+            commands::provider_templates,
+            commands::upsert_provider,
+            commands::delete_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

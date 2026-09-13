@@ -192,14 +192,14 @@ export const tauriApi: ChatApi = {
   },
 
   async listProviderTemplates(): Promise<ProviderTemplate[]> {
-    throw new Error("桌面模式暂不支持在线添加供应商")
+    return invoke<ProviderTemplate[]>("provider_templates")
   },
 
-  async addProvider(_draft: ProviderDraft): Promise<ProviderInfo[]> {
-    throw new Error("桌面模式暂不支持在线添加供应商")
+  async addProvider(draft: ProviderDraft): Promise<ProviderInfo[]> {
+    return invoke<ProviderInfo[]>("upsert_provider", { payload: draft })
   },
 
-  async deleteProvider(_id: string): Promise<ProviderInfo[]> {
-    throw new Error("桌面模式暂不支持在线添加供应商")
+  async deleteProvider(id: string): Promise<ProviderInfo[]> {
+    return invoke<ProviderInfo[]>("delete_provider", { id })
   },
 }

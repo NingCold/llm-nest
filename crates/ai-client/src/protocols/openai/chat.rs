@@ -127,6 +127,10 @@ pub struct Delta {
     /// absent for plain chat completions.
     #[serde(default)]
     pub reasoning_content: Option<String>,
+    /// Some OpenAI-compatible gateways (including ecnu-max) emit `reasoning`.
+    /// Keep both fields: a serde alias would reject responses containing both.
+    #[serde(default)]
+    pub reasoning: Option<String>,
     /// Function-call fragments (streamed piecemeal; assembled by the stream
     /// parser keyed by `index`).
     #[serde(default)]

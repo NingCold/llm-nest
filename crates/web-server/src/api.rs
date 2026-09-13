@@ -36,14 +36,7 @@ pub struct AppInit {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GuiConfig {
-    pub current_model: ModelSelection,
-    pub temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-}
+pub use runtime::config::GuiConfig;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -392,6 +385,7 @@ pub struct FeedbackPayload {
 pub fn routes(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/init", get(init_app))
+        .route("/api/config", axum::routing::put(set_config))
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{id}",
@@ -520,25 +514,28 @@ impl IntoResponse for ApiError {
 pub async fn init_app(State(state): State<Arc<AppState>>) -> ApiResult<Json<AppInit>> {
     let sessions = build_sessions(&state.runtime).await;
     let providers = build_providers(&state.runtime).await;
-    let current_model = state
-        .runtime
-        .default_model()
-        .await
-        .unwrap_or_else(|| ModelSelection {
-            provider: String::new(),
-            model: String::new(),
-            reasoning_effort: None,
-        });
     Ok(Json(AppInit {
-        config: GuiConfig {
-            current_model,
-            temperature: 0.7,
-            max_tokens: None,
-        },
+        config: state
+            .runtime
+            .gui_config()
+            .await
+            .map_err(|e| e.to_string())?,
         providers,
         sessions,
         version: env!("CARGO_PKG_VERSION").to_string(),
     }))
+}
+
+pub async fn set_config(
+    State(state): State<Arc<AppState>>,
+    Json(config): Json<GuiConfig>,
+) -> ApiResult<StatusCode> {
+    state
+        .runtime
+        .set_gui_config(&config)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Builtin catalog providers the settings can materialize as real routes.
@@ -1159,7 +1156,11 @@ async fn local_request_guard(
     next: axum::middleware::Next,
 ) -> Response {
     if let Err(error) = validate_local_request(&req) {
-        return (StatusCode::FORBIDDEN, error).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
     }
     next.run(req).await
 }

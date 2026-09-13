@@ -134,7 +134,12 @@ impl OpenAIStream {
                     self.merge_tool_call_fragment(&fragment);
                 }
             }
-            if let Some(content) = choice.delta.reasoning_content.filter(|s| !s.is_empty()) {
+            if let Some(content) = choice
+                .delta
+                .reasoning_content
+                .filter(|s| !s.is_empty())
+                .or_else(|| choice.delta.reasoning.filter(|s| !s.is_empty()))
+            {
                 self.queued.push_back(ChatChunk::ReasoningDelta { content });
             }
             if let Some(content) = choice.delta.content.filter(|s| !s.is_empty()) {

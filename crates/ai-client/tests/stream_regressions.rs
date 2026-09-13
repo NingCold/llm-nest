@@ -143,3 +143,34 @@ fn regression_responses_failure_is_error() {
         assert!(openai_responses::convert::parse_event(&payload.to_string()).is_err());
     }
 }
+
+#[tokio::test]
+async fn openai_reasoning_alias_is_streamed_once_before_text() {
+    let mut body = String::new();
+    for delta in [
+        serde_json::json!({"reasoning":"思考🙂"}),
+        serde_json::json!({"reasoning_content":null,"reasoning":"fallback"}),
+        serde_json::json!({"reasoning_content":"","reasoning":"empty fallback"}),
+        serde_json::json!({"reasoning_content":"preferred","reasoning":"duplicate","content":"answer"}),
+    ] {
+        body.push_str(&format!(
+            "data: {}\n\n",
+            serde_json::json!({"id":"fixture","choices":[{"index":0,"delta":delta}]})
+        ));
+    }
+    body.push_str("data: [DONE]\n\n");
+    let chunks: Vec<_> = openai::sse::OpenAIStream::new(fixture(body).await)
+        .collect()
+        .await;
+    assert_eq!(chunks.len(), 6);
+    for (index, expected) in ["思考🙂", "fallback", "empty fallback", "preferred"]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(
+            matches!(&chunks[index], Ok(ChatChunk::ReasoningDelta { content }) if content == expected)
+        );
+    }
+    assert!(matches!(&chunks[4], Ok(ChatChunk::Delta { content }) if content == "answer"));
+    assert!(matches!(&chunks[5], Ok(ChatChunk::Done { .. })));
+}

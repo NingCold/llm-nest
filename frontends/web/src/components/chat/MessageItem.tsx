@@ -140,7 +140,7 @@ function UserMessage({
         )}
       </div>
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-500 to-zinc-800 text-[11px] font-semibold text-white">
-        {initials("Demo User")}
+        {initials("User")}
       </div>
     </div>
   )
@@ -149,10 +149,12 @@ function UserMessage({
 function AssistantMessage({
   sessionId,
   message,
+  isStreaming,
   onRegenerate,
 }: {
   sessionId: string
   message: Message
+  isStreaming: boolean
   onRegenerate: (messageId: string) => void
 }) {
   const streaming = message.status === "streaming"
@@ -205,6 +207,9 @@ function AssistantMessage({
           <p className="mt-2 text-xs text-muted-foreground">已停止生成</p>
         )}
 
+        {(message.status === "error" || message.status === "cancelled") && message.revision && (
+          <button disabled={isStreaming} onClick={() => onRegenerate(message.id)} className="mt-2 rounded border px-3 py-1.5 text-sm disabled:opacity-50">重新生成</button>
+        )}
         {message.status === "done" && message.content && (
           <MessageActions
             sessionId={sessionId}
@@ -233,6 +238,7 @@ export function MessageItem(props: MessageItemProps) {
   return (
     <AssistantMessage
       sessionId={props.sessionId}
+      isStreaming={props.isStreaming}
       message={props.message}
       onRegenerate={props.onRegenerate}
     />

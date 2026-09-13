@@ -67,7 +67,7 @@ export function ProviderManager() {
     getApi()
       .then((a) => a.listProviderTemplates())
       .then(setTemplates)
-      .catch(() => setTemplates([]))
+      .catch(e => setError(`供应商模板加载失败：${String(e)}；可切换自定义添加或重新打开重试。`))
   }, [adding])
 
   const resetForm = () => {
@@ -173,7 +173,7 @@ export function ProviderManager() {
       const next = await (await getApi()).deleteProvider(p.id)
       setProviders(next)
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -185,6 +185,7 @@ export function ProviderManager() {
     <div className="space-y-2.5">
       <p className="text-sm font-medium">模型供应商</p>
 
+      {error && !adding && <p role="alert" className="text-sm text-red-500">{error}</p>}
       {/* 已配置供应商列表 */}
       {providers.length > 0 && (
         <ul className="space-y-1.5">

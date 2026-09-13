@@ -78,14 +78,14 @@ display_name = "GPT 5.6 sol"
 
 # ChatECNU / ecnu-max 示例（思考模式：thinking 开关 + reasoning_effort 强度，
 # 官方文档 https://developer.ecnu.edu.cn/vitepress/llm/thinking.html）
-# [providers.chatecnu]
-# protocol = "openai"
-# api_key = { env = "CHATECNU_API_KEY" }
-# base_url = "https://chat.ecnu.edu.cn/open/api/v1/"
-#
-# [providers.chatecnu.models.ecnu-max]
-# model = "ecnu-max"
-# reasoning = { levels = ["off", "low", "high", "max"], format = "deepseek-effort" }
+[providers.chatecnu]
+protocol = "openai"
+api_key = { env = "API_KEY_CHATECNU" }
+base_url = "https://chat.ecnu.edu.cn/open/api/v1/"
+
+[providers.chatecnu.models.ecnu-max]
+model = "ecnu-max"
+reasoning = { levels = ["off", "low", "high", "max"], format = "deepseek-effort" }
 
 # Anthropic Messages API 示例（认证走 x-api-key + anthropic-version；
 # max_tokens 必填——未设置时取模型声明的 max_tokens，缺省 4096；

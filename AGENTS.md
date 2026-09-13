@@ -473,6 +473,13 @@ runner::run(app, chat).await?;
 - 空 providers 是有效的首次启动/删除最后一个供应商状态；模型解析仍拒绝无模型的聊天请求。不要用示例密钥或开发配置填充安装包。
 - 桌面实机验收记录与未覆盖范围见 `docs/tauri-acceptance-2026-09-13.md`。
 
+## Windows 上下贴边细边框（2026-09-13）
+
+- `window_frame.rs` 通过 DWM 可见窗口物理边界与当前显示器 `rcWork` 判断上下同时贴边，容差 2 个物理像素，排除最大化/全屏/最小化。不使用前端 `screen.height` 推算，须兼容任务栏和负坐标显示器。
+- 普通窗口使用 DWM 圆角/描边；上下贴边时停用原生描边并请求直角，由前端绘制按系统缩放折算的 1 物理像素内描边。保留 `shadow=false`、透明 WebView 合成表面与不透明 HTML 背景，不能重新引入 tao 阴影边距。
+- 位置、大小、DPI、焦点变化刷新原生窗口状态。仅状态/主题变化时更新 DWM 并发出 `window-frame-changed`，前端通过 revision 丢弃旧事件/IPC 返回；监听器先注册再请求初始快照。
+- Linux 仍仅为方案阶段。构建环境选择见 `docs/linux-build-plan.md`；Windows 专用窗口代码或 Job Object 验证不能当作 Linux 适配通过。
+
 ## 桌面图标、窗口与独立设置页（2026-09-13）
 
 - Web 和 Tauri 共用 `frontends/web`；`lib/desktop.ts` 在初始化前识别桌面壳。Tauri 使用无原生标题栏窗口，`WindowControls` 独立于后端启动状态。窗口 IPC 权限在 capabilities/default.json。

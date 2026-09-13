@@ -5,10 +5,19 @@ import { invoke } from "@tauri-apps/api/core"
 import { IS_DESKTOP } from "@/lib/desktop"
 import { useUiStore } from "@/store/ui"
 
+interface FrameInfo {
+  maximized: boolean
+  fullscreen: boolean
+  verticalDocked: boolean
+  focused: boolean
+  scaleFactor: number
+  nativeBorder: boolean
+  revision: number
+}
+
 /** Kept outside backend-dependent content so a failed startup is still closable. */
 export function WindowControls() {
-  const [maximized, setMaximized] = useState(false)
-  const [fullscreen, setFullscreen] = useState(false)
+  const [frame, setFrame] = useState<FrameInfo>()
   const [error, setError] = useState("")
   const [fallbackFrame, setFallbackFrame] = useState(false)
   const theme = useUiStore(s => s.theme)
@@ -18,37 +27,30 @@ export function WindowControls() {
     // Keep the native surface exposed during resize in sync with the opaque CSS page.
     // Use Window (not WebviewWindow) so the WebView2 composition surface stays transparent.
     let active = true
+    let unlisten: (() => void) | undefined
+    const accept = (next: FrameInfo) => {
+      if (active) setFrame(current => !current || next.revision >= current.revision ? next : current)
+    }
     void (async () => {
-      await getCurrentWindow().setBackgroundColor(theme === "dark" ? "#0c0c0e" : "#ffffff")
+      const win = getCurrentWindow()
+      // Subscribe before requesting a snapshot; revisions discard late IPC replies.
+      const stop = await win.listen<FrameInfo>("window-frame-changed", event => accept(event.payload))
+      if (!active) { stop(); return }
+      unlisten = stop
+      await win.setBackgroundColor(theme === "dark" ? "#0c0c0e" : "#ffffff")
       if (!active) return
-      const nativeFrame = await invoke<boolean>("set_window_appearance", { dark: theme === "dark" })
-      if (active) setFallbackFrame(!nativeFrame)
+      accept(await invoke<FrameInfo>("set_window_appearance", { dark: theme === "dark" }))
+      if (active) setFallbackFrame(false)
     })().catch(e => {
       if (active) { setFallbackFrame(true); setError(`窗口外观更新失败：${String(e)}`) }
     })
-    return () => { active = false }
+    return () => { active = false; unlisten?.() }
   }, [theme])
 
-  useEffect(() => {
-    if (!IS_DESKTOP) return
-    let active = true
-    let unlisten: (() => void) | undefined
-    const win = getCurrentWindow()
-    const refresh = () => {
-      void Promise.all([win.isMaximized(), win.isFullscreen()]).then(([max, full]) => {
-        if (active) { setMaximized(max); setFullscreen(full) }
-      })
-        .catch(e => { if (active) setError(String(e)) })
-    }
-    refresh()
-    void win.onResized(refresh).then(stop => {
-      if (active) unlisten = stop
-      else stop()
-    }).catch(e => { if (active) setError(String(e)) })
-    return () => { active = false; unlisten?.() }
-  }, [])
-
   if (!IS_DESKTOP) return null
+  const maximized = frame?.maximized ?? false
+  const fullscreen = frame?.fullscreen ?? false
+  const clientFrame = fallbackFrame || (frame && (!frame.nativeBorder || frame.verticalDocked))
   const action = async (name: "minimize" | "toggleMaximize" | "close") => {
     setError("")
     try { await getCurrentWindow()[name]() }
@@ -56,7 +58,12 @@ export function WindowControls() {
   }
   const button = "flex h-14 w-11 items-center justify-center text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
   return <>
-    {fallbackFrame && !maximized && !fullscreen && <div aria-hidden="true" className="desktop-frame-fallback" />}
+    {clientFrame && !maximized && !fullscreen && <div
+      aria-hidden="true"
+      className="desktop-frame-fallback"
+      data-focused={frame?.focused ?? true}
+      style={{ borderWidth: 1 / (frame?.scaleFactor || 1) }}
+    />}
     <div className="fixed right-0 top-0 z-50 flex select-none" aria-label="窗口控制">
       <button type="button" aria-label="最小化窗口" title="最小化" className={`${button} hover:bg-accent hover:text-foreground`} onClick={() => void action("minimize")}><Minus className="h-4 w-4" /></button>
       <button type="button" aria-label={maximized ? "还原窗口" : "最大化窗口"} title={maximized ? "还原" : "最大化"} className={`${button} hover:bg-accent hover:text-foreground`} onClick={() => void action("toggleMaximize")}>

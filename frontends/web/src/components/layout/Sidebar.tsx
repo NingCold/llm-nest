@@ -5,13 +5,13 @@ import {
   Pencil,
   Plus,
   Search,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react"
 import { useSessionStore } from "@/store/session"
 import { useUiStore } from "@/store/ui"
-import { bucketSessions, formatRelativeTime, initials } from "@/lib/format"
+import { bucketSessions, formatRelativeTime } from "@/lib/format"
+import { BrandMark } from "@/components/BrandMark"
 import { SettingsDialog } from "@/components/settings/SettingsDialog"
 import { cn } from "@/lib/utils"
 import type { SessionSummary } from "@/api/types"
@@ -180,9 +180,7 @@ export function Sidebar() {
       >
         {/* Brand */}
         <div className="flex items-center gap-2.5 px-4 pb-1 pt-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
-            <Sparkles className="h-4.5 w-4.5" />
-          </div>
+          <BrandMark />
           <span className="text-[15px] font-semibold tracking-tight">LLM Nest</span>
         </div>
 
@@ -250,9 +248,7 @@ export function Sidebar() {
 
         {/* User footer */}
         <div className="flex items-center gap-2 border-t border-sidebar-border px-3 py-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-500 to-zinc-800 text-xs font-semibold text-white">
-            {initials("LLM Nest")}
-          </div>
+          <BrandMark className="h-8 w-8" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium leading-tight">LLM Nest</p>
             <p className="truncate text-[11px] leading-tight text-sidebar-muted">

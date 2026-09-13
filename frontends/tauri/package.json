@@ -8,6 +8,7 @@
     "dev": "pnpm --dir ../web dev",
     "build": "pnpm --dir ../web exec vite build --outDir ../tauri/dist --emptyOutDir",
     "typecheck": "pnpm --dir ../web typecheck",
+    "icons": "node ../../scripts/generate-icons.mjs",
     "tauri": "tauri"
   },
   "devDependencies": {

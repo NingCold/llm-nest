@@ -41,15 +41,15 @@ export function ModelPicker({ className }: { className?: string }) {
     >
       <SelectTrigger
         className={cn(
-          "h-8 w-auto gap-2 border border-transparent bg-transparent px-2.5 text-sm shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 data-[placeholder]:text-muted-foreground",
+          "h-8 w-auto max-w-[min(24vw,16rem)] gap-2 border border-transparent bg-transparent px-2.5 text-sm shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 data-[placeholder]:text-muted-foreground",
           className,
         )}
       >
         <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" />
         {currentProvider && currentModel ? (
-          <span className="flex items-center gap-1.5">
+          <span className="min-w-0 truncate" title={`${currentProvider.displayName} / ${currentModel.displayName}`}>
             <span className="text-muted-foreground">{currentProvider.displayName}</span>
-            <span className="text-muted-foreground/50">/</span>
+            <span className="mx-1.5 text-muted-foreground/50">/</span>
             <span className="font-medium">{currentModel.displayName}</span>
           </span>
         ) : (

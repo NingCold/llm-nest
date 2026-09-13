@@ -9,6 +9,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { ProviderManager } from "@/components/settings/ProviderManager"
+import { BrandMark } from "@/components/BrandMark"
 import { useConfigStore } from "@/store/config"
 import { useUiStore } from "@/store/ui"
 import { cn } from "@/lib/utils"
@@ -40,9 +41,7 @@ export function SettingsDialog() {
         <div className="space-y-6 py-2">
           {/* Profile */}
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-zinc-600 to-zinc-900 text-sm font-semibold text-white dark:from-zinc-400 dark:to-zinc-700">
-              LN
-            </div>
+            <BrandMark className="h-12 w-12" />
             <div className="min-w-0">
               <p className="font-medium">LLM Nest</p>
               <p className="truncate text-sm text-muted-foreground">

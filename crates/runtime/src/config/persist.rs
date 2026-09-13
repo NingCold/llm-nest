@@ -126,6 +126,11 @@ pub fn render_remove_provider(text: &str, id: &str) -> Result<String> {
     };
     if providers.contains_key(id) {
         providers.remove(id);
+        // TOML creates an implicit parent for [providers.foo]. Once its last
+        // child is removed it would disappear, making the config unloadable.
+        if providers.is_empty() {
+            providers.set_implicit(false);
+        }
     }
     Ok(doc.to_string())
 }

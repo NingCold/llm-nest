@@ -80,7 +80,7 @@ export function Header() {
       <button
         type="button"
         onClick={toggleSidebar}
-        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
       >
         <PanelLeft className="h-4.5 w-4.5" />
@@ -90,15 +90,15 @@ export function Header() {
         type="button"
         disabled={creating}
         onClick={async () => { setCreating(true); setError(null); try { await createSession() } catch (e) { setError(`创建失败：${String(e)}`) } finally { setCreating(false) } }}
-        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="新建对话"
       >
         <Plus className="h-4.5 w-4.5" />
       </button>
 
-      <div className="mx-1 h-5 w-px bg-border" />
+      <div className="mx-1 h-5 w-px shrink-0 bg-border" />
 
-      <div className="group relative flex min-w-0 items-center">
+      <div className="group relative flex min-w-0 flex-1 items-center">
         {editing ? (
           <input
             ref={inputRef}
@@ -109,12 +109,12 @@ export function Header() {
               if (e.key === "Escape") setEditing(false)
             }}
             onBlur={() => void commit()}
-            className="h-8 w-64 max-w-[40vw] rounded-md border border-input bg-card px-2 text-sm font-medium outline-none focus:ring-2 focus:ring-ring"
+            className="h-8 w-full min-w-0 max-w-64 rounded-md border border-input bg-card px-2 text-sm font-medium outline-none focus:ring-2 focus:ring-ring"
           />
         ) : (
           <>
             <h1
-              className="max-w-[28vw] truncate text-[15px] font-semibold tracking-tight"
+              className="truncate text-[15px] font-semibold tracking-tight"
               onDoubleClick={() => {
                 if (current) {
                   setDraft(current.title)
@@ -132,7 +132,7 @@ export function Header() {
                   setDraft(current.title)
                   setEditing(true)
                 }}
-                className="ml-1.5 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground"
+                className="ml-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-accent hover:text-foreground"
                 aria-label="重命名对话"
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -142,10 +142,8 @@ export function Header() {
         )}
       </div>
 
-      <div className="flex-1" />
-
       {/* Right: model + toggles */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-0.5 whitespace-nowrap">
         <ModelPicker className="hidden sm:flex" />
 
         <div className="mx-1.5 hidden h-5 w-px bg-border sm:block" />
@@ -158,7 +156,7 @@ export function Header() {
         >
           <SelectTrigger className="hidden h-9 w-auto gap-2 border border-transparent bg-transparent px-2.5 text-sm text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 md:flex">
             <Brain className="h-4 w-4 shrink-0" />
-            <span className="text-muted-foreground">思考</span>
+            <span className="hidden text-muted-foreground lg:inline">思考</span>
             <span className="font-medium text-foreground">
               {EFFORT_LABEL[effectiveEffort] ?? effectiveEffort}
             </span>
@@ -172,8 +170,8 @@ export function Header() {
           </SelectContent>
         </Select>
 
-        <button disabled title="联网搜索尚未接入" className="hidden lg:flex items-center gap-2 text-muted-foreground opacity-50">
-          <Globe className="h-4 w-4" />联网搜索（未接入）
+        <button disabled aria-label="联网搜索（未接入）" title="联网搜索尚未接入" className="hidden h-9 shrink-0 items-center gap-2 px-2 text-muted-foreground opacity-50 lg:flex">
+          <Globe className="h-4 w-4 shrink-0" /><span className="hidden 2xl:inline">联网搜索（未接入）</span>
         </button>
 
         <div className="mx-1.5 hidden h-5 w-px bg-border md:block" />
@@ -181,7 +179,7 @@ export function Header() {
         <button
           type="button"
           onClick={toggleTheme}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           aria-label="切换主题"
         >
           {theme === "dark" ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}

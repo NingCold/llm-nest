@@ -1,5 +1,7 @@
 # Tauri Windows 安装包验收（2026-09-13）
 
+> 此报告保留图标接入前批次的验收与哈希记录。新的图标、顶栏修复和安装包结果见 [图标与桌面验收补充](branding-acceptance-2026-09-13.md)。
+
 本次验收使用 Windows 本机安装的 NSIS release 包、真实 WebView2 桌面窗口和 Tauri IPC。模型测试使用 ChatECNU `ecnu-max`，仅发送合成的算术/测试请求，凭据来自环境变量；测试数据与原有会话隔离。
 
 ## 打包

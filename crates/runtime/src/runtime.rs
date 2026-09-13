@@ -995,6 +995,31 @@ model = "m"
     }
 
     #[tokio::test]
+    async fn removing_last_implicit_provider_leaves_loadable_config() {
+        let path = std::env::temp_dir().join(format!(
+            "llmn-remove-last-{}.toml",
+            common::SessionId::new()
+        ));
+        std::fs::write(
+            &path,
+            "# hand-written config\n[gui]\ntemperature = 0.4\ncurrentModel = { provider = 'deepseek', model = 'deepseek-chat' }\n[providers.deepseek]\napi_key = 'fixture'\n",
+        )
+        .unwrap();
+        let rt = Runtime::from_config(&path).unwrap();
+        rt.remove_provider("deepseek").await.unwrap();
+        assert!(rt.list_models().await.is_empty());
+        let restarted = Runtime::from_config(&path).unwrap();
+        assert!(restarted.default_model().await.is_none());
+        assert_eq!(restarted.gui_config().await.unwrap().temperature, 0.4);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("# hand-written config")
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn empty_catalog_can_add_remove_and_restart_without_losing_history() {
         let dir =
             std::env::temp_dir().join(format!("llmn-onboarding-{}", common::SessionId::new()));

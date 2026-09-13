@@ -37,7 +37,9 @@ pub fn setup(app: &tauri::App) {
         dark: AtomicBool::new(true),
         ..Default::default()
     });
-    if let Some(webview) = app.get_webview_window("main") {
+    if cfg!(windows)
+        && let Some(webview) = app.get_webview_window("main")
+    {
         let window = webview.as_ref().window();
         if let Err(error) = update(&window) {
             eprintln!("window frame setup failed: {error}");

@@ -248,4 +248,26 @@ mod tests {
             }
         }
     }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_run_reaps_blocking_worker() {
+        let tool = ProcessTool::builtin(Arc::new(crate::builtin::Echo));
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tool.run(serde_json::json!({"text":"test"})),
+        )
+        .await;
+        assert!(result.is_err());
+        let pid = CHILD_PID.load(std::sync::atomic::Ordering::SeqCst);
+        assert_ne!(pid, 0);
+        // A zombie still has /proc/PID: require both termination and reaping.
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("cancelled worker must terminate and be reaped");
+    }
 }

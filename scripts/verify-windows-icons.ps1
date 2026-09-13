@@ -4,9 +4,11 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $ArtifactPath) {
+    $tauriConfig = Get-Content -LiteralPath (Join-Path $projectRoot 'frontends/tauri/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+    $version = $tauriConfig.version
     $ArtifactPath = @(
         (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/LLM-Nest.exe'),
-        (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/bundle/nsis/LLM-Nest_0.1.0_x64-setup.exe')
+        (Join-Path $projectRoot "target/x86_64-pc-windows-msvc/release/bundle/nsis/LLM-Nest_${version}_x64-setup.exe")
     )
 }
 

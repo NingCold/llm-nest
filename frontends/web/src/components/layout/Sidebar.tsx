@@ -13,7 +13,7 @@ import { useSessionStore } from "@/store/session"
 import { useUiStore } from "@/store/ui"
 import { bucketSessions, formatRelativeTime } from "@/lib/format"
 import { BrandMark } from "@/components/BrandMark"
-import { IS_DESKTOP } from "@/lib/desktop"
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { cn } from "@/lib/utils"
 import type { SessionSummary } from "@/api/types"
 
@@ -181,7 +181,7 @@ export function Sidebar() {
         )}
       >
         {/* Brand */}
-        <div data-tauri-drag-region={IS_DESKTOP || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-4">
+        <div data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-4">
           <BrandMark className="pointer-events-none" />
           <span className="pointer-events-none text-[15px] font-semibold tracking-tight">LLM-Nest</span>
         </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Copy, Minus, Square, X } from "lucide-react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { invoke } from "@tauri-apps/api/core"
-import { IS_DESKTOP } from "@/lib/desktop"
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { useUiStore } from "@/store/ui"
 
 interface FrameInfo {
@@ -23,7 +23,7 @@ export function WindowControls() {
   const theme = useUiStore(s => s.theme)
 
   useEffect(() => {
-    if (!IS_DESKTOP) return
+    if (!CUSTOM_WINDOW_CHROME) return
     // Keep the native surface exposed during resize in sync with the opaque CSS page.
     // Use Window (not WebviewWindow) so the WebView2 composition surface stays transparent.
     let active = true
@@ -47,7 +47,7 @@ export function WindowControls() {
     return () => { active = false; unlisten?.() }
   }, [theme])
 
-  if (!IS_DESKTOP) return null
+  if (!CUSTOM_WINDOW_CHROME) return null
   const maximized = frame?.maximized ?? false
   const fullscreen = frame?.fullscreen ?? false
   const clientFrame = fallbackFrame || (frame && (!frame.nativeBorder || frame.verticalDocked))

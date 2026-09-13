@@ -1,165 +1,141 @@
-# LLM Nest
+<p align="center">
+  <img src="assets/branding/app-icon.svg" width="96" height="96" alt="LLM-Nest 图标">
+</p>
 
-LLM Nest 是基于 Rust 编写的一个模块化的 AI 平台，可以支持聊天、编码和构建智能工作流
+<h1 align="center">LLM-Nest</h1>
 
-- **品牌名**：**LLM Nest**
-- **仓库名**：`llm-nest`
-- **CLI**：`llmn`
+<p align="center"><strong>同一套 Rust 运行时，连接桌面、浏览器和终端。</strong></p>
 
-## 设计原则
+<p align="center">
+  <a href="#开始使用">开始使用</a> ·
+  <a href="#为什么做-llm-nest">项目定位</a> ·
+  <a href="docs/development.md">开发指南</a> ·
+  <a href="docs/releases.md">构建与发布</a> ·
+  <a href="https://github.com/NingCold/llm-nest/issues">反馈问题</a>
+</p>
 
-1. 万物皆插件
-2. Core 只负责提供软件基建，永远不知道具体实现
-3. APP 之间不能直接依赖
+LLM-Nest 是一个以本地会话为基础的 AI 工作空间，也是一套正在发展的 AI Harness。你可以在图形界面里配置模型、阅读流式回答，也可以在 CLI 或 TUI 中使用同一套模型路由、会话存储和工具执行逻辑。
 
-## 软件架构
+**当前处于开发预览阶段。** 聊天、设置、持久化和内置工具循环已经落地；通用编码代理、MCP、知识库和工作流编排尚未实现。
 
-```
-Apps (Chat / Code / CLI / Web / Mobile / Future)
-    ↓
-Core Runtime (Session / Router / Context / EventBus / PluginManager / Scheduler / Config)
-    ↓
-Providers / Tools / Storage
-    ↓
-External Systems (LLM APIs / Filesystem / Git / Browser / DB)
-```
+## 为什么做 LLM-Nest
 
-## 目录结构
+模型回答只是一次任务的一部分。LLM-Nest 关心它之前和之后的事情：选中了哪个模型、任务是否完成、取消后留下了什么，以及应用重启后还能找回多少上下文。
 
-```
-llm-nest/
-├── crates/
-│   ├── common/        → 公共数据结构
-│   ├── provider/      → 模型供应协议
-│   ├── runtime/       → 程序运行时
-│   ├── storage/       → storage (V0.1 预留)
-│   └── tools/         → tools (V0.1 预留)
-├── features/
-│   ├── chat/          → 聊天功能
-│   ├── translate/     → 翻译功能（尚未实现）
-|   ...                → 更多功能（尚未实现）
-├── frontends/
-│   ├── cli/           → cli 应用（暂未实现）
-|   ...                → 更多前端（暂未实现）
-├── .cargo/config.toml  — 使用 GNU 工具链 (MinGW)
-└── Cargo.toml          — workspace 根
-```
+- **一个运行时，多个入口。** 桌面、Web、CLI 和 TUI 共用 Rust 业务实现。桌面和 Web 还共用 React 前端，减少不同入口之间的行为差异。
+- **让中断有明确的结果。** 取消、网络错误和异常结束会留下状态与已保存的片段。重启时可以恢复最近检查点，并将未完成任务标为中断；不会悄悄重放工具。
+- **把模型差异留在协议边界。** 支持多种 API 协议、模型级协议覆盖和思考强度校验。同一供应商网关里的不同模型可以使用不同协议。
+- **让扩展建立在可检查的行为上。** Feature、协议适配器、存储和工具执行有明确边界；离线验收通过真实 Runtime、HTTP 和工具子进程检查整个链路。
 
-## 构建
+这些是当前的工程方向，不代表功能广度或成熟度已经超过现有客户端。我们希望先把“会话和运行过程可理解、可恢复”做好，再围绕真实任务扩展能力。
+
+## 现在能做什么
+
+| 能力 | 当前实现 |
+| --- | --- |
+| 多模型对话 | OpenAI Chat Completions、Responses、Anthropic Messages、Gemini；Ollama 通过 OpenAI 兼容接口接入 |
+| 会话管理 | 新建、切换、重命名、删除；会话记住模型与思考强度 |
+| 阅读与展示 | 流式正文、模型返回的思考内容、Markdown、代码、公式、Mermaid、用量与耗时 |
+| 设置 | 独立设置页、供应商和模型管理、生成参数、浅色/深色主题 |
+| 消息操作 | 编辑后重新生成、重新生成回答、消息反馈；通过持久消息 ID 定位 |
+| 工具循环 | 模型调用工具、接收结果并继续回答；默认仅开放编译内置的 `echo` 和 `add` |
+| 中断与恢复 | 取消、错误、断流收尾；运行检查点；重启恢复已保存片段 |
+| 配置更新 | TOML 配置、环境变量密钥、配置热更新、模型清单刷新 |
+
+界面里的联网搜索尚未接入。附件的数据表示与存储已实现，但完整上传、文档解析和跨协议多模态体验还没有完成。
+
+### 平台状态
+
+| 入口 | 状态 |
+| --- | --- |
+| Windows 桌面 x64 | NSIS 实机安装、图标、设置及窗口边框已验收；干净系统、缺少 WebView2 和 MSI 系统级安装仍待验收 |
+| Linux 桌面 x64 | Ubuntu 24.04 基线的 deb/AppImage 已构建；干净容器安装、包内 worker 和无界面启动通过，GNOME 实机操作待验收；见 [记录](docs/linux-acceptance-2026-09-13.md) |
+| Web | 本地 HTTP 服务与浏览器界面；已完成离线完整链路和部分真实模型验收 |
+| CLI / TUI | 已实现，命令分别为 `llmn` / `llmnt` |
+| macOS / 移动端 | 尚未构建和实机验收 |
+
+## 开始使用
+
+### 桌面
+
+1. 从 [GitHub Releases](https://github.com/NingCold/llm-nest/releases) 获取已发布的对应平台安装包。若还没有公开版本，可按 [开发指南](docs/development.md) 自行构建。
+2. 打开 LLM-Nest，进入 **设置 → 模型**，添加供应商、API Key 和模型。
+3. 新建对话，选择模型后开始聊天。没有模型时，界面会显示设置入口。
+
+安装包不附带 API Key，也不需要安装 Node.js 或 Rust。Windows 需要 WebView2 Runtime；当前安装器在缺失时联网下载。
+
+### 从源码运行
+
+开发环境以 **Rust 1.97.0、Node.js 24.18.0、pnpm 11.22.0** 验证；桌面构建还需要相应平台的系统依赖。详细步骤见 [开发指南](docs/development.md)。
 
 ```bash
-# 构建全部
-cargo build
-
-# 构建并运行 Chat (目前暂时集成在chat功能中)
-cargo run -p chat
+git clone https://github.com/NingCold/llm-nest.git
+cd llm-nest
+cp config/config.example.toml config/llmn.toml
 ```
 
-## 环境配置
+示例配置通过 `DEEPSEEK_API_KEY` 环境变量读取密钥。设置该变量，或在被忽略的 `config/.env` 中填写它，再启动一个入口：
 
-通过 `config/llmn.toml` 配置：
+```bash
+cargo run -p cli        # llmn
+cargo run -p tui        # llmnt
 
-```toml
-[providers.chatecnu]
-protocol = "openai"                       # 可选：命中内置目录时可省略
-api_key = "API-KEY"                       # 或 api_key = { env = "MY_ENV_VAR" }
-base_url = "https://chat.ecnu.edu.cn/open/api/v1/"   # 可选：命中内置目录时可省略
-default_model = "ecnu-max"                # 可选：默认模型（key 或 wire 名），缺省回退内置默认/首个模型
-# headers = { X-Custom = "value" }        # 可选：附加到该 provider 每个请求的头
-# timeout_ms = 30000                      # 可选：单请求超时毫秒（含流式读取）
-
-[providers.chatecnu.models.ecnu-max]
-model = "ecnu-max"
-display_name = "DeepSeek-V4-Flash"
-# context_window = 131072                 # 可选：能力信息（仅展示）
-# max_tokens = 16384                      # 可选：能力信息（仅展示）
-reasoning = { levels = ["off", "low", "high", "max"], format = "deepseek-effort" }
-# protocol = "openai_responses"           # 可选：模型级协议覆盖（缺省继承 provider 协议）
+# 桌面：先安装两份前端依赖
+pnpm --dir frontends/web install --frozen-lockfile
+pnpm --dir frontends/tauri install --frozen-lockfile
+pnpm --dir frontends/tauri exec tauri dev
 ```
 
-**内置 provider 目录**（`ai_client::catalog`）：deepseek / openai / gemini / kimi / zhipu / anthropic /
-xai / minimax / mimo / openrouter / opencode-zen / opencode-go / siliconflow / tokenrhythm / chatecnu 等。
-命中内置目录的 provider 可以**只写 api_key**，protocol / base_url / 模型清单 / 默认模型全部缺省回退：
+也可以使用其他供应商或本地 Ollama，见 [配置指南](docs/configuration.md)。首次运行桌面安装版时无需手写配置；上述源码配置主要供终端入口和开发使用。
 
-```toml
-[providers.deepseek]
-api_key = { env = "DEEPSEEK_API_KEY" }
+### Web
+
+```bash
+pnpm --dir frontends/web install --frozen-lockfile
+pnpm --dir frontends/web build
+cargo run -p web-server
 ```
 
-未命中内置目录的自定义 provider 必须显式写 `protocol` + `base_url` + 至少一个模型。
+打开 `http://127.0.0.1:8787`。Web 服务默认仅监听本机，不具备面向公网的完整身份认证与多用户隔离。
 
-- `providers.<id>` 的 dict key 就是一个模型路由（route），任意自定义 id 均可。支持的协议：
-  - `openai` / `openai_chat`：OpenAI 兼容 chat completions（`{base}/chat/completions`）
-  - `openai_responses`：OpenAI Responses API（`{base}/responses`，消息走 `input`，上限 `max_output_tokens`，reasoning 走 `reasoning: {effort}`）
-  - `anthropic`：Anthropic Messages API（`{base}/messages`，认证 `x-api-key` + `anthropic-version`，`max_tokens` 必填——取自请求选项、模型声明的 `max_tokens`，缺省 4096；system/developer 消息折叠进顶层 `system` 字段）
-  - `gemini`：Gemini API（模型名在 URL 路径 `{base}/models/{model}:generateContent` / `:streamGenerateContent?alt=sse`，消息走 `contents`/`parts`，assistant 角色为 `model`，system 走 `systemInstruction`）
-  - `ollama`：Ollama 自带 OpenAI 兼容端点，直接复用 chat completions 适配器（`base_url = "http://localhost:11434/v1"`）
-- **模型级协议覆盖**：`models.<id>.protocol` 让单个模型改用其它协议发送，provider 内共享 key/base_url/
-  headers——适配"同端点多协议"的网关（如 opencode zen 一家同时暴露 chat completions / responses）。
-  请求分派按模型的有效协议走对应适配器（`AiClient` 按 `(provider, protocol)` 建路由表）。
-- `reasoning.format`：`openai-effort`（chat wire: `reasoning_effort`；responses wire: `reasoning: {effort}`）、
-  `deepseek-thinking`（wire: `thinking`）、`deepseek-effort`（wire: `thinking` + `reasoning_effort`，
-  ECNU ecnu-max 风格）、`anthropic-thinking`（wire: `thinking: {type, budget_tokens}`）、
-  `gemini-thinking`（wire: `generationConfig.thinkingConfig.thinkingBudget`）。
-  中性级别（off/low/medium/high/max）到各协议 wire 的映射：
+## 数据与运行边界
 
-  | `/effort` | openai-effort (chat) | openai-effort (responses) | deepseek-thinking | deepseek-effort | anthropic-thinking | gemini-thinking |
-  |---|---|---|---|---|---|---|
-  | `off` | 不输出 | 不输出 | `thinking:{type:"disabled"}` | `thinking:{type:"disabled"}` | `thinking:{type:"disabled"}` | `thinkingBudget: 0` |
-  | `low` | `reasoning_effort:"low"` | `reasoning:{effort:"low"}` | `thinking:{type:"enabled"}` | `enabled` + `reasoning_effort:"low"` | `enabled, budget_tokens:1024` | `thinkingBudget: 1024` |
-  | `medium` | `"medium"` | `effort:"medium"` | `enabled` | `enabled` + `"medium"` | `enabled, budget_tokens:4096` | `4096` |
-  | `high` | `"high"` | `effort:"high"` | `enabled` | `enabled` + `"high"` | `enabled, budget_tokens:16384` | `16384` |
-  | `max` | `"max"` | `effort:"max"` | `enabled` | `enabled` + `"max"` | `enabled, 4096*` | `4096*` |
+- 会话以 JSON 保存在本机；配置为 TOML。默认数据目录是系统用户数据目录下的 `llmn`，可通过 `LLMN_DATA_DIR` 指定。
+- **同一个数据目录只能由一个独立 Runtime 写入。** 多入口共用实现，不等于多个进程可以同时打开同一存储目录；同时运行时应使用不同目录。
+- 配置与会话目前未加密。密钥可使用环境变量引用；发送到远程模型的消息会交给所选供应商处理。
+- 恢复以最近一次落盘的检查点为准，不承诺零片段丢失，也不提供工具副作用回滚或模型 token 游标续传。
+- 默认工具是固定白名单子进程。Windows 有 Job Object 资源约束；Linux 尚未具备等价的完整资源约束，当前不支持运行任意不可信插件。
 
-  anthropic/gemini 的逐级别预算可用能力声明里的 `budget_tokens` 统一覆盖（缺省按上表）。`*`：max 级别没有专属
-  默认预算，缺省回退 4096。deepseek-thinking 只有开关语义，low/medium/high/max 都映射为 `enabled`；
-  deepseek-effort（ECNU ecnu-max）除 thinking 开关外还带 `reasoning_effort` 强度（官方文档称强度仅对开启
-  思考模式的请求生效，故 `off` 只发 `thinking:{type:"disabled"}`，不带强度）。
-- 模型与 effort：CLI 与 TUI 均支持 `/models`（列出合并目录）、`/model <provider/model>`（切换，也支持裸模型名跨
-  provider 唯一匹配）、`/effort <off|low|medium|high|max>`（独立设置当前模型的 reasoning effort，无参显示当前值，
-  切换前经路由校验该模型是否支持，无效级别会列出该模型实际支持的级别）、`/current`（显示当前 provider / model / effort）；
-  未知 provider/model/effort 会报错并列出候选。
-- **思维链显示**：模型返回的 reasoning_content（DeepSeek/ecnu-max/kimi/glm 等）会实时显示——CLI 用浅色（dim）
-  打印，TUI 用浅色+斜体渲染；思维链随消息持久化（刷新后可再次显示），但不会回传给 provider。
-- **用量与计时（后端提供，前端渲染）**：`/models` 显示每个模型的能力时带上 wire 格式
-  （如 `[reasoning: off/low/high/max · deepseek-effort]`）；每次回复后端持久化并随事件下发：
-  - `Usage`：prompt/completion/total + **cached_tokens**（缓存命中，各 provider 归一化：openai
-    `prompt_tokens_details.cached_tokens`、anthropic `cache_read + cache_creation`、gemini
-    `cachedContentTokenCount`；缓存命中率 = cached / (prompt + cached)，前端算）
-  - `MessageTimings`：`ttft_ms`（请求开始→首个 token）、`reasoning_ms`（请求开始→首个正文，即思考阶段）、
-    `total_ms`（请求开始→流结束）
-  - 消息级 `created_at` / `thinking_ms` / `usage` / `timings` 随 assistant 消息持久化，
-    `ChatEvent::Finished` 实时携带 `usage` + `timings`；GUI 消息（web-server/tauri）原样透传，
-    会话级聚合（状态栏的轮数/LLM 用时/平均速度等）由前端从历史+实时数据求和
-- **附件无损持久化**：持久化格式与 wire 格式分离——`ContentPart::Image/File` 的二进制以 base64 直存
-  （`{type:"image"/"file", mime, data}`），刷新/重启后无损还原；`Message::to_wire_value()` 才转成
-  provider 的 `image_url` data URL（旧持久化文件里的 `image_url` 块也会被还原）；GUI 消息带
-  `attachments`（dataUrl 数组）供前端渲染缩略图/附件回显
-- **feedback 持久化**：`Message.feedback`（up/down，serde default 零迁移）+ GUI 透传；
-  更新接口：`PATCH /api/sessions/{id}/messages/{idx}`（body `{"feedback":"up"|"down"|null}`）/
-  tauri `set_message_feedback(sessionId, idx, feedback)`（idx 与 GUI 消息 id `m-{i}` 的索引一致，
-  按 user/assistant 过滤后计数）
-- **模型清单自动刷新**：`/refresh <provider>` 调用该 provider 的 `GET /models` 拉取最新模型，合并进内存目录
-  并**写回 config/llmn.toml**（toml_edit 定点插入，只往该 provider 的 models 表补缺失条目，注释/格式/其他
-  内容不动）；`/refresh` 无新模型时输出提示。底层接口：`Runtime::refresh_models`（返回新增模型列表）。
-  若 provider 刚写进 `config/llmn.toml`、内存快照还没有（热更新未触发），`/refresh` 会先自动重载配置再拉取；
-  但 provider 的注册信息（protocol/base_url/api_key）必须来自配置——`/refresh` 只负责模型清单，不凭空注册 provider。
-- **会话记住模型**：`/model` 与 `/effort` 的选择绑定到当前会话；切换会话（`/switch`/`/new`）时恢复该会话记住的
-  模型，新会话回退全局默认；TUI 状态栏常驻显示当前会话的 `provider/model@effort`。
-- 配置在启动时整体校验（未知 `default_model`、空 `reasoning.levels`、非法 header 名、`timeout_ms = 0` 都会
-  在启动阶段失败并指名）。
+## 项目结构
 
-### 配置热更新
+```text
+frontends/cli · frontends/tui · frontends/tauri · crates/web-server
+                         │
+                    features/chat
+                         │
+                     runtime
+                    /    |    \
+              ai-client storage tools
+                    \    |    /
+                     common
+```
 
-- 运行中修改 `config/llmn.toml` 会被自动识别（100ms 防抖）并热更新：CLI/TUI 都会在文件变化后重新
-  加载并原子替换 provider 路由，成功时提示"已热更新"，失败时**保留旧配置继续服务**并显示原因。
-- 也可以手动触发：`/reload`。
-- 热更新同样走启动时的完整校验（未知 `default_model`、空 `reasoning.levels`、未设置的环境变量 key、
-  非法 header、`timeout_ms = 0` 等都会拒绝这次更新，运行中的配置不受影响）。
-- 在飞请求不受影响：路由解析在请求的第一个 await 前冻结，配置替换只影响下一个请求。
+业务事件定义在 `crates/events`。图形界面源代码在 `frontends/web`；Tauri 是桌面壳，Web Server 是 HTTP 入口。详细边界和修改约定见 [AGENTS.md](AGENTS.md)。
 
-## 版本状态
+## 接下来重点做什么
 
-- 当前版本：V0.1
-- 已完成：Workspace 骨架、Provider Trait + OpenAI 实现、Core Runtime
-- 全部静态链接 (V0.1)
+1. 完成 Linux GNOME 实机验收，并跑通 GitHub 托管构建与发布流程。
+2. 完善运行记录和故障诊断，让失败原因与恢复边界更容易理解。
+3. 围绕一个可验收的实际任务扩展工具，先完成权限和执行边界，再考虑更广泛的插件接入。
+
+欢迎提供具体任务和复现步骤：你当时想做什么、选了什么模型、期望和实际结果分别是什么。请勿在 Issue、日志或截图中附带 API Key。
+
+## 文档与参考
+
+- [文档索引与验收记录](docs/README.md)
+- [开发约定](AGENTS.md) · [配置指南](docs/configuration.md) · [发布指南](docs/releases.md)
+- [Cherry Studio](https://github.com/CherryHQ/cherry-studio)：参考其面向用户的功能组织和开发入口。
+- [Chatbox](https://github.com/chatboxai/chatbox)：参考其安装、快速开始和平台要求的分层说明。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：参考其 Harness 定位、开发预览边界与扩展文档入口。
+
+上述项目是设计和文档参考，没有进行功能评分或性能排名。本仓库尚未声明许可证，许可证选择将在正式公开发布前明确。

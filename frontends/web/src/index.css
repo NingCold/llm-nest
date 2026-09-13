@@ -153,6 +153,7 @@
 
   html {
     color-scheme: light;
+    background-color: var(--background);
   }
   html.dark {
     color-scheme: dark;

@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "LLM Nest",
+  "productName": "LLM-Nest",
   "version": "0.1.0",
   "identifier": "com.llmnest.tauri",
   "build": {
@@ -12,11 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "LLM Nest",
+        "title": "LLM-Nest",
         "width": 1200,
         "height": 800,
         "resizable": true,
         "decorations": false,
+        "shadow": false,
+        "transparent": true,
+        "backgroundColor": "#0c0c0e",
         "fullscreen": false,
         "minWidth": 800,
         "minHeight": 600

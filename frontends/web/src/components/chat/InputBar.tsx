@@ -4,7 +4,7 @@ import { PROMPT_TEMPLATES } from "@/lib/prompts"
 import { useConfigStore } from "@/store/config"
 import { useSessionStore } from "@/store/session"
 import { useChatStore } from "@/store/chat"
-import { useUiStore } from "@/store/ui"
+import { useUiStore, clampEffort } from "@/store/ui"
 import {
   cacheHitRate,
   formatThinking,
@@ -128,13 +128,11 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
     }
   }, [sessionMessages])
 
-  const modelName = (() => {
-    const m = config?.currentModel
-    if (!m) return ""
-    const p = providers.find((x) => x.id === m.provider)
-    const model = p?.models.find((x) => x.id === m.model)
-    return model?.displayName ?? `${m.provider}/${m.model}`
-  })()
+  const selection = config?.currentModel
+  const selectedModel = providers.find(p => p.id === selection?.provider)?.models.find(m => m.id === selection?.model)
+  const modelName = selection?.provider && selection.model
+    ? selectedModel?.displayName ?? `${selection.provider}/${selection.model}` : ""
+  const effectiveEffort = clampEffort(reasoningEffort, selectedModel?.reasoningLevels)
 
   const resize = () => {
     const el = taRef.current
@@ -362,7 +360,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
                   submit()
                 }
               }}
-              placeholder={disabled ? "先创建一个对话…" : "给 LLM Nest 发送消息…"}
+              placeholder={disabled ? "先创建一个对话…" : "给 LLM-Nest 发送消息…"}
               className="max-h-52 min-h-[38px] flex-1 resize-none bg-transparent px-1.5 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
             />
 
@@ -401,17 +399,17 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: InputBarProp
 
         {/* Caption */}
         <p className="mt-2.5 flex flex-wrap items-center justify-center gap-x-1.5 text-center text-xs text-muted-foreground">
-          <span>LLM Nest 可能会犯错，请核查重要信息。</span>
+          <span>LLM-Nest 可能会犯错，请核查重要信息。</span>
           {modelName && (
             <>
               <span className="text-muted-foreground/50">·</span>
               <span>{modelName}</span>
             </>
           )}
-          {reasoningEffort !== "off" && (
+          {effectiveEffort !== "off" && (
             <>
               <span className="text-muted-foreground/50">·</span>
-              <span>思考 · {reasoningEffort}</span>
+              <span>思考 · {effectiveEffort}</span>
             </>
           )}
           {webSearchEnabled && (

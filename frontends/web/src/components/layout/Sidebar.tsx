@@ -183,7 +183,7 @@ export function Sidebar() {
         {/* Brand */}
         <div data-tauri-drag-region={IS_DESKTOP || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-4">
           <BrandMark className="pointer-events-none" />
-          <span className="pointer-events-none text-[15px] font-semibold tracking-tight">LLM Nest</span>
+          <span className="pointer-events-none text-[15px] font-semibold tracking-tight">LLM-Nest</span>
         </div>
 
         {/* New chat */}
@@ -252,7 +252,7 @@ export function Sidebar() {
         <div className="flex items-center gap-2 border-t border-sidebar-border px-3 py-2.5">
           <BrandMark className="h-8 w-8" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium leading-tight">LLM Nest</p>
+            <p className="truncate text-sm font-medium leading-tight">LLM-Nest</p>
             <p className="truncate text-[11px] leading-tight text-sidebar-muted">
               {apiMode === "tauri"
                 ? "桌面模式"

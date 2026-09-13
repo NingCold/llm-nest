@@ -53,7 +53,7 @@ function AppContent() {
 
   if (error) return <div className="flex h-screen flex-col items-center justify-center gap-4 p-8 bg-background text-foreground">
     <StartupDragRegion />
-    <h1 className="text-lg font-medium">无法启动 LLM Nest</h1>
+    <h1 className="text-lg font-medium">无法启动 LLM-Nest</h1>
     <p role="alert" className="max-w-xl whitespace-pre-wrap break-words text-sm text-red-500">{error}</p>
     <p className="text-sm text-muted-foreground">请检查后端连接、配置文件和数据目录占用情况后重试。</p>
     <button className="rounded border px-4 py-2" onClick={retry}>重新连接</button>

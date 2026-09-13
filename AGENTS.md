@@ -480,3 +480,10 @@ runner::run(app, chat).await?;
 - `build.rs` 必须跟踪 `icons` 目录，避免增量构建只更新窗口图标却保留 EXE 的旧 Windows 资源。安装器/卸载器使用同一 ICO。
 - 发布后运行 `scripts/verify-windows-icons.ps1` 核对实际 EXE 和安装器资源；可用 `-ArtifactPath` 检查已安装 EXE、卸载器、MSI 解包 EXE。界面截图、文件存在或 NSIS 返回 0 均不足以证明安装图标或覆盖安装正确。
 - 本轮验收与边界见 `docs/desktop-settings-acceptance-2026-09-13.md`；干净系统、缺 WebView2、MSI 系统级安装仍未验收。
+
+## 窗口与模型入口修整（2026-09-13）
+
+- 产品名与 Rust 二进制名为 `LLM-Nest`，内部 Cargo 包名仍为 `tauri-frontend`。Windows 产物为 `LLM-Nest.exe` / `LLM-Nest_0.1.0_x64-setup.exe`；保持 `com.llmnest.tauri` identifier 和 `llmn` 数据目录。旧 NSIS 产品名到新名称的升级需要一次保留数据的安装迁移，本机已完成，没有通用自动迁移钩子。
+- 无边框窗口 `shadow=false`、WebView `transparent=true`，CSS 页面不透明。主题切换只能用 `@tauri-apps/api/window` 的 `Window.setBackgroundColor` 同步原生底色，不要用会覆盖 WebView 透明背景的 `WebviewWindow` 同名 API。关闭系统阴影也会移除 Windows 11 系统圆角。
+- 模型与思考菜单空状态通过 `ModelSetupOptions` 提供说明和键盘可达的模型设置入口；无效思考能力不显示为可用级别。输入框底部使用 `clampEffort` 显示实际有效级别。
+- 修改、最终包哈希与验收边界见 `docs/window-polish-acceptance-2026-09-13.md`。尺寸调整后的画面已检查，整个高速拉伸过程和垂直贴边黑框仍需用户复核。

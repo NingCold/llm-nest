@@ -9,6 +9,7 @@ import {
   Sun,
 } from "lucide-react"
 import { ModelPicker } from "@/components/layout/ModelPicker"
+import { MODEL_SETTINGS_ACTION, ModelSetupOptions } from "@/components/layout/ModelSetupOptions"
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ export function Header() {
   const setReasoningEffort = useUiStore((s) => s.setReasoningEffort)
   const theme = useUiStore((s) => s.theme)
   const toggleTheme = useUiStore((s) => s.toggleTheme)
+  const showSettings = useUiStore(s => s.showSettings)
 
   const config = useConfigStore((s) => s.config)
   const providers = useConfigStore((s) => s.providers)
@@ -52,11 +54,13 @@ export function Header() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 当前模型支持的思考级别（来自模型快照/配置），用于渲染强度选项
-  const reasoningLevels = (() => {
+  const selectedModel = (() => {
     const p = providers.find((x) => x.id === config?.currentModel.provider)
     return p?.models.find((m) => m.id === config?.currentModel.model)
-      ?.reasoningLevels
   })()
+  const hasModels = providers.some(p => p.models.length > 0)
+  const reasoningLevels = selectedModel?.reasoningLevels
+  const supportsReasoning = Boolean(reasoningLevels?.some(level => level !== "off"))
   const effectiveEffort = clampEffort(reasoningEffort, reasoningLevels)
 
   useEffect(() => {
@@ -125,7 +129,7 @@ export function Header() {
               }}
               title={current ? `${current.title}（双击重命名）` : undefined}
             >
-              {current?.title ?? "LLM Nest"}
+              {current?.title ?? "LLM-Nest"}
             </h1>
             {current && (
               <button
@@ -152,19 +156,25 @@ export function Header() {
 
         {/* 思考强度：选项来自当前模型的 reasoning levels（模型快照/配置） */}
         <Select
-          value={effectiveEffort}
-          onValueChange={setReasoningEffort}
-          disabled={!reasoningLevels || reasoningLevels.length === 0}
+          value={supportsReasoning ? effectiveEffort : ""}
+          onValueChange={value => {
+            if (value === MODEL_SETTINGS_ACTION) showSettings("models")
+            else setReasoningEffort(value)
+          }}
         >
           <SelectTrigger aria-label="思考强度" className={cn("hidden h-9 w-auto gap-2 border border-transparent bg-transparent px-2.5 text-sm text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 md:flex", IS_DESKTOP && "max-lg:gap-1 max-lg:px-1.5")}>
             <Brain className="h-4 w-4 shrink-0" />
             <span className="hidden text-muted-foreground xl:inline">思考</span>
             <span className="font-medium text-foreground">
-              {EFFORT_LABEL[effectiveEffort] ?? effectiveEffort}
+              {supportsReasoning ? EFFORT_LABEL[effectiveEffort] ?? effectiveEffort : selectedModel ? "不支持" : "未配置"}
             </span>
           </SelectTrigger>
-          <SelectContent className="w-36">
-            {(reasoningLevels ?? []).map((l) => (
+          <SelectContent className={supportsReasoning ? "w-36" : "w-72"}>
+            {!supportsReasoning && <ModelSetupOptions
+              message={!hasModels ? "暂无可用模型。添加模型后可查看其支持的思考模式。" : !selectedModel ? "请先选择一个可用模型，再设置思考模式。" : "当前模型未提供可用的思考模式，可切换支持思考的模型。"}
+              action={hasModels ? "管理模型" : "添加模型"}
+            />}
+            {supportsReasoning && (reasoningLevels ?? []).map((l) => (
               <SelectItem key={l} value={l} className="py-1.5">
                 {EFFORT_LABEL[l] ?? l}
               </SelectItem>
@@ -172,7 +182,7 @@ export function Header() {
           </SelectContent>
         </Select>
 
-        <button disabled aria-label="联网搜索（未接入）" title="联网搜索尚未接入" className="hidden h-9 shrink-0 items-center gap-2 px-2 text-muted-foreground opacity-50 xl:flex">
+        <button disabled aria-label="联网搜索（未接入）" title="联网搜索尚未接入" className="hidden h-9 shrink-0 items-center gap-2 px-2 font-sans text-sm font-medium leading-5 text-muted-foreground opacity-50 xl:flex">
           <Globe className="h-4 w-4 shrink-0" /><span className="hidden 2xl:inline">联网搜索（未接入）</span>
         </button>
 

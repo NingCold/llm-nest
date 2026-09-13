@@ -44,7 +44,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
     <div className="flex h-full min-h-0 w-full">
       <aside className="flex w-48 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:w-56">
         <div data-tauri-drag-region={IS_DESKTOP || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-5">
-          <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM Nest</span>
+          <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM-Nest</span>
         </div>
         <div className="px-3 py-4">
           <button type="button" onClick={showChat} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -59,7 +59,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
             </button>
           ))}
         </nav>
-        <div className="mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM Nest · {version || "0.1.0"}</div>
+        <div className="mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM-Nest · {version || "0.1.0"}</div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <header data-tauri-drag-region={IS_DESKTOP || undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", IS_DESKTOP && "pr-[140px]")}>
@@ -89,7 +89,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
                 <p className="text-xs text-muted-foreground">立即生效，并在下次启动时保留。</p>
               </div>)}
               {panel("about", <div className="space-y-6">
-                <div className="flex items-center gap-4"><BrandMark className="h-16 w-16" /><div><h2 className="text-xl font-semibold">LLM Nest</h2><p className="mt-1 text-sm text-muted-foreground">版本 {version || "0.1.0"}</p></div></div>
+                <div className="flex items-center gap-4"><BrandMark className="h-16 w-16" /><div><h2 className="text-xl font-semibold">LLM-Nest</h2><p className="mt-1 text-sm text-muted-foreground">版本 {version || "0.1.0"}</p></div></div>
                 <dl className="space-y-3 text-sm">
                   <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">运行模式</dt><dd>{apiMode === "tauri" ? "桌面应用" : apiMode === "http" ? "Web 应用" : "本地演示"}</dd></div>
                   <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">当前模型</dt><dd className="break-all">{model?.model ? `${model.provider} / ${model.model}` : "尚未配置"}</dd></div>

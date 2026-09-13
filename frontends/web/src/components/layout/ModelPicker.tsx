@@ -9,6 +9,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useConfigStore } from "@/store/config"
+import { useUiStore } from "@/store/ui"
+import { MODEL_SETTINGS_ACTION, ModelSetupOptions } from "./ModelSetupOptions"
 import { cn } from "@/lib/utils"
 
 function findModel(providerId: string, modelId: string) {
@@ -22,6 +24,8 @@ export function ModelPicker({ className }: { className?: string }) {
   const config = useConfigStore((s) => s.config)
   const providers = useConfigStore((s) => s.providers)
   const setModel = useConfigStore((s) => s.setModel)
+  const showSettings = useUiStore(s => s.showSettings)
+  const availableProviders = providers.filter(p => p.models.length > 0)
 
   const current = config?.currentModel
   const { provider: currentProvider, model: currentModel } = findModel(
@@ -29,17 +33,19 @@ export function ModelPicker({ className }: { className?: string }) {
     current?.model ?? "",
   )
 
-  const value = current ? `${current.provider}::${current.model}` : ""
+  const value = current && currentModel ? `${current.provider}::${current.model}` : ""
 
   return (
     <Select
       value={value}
       onValueChange={(v) => {
+        if (v === MODEL_SETTINGS_ACTION) { showSettings("models"); return }
         const [provider, model] = v.split("::")
         if (provider && model) setModel({ provider, model })
       }}
     >
       <SelectTrigger
+        aria-label="选择模型"
         className={cn(
           "h-8 w-auto max-w-[min(24vw,16rem)] gap-2 border border-transparent bg-transparent px-2.5 text-sm shadow-none hover:bg-accent hover:text-accent-foreground focus:ring-0 focus:ring-offset-0 data-[placeholder]:text-muted-foreground",
           className,
@@ -57,7 +63,8 @@ export function ModelPicker({ className }: { className?: string }) {
         )}
       </SelectTrigger>
       <SelectContent className="max-h-[420px] w-72" position="popper">
-        {providers.map((p) => (
+        {availableProviders.length === 0 && <ModelSetupOptions message="暂无可用模型。请先添加供应商和模型。" />}
+        {availableProviders.map((p) => (
           <SelectGroup key={p.id}>
             <SelectLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {p.displayName}

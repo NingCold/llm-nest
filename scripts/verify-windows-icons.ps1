@@ -5,8 +5,8 @@ Add-Type -AssemblyName System.Drawing
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $ArtifactPath) {
     $ArtifactPath = @(
-        (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/tauri-frontend.exe'),
-        (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/bundle/nsis/LLM Nest_0.1.0_x64-setup.exe')
+        (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/LLM-Nest.exe'),
+        (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/bundle/nsis/LLM-Nest_0.1.0_x64-setup.exe')
     )
 }
 

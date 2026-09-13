@@ -2,11 +2,23 @@ import { useEffect, useState } from "react"
 import { Copy, Minus, Square, X } from "lucide-react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { IS_DESKTOP } from "@/lib/desktop"
+import { useUiStore } from "@/store/ui"
 
 /** Kept outside backend-dependent content so a failed startup is still closable. */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false)
   const [error, setError] = useState("")
+  const theme = useUiStore(s => s.theme)
+
+  useEffect(() => {
+    if (!IS_DESKTOP) return
+    // Keep the native surface exposed during resize in sync with the opaque CSS page.
+    // Use Window (not WebviewWindow) so the WebView2 composition surface stays transparent.
+    let active = true
+    void getCurrentWindow().setBackgroundColor(theme === "dark" ? "#0c0c0e" : "#ffffff")
+      .catch(e => { if (active) setError(`窗口背景更新失败：${String(e)}`) })
+    return () => { active = false }
+  }, [theme])
 
   useEffect(() => {
     if (!IS_DESKTOP) return

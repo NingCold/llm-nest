@@ -43,6 +43,8 @@ export function ChatView() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
+  const draggingScrollbar = useRef(false)
+  const touchY = useRef<number | null>(null)
   /** 距底部超过阈值（不跟随）时显示右下角置底按钮 */
   const [showJump, setShowJump] = useState(false)
 
@@ -80,7 +82,7 @@ export function ChatView() {
     const el = scrollRef.current
     if (!el) return
     const raf = requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight
     })
     return () => cancelAnimationFrame(raf)
   }, [messages, virtualizer.getTotalSize()])
@@ -91,28 +93,50 @@ export function ChatView() {
     setShowJump(false)
   }, [currentSessionId])
 
+  useEffect(() => {
+    const release = () => { draggingScrollbar.current = false }
+    window.addEventListener("pointerup", release)
+    window.addEventListener("pointercancel", release)
+    return () => {
+      window.removeEventListener("pointerup", release)
+      window.removeEventListener("pointercancel", release)
+    }
+  }, [])
+
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-    stickToBottom.current = dist < FOLLOW_THRESHOLD
-    setShowJump(dist >= FOLLOW_THRESHOLD)
+    // Virtualizer corrections can move scrollTop in either direction. A
+    // scroll event alone is not evidence that the user stopped following.
+    if (draggingScrollbar.current) stickToBottom.current = dist < FOLLOW_THRESHOLD
+    else if (dist < FOLLOW_THRESHOLD) stickToBottom.current = true
+    setShowJump(!stickToBottom.current)
+  }
+
+  const resumeFollowing = () => {
+    stickToBottom.current = true
+    setShowJump(false)
+  }
+
+  const pauseFollowing = () => {
+    stickToBottom.current = false
+    setShowJump(true)
   }
 
   const jumpToBottom = () => {
     const el = scrollRef.current
     if (!el) return
-    stickToBottom.current = true
-    setShowJump(false)
+    resumeFollowing()
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
   }
 
   const handlePick = (prompt: string) => {
-    if (historyReady && hasModel) void send(prompt)
+    if (historyReady && hasModel) { resumeFollowing(); void send(prompt) }
   }
 
   const handleSend = (text: string, attachments: GuiAttachment[]) => {
-    if (historyReady && hasModel) void send(text, attachments)
+    if (historyReady && hasModel) { resumeFollowing(); void send(text, attachments) }
   }
 
   return (
@@ -127,6 +151,15 @@ export function ChatView() {
         <div
           ref={scrollRef}
           onScroll={handleScroll}
+          onWheel={e => { if (e.deltaY < 0) pauseFollowing() }}
+          onPointerDown={e => { draggingScrollbar.current = e.target === e.currentTarget }}
+          onTouchStart={e => { touchY.current = e.touches[0]?.clientY ?? null }}
+          onTouchMove={e => {
+            const y = e.touches[0]?.clientY ?? null
+            if (y !== null && touchY.current !== null && y > touchY.current) pauseFollowing()
+            touchY.current = y
+          }}
+          onKeyDown={e => { if (["ArrowUp", "PageUp", "Home"].includes(e.key)) pauseFollowing() }}
           className="overflow-anchor-none min-h-0 flex-1 overflow-y-auto"
         >
           {messages.length === 0 ? (
@@ -153,8 +186,8 @@ export function ChatView() {
                         sessionId={currentSessionId ?? ""}
                         message={m}
                         isStreaming={isStreaming}
-                        onRegenerate={(id) => void regenerate(id)}
-                        onEditResend={(id, content) => void editAndResend(id, content)}
+                        onRegenerate={(id) => { resumeFollowing(); void regenerate(id) }}
+                        onEditResend={(id, content) => { resumeFollowing(); void editAndResend(id, content) }}
                       />
                     </div>
                   </div>

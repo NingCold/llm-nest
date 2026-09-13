@@ -6,7 +6,7 @@
   "description": "Tauri desktop shell — the actual React frontend lives in ../web",
   "scripts": {
     "dev": "pnpm --dir ../web dev",
-    "build": "pnpm --dir ../web build",
+    "build": "pnpm --dir ../web exec vite build --outDir ../tauri/dist --emptyOutDir",
     "typecheck": "pnpm --dir ../web typecheck",
     "tauri": "tauri"
   },

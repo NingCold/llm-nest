@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use runtime::runtime::Runtime;
@@ -8,6 +7,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 pub mod commands;
+mod config_path;
 
 pub struct AppState {
     pub runtime: Runtime,
@@ -25,7 +25,7 @@ impl BackendState {
         if let Some(state) = inner.as_ref() {
             return Ok(state.clone());
         }
-        let config_path = find_config_path()?;
+        let config_path = config_path::find_config_path()?;
         let runtime = Arc::new(
             Runtime::from_config_persistent(&config_path, storage::default_data_dir())
                 .map_err(|e| e.to_string())?,
@@ -54,34 +54,6 @@ impl BackendState {
         *inner = Some(state.clone());
         Ok(state)
     }
-}
-
-fn find_config_path() -> Result<PathBuf, String> {
-    if let Ok(path) = std::env::var("LLMN_CONFIG") {
-        let path = PathBuf::from(path);
-        return if path.is_file() {
-            Ok(path)
-        } else {
-            Err(format!("LLMN_CONFIG not found: {}", path.display()))
-        };
-    }
-    let candidates = [PathBuf::from("config/llmn.toml"), {
-        let mut p = std::env::current_exe().map_err(|e| e.to_string())?;
-        p.pop();
-        p.pop();
-        p.pop();
-        p.push("config/llmn.toml");
-        p
-    }];
-    for p in &candidates {
-        if p.exists() {
-            return Ok(p.clone());
-        }
-    }
-    Err(format!(
-        "config/llmn.toml not found, tried: {:?}",
-        candidates
-    ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

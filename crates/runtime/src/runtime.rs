@@ -993,4 +993,45 @@ model = "m"
         assert_eq!(rt.default_model().await.unwrap(), before);
         std::fs::remove_file(path).unwrap();
     }
+
+    #[tokio::test]
+    async fn empty_catalog_can_add_remove_and_restart_without_losing_history() {
+        let dir =
+            std::env::temp_dir().join(format!("llmn-onboarding-{}", common::SessionId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("llmn.toml");
+        std::fs::write(&path, "[providers]\n").unwrap();
+        let session_id;
+        {
+            let rt = Runtime::from_config_persistent(&path, &dir).unwrap();
+            assert!(rt.default_model().await.is_none());
+            assert!(
+                rt.gui_config()
+                    .await
+                    .unwrap()
+                    .current_model
+                    .model
+                    .is_empty()
+            );
+            session_id = rt.create_session(Some("first run".into())).await.unwrap();
+            let draft = crate::config::persist::ProviderDraft {
+                id: "deepseek".into(),
+                protocol: None,
+                base_url: None,
+                api_key: Some("fixture".into()),
+                models: None,
+            };
+            rt.upsert_provider(&draft).await.unwrap();
+            let selection = rt.default_model().await.unwrap();
+            rt.remove_provider("deepseek").await.unwrap();
+            assert!(rt.list_models().await.is_empty());
+            assert!(rt.resolve_model(&selection).await.is_err());
+        }
+        {
+            let rt = Runtime::from_config_persistent(&path, &dir).unwrap();
+            assert!(rt.default_model().await.is_none());
+            assert_eq!(rt.list_sessions().await, vec![session_id]);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

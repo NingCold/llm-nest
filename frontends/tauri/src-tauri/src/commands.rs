@@ -241,8 +241,8 @@ impl GuiEvent {
     }
 }
 
-/// 历史消息 DTO：后端存储的 common::Message 没有 id，id 由索引生成（会话内
-/// 稳定）；created_at 为 epoch 毫秒（由持久化的 Unix 秒换算）。
+/// 历史消息 DTO：透传持久化的消息 UUID；created_at 为 epoch 毫秒
+/// （由持久化的 Unix 秒换算）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiMessage {
@@ -877,11 +877,14 @@ mod tests {
     }
 
     #[test]
-    fn messages_to_gui_filters_and_builds_ids() {
+    fn messages_to_gui_filters_and_preserves_ids() {
         let mut session = runtime::session::Session::new(None);
         session.push(Message::system("sys"));
-        session.push(Message::user("hello"));
+        let user = Message::user("hello");
+        let user_id = user.id.unwrap().to_string();
+        session.push(user);
         let mut assistant = Message::assistant("world");
+        let assistant_id = assistant.id.unwrap().to_string();
         assistant.feedback = Some(common::Feedback::Down);
         // Persisted value is Unix seconds; the wire value must be ms.
         assistant.created_at = Some(1_787_587_347);
@@ -894,10 +897,10 @@ mod tests {
         let gui = messages_to_gui(&session);
         // system is skipped; user/assistant/tool are kept
         assert_eq!(gui.len(), 3);
-        assert_eq!(gui[0].id, "m-0");
+        assert_eq!(gui[0].id, user_id);
         assert_eq!(gui[0].role, "user");
         assert_eq!(gui[0].content, "hello");
-        assert_eq!(gui[1].id, "m-1");
+        assert_eq!(gui[1].id, assistant_id);
         assert_eq!(gui[1].role, "assistant");
         assert_eq!(gui[1].content, "world");
         assert_eq!(gui[0].status, "done");

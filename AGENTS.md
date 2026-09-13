@@ -464,3 +464,11 @@ runner::run(app, chat).await?;
 - OpenAI 兼容适配器同时接收 `reasoning_content` 和 `reasoning`（流式 delta 与非流式 message）。两字段同在时选非空 reasoning_content，否则回退 reasoning，避免重复显示与 serde duplicate field 错误。
 - `scripts/live_acceptance.py` 是显式调用真实 API 的验收脚本，不属于离线测试；读取所选配置的 chatecnu 段与密钥环境变量，只写独立临时配置/会话。不会把密钥写进配置或报告。
 - 真实 chatecnu/ecnu-max 已验收普通回答、思考、工具调用、取消后继续、重启历史以及 Web GUI。结果和边界见 `docs/live-acceptance-2026-09-13.md`。
+
+## Tauri Windows 打包与首次启动（2026-09-13）
+
+- Windows 发布包使用 MSVC 工具链；在 `frontends/tauri` 运行 `pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci`。`RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc` 可覆盖本机默认 GNU 工具链。
+- Tauri 前端独立构建到 `frontends/tauri/dist`，每次清理该输出目录，配置 `frontendDist=../dist`，不改 Web 前端已跟踪的 dist。NSIS 工具缓存使用项目 target 目录（`useLocalToolsDir=true`）。
+- Release 默认从 `<storage::default_data_dir()>/llmn.toml` 读取配置；缺失时只创建一次初始 `[providers]` 文件。显式 `LLMN_CONFIG` 不存在仍报错；debug 构建可优先使用项目配置。
+- 空 providers 是有效的首次启动/删除最后一个供应商状态；模型解析仍拒绝无模型的聊天请求。不要用示例密钥或开发配置填充安装包。
+- 桌面实机验收记录与未覆盖范围见 `docs/tauri-acceptance-2026-09-13.md`。

@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 pub mod commands;
 mod config_path;
+mod window_frame;
 
 pub struct AppState {
     pub runtime: Runtime,
@@ -62,12 +63,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            window_frame::setup(app);
             app.manage(BackendState {
                 inner: Mutex::new(None),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            window_frame::set_window_appearance,
             commands::init_app,
             commands::chat,
             commands::cancel_chat,

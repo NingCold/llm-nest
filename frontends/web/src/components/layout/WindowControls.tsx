@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react"
 import { Copy, Minus, Square, X } from "lucide-react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { invoke } from "@tauri-apps/api/core"
 import { IS_DESKTOP } from "@/lib/desktop"
 import { useUiStore } from "@/store/ui"
 
 /** Kept outside backend-dependent content so a failed startup is still closable. */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
   const [error, setError] = useState("")
+  const [fallbackFrame, setFallbackFrame] = useState(false)
   const theme = useUiStore(s => s.theme)
 
   useEffect(() => {
@@ -15,8 +18,14 @@ export function WindowControls() {
     // Keep the native surface exposed during resize in sync with the opaque CSS page.
     // Use Window (not WebviewWindow) so the WebView2 composition surface stays transparent.
     let active = true
-    void getCurrentWindow().setBackgroundColor(theme === "dark" ? "#0c0c0e" : "#ffffff")
-      .catch(e => { if (active) setError(`窗口背景更新失败：${String(e)}`) })
+    void (async () => {
+      await getCurrentWindow().setBackgroundColor(theme === "dark" ? "#0c0c0e" : "#ffffff")
+      if (!active) return
+      const nativeFrame = await invoke<boolean>("set_window_appearance", { dark: theme === "dark" })
+      if (active) setFallbackFrame(!nativeFrame)
+    })().catch(e => {
+      if (active) { setFallbackFrame(true); setError(`窗口外观更新失败：${String(e)}`) }
+    })
     return () => { active = false }
   }, [theme])
 
@@ -26,7 +35,9 @@ export function WindowControls() {
     let unlisten: (() => void) | undefined
     const win = getCurrentWindow()
     const refresh = () => {
-      void win.isMaximized().then(value => { if (active) setMaximized(value) })
+      void Promise.all([win.isMaximized(), win.isFullscreen()]).then(([max, full]) => {
+        if (active) { setMaximized(max); setFullscreen(full) }
+      })
         .catch(e => { if (active) setError(String(e)) })
     }
     refresh()
@@ -44,7 +55,8 @@ export function WindowControls() {
     catch (e) { setError(`窗口操作失败：${String(e)}`) }
   }
   const button = "flex h-14 w-11 items-center justify-center text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-  return (
+  return <>
+    {fallbackFrame && !maximized && !fullscreen && <div aria-hidden="true" className="desktop-frame-fallback" />}
     <div className="fixed right-0 top-0 z-50 flex select-none" aria-label="窗口控制">
       <button type="button" aria-label="最小化窗口" title="最小化" className={`${button} hover:bg-accent hover:text-foreground`} onClick={() => void action("minimize")}><Minus className="h-4 w-4" /></button>
       <button type="button" aria-label={maximized ? "还原窗口" : "最大化窗口"} title={maximized ? "还原" : "最大化"} className={`${button} hover:bg-accent hover:text-foreground`} onClick={() => void action("toggleMaximize")}>
@@ -55,5 +67,5 @@ export function WindowControls() {
         <p className="break-words text-red-500">{error}</p><p className="mt-1 text-muted-foreground">也可按 Alt+F4 关闭窗口。</p><button onClick={() => setError("")} className="mt-2 underline">知道了</button>
       </div>}
     </div>
-  )
+  </>
 }

@@ -487,3 +487,10 @@ runner::run(app, chat).await?;
 - 无边框窗口 `shadow=false`、WebView `transparent=true`，CSS 页面不透明。主题切换只能用 `@tauri-apps/api/window` 的 `Window.setBackgroundColor` 同步原生底色，不要用会覆盖 WebView 透明背景的 `WebviewWindow` 同名 API。关闭系统阴影也会移除 Windows 11 系统圆角。
 - 模型与思考菜单空状态通过 `ModelSetupOptions` 提供说明和键盘可达的模型设置入口；无效思考能力不显示为可用级别。输入框底部使用 `clampEffort` 显示实际有效级别。
 - 修改、最终包哈希与验收边界见 `docs/window-polish-acceptance-2026-09-13.md`。尺寸调整后的画面已检查，整个高速拉伸过程和垂直贴边黑框仍需用户复核。
+
+## Windows 原生圆角与边框（2026-09-13）
+
+- 用户已确认上一版快速缩放和上下贴边的黑影消失。保留 `shadow=false`、透明 WebView、随主题同步的原生底色，不重新启用 tao 的阴影边缘布局。
+- `window_frame.rs` 使用 Windows 11 的 `DWMWA_WINDOW_CORNER_PREFERENCE` 与 `DWMWA_BORDER_COLOR` 独立请求系统圆角和细描边；圆角在最大化/贴边时由 DWM 决定，不使用 `SetWindowRgn`、CSS 圆角裁切、透明外边距或自建阴影窗口。
+- `set_window_appearance` 仅同步外观，不依赖聊天后端初始化。边框随应用主题和原生焦点变化；Windows 10 不支持这些属性时返回 false，由不拦截鼠标的 CSS 内描边回退，最大化/全屏时隐藏回退描边。
+- 不把 DWM API 返回成功等同于所有机器的视觉验收。原生圆角与测试范围见 `docs/native-window-frame-2026-09-13.md`。

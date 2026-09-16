@@ -5,7 +5,7 @@ import { ProviderManager } from "@/components/settings/ProviderManager"
 import { GenerationSettings } from "@/components/settings/GenerationSettings"
 import { useConfigStore } from "@/store/config"
 import { useUiStore, type SettingsSection } from "@/store/ui"
-import { IS_DESKTOP } from "@/lib/desktop"
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { cn } from "@/lib/utils"
 
 const sections = [
@@ -43,7 +43,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 w-full">
       <aside className="flex w-48 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:w-56">
-        <div data-tauri-drag-region={IS_DESKTOP || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-5">
+        <div data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-5">
           <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM-Nest</span>
         </div>
         <div className="px-3 py-4">
@@ -62,7 +62,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
         <div className="mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM-Nest · {version || "0.1.0"}</div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        <header data-tauri-drag-region={IS_DESKTOP || undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", IS_DESKTOP && "pr-[140px]")}>
+        <header data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", CUSTOM_WINDOW_CHROME && "pr-[140px]")}>
           <span className="pointer-events-none text-muted-foreground">设置</span><span className="pointer-events-none text-muted-foreground/50">/</span><span className="pointer-events-none font-medium">{current.label}</span>
         </header>
         {notices}

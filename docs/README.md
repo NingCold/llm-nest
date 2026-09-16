@@ -16,6 +16,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [Linux 桌面接续验收](linux-acceptance-2026-09-16.md) | 已有包、XWayland/Wayland 自动 GUI、修复重建与待人工项 |
 | [Linux 首次构建与包验证](linux-acceptance-2026-09-13.md) | Ubuntu 24.04 构建基线、安装依赖、worker、无界面启动与待测 GUI |
 | [Windows 上下贴边细边框](docked-window-frame-2026-09-13.md) | DWM/自绘细边框、窗口状态切换、用户确认的基线 |
 | [Tauri Windows 安装验收](tauri-acceptance-2026-09-13.md) | Windows 安装包与首次启动，及仍未覆盖的安装场景 |

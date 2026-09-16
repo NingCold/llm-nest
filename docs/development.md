@@ -81,6 +81,8 @@ python scripts/acceptance.py
 
 `frontends/web/dist` 是已跟踪的 Web 产物；桌面构建单独输出到 `frontends/tauri/dist`。除非任务要求更新 Web 部署产物，不要把桌面构建的输出提交进去。
 
+`frontends/tauri/src-tauri/gen/schemas` 下的 `windows-schema.json`、`linux-schema.json`、`desktop-schema.json` 和权限 manifest 由 Tauri 构建脚本生成，已从 Git 排除。构建时出现或更新这些文件是正常行为，无需提交；需要修改权限时编辑 `capabilities/*.json`。首次克隆后运行桌面构建或 `cargo check -p tauri-frontend` 即可生成当前平台的文件。
+
 图标从 `assets/branding/app-icon.svg` 生成：
 
 ```bash

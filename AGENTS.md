@@ -101,6 +101,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 ### GUI 与平台
 
 - React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`；不要用桌面打包改写已跟踪的 Web dist。
+- `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 只控制 Windows 自绘窗口区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试；历史未成功加载或无模型时禁止发送。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。

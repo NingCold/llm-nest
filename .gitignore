@@ -37,6 +37,9 @@ config/llmn.toml
 STATE.md
 /frontends/tauri/dist/
 
+# Tauri rebuilds permission schemas/manifests for each target platform.
+/frontends/tauri/src-tauri/gen/schemas/
+
 # Local Python/build helpers
 __pycache__/
 /release-assets/

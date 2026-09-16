@@ -129,7 +129,7 @@ export function Header() {
               }}
               title={current ? `${current.title}（双击重命名）` : undefined}
             >
-              {current?.title ?? "LLM-Nest"}
+              {current?.title ?? "LLM Nest"}
             </h1>
             {current && (
               <button

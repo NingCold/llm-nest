@@ -4,7 +4,7 @@
 
 ## 项目定位与当前范围
 
-LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。产品/桌面二进制名为 `LLM-Nest`，CLI 为 `llmn`，TUI 为 `llmnt`；内部 Tauri Cargo 包名为 `tauri-frontend`。
+LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用显示名称为 `LLM Nest`，桌面二进制名仍为 `LLM-Nest`，CLI 为 `llmn`，TUI 为 `llmnt`；内部 Tauri Cargo 包名为 `tauri-frontend`。
 
 已实现聊天、协议路由、会话持久化、运行中断/恢复、内置工具循环，以及桌面/Web 设置。MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留 trait 或界面按钮声称功能已经可用。
 
@@ -113,6 +113,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - Windows 10 不支持 DWM 属性时回退细边框；DWM 返回成功不等同于所有机器视觉验收通过。
 - 产品 identifier `com.llmnest.tauri` 和安装路径不得随意更改。默认会话目录与桌面安装版配置目录按用户要求统一为 `~/.llmn`（Windows 使用用户主目录），`LLMN_DATA_DIR` / `LLMN_CONFIG` 覆盖仍有效。宿主在读取配置/.env 前准备数据目录；旧系统 `llmn` 仅在新目录不存在、未显式指定数据目录且旧目录可获得写锁时复制，保留源目录，不自动合并。图标变更时保留 build.rs 对 icons 的依赖，核对实际安装器和 EXE 资源。
 - 设置中的路径来自后端启动时冻结的实际路径。打开目录 IPC 只接受 config/data 枚举，不接受任意文件路径或可执行程序；Web 不提供打开服务器文件夹的接口。
+- Windows 安装器显示名与内部标识分离：保留 `packaging/windows` 模板里的旧安装目录和注册项，MSI upgradeCode 固定为 `0dc13402-ce85-5dcb-ba1a-1f629fecd8b8`。模板基于 Tauri CLI 2.11.4，升级 CLI 时对照上游合并；打包后执行 `scripts/verify-windows-branding.ps1`。不要全局替换二进制名或历史安装标识。
 
 ## 如何验证改动
 

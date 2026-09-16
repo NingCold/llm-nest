@@ -3,7 +3,8 @@ param([string]$InstallerPath)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/bundle/nsis/LLM-Nest_0.1.0_x64-setup.exe'
+    $tauriConfig = Get-Content -LiteralPath (Join-Path $projectRoot 'frontends/tauri/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+    $InstallerPath = Join-Path $projectRoot "target/x86_64-pc-windows-msvc/release/bundle/nsis/$($tauriConfig.productName)_$($tauriConfig.version)_x64-setup.exe"
 }
 $installer = Get-Item -LiteralPath (Resolve-Path -LiteralPath $InstallerPath).Path
 if ($installer.PSIsContainer -or $installer.Extension -notin '.exe', '.msi') {

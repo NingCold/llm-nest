@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/branding/app-icon.svg" width="96" height="96" alt="LLM-Nest 图标">
+  <img src="assets/branding/app-icon.svg" width="96" height="96" alt="LLM Nest 图标">
 </p>
 
-<h1 align="center">LLM-Nest</h1>
+<h1 align="center">LLM Nest</h1>
 
 <p align="center"><strong>同一套 Rust 运行时，连接桌面、浏览器和终端。</strong></p>
 
@@ -14,13 +14,13 @@
   <a href="https://github.com/NingCold/llm-nest/issues">反馈问题</a>
 </p>
 
-LLM-Nest 是一个以本地会话为基础的 AI 工作空间，也是一套正在发展的 AI Harness。你可以在图形界面里配置模型、阅读流式回答，也可以在 CLI 或 TUI 中使用同一套模型路由、会话存储和工具执行逻辑。
+LLM Nest 是一个以本地会话为基础的 AI 工作空间，也是一套正在发展的 AI Harness。你可以在图形界面里配置模型、阅读流式回答，也可以在 CLI 或 TUI 中使用同一套模型路由、会话存储和工具执行逻辑。
 
 **当前处于开发预览阶段。** 聊天、设置、持久化和内置工具循环已经落地；通用编码代理、MCP、知识库和工作流编排尚未实现。
 
-## 为什么做 LLM-Nest
+## 为什么做 LLM Nest
 
-模型回答只是一次任务的一部分。LLM-Nest 关心它之前和之后的事情：选中了哪个模型、任务是否完成、取消后留下了什么，以及应用重启后还能找回多少上下文。
+模型回答只是一次任务的一部分。LLM Nest 关心它之前和之后的事情：选中了哪个模型、任务是否完成、取消后留下了什么，以及应用重启后还能找回多少上下文。
 
 - **一个运行时，多个入口。** 桌面、Web、CLI 和 TUI 共用 Rust 业务实现。桌面和 Web 还共用 React 前端，减少不同入口之间的行为差异。
 - **让中断有明确的结果。** 取消、网络错误和异常结束会留下状态与已保存的片段。重启时可以恢复最近检查点，并将未完成任务标为中断；不会悄悄重放工具。
@@ -59,7 +59,7 @@ LLM-Nest 是一个以本地会话为基础的 AI 工作空间，也是一套正�
 ### 桌面
 
 1. 从 [GitHub Releases](https://github.com/NingCold/llm-nest/releases) 获取已发布的对应平台安装包。若还没有公开版本，可按 [开发指南](docs/development.md) 自行构建。
-2. 打开 LLM-Nest，进入 **设置 → 模型**，添加供应商、API Key 和模型。
+2. 打开 LLM Nest，进入 **设置 → 模型**，添加供应商、API Key 和模型。
 3. 新建对话，选择模型后开始聊天。没有模型时，界面会显示设置入口。
 
 安装包不附带 API Key，也不需要安装 Node.js 或 Rust。Windows 需要 WebView2 Runtime；当前安装器在缺失时联网下载。

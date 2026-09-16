@@ -76,10 +76,12 @@ jobs:
       - name: Build embedded desktop installers
         working-directory: frontends/tauri
         run: pnpm exec tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
-      - name: Check Windows icon resources
+      - name: Check Windows icons and install identity
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/verify-windows-icons.ps1
+        run: |
+          ./scripts/verify-windows-icons.ps1
+          ./scripts/verify-windows-branding.ps1
       - name: Check packaged Linux startup and worker
         if: runner.os == 'Linux'
         run: |
@@ -124,7 +126,7 @@ jobs:
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
           cat > release-notes.md <<'NOTES'
-          LLM-Nest 开发预览版。
+          LLM Nest 开发预览版。
 
           安装包和 SHA256SUMS.txt 由同一次构建生成。
           Windows x64：NSIS 安装器与 MSI；Linux x64：Ubuntu 24.04 基线的 deb 包与 AppImage。
@@ -142,5 +144,5 @@ jobs:
           else
             flags=()
             if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
-            gh release create "$tag" release-assets/* --verify-tag --draft "${flags[@]}" --title "LLM-Nest $tag" --notes-file release-notes.md
+            gh release create "$tag" release-assets/* --verify-tag --draft "${flags[@]}" --title "LLM Nest $tag" --notes-file release-notes.md
           fi

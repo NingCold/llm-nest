@@ -6,9 +6,10 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $ArtifactPath) {
     $tauriConfig = Get-Content -LiteralPath (Join-Path $projectRoot 'frontends/tauri/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
     $version = $tauriConfig.version
+    $productName = $tauriConfig.productName
     $ArtifactPath = @(
         (Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release/LLM-Nest.exe'),
-        (Join-Path $projectRoot "target/x86_64-pc-windows-msvc/release/bundle/nsis/LLM-Nest_${version}_x64-setup.exe")
+        (Join-Path $projectRoot "target/x86_64-pc-windows-msvc/release/bundle/nsis/${productName}_${version}_x64-setup.exe")
     )
 }
 

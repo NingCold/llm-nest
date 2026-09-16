@@ -32,7 +32,7 @@ export function StorageSettings() {
     finally { setOpening(false) }
   }
 
-  return <div className="space-y-4 border-t border-border pt-5">
+  return <div className="space-y-4">
     <h2 className="text-sm font-medium">配置与数据</h2>
     {!IS_DESKTOP ? <p className="text-sm text-muted-foreground">Web 版的配置和会话保存在运行服务的机器上，请在该机器管理文件。桌面版可在这里直接打开目录。</p> : <>
       {paths ? <div className="space-y-4">

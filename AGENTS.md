@@ -105,7 +105,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 只控制 Windows 自绘窗口区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试；历史未成功加载或无模型时禁止发送。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
-- 设置路由为 `#/settings/models|generation|appearance|about`，聊天为 `#/chat`。切换保留输入和表单；隐藏聊天 Header 时卸载其菜单 portal。
+- 设置路由为 `#/settings/models|generation|appearance|config|about`，聊天为 `#/chat`。切换保留输入和表单；隐藏聊天 Header 时卸载其菜单 portal。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；Linux 首版使用系统装饰。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。
 - Windows 保留 `shadow=false`、透明 WebView 合成表面、不透明 HTML 背景。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
 - 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。

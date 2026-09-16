@@ -29,6 +29,25 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.validate(root)
 
+    def test_prerelease_requires_matching_numeric_msi_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="0.1.1-alpha.1"\n')
+            for name in ("frontends/tauri/src-tauri/tauri.conf.json",
+                         "frontends/tauri/package.json", "frontends/web/package.json"):
+                p = root / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps({"version": "0.1.1-alpha.1"}))
+            tauri_path = root / "frontends/tauri/src-tauri/tauri.conf.json"
+            with self.assertRaisesRegex(ValueError, "numeric"):
+                release.validate(root)
+            for msi_version in ("0.1.0.1", "0.1.1.alpha.1", "0.1.1.65536"):
+                tauri_path.write_text(json.dumps({"version": "0.1.1-alpha.1", "bundle": {"windows": {"wix": {"version": msi_version}}}}))
+                with self.assertRaises(ValueError):
+                    release.validate(root)
+            tauri_path.write_text(json.dumps({"version": "0.1.1-alpha.1", "bundle": {"windows": {"wix": {"version": "0.1.1.1"}}}}))
+            self.assertEqual(release.validate(root, "v0.1.1-alpha.1"), "0.1.1-alpha.1")
+
     def test_missing_duplicate_and_stale_artifacts_are_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

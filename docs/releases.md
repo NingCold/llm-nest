@@ -30,6 +30,14 @@ Linux 以 Ubuntu 24.04 为构建基线，不能据此承诺所有 Linux 发行�
 
 不需要添加模型 API Key、个人访问令牌或 SSH 私钥到 GitHub。构建 job 仅有 `contents: read`；生成草稿的 job 使用 GitHub 临时提供的 `GITHUB_TOKEN`，单独声明 `contents: write`。组织策略仍可能限制工作流运行或写权限，参见 [GitHub 的 GITHUB_TOKEN 文档](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token)。
 
+### 开发版与版本递增
+
+当前版本为 `0.1.1-alpha.1`，用于开发测试，产品名称仍为 LLM-Nest。历史安装包已使用 `0.1.0`，因此在更高的基础版本上开始预发布序列。遵循 [SemVer 预发布规则](https://semver.org/lang/zh-CN/)，同一基础版本可依次使用 `alpha.1`、`alpha.2`、`beta.1`、`rc.1`，验收完成后去掉后缀。
+
+每次向测试者交付新安装包时递增版本；普通代码提交不必都改版本。Alpha 表示功能与交互仍会调整，Beta 表示进入较完整的测试，RC 表示正式版候选。修改版本、生成安装包、创建 Git 标签和公开 Release 是分别执行的动作；改成预发布版本不会自动发布。
+
+Windows MSI 要求纯数字安装器版本，本轮通过 `bundle.windows.wix.version = "0.1.1.1"` 适配，应用显示和安装包文件名仍使用 `0.1.1-alpha.1`。修改版本时同步检查此字段：前三段与应用基础版本相同，第四段是安装器构建号。Windows Installer 的产品版本比较主要使用前三段，不应把第四段当作完整的 SemVer 升级/降级保护；不同预发布包的覆盖安装仍需实际验收。见 [Tauri WiX 配置](https://v2.tauri.app/reference/config/#wixconfig) 与 [Windows Installer ProductVersion](https://learn.microsoft.com/en-us/windows/win32/msi/productversion)。`release.py validate` 会拒绝缺失映射、基础版本不匹配或数字超限的配置。
+
 ### 发布一个版本
 
 以下四处版本必须一致：
@@ -44,18 +52,18 @@ Linux 以 Ubuntu 24.04 为构建基线，不能据此承诺所有 Linux 发行�
 修改 Cargo 版本后，运行 `cargo check -p cli` 更新工作区包在 `Cargo.lock` 中的版本，一并提交锁文件。随后检查：
 
 ```bash
-python scripts/release.py validate --tag v0.1.0
+python scripts/release.py validate --tag v0.1.1-alpha.1
 python scripts/test_release.py
 ```
 
-将 `v0.1.0` 换成要发布的实际版本。确认检查通过、改动已合入并推送后，在该提交上打标签：
+将 `v0.1.1-alpha.1` 换成要发布的实际版本。确认检查通过、改动已合入并推送后，在该提交上打标签：
 
 ```bash
-git tag -a v0.1.0 -m "LLM-Nest 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1-alpha.1 -m "LLM-Nest 0.1.1-alpha.1"
+git push origin v0.1.1-alpha.1
 ```
 
-标签会触发打包；进入仓库 Releases 查看生成的草稿。`v0.1.0-beta.1` 这类预发布标签也必须与四处版本完整匹配，草稿会标记为 prerelease。已发布版本有问题时应修复后发新版本，避免修改旧标签和旧资产。
+标签会触发打包；进入仓库 Releases 查看生成的草稿。`v0.1.1-alpha.1` 这类预发布标签也必须与四处版本完整匹配，草稿会标记为 prerelease。已发布版本有问题时应修复后发新版本，避免修改旧标签和旧资产。
 
 校验下载文件：Linux 使用 `sha256sum -c SHA256SUMS.txt`（全部产物在同目录时）；Windows 使用 `Get-FileHash <安装包> -Algorithm SHA256` 与清单对照。
 

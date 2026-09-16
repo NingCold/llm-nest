@@ -23,6 +23,17 @@ def validate(root=ROOT, tag=""):
             raise ValueError(f"{name}: version {actual!r} does not match Cargo {version!r}")
     if tag and (not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", tag) or tag != f"v{version}"):
         raise ValueError(f"Tag {tag!r} must match v{version}")
+    tauri = json.loads((root / "frontends/tauri/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+    msi = tauri.get("bundle", {}).get("windows", {}).get("wix", {}).get("version")
+    if "-" in version and not msi:
+        raise ValueError("Pre-release builds require a numeric bundle.windows.wix.version for MSI")
+    if msi:
+        core = version.split("-", 1)[0]
+        if not re.fullmatch(rf"{re.escape(core)}(?:\.\d+)?", msi):
+            raise ValueError(f"MSI version {msi!r} must match {core}.build (numeric build is optional)")
+        limits = (255, 255, 65535, 65535)
+        if any(int(part) > limit for part, limit in zip(msi.split("."), limits)):
+            raise ValueError(f"MSI version {msi!r} exceeds Windows Installer limits")
     return version
 
 

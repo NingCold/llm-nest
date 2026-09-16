@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react"
-import { ArrowLeft, Check, Info, Moon, Palette, SlidersHorizontal, Sun, Cpu } from "lucide-react"
+import { ArrowLeft, Check, FolderCog, Info, Moon, Palette, SlidersHorizontal, Sun, Cpu } from "lucide-react"
 import { BrandMark } from "@/components/BrandMark"
 import { ProviderManager } from "@/components/settings/ProviderManager"
 import { GenerationSettings } from "@/components/settings/GenerationSettings"
@@ -7,12 +7,14 @@ import { StorageSettings } from "@/components/settings/StorageSettings"
 import { useConfigStore } from "@/store/config"
 import { useUiStore, type SettingsSection } from "@/store/ui"
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
+import { APP_VERSION } from "@/lib/version"
 import { cn } from "@/lib/utils"
 
 const sections = [
   { id: "models", label: "模型服务", icon: Cpu, description: "连接模型供应商，管理可用模型与访问密钥。" },
   { id: "generation", label: "生成参数", icon: SlidersHorizontal, description: "调整回答的随机性和最大输出长度。" },
   { id: "appearance", label: "外观", icon: Palette, description: "选择适合当前环境的界面主题。" },
+  { id: "config", label: "配置", icon: FolderCog, description: "查看配置文件与会话数据的保存位置，并打开所在目录。" },
   { id: "about", label: "关于", icon: Info, description: "查看应用版本与当前运行状态。" },
 ] as const
 
@@ -60,7 +62,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
             </button>
           ))}
         </nav>
-        <div className="mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM-Nest · {version || "0.1.0"}</div>
+        <div className="mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM-Nest · {version || APP_VERSION}</div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <header data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", CUSTOM_WINDOW_CHROME && "pr-[140px]")}>
@@ -89,13 +91,13 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
                 </div>
                 <p className="text-xs text-muted-foreground">立即生效，并在下次启动时保留。</p>
               </div>)}
+              {panel("config", page === "settings" && section === "config" && <StorageSettings />)}
               {panel("about", <div className="space-y-6">
-                <div className="flex items-center gap-4"><BrandMark className="h-16 w-16" /><div><h2 className="text-xl font-semibold">LLM-Nest</h2><p className="mt-1 text-sm text-muted-foreground">版本 {version || "0.1.0"}</p></div></div>
+                <div className="flex items-center gap-4"><BrandMark className="h-16 w-16" /><div><h2 className="text-xl font-semibold">LLM-Nest</h2><p className="mt-1 text-sm text-muted-foreground">版本 {version || APP_VERSION}</p></div></div>
                 <dl className="space-y-3 text-sm">
                   <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">运行模式</dt><dd>{apiMode === "tauri" ? "桌面应用" : apiMode === "http" ? "Web 应用" : "本地演示"}</dd></div>
                   <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">当前模型</dt><dd className="break-all">{model?.model ? `${model.provider} / ${model.model}` : "尚未配置"}</dd></div>
                 </dl>
-                {page === "settings" && section === "about" && <StorageSettings />}
               </div>)}
             </div>
           </div>

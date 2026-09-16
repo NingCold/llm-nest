@@ -3,13 +3,13 @@ import { create } from "zustand"
 export type Theme = "dark" | "light"
 export type ApiMode = "tauri" | "http" | "demo" | null
 export type ReasoningEffort = "off" | "low" | "medium" | "high" | "max"
-export type SettingsSection = "models" | "generation" | "appearance" | "about"
+export type SettingsSection = "models" | "generation" | "appearance" | "config" | "about"
 
 function routeFromHash() {
   const [, page, section] = location.hash.replace(/^#/, "").split("/")
   return {
     page: page === "settings" ? "settings" as const : "chat" as const,
-    settingsSection: (["models", "generation", "appearance", "about"].includes(section)
+    settingsSection: (["models", "generation", "appearance", "config", "about"].includes(section)
       ? section : "models") as SettingsSection,
   }
 }

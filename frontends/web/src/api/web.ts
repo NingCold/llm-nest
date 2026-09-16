@@ -13,6 +13,7 @@ import type {
   SessionSummary,
 } from "./types"
 import { useUiStore } from "@/store/ui"
+import { APP_VERSION } from "@/lib/version"
 
 /* ------------------------------------------------------------------ *
  *  Web demo adapter — simulates the LLM Nest backend entirely in the
@@ -422,7 +423,7 @@ export const webApi: ChatApi = {
       config,
       providers,
       sessions,
-      version: "0.1.0 (web demo)",
+      version: `${APP_VERSION} (web demo)`,
     }
   },
 

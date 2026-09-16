@@ -82,14 +82,15 @@ pub struct ResponseUsage {
 
 impl From<ResponseUsage> for Usage {
     fn from(u: ResponseUsage) -> Self {
-        let input = u.input_tokens.unwrap_or(0);
+        let input = u.input_tokens.unwrap_or(0)
+            + u.cache_read_input_tokens.unwrap_or(0)
+            + u.cache_creation_input_tokens.unwrap_or(0);
         let output = u.output_tokens.unwrap_or(0);
         Usage {
             prompt_tokens: input,
             completion_tokens: output,
             total_tokens: input + output,
-            cached_tokens: u.cache_read_input_tokens.unwrap_or(0)
-                + u.cache_creation_input_tokens.unwrap_or(0),
+            cached_tokens: u.cache_read_input_tokens.unwrap_or(0),
         }
     }
 }
@@ -102,7 +103,7 @@ pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 pub fn to_request(req: &ChatRequest) -> Request {
     let (system, messages) = split_system(&req.messages);
     Request {
-        model: req.selection.model.clone(),
+        model: req.wire_model().to_string(),
         max_tokens: req
             .options
             .max_tokens
@@ -294,8 +295,8 @@ pub enum StreamEvent {
 }
 
 /// One SSE payload → optional stream event. `content_block_delta` text
-/// deltas stream content; `message_delta` carries the final usage and closes
-/// the stream (the trailing `message_stop` is just a confirmation); an
+/// deltas stream content; `message_delta` carries partial usage fields.
+/// AnthropicStream merges them and waits for `message_stop`; an
 /// `error` event surfaces as a stream error. `thinking_delta` /
 /// `signature_delta` blocks are skipped (thinking chain is not surfaced).
 pub fn parse_event(data: &str) -> Result<Option<StreamEvent>> {
@@ -356,8 +357,7 @@ pub fn parse_event(data: &str) -> Result<Option<StreamEvent>> {
         "content_block_stop" => Ok(Some(StreamEvent::ToolUseStop {
             index: event.index.unwrap_or(0),
         })),
-        // message_delta carries the final cumulative usage; close the stream
-        // here — the following message_stop has no payload of its own.
+        // AnthropicStream intercepts this update, merges usage, and waits for message_stop.
         "message_delta" => Ok(Some(StreamEvent::Done {
             usage: event.usage.map(Usage::from),
         })),
@@ -562,11 +562,11 @@ mod tests {
         let json = r#"{"type":"message_delta","usage":{"input_tokens":200,"output_tokens":60,"cache_creation_input_tokens":50,"cache_read_input_tokens":30}}"#;
         match parse_event(json).unwrap() {
             Some(StreamEvent::Done { usage: Some(u) }) => {
-                assert_eq!(u.prompt_tokens, 200);
+                assert_eq!(u.prompt_tokens, 280);
                 assert_eq!(u.completion_tokens, 60);
-                assert_eq!(u.total_tokens, 260);
+                assert_eq!(u.total_tokens, 340);
                 // cached = cache_read + cache_creation
-                assert_eq!(u.cached_tokens, 80);
+                assert_eq!(u.cached_tokens, 30);
             }
             other => panic!("expected Done with usage, got {other:?}"),
         }
@@ -659,6 +659,8 @@ mod tests {
                     usage: None,
                     timings: None,
                     feedback: None,
+                    interruption: None,
+                    id: Some(common::MessageId::new()),
                 },
                 Message {
                     role: Role::Tool,
@@ -675,6 +677,8 @@ mod tests {
                     usage: None,
                     timings: None,
                     feedback: None,
+                    interruption: None,
+                    id: Some(common::MessageId::new()),
                 },
             ],
             None,
@@ -720,6 +724,8 @@ mod tests {
                 usage: None,
                 timings: None,
                 feedback: None,
+                interruption: None,
+                id: Some(common::MessageId::new()),
             }],
             None,
         );

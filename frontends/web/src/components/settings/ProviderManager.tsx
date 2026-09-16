@@ -67,7 +67,7 @@ export function ProviderManager() {
     getApi()
       .then((a) => a.listProviderTemplates())
       .then(setTemplates)
-      .catch(() => setTemplates([]))
+      .catch(e => setError(`供应商模板加载失败：${String(e)}；可切换自定义添加或重新打开重试。`))
   }, [adding])
 
   const resetForm = () => {
@@ -134,6 +134,7 @@ export function ProviderManager() {
   const missingBase = editing === null && mode === "custom" && baseUrl.trim() === ""
   const missingModels = models.length === 0
   const anyEmptyModel = models.some((m) => m.id.trim() === "")
+  const missingKey = editing === null && apiKey.trim() === ""
   const ready =
     !busy &&
     id.length > 0 &&
@@ -141,9 +142,11 @@ export function ProviderManager() {
     !idTaken &&
     (mode === "template" ? templateId !== "" : !missingProtocol && !missingBase) &&
     !missingModels &&
+    !missingKey &&
     !anyEmptyModel
 
   const submit = async () => {
+    if (!ready) return
     setBusy(true)
     setError(undefined)
     try {
@@ -173,7 +176,7 @@ export function ProviderManager() {
       const next = await (await getApi()).deleteProvider(p.id)
       setProviders(next)
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -185,6 +188,7 @@ export function ProviderManager() {
     <div className="space-y-2.5">
       <p className="text-sm font-medium">模型供应商</p>
 
+      {error && !adding && <p role="alert" className="text-sm text-red-500">{error}</p>}
       {/* 已配置供应商列表 */}
       {providers.length > 0 && (
         <ul className="space-y-1.5">
@@ -349,8 +353,13 @@ export function ProviderManager() {
           </div>
 
           <div className="space-y-1">
-            <span className={labelCls}>API Key（可留空）</span>
+            <label htmlFor="provider-api-key" className={labelCls}>
+              {editing ? "API Key（留空保持现有密钥）" : "API Key（新建时必填）"}
+            </label>
             <input
+              id="provider-api-key"
+              aria-describedby="provider-api-key-hint"
+              required={editing === null}
               className={inputCls}
               type="password"
               autoComplete="off"
@@ -358,6 +367,11 @@ export function ProviderManager() {
               placeholder={editing ? "留空 = 保持现有 key" : "sk-…"}
               onChange={(e) => setApiKey(e.target.value)}
             />
+            <p id="provider-api-key-hint" className="text-xs text-muted-foreground">
+              {editing
+                ? "现有密钥或环境变量引用不会显示；仅填写时才替换。"
+                : "填写此供应商的密钥后即可创建；无认证的本地服务可填写占位值。"}
+            </p>
           </div>
 
           {/* 模型列表 */}

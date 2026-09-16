@@ -1,3 +1,4 @@
+import { useConfigStore } from "@/store/config"
 import { useEffect, useRef, useState } from "react"
 import { ArrowDown } from "lucide-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -25,6 +26,7 @@ const EMPTY_MESSAGES: never[] = []
 const FOLLOW_THRESHOLD = 160
 
 export function ChatView() {
+  const hasModel = useConfigStore(s => Boolean(s.config?.currentModel.provider && s.config?.currentModel.model))
   const currentSessionId = useSessionStore((s) => s.currentSessionId)
   const messagesBySession = useChatStore((s) => s.messagesBySession)
   const messages = currentSessionId
@@ -34,8 +36,15 @@ export function ChatView() {
 
   const { send, regenerate, editAndResend, cancel, isStreaming } = useChat()
 
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [history, setHistory] = useState<{ id: string | null; error?: string }>({ id: null })
+  const [historyAttempt, retryHistory] = useState(0)
+  const historyReady = !currentSessionId || history.id === currentSessionId
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
+  const draggingScrollbar = useRef(false)
+  const touchY = useRef<number | null>(null)
   /** 距底部超过阈值（不跟随）时显示右下角置底按钮 */
   const [showJump, setShowJump] = useState(false)
 
@@ -51,23 +60,19 @@ export function ChatView() {
   /* 切换会话时从 API 载入历史消息（仅当内存中还没有该会话） */
   useEffect(() => {
     if (!currentSessionId) return
-    const existing = useChatStore.getState().getMessages(currentSessionId)
-    if (existing.length > 0) return
-    let cancelled = false
-    getApi()
-      .then((a) => a.getMessages(currentSessionId))
-      .then((msgs) => {
-        if (!cancelled && msgs.length > 0) {
-          hydrateSession(currentSessionId, msgs)
-        }
-      })
-      .catch(() => {
-        /* demo adapter 不会失败；静默 */
-      })
-    return () => {
-      cancelled = true
+    if (Object.prototype.hasOwnProperty.call(useChatStore.getState().messagesBySession, currentSessionId)) {
+      setHistory({ id: currentSessionId })
+      return
     }
-  }, [currentSessionId, hydrateSession])
+    let cancelled = false
+    setHistory({ id: null })
+    getApi().then(a => a.getMessages(currentSessionId)).then(msgs => {
+      if (!cancelled) { hydrateSession(currentSessionId, msgs); setHistory({ id: currentSessionId }) }
+    }).catch(error => {
+      if (!cancelled) setHistory({ id: null, error: `历史记录加载失败：${String(error)}` })
+    })
+    return () => { cancelled = true }
+  }, [currentSessionId, hydrateSession, historyAttempt])
 
   /* 自动滚动（用户未上翻时跟随最新内容；rAF 等虚拟化测量落定）：
      依赖 messages 与 virtualizer 总高度——思考卡片展开/收起、markdown 渲染、
@@ -77,7 +82,7 @@ export function ChatView() {
     const el = scrollRef.current
     if (!el) return
     const raf = requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight
     })
     return () => cancelAnimationFrame(raf)
   }, [messages, virtualizer.getTotalSize()])
@@ -88,37 +93,73 @@ export function ChatView() {
     setShowJump(false)
   }, [currentSessionId])
 
+  useEffect(() => {
+    const release = () => { draggingScrollbar.current = false }
+    window.addEventListener("pointerup", release)
+    window.addEventListener("pointercancel", release)
+    return () => {
+      window.removeEventListener("pointerup", release)
+      window.removeEventListener("pointercancel", release)
+    }
+  }, [])
+
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-    stickToBottom.current = dist < FOLLOW_THRESHOLD
-    setShowJump(dist >= FOLLOW_THRESHOLD)
+    // Virtualizer corrections can move scrollTop in either direction. A
+    // scroll event alone is not evidence that the user stopped following.
+    if (draggingScrollbar.current) stickToBottom.current = dist < FOLLOW_THRESHOLD
+    else if (dist < FOLLOW_THRESHOLD) stickToBottom.current = true
+    setShowJump(!stickToBottom.current)
+  }
+
+  const resumeFollowing = () => {
+    stickToBottom.current = true
+    setShowJump(false)
+  }
+
+  const pauseFollowing = () => {
+    stickToBottom.current = false
+    setShowJump(true)
   }
 
   const jumpToBottom = () => {
     const el = scrollRef.current
     if (!el) return
-    stickToBottom.current = true
-    setShowJump(false)
+    resumeFollowing()
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
   }
 
   const handlePick = (prompt: string) => {
-    void send(prompt)
+    if (historyReady && hasModel) { resumeFollowing(); void send(prompt) }
   }
 
   const handleSend = (text: string, attachments: GuiAttachment[]) => {
-    void send(text, attachments)
+    if (historyReady && hasModel) { resumeFollowing(); void send(text, attachments) }
   }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      {!hasModel && <p className="p-3 text-sm text-muted-foreground">尚未配置模型，请在设置中添加供应商。</p>}
+      {actionError && <p role="alert" className="p-3 text-sm text-red-500">{actionError}</p>}
+      {!historyReady && <div className="p-4 text-sm" role="status">{history.error ?? "正在加载历史记录…"}
+        {history.error && <button onClick={() => retryHistory(n => n + 1)} className="ml-3 underline">重试加载</button>}
+      </div>}
       {/* Message feed（外层 relative：置底按钮相对滚动区定位，不随内容滚动） */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           onScroll={handleScroll}
+          onWheel={e => { if (e.deltaY < 0) pauseFollowing() }}
+          onPointerDown={e => { draggingScrollbar.current = e.target === e.currentTarget }}
+          onTouchStart={e => { touchY.current = e.touches[0]?.clientY ?? null }}
+          onTouchMove={e => {
+            const y = e.touches[0]?.clientY ?? null
+            if (y !== null && touchY.current !== null && y > touchY.current) pauseFollowing()
+            touchY.current = y
+          }}
+          onKeyDown={e => { if (["ArrowUp", "PageUp", "Home"].includes(e.key)) pauseFollowing() }}
           className="overflow-anchor-none min-h-0 flex-1 overflow-y-auto"
         >
           {messages.length === 0 ? (
@@ -145,8 +186,8 @@ export function ChatView() {
                         sessionId={currentSessionId ?? ""}
                         message={m}
                         isStreaming={isStreaming}
-                        onRegenerate={(id) => void regenerate(id)}
-                        onEditResend={(id, content) => void editAndResend(id, content)}
+                        onRegenerate={(id) => { resumeFollowing(); void regenerate(id) }}
+                        onEditResend={(id, content) => { resumeFollowing(); void editAndResend(id, content) }}
                       />
                     </div>
                   </div>
@@ -173,9 +214,9 @@ export function ChatView() {
       {/* Floating input bar */}
       <InputBar
         onSend={handleSend}
-        onStop={() => void cancel()}
+        onStop={() => { setActionError(null); void cancel().catch(e => setActionError(`停止失败，请重试：${String(e)}`)) }}
         isStreaming={isStreaming}
-        disabled={!currentSessionId}
+        disabled={!currentSessionId || !historyReady || !hasModel}
       />
     </div>
   )

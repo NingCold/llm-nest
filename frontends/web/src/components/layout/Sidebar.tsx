@@ -5,14 +5,15 @@ import {
   Pencil,
   Plus,
   Search,
-  Sparkles,
+  Settings,
   Trash2,
   X,
 } from "lucide-react"
 import { useSessionStore } from "@/store/session"
 import { useUiStore } from "@/store/ui"
-import { bucketSessions, formatRelativeTime, initials } from "@/lib/format"
-import { SettingsDialog } from "@/components/settings/SettingsDialog"
+import { bucketSessions, formatRelativeTime } from "@/lib/format"
+import { BrandMark } from "@/components/BrandMark"
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { cn } from "@/lib/utils"
 import type { SessionSummary } from "@/api/types"
 
@@ -27,6 +28,7 @@ function SessionRow({
   active: boolean
   onSelect: () => void
 }) {
+  const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(session.title)
   const [confirming, setConfirming] = useState(false)
@@ -42,7 +44,8 @@ function SessionRow({
     const next = draft.trim()
     setEditing(false)
     if (next && next !== session.title) {
-      await renameSession(session.id, next)
+      try { await renameSession(session.id, next); setError(null) }
+      catch (err) { setError(`重命名失败：${String(err)}`); setEditing(true) }
     } else {
       setDraft(session.title)
     }
@@ -50,7 +53,7 @@ function SessionRow({
 
   const askDelete = () => {
     if (confirming) {
-      void deleteSession(session.id)
+      void deleteSession(session.id).catch(err => setError(`删除失败：${String(err)}`))
       return
     }
     setConfirming(true)
@@ -59,7 +62,8 @@ function SessionRow({
 
   if (editing) {
     return (
-      <div className="flex items-center rounded-lg px-1 py-1">
+      <div className="flex flex-col rounded-lg px-1 py-1">
+        {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
         <input
           autoFocus
           value={draft}
@@ -85,6 +89,7 @@ function SessionRow({
         active ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
+      {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
       <button
         type="button"
         onClick={onSelect}
@@ -138,9 +143,12 @@ function SessionRow({
 /* ---------------- sidebar ---------------- */
 
 export function Sidebar() {
+  const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useUiStore((s) => s.toggleSidebar)
   const apiMode = useUiStore((s) => s.apiMode)
+  const showSettings = useUiStore((s) => s.showSettings)
   const searchQuery = useUiStore((s) => s.searchQuery)
   const setSearchQuery = useUiStore((s) => s.setSearchQuery)
 
@@ -173,18 +181,17 @@ export function Sidebar() {
         )}
       >
         {/* Brand */}
-        <div className="flex items-center gap-2.5 px-4 pb-1 pt-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
-            <Sparkles className="h-4.5 w-4.5" />
-          </div>
-          <span className="text-[15px] font-semibold tracking-tight">LLM Nest</span>
+        <div data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-4">
+          <BrandMark className="pointer-events-none" />
+          <span className="pointer-events-none text-[15px] font-semibold tracking-tight">LLM-Nest</span>
         </div>
 
         {/* New chat */}
         <div className="px-3 pt-3">
           <button
             type="button"
-            onClick={() => void createSession()}
+            disabled={creating}
+            onClick={async () => { setCreating(true); setError(null); try { await createSession() } catch (err) { setError(`创建失败：${String(err)}`) } finally { setCreating(false) } }}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
           >
             <Plus className="h-4 w-4" />
@@ -192,6 +199,7 @@ export function Sidebar() {
           </button>
         </div>
 
+        {error && <p role="alert" className="px-3 pt-2 text-xs text-red-500">{error}</p>}
         {/* Search */}
         <div className="px-3 pt-3">
           <div className="relative">
@@ -242,11 +250,9 @@ export function Sidebar() {
 
         {/* User footer */}
         <div className="flex items-center gap-2 border-t border-sidebar-border px-3 py-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-500 to-zinc-800 text-xs font-semibold text-white">
-            {initials("Demo User")}
-          </div>
+          <BrandMark className="h-8 w-8" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium leading-tight">Demo User</p>
+            <p className="truncate text-sm font-medium leading-tight">LLM-Nest</p>
             <p className="truncate text-[11px] leading-tight text-sidebar-muted">
               {apiMode === "tauri"
                 ? "桌面模式"
@@ -255,7 +261,9 @@ export function Sidebar() {
                   : "本地演示模式 · 数据在浏览器"}
             </p>
           </div>
-          <SettingsDialog />
+          <button type="button" onClick={() => showSettings()} aria-label="设置" title="设置" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sidebar-foreground/70 transition-colors hover:bg-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Settings className="h-4.5 w-4.5" />
+          </button>
           <button
             type="button"
             onClick={toggleSidebar}

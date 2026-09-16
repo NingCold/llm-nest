@@ -23,12 +23,9 @@ impl ConfigLoader {
     }
 
     pub fn validate(config: &RuntimeConfig) -> Result<()> {
-        if config.providers.is_empty() {
-            return Err(RuntimeError::ConfigError(
-                "at least one provider must be configured".into(),
-            ));
-        }
-
+        // An empty catalog is a valid first-run state. The GUI can configure
+        // the first provider (or remove the last one); model resolution still
+        // refuses chat requests until a usable provider exists.
         for (id, provider) in &config.providers {
             // models/base_url/protocol may be omitted when the provider id
             // matches the builtin directory; otherwise they are required.

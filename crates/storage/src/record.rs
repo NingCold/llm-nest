@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 /// Fields mirror `runtime::session::Session` 1:1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
+    #[serde(default)]
+    pub run: Option<common::RunCheckpoint>,
     /// Storage format version. Always `VERSION` for new writes; `#[serde(default)]`
     /// lets older files without the field keep loading.
     #[serde(default = "SessionRecord::default_version")]

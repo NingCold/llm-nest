@@ -19,12 +19,13 @@ use crate::session_manager::SessionManager;
 
 #[derive(Clone)]
 pub struct Runtime {
+    config_updates: Arc<tokio::sync::Mutex<()>>,
     sessions: Arc<RwLock<SessionManager>>,
     llm: Arc<AiClient>,
     event_bus: EventBus<RuntimeEvent>,
     features: Arc<RwLock<FeatureRegistry>>,
     /// Tools available to features (chat agent loop). Pre-registered with
-    /// built-ins; call [`Runtime::register_tool`] to add more.
+    /// built-ins; call [`Runtime::register_trusted_tool`] to add more.
     tools: Arc<tools::ToolRegistry>,
     /// Config document path, when the runtime was created via
     /// [`Runtime::from_config`]; used to auto-reload before a `/refresh` of a
@@ -41,6 +42,7 @@ impl Runtime {
         let sessions = Arc::new(RwLock::new(sessions));
 
         Self {
+            config_updates: Arc::new(tokio::sync::Mutex::new(())),
             sessions,
             llm,
             event_bus,
@@ -50,9 +52,9 @@ impl Runtime {
         }
     }
 
-    /// Register a tool available to the chat agent loop (after built-ins).
-    pub fn register_tool(&self, tool: Arc<dyn tools::Tool>) {
-        self.tools.register(tool);
+    /// Explicitly trust an in-process extension. Built-in tools use isolated workers.
+    pub fn register_trusted_tool(&self, tool: Arc<dyn tools::Tool>) {
+        self.tools.register_trusted_in_process(tool);
     }
 
     pub fn llm_client(&self) -> Arc<AiClient> {
@@ -63,6 +65,42 @@ impl Runtime {
     /// model router (config `default_model` > builtin default > first model).
     pub async fn default_model(&self) -> Option<ModelSelection> {
         self.llm.default_selection().await
+    }
+
+    /// Settings are read from the shared config document; stale model selections
+    /// fall back to the current catalog after a provider is removed.
+    pub async fn gui_config(&self) -> Result<crate::config::GuiConfig> {
+        let _update = self.config_updates.lock().await;
+        let saved = match &self.config_path {
+            Some(path) => crate::config::gui::read_gui(&crate::config::gui::read_document(path)?)?,
+            None => None,
+        };
+        let default = self.default_model().await.unwrap_or(ModelSelection {
+            provider: String::new(),
+            model: String::new(),
+            reasoning_effort: None,
+        });
+        let mut config = saved.unwrap_or(crate::config::GuiConfig {
+            current_model: default.clone(),
+            temperature: 0.7,
+            max_tokens: None,
+        });
+        if self.resolve_model(&config.current_model).await.is_err() {
+            config.current_model = default;
+        }
+        Ok(config)
+    }
+
+    pub async fn set_gui_config(&self, config: &crate::config::GuiConfig) -> Result<()> {
+        let _update = self.config_updates.lock().await;
+        config.validate()?;
+        self.resolve_model(&config.current_model).await?;
+        let path = self.config_path.as_ref().ok_or_else(|| {
+            RuntimeError::ConfigError("当前 Runtime 未绑定配置文件，无法保存 GUI 设置".into())
+        })?;
+        let text =
+            crate::config::gui::render_gui(&crate::config::gui::read_document(path)?, config)?;
+        crate::config::persist::atomic_write(path, &text)
     }
 
     /// Every effective model across providers, with capabilities and display
@@ -79,6 +117,7 @@ impl Runtime {
     /// the current configuration keeps serving. In-flight requests are
     /// unaffected; the new configuration applies to the next request.
     pub async fn reload_config(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        let _update = self.config_updates.lock().await;
         let config = crate::config::ConfigLoader::load(path)?;
         self.llm.reload_config(config.providers()).await?;
         Ok(())
@@ -94,24 +133,19 @@ impl Runtime {
     /// added to the config file and the watcher has not reloaded yet), the
     /// config document is reloaded first and the refresh retried once.
     pub async fn refresh_models(&self, provider: &str) -> Result<Vec<ai_client::WireModel>> {
-        let added = match self.llm.refresh_models(provider).await {
-            Ok(added) => added,
-            Err(e @ ai_client::error::AiError::ProviderNotFound(..)) => {
-                // Provider is not yet in the in-memory snapshot (e.g. just
-                // added to the config file): reload the document first,
-                // then retry once.
-                let Some(path) = self.config_path.clone() else {
-                    return Err(e.into());
-                };
-                self.reload_config(path).await?;
-                self.llm.refresh_models(provider).await?
-            }
-            Err(e) => return Err(e.into()),
+        let _update = self.config_updates.lock().await;
+        let candidate = if let Some(path) = &self.config_path {
+            let config = crate::config::ConfigLoader::load(path)?;
+            AiClient::from_config(config.providers())?
+        } else {
+            self.llm.snapshot().await
         };
+        let added = candidate.refresh_models(provider).await?;
         if !added.is_empty() {
             if let Some(path) = &self.config_path {
                 crate::config::persist::persist_new_models(path, provider, &added)?;
             }
+            self.llm.install(candidate).await;
         }
         Ok(added)
     }
@@ -126,20 +160,34 @@ impl Runtime {
         &self,
         draft: &crate::config::persist::ProviderDraft,
     ) -> Result<()> {
+        let _update = self.config_updates.lock().await;
         let path = self.config_path.clone().ok_or_else(|| {
             RuntimeError::ConfigError("no config document to persist to (in-memory runtime)".into())
         })?;
-        crate::config::persist::persist_provider(&path, draft)?;
-        self.reload_config(&path).await
+        let text = std::fs::read_to_string(&path)?;
+        let next = crate::config::persist::render_provider(&text, draft)?;
+        let config: crate::config::runtime::RuntimeConfig = toml::from_str(&next)?;
+        crate::config::ConfigLoader::validate(&config)?;
+        let candidate = AiClient::from_config(config.providers())?;
+        crate::config::persist::atomic_write(&path, &next)?;
+        self.llm.install(candidate).await;
+        Ok(())
     }
 
     /// Remove a provider from the config document and hot-apply the change.
     pub async fn remove_provider(&self, id: &str) -> Result<()> {
+        let _update = self.config_updates.lock().await;
         let path = self.config_path.clone().ok_or_else(|| {
             RuntimeError::ConfigError("no config document to persist to (in-memory runtime)".into())
         })?;
-        crate::config::persist::persist_remove_provider(&path, id)?;
-        self.reload_config(&path).await
+        let text = std::fs::read_to_string(&path)?;
+        let next = crate::config::persist::render_remove_provider(&text, id)?;
+        let config: crate::config::runtime::RuntimeConfig = toml::from_str(&next)?;
+        crate::config::ConfigLoader::validate(&config)?;
+        let candidate = AiClient::from_config(config.providers())?;
+        crate::config::persist::atomic_write(&path, &next)?;
+        self.llm.install(candidate).await;
+        Ok(())
     }
 
     /// Strictly validate a selection against the mounted model catalog before
@@ -288,19 +336,18 @@ impl Runtime {
         Ok(())
     }
 
-    /// Set feedback (up/down) on the `idx`-th user/assistant message of a
-    /// session (same indexing as GUI message ids) and persist it. `None`
-    /// clears the feedback.
-    pub async fn set_message_feedback(
+    /// Version-checked feedback mutation by persistent message ID.
+    pub async fn feedback_by_id(
         &self,
-        session_id: SessionId,
-        idx: usize,
+        session_id: common::SessionId,
+        message_id: &str,
+        revision: &str,
         feedback: Option<common::Feedback>,
     ) -> Result<()> {
         self.sessions
             .write()
             .await
-            .set_message_feedback(&session_id, idx, feedback)
+            .feedback_by_id(&session_id, message_id, revision, feedback)
     }
 
     pub async fn get_session(&self, session_id: &SessionId) -> Option<Session> {
@@ -722,6 +769,8 @@ model = "m"
                         usage: None,
                         timings: None,
                         feedback: None,
+                        interruption: None,
+                        id: Some(common::MessageId::new()),
                     },
                 )
                 .await
@@ -769,9 +818,14 @@ model = "m"
                 .push_message(&sid, common::Message::assistant("yo"))
                 .await
                 .expect("push assistant");
-            // idx 1 = the assistant message (user/assistant indexing)
+            let s = runtime.get_session(&sid).await.unwrap();
             runtime
-                .set_message_feedback(sid, 1, Some(common::Feedback::Up))
+                .feedback_by_id(
+                    sid,
+                    &s.messages()[1].id.unwrap().to_string(),
+                    &s.updated_at().to_rfc3339(),
+                    Some(common::Feedback::Up),
+                )
                 .await
                 .expect("set feedback");
             let s = runtime.get_session(&sid).await.expect("session");
@@ -791,7 +845,12 @@ model = "m"
 
             // clear it
             runtime
-                .set_message_feedback(sid, 1, None)
+                .feedback_by_id(
+                    sid,
+                    &s.messages()[1].id.unwrap().to_string(),
+                    &s.updated_at().to_rfc3339(),
+                    None,
+                )
                 .await
                 .expect("clear feedback");
             let s = runtime.get_session(&sid).await.expect("session");
@@ -799,10 +858,15 @@ model = "m"
 
             // out-of-range index errors
             let err = runtime
-                .set_message_feedback(sid, 99, Some(common::Feedback::Down))
+                .feedback_by_id(
+                    sid,
+                    "deleted-id",
+                    &s.updated_at().to_rfc3339(),
+                    Some(common::Feedback::Down),
+                )
                 .await
                 .unwrap_err();
-            assert!(err.to_string().contains("out of range"));
+            assert!(err.to_string().contains("no longer exists"));
         }
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -908,5 +972,91 @@ model = "m"
             .await
             .unwrap();
         assert_eq!(runtime.list_sessions().await, vec![a, b]);
+    }
+    #[tokio::test]
+    async fn invalid_provider_edit_preserves_disk_and_runtime() {
+        let path =
+            std::env::temp_dir().join(format!("llmn-config-{}.toml", common::SessionId::new()));
+        let original = "[providers.deepseek]\napi_key = 'fixture'\n";
+        std::fs::write(&path, original).unwrap();
+        let rt = Runtime::from_config(&path).unwrap();
+        let before = rt.default_model().await.unwrap();
+        let draft = crate::config::persist::ProviderDraft {
+            id: "deepseek".into(),
+            protocol: Some("unsupported".into()),
+            base_url: None,
+            api_key: None,
+            models: None,
+        };
+        assert!(rt.upsert_provider(&draft).await.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(rt.default_model().await.unwrap(), before);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn removing_last_implicit_provider_leaves_loadable_config() {
+        let path = std::env::temp_dir().join(format!(
+            "llmn-remove-last-{}.toml",
+            common::SessionId::new()
+        ));
+        std::fs::write(
+            &path,
+            "# hand-written config\n[gui]\ntemperature = 0.4\ncurrentModel = { provider = 'deepseek', model = 'deepseek-chat' }\n[providers.deepseek]\napi_key = 'fixture'\n",
+        )
+        .unwrap();
+        let rt = Runtime::from_config(&path).unwrap();
+        rt.remove_provider("deepseek").await.unwrap();
+        assert!(rt.list_models().await.is_empty());
+        let restarted = Runtime::from_config(&path).unwrap();
+        assert!(restarted.default_model().await.is_none());
+        assert_eq!(restarted.gui_config().await.unwrap().temperature, 0.4);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("# hand-written config")
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_catalog_can_add_remove_and_restart_without_losing_history() {
+        let dir =
+            std::env::temp_dir().join(format!("llmn-onboarding-{}", common::SessionId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("llmn.toml");
+        std::fs::write(&path, "[providers]\n").unwrap();
+        let session_id;
+        {
+            let rt = Runtime::from_config_persistent(&path, &dir).unwrap();
+            assert!(rt.default_model().await.is_none());
+            assert!(
+                rt.gui_config()
+                    .await
+                    .unwrap()
+                    .current_model
+                    .model
+                    .is_empty()
+            );
+            session_id = rt.create_session(Some("first run".into())).await.unwrap();
+            let draft = crate::config::persist::ProviderDraft {
+                id: "deepseek".into(),
+                protocol: None,
+                base_url: None,
+                api_key: Some("fixture".into()),
+                models: None,
+            };
+            rt.upsert_provider(&draft).await.unwrap();
+            let selection = rt.default_model().await.unwrap();
+            rt.remove_provider("deepseek").await.unwrap();
+            assert!(rt.list_models().await.is_empty());
+            assert!(rt.resolve_model(&selection).await.is_err());
+        }
+        {
+            let rt = Runtime::from_config_persistent(&path, &dir).unwrap();
+            assert!(rt.default_model().await.is_none());
+            assert_eq!(rt.list_sessions().await, vec![session_id]);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

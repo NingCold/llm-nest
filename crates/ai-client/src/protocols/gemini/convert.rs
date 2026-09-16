@@ -715,6 +715,8 @@ mod tests {
                     usage: None,
                     timings: None,
                     feedback: None,
+                    interruption: None,
+                    id: Some(common::MessageId::new()),
                 },
                 Message {
                     role: Role::Tool,
@@ -731,6 +733,8 @@ mod tests {
                     usage: None,
                     timings: None,
                     feedback: None,
+                    interruption: None,
+                    id: Some(common::MessageId::new()),
                 },
             ],
             None,

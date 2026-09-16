@@ -20,9 +20,12 @@ use crate::error::Result;
 /// Most servers separate events with a blank line `\n\n`; Gemini's
 /// `streamGenerateContent?alt=sse` uses CRLF (`\r\n\r\n`). Both are accepted;
 /// the earliest boundary wins.
-fn find_frame_boundary(buf: &str) -> Option<(usize, usize)> {
-    let lf = buf.find("\n\n").map(|i| (i, 2));
-    let crlf = buf.find("\r\n\r\n").map(|i| (i, 4));
+fn find_frame_boundary(buf: &[u8]) -> Option<(usize, usize)> {
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2));
+    let crlf = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| (i, 4));
     match (lf, crlf) {
         (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
         (a, b) => a.or(b),
@@ -32,15 +35,21 @@ fn find_frame_boundary(buf: &str) -> Option<(usize, usize)> {
 /// One `data:` payload extracted from an SSE byte stream.
 pub struct SseDataStream {
     inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
-    buffer: String,
+    buffer: Vec<u8>,
     finished: bool,
 }
 
 impl SseDataStream {
     pub fn new(response: reqwest::Response) -> Self {
+        Self::from_stream(response.bytes_stream())
+    }
+
+    pub fn from_stream(
+        stream: impl Stream<Item = reqwest::Result<Bytes>> + Send + 'static,
+    ) -> Self {
         Self {
-            inner: Box::pin(response.bytes_stream()),
-            buffer: String::new(),
+            inner: Box::pin(stream),
+            buffer: Vec::new(),
             finished: false,
         }
     }
@@ -56,29 +65,45 @@ impl Stream for SseDataStream {
         }
         loop {
             if let Some((index, sep_len)) = find_frame_boundary(&self.buffer) {
-                let event = self.buffer[..index].to_string();
-                self.buffer = self.buffer[index + sep_len..].to_string();
-                for line in event.lines() {
-                    if let Some(data) = line.strip_prefix("data:") {
-                        let payload = data.trim().to_string();
-                        if !payload.is_empty() {
-                            return Poll::Ready(Some(Ok(payload)));
-                        }
+                let bytes: Vec<_> = self.buffer.drain(..index + sep_len).collect();
+                let event = match std::str::from_utf8(&bytes[..index]) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        self.finished = true;
+                        return Poll::Ready(Some(Err(crate::error::AiError::StreamError(
+                            e.to_string(),
+                        ))));
                     }
+                };
+                let data: Vec<_> = event
+                    .lines()
+                    .filter_map(|line| {
+                        line.strip_prefix("data:")
+                            .map(|s| s.strip_prefix(' ').unwrap_or(s))
+                    })
+                    .collect();
+                if !data.is_empty() {
+                    return Poll::Ready(Some(Ok(data.join("\n"))));
                 }
+                continue;
             }
 
             match self.inner.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    self.buffer.push_str(&text);
+                    self.buffer.extend_from_slice(&bytes);
                     continue;
                 }
                 Poll::Ready(Some(Err(err))) => {
+                    self.finished = true;
                     return Poll::Ready(Some(Err(crate::error::AiError::Reqwest(err))));
                 }
                 Poll::Ready(None) => {
                     self.finished = true;
+                    if !self.buffer.is_empty() {
+                        return Poll::Ready(Some(Err(crate::error::AiError::StreamError(
+                            "truncated SSE frame".into(),
+                        ))));
+                    }
                     return Poll::Ready(None);
                 }
                 Poll::Pending => return Poll::Pending,
@@ -100,7 +125,7 @@ mod tests {
             inner: Box::pin(futures_util::stream::iter(vec![Ok(bytes::Bytes::from(
                 body.as_bytes().to_vec(),
             ))])),
-            buffer: String::new(),
+            buffer: Vec::new(),
             finished: false,
         };
         let items: Vec<String> = stream.map(|r| r.unwrap()).collect().await;
@@ -117,7 +142,7 @@ mod tests {
                 Ok(bytes::Bytes::from(part1.as_bytes().to_vec())),
                 Ok(bytes::Bytes::from(part2.as_bytes().to_vec())),
             ])),
-            buffer: String::new(),
+            buffer: Vec::new(),
             finished: false,
         };
         let items: Vec<String> = stream.map(|r| r.unwrap()).collect().await;
@@ -134,7 +159,7 @@ mod tests {
             inner: Box::pin(futures_util::stream::iter(vec![Ok(bytes::Bytes::from(
                 body.as_bytes().to_vec(),
             ))])),
-            buffer: String::new(),
+            buffer: Vec::new(),
             finished: false,
         };
         let items: Vec<String> = stream.map(|r| r.unwrap()).collect().await;

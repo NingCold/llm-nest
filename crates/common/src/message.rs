@@ -61,12 +61,22 @@ pub enum ContentPart {
     ToolResult(ToolResult),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Interruption {
+    Cancelled,
+    Failed(String),
+}
+
 /// Common content format used by OpenAI-compatible APIs:
 ///
 /// Text-only message: `{ "role": ..., "content": "the text" }`
 /// Multimodal message: `{ "role": ..., "content": [{ "type": "text", "text": ... }, ...] }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Message {
+    pub id: Option<crate::MessageId>,
+    /// Display-only interruption marker; incomplete answers are excluded from future prompts.
+    pub interruption: Option<Interruption>,
     pub role: Role,
     pub content: Vec<ContentPart>,
     /// The model's thinking chain for this message. Rendered distinctly by
@@ -100,6 +110,8 @@ impl Message {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: Some(crate::MessageId::new()),
         }
     }
 
@@ -142,6 +154,8 @@ impl Message {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: Some(crate::MessageId::new()),
         }
     }
 
@@ -159,6 +173,8 @@ impl Message {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: None,
         }
     }
 
@@ -198,6 +214,9 @@ impl Serialize for Message {
         use serde::ser::SerializeStruct;
 
         let mut map = serializer.serialize_struct("Message", 3)?;
+        if let Some(id) = self.id {
+            map.serialize_field("id", &id)?;
+        }
         map.serialize_field("role", &self.role)?;
 
         let is_text_only = self
@@ -237,6 +256,9 @@ impl Serialize for Message {
             map.serialize_field("feedback", &feedback)?;
         }
 
+        if let Some(interruption) = &self.interruption {
+            map.serialize_field("interruption", interruption)?;
+        }
         map.end()
     }
 }
@@ -323,6 +345,8 @@ impl<'de> Deserialize<'de> for Message {
     {
         #[derive(Deserialize)]
         struct RawMessage {
+            #[serde(default)]
+            id: Option<crate::MessageId>,
             role: Role,
             // `content` may be a string or an array of blocks.
             #[serde(deserialize_with = "de_content")]
@@ -340,6 +364,8 @@ impl<'de> Deserialize<'de> for Message {
             timings: Option<MessageTimings>,
             #[serde(default)]
             feedback: Option<Feedback>,
+            #[serde(default)]
+            interruption: Option<Interruption>,
         }
 
         let raw = RawMessage::deserialize(deserializer)?;
@@ -352,6 +378,8 @@ impl<'de> Deserialize<'de> for Message {
             usage: raw.usage,
             timings: raw.timings,
             feedback: raw.feedback,
+            interruption: raw.interruption,
+            id: raw.id,
         })
     }
 }
@@ -494,6 +522,8 @@ mod tests {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: Some(crate::MessageId::new()),
         };
         assert_eq!(msg.text(), "foo bar");
     }
@@ -525,6 +555,8 @@ mod tests {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: Some(crate::MessageId::new()),
         };
         // persisted form stores the binary losslessly (dedicated image block)
         let json = serde_json::to_value(&msg).unwrap();
@@ -606,6 +638,8 @@ mod tests {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: Some(crate::MessageId::new()),
         };
         // text() never includes tool parts
         assert_eq!(msg.text(), "calling");
@@ -640,6 +674,8 @@ mod tests {
             usage: None,
             timings: None,
             feedback: None,
+            interruption: None,
+            id: Some(crate::MessageId::new()),
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"is_error\":true"));
@@ -719,5 +755,17 @@ mod tests {
         assert_eq!(wire.thinking_ms, None);
         assert_eq!(wire.usage, None);
         assert_eq!(wire.timings, None);
+    }
+    #[test]
+    fn interruption_roundtrip_and_wire_isolation() {
+        let legacy: Message =
+            serde_json::from_str(r#"{"role":"assistant","content":"old"}"#).unwrap();
+        assert!(legacy.interruption.is_none());
+        let mut partial = Message::assistant_with_reasoning("partial", "thinking");
+        partial.interruption = Some(Interruption::Failed("connection lost".into()));
+        let decoded: Message =
+            serde_json::from_str(&serde_json::to_string(&partial).unwrap()).unwrap();
+        assert_eq!(decoded, partial);
+        assert!(decoded.to_wire().interruption.is_none());
     }
 }

@@ -23,6 +23,8 @@ async function getApi() {
 
 export function MessageActions({ sessionId, message, onRegenerate }: MessageActionsProps) {
   const setFeedback = useChatStore((s) => s.setFeedback)
+  const [error, setError] = useState<string | null>(null)
+  const [savingFeedback, setSavingFeedback] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -33,15 +35,22 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
     }
   }
 
-  /** 乐观更新本地反馈并持久化到后端（失败静默，刷新后以服务端为准） */
+  /** 按消息 ID 和版本保存反馈；失败回滚，成功同步新版本 */
   const toggleFeedback = (fb: Feedback) => {
+    if (!message.revision || savingFeedback) return
+    setSavingFeedback(true); setError(null)
     const next = message.feedback === fb ? null : fb
     setFeedback(sessionId, message.id, next)
     void getApi()
-      .then((a) => a.setMessageFeedback(sessionId, message.id, next))
-      .catch(() => {
-        /* 持久化失败不打断交互 */
+      .then(async (a) => {
+        await a.setMessageFeedback(sessionId, message.id, next, message.revision!)
+        const stored = await a.getMessages(sessionId)
+        if (!useChatStore.getState().isStreaming) useChatStore.getState().hydrateSession(sessionId, stored)
       })
+      .catch(error => {
+        setError(`反馈保存失败，请重试：${String(error)}`)
+        setFeedback(sessionId, message.id, message.feedback ?? null)
+      }).finally(() => setSavingFeedback(false))
   }
 
   const btn =
@@ -60,6 +69,7 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
 
   return (
     <div className="group/actions relative">
+      {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
       <div className="mt-2 flex items-center gap-0.5">
         <button type="button" onClick={handleCopy} className={btn} title="复制全文">
           {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
@@ -71,6 +81,7 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
         )}
         <button
           type="button"
+          disabled={savingFeedback}
           onClick={() => toggleFeedback("up")}
           className={cn(btn, message.feedback === "up" && "text-emerald-500 hover:text-emerald-500")}
           title="有帮助"
@@ -79,6 +90,7 @@ export function MessageActions({ sessionId, message, onRegenerate }: MessageActi
         </button>
         <button
           type="button"
+          disabled={savingFeedback}
           onClick={() => toggleFeedback("down")}
           className={cn(btn, message.feedback === "down" && "text-red-500 hover:text-red-500")}
           title="没帮助"

@@ -5,6 +5,7 @@ export type MessageStatus = "pending" | "streaming" | "done" | "error" | "cancel
 export type Feedback = "up" | "down" | null
 
 export interface Message {
+  revision?: string
   id: string
   role: "user" | "assistant" | "tool"
   content: string
@@ -66,7 +67,7 @@ interface ChatStore {
     isError: boolean,
     durationMs?: number,
   ) => void
-  /** 把消息 id 改为新值（流式完成后统一为 m-{index}，与后端历史加载一致） */
+  /** 替换临时消息 ID；正常完成后以服务端持久化历史为准 */
   renameMessageId: (sessionId: string, oldId: string, newId: string) => void
   editUserMessage: (sessionId: string, messageId: string, content: string) => void
   truncateFrom: (sessionId: string, messageId: string) => void

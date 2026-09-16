@@ -1,10 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "LLM Nest",
+  "productName": "LLM-Nest",
   "version": "0.1.0",
   "identifier": "com.llmnest.tauri",
   "build": {
-    "frontendDist": "../web/dist",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build"
@@ -12,10 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "LLM Nest",
+        "title": "LLM-Nest",
         "width": 1200,
         "height": 800,
         "resizable": true,
+        "decorations": true,
+        "shadow": true,
+        "transparent": false,
+        "backgroundColor": "#0c0c0e",
         "fullscreen": false,
         "minWidth": 800,
         "minHeight": 600
@@ -27,13 +31,23 @@
   },
   "bundle": {
     "active": true,
+    "useLocalToolsDir": true,
     "targets": "all",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "Productivity",
+    "shortDescription": "A local-first AI workspace with a shared Rust runtime",
+    "publisher": "LLM-Nest"
   }
 }

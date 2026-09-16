@@ -35,3 +35,13 @@ pub struct ChatRequest {
     /// mapping. Not part of serialization.
     pub resolved: Option<ResolvedSelection>,
 }
+
+impl ChatRequest {
+    /// Effective API model name; configuration aliases never reach the wire.
+    pub fn wire_model(&self) -> &str {
+        self.resolved
+            .as_ref()
+            .map(|r| r.spec.wire.as_str())
+            .unwrap_or(&self.selection.model)
+    }
+}

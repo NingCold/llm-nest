@@ -45,6 +45,8 @@ pub struct Request {
     pub top_p: Option<f32>,
     #[serde(default)]
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<serde_json::Value>,
     /// OpenAI `reasoning_effort` parameter (`low`/`medium`/`high`/`max`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
@@ -125,6 +127,10 @@ pub struct Delta {
     /// absent for plain chat completions.
     #[serde(default)]
     pub reasoning_content: Option<String>,
+    /// Some OpenAI-compatible gateways (including ecnu-max) emit `reasoning`.
+    /// Keep both fields: a serde alias would reject responses containing both.
+    #[serde(default)]
+    pub reasoning: Option<String>,
     /// Function-call fragments (streamed piecemeal; assembled by the stream
     /// parser keyed by `index`).
     #[serde(default)]

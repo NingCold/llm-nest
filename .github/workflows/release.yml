@@ -1,0 +1,146 @@
+name: Build installers
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: 1.97.0
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 4
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Validate version and tag
+        run: |
+          python scripts/release.py validate
+          python scripts/test_release.py
+      - name: Install toolchain
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rustfmt,clippy --target ${{ matrix.target }}
+          npm install --global pnpm@11.22.0
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf xvfb xauth dbus-x11 libfuse2t64
+      - name: Frontend checks
+        run: |
+          pnpm --dir frontends/web install --frozen-lockfile
+          pnpm --dir frontends/tauri install --frozen-lockfile
+          pnpm --dir frontends/web typecheck
+          pnpm --dir frontends/web test
+      - name: Rust and offline acceptance
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo build -p web-server --locked
+          python scripts/acceptance.py
+      - name: Build embedded desktop installers
+        working-directory: frontends/tauri
+        run: pnpm exec tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+      - name: Check Windows icon resources
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/verify-windows-icons.ps1
+      - name: Check packaged Linux startup and worker
+        if: runner.os == 'Linux'
+        run: |
+          python scripts/linux/smoke.py --deb target/${{ matrix.target }}/release/bundle/deb/*.deb --gui
+          python scripts/linux/smoke.py --appimage target/${{ matrix.target }}/release/bundle/appimage/*.AppImage --gui
+      - name: Collect installers and checksums
+        run: |
+          extra=()
+          if [[ "$RUNNER_OS" == Linux ]]; then extra+=(--appimage); fi
+          python scripts/release.py collect --platform ${{ matrix.platform }} --bundle-dir target/${{ matrix.target }}/release/bundle --output release-assets "${extra[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installers-${{ matrix.platform }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    # Manual dispatch only builds downloadable Actions artifacts.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: release-assets
+      - name: Assemble release checksums
+        run: python3 scripts/release.py checksums release-assets
+      - name: Create or update the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          cat > release-notes.md <<'NOTES'
+          LLM-Nest 开发预览版。
+
+          安装包和 SHA256SUMS.txt 由同一次构建生成。
+          Windows x64：NSIS 安装器与 MSI；Linux x64：Ubuntu 24.04 基线的 deb 包与 AppImage。
+          安装包不包含模型 API Key。Linux GUI、干净 Windows 和系统级 MSI 请按仓库验收清单检查。
+          当前未配置系统代码签名或应用内自动更新。
+
+          维护者：核对平台验收、许可证和产物后，再公开此草稿并补充版本变更说明。
+          NOTES
+          if gh release view "$tag" --json isDraft --jq .isDraft > is-draft.txt 2>/dev/null; then
+            if [[ "$(cat is-draft.txt)" != true ]]; then
+              echo 'Refusing to replace files in an already published release.' >&2
+              exit 1
+            fi
+            gh release upload "$tag" release-assets/* --clobber
+          else
+            flags=()
+            if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
+            gh release create "$tag" release-assets/* --verify-tag --draft "${flags[@]}" --title "LLM-Nest $tag" --notes-file release-notes.md
+          fi

@@ -35,3 +35,8 @@ config/llmn.toml
 
 # Project state (local only, not for VCS)
 STATE.md
+/frontends/tauri/dist/
+
+# Local Python/build helpers
+__pycache__/
+/release-assets/

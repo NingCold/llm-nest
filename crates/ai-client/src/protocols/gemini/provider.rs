@@ -88,7 +88,7 @@ impl GeminiProvider {
         let request = convert::to_request(&req);
         let response = self
             .client
-            .post(self.endpoint(&req.selection.model, false))
+            .post(self.endpoint(req.wire_model(), false))
             .headers(self.headers.clone())
             .header("x-goog-api-key", &self.api_key)
             .json(&request)
@@ -105,7 +105,7 @@ impl GeminiProvider {
         let request = convert::to_request(&req);
         let response = self
             .client
-            .post(self.endpoint(&req.selection.model, true))
+            .post(self.endpoint(req.wire_model(), true))
             .headers(self.headers.clone())
             .header("x-goog-api-key", &self.api_key)
             .json(&request)

@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::chunk::ChatChunk;
-use bytes::Bytes;
+use crate::protocols::sse::SseDataStream;
 use futures_util::Stream;
 
 use super::chat::{DeltaToolCall, StreamResponse};
@@ -21,8 +21,9 @@ struct PendingToolCall {
 }
 
 pub struct OpenAIStream {
-    inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
-    buffer: String,
+    inner: SseDataStream,
+    usage: Option<Usage>,
+    saw_finish: bool,
     finished: bool,
     /// Fragments of in-flight tool calls, keyed by delta `index`.
     pending_tool_calls: Vec<PendingToolCall>,
@@ -34,8 +35,9 @@ pub struct OpenAIStream {
 impl OpenAIStream {
     pub fn new(response: reqwest::Response) -> Self {
         Self {
-            inner: Box::pin(response.bytes_stream()),
-            buffer: String::new(),
+            inner: SseDataStream::new(response),
+            usage: None,
+            saw_finish: false,
             finished: false,
             pending_tool_calls: Vec::new(),
             queued: VecDeque::new(),
@@ -85,129 +87,92 @@ impl OpenAIStream {
         }
     }
 
-    /// Parse one SSE `data:` payload into a stream event.
-    fn parse_event(data: &str) -> Result<Option<ParsedEvent>> {
-        if data.trim().is_empty() {
-            return Ok(None);
+    fn finish(&mut self) -> Result<()> {
+        self.finished = true;
+        self.pending_tool_calls.sort_by_key(|c| c.index);
+        for call in self.pending_tool_calls.drain(..) {
+            if call.id.is_empty() || call.name.is_empty() {
+                return Err(AiError::StreamError("incomplete tool call".into()));
+            }
+            self.queued.push_back(ChatChunk::ToolCall {
+                id: call.id,
+                name: call.name,
+                arguments: call.arguments,
+                thought_signature: None,
+            });
         }
-        if data.trim() == "[DONE]" {
-            return Ok(Some(ParsedEvent::Done { usage: None }));
-        }
-
-        let response: StreamResponse = serde_json::from_str(data)?;
-        let usage = response.usage.map(Usage::from);
-        let Some(choice) = response.choices.into_iter().next() else {
-            return Ok(usage.map(|usage| ParsedEvent::Done { usage: Some(usage) }));
-        };
-
-        if let Some(fragments) = choice.delta.tool_calls
-            && !fragments.is_empty()
-        {
-            return Ok(Some(ParsedEvent::ToolFragments(fragments)));
-        }
-        if let Some(reasoning) = choice.delta.reasoning_content
-            && !reasoning.is_empty()
-        {
-            return Ok(Some(ParsedEvent::Reasoning(reasoning)));
-        }
-        if let Some(content) = choice.delta.content
-            && !content.is_empty()
-        {
-            return Ok(Some(ParsedEvent::Delta(content)));
-        }
-        if choice.finish_reason.is_some() {
-            return Ok(Some(ParsedEvent::Done { usage }));
-        }
-        Ok(None)
+        self.queued.push_back(ChatChunk::Done {
+            usage: self.usage.take(),
+        });
+        Ok(())
     }
-}
 
-enum ParsedEvent {
-    Reasoning(String),
-    Delta(String),
-    ToolFragments(Vec<DeltaToolCall>),
-    Done { usage: Option<Usage> },
+    fn consume(&mut self, payload: &str) -> Result<()> {
+        if payload.trim() == "[DONE]" {
+            return self.finish();
+        }
+        if payload.trim().is_empty() {
+            return Ok(());
+        }
+        let response: StreamResponse = serde_json::from_str(payload)?;
+        if let Some(usage) = response.usage {
+            self.usage = Some(usage.into());
+        }
+        if let Some(choice) = response.choices.into_iter().next() {
+            if let Some(reason) = choice.finish_reason {
+                match reason.as_str() {
+                    "stop" | "tool_calls" | "function_call" => self.saw_finish = true,
+                    _ => {
+                        return Err(AiError::StreamError(format!(
+                            "generation incomplete: {reason}"
+                        )));
+                    }
+                }
+            }
+            if let Some(fragments) = choice.delta.tool_calls {
+                for fragment in fragments {
+                    self.merge_tool_call_fragment(&fragment);
+                }
+            }
+            if let Some(content) = choice
+                .delta
+                .reasoning_content
+                .filter(|s| !s.is_empty())
+                .or_else(|| choice.delta.reasoning.filter(|s| !s.is_empty()))
+            {
+                self.queued.push_back(ChatChunk::ReasoningDelta { content });
+            }
+            if let Some(content) = choice.delta.content.filter(|s| !s.is_empty()) {
+                self.queued.push_back(ChatChunk::Delta { content });
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Stream for OpenAIStream {
     type Item = Result<ChatChunk>;
-
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.finished {
-            return Poll::Ready(None);
-        }
-
-        // Flush assembled tool calls and the terminal chunk in order.
-        if let Some(chunk) = self.queued.pop_front() {
-            return Poll::Ready(Some(Ok(chunk)));
-        }
-
         loop {
-            if let Some(index) = self.buffer.find("\n\n") {
-                let event = self.buffer[..index].to_string();
-                self.buffer = self.buffer[index + 2..].to_string();
-
-                for line in event.lines() {
-                    let Some(data) = line.strip_prefix("data:") else {
-                        continue;
-                    };
-                    match Self::parse_event(data.trim()) {
-                        Ok(Some(ParsedEvent::Reasoning(content))) => {
-                            return Poll::Ready(Some(Ok(ChatChunk::ReasoningDelta { content })));
-                        }
-                        Ok(Some(ParsedEvent::Delta(content))) => {
-                            return Poll::Ready(Some(Ok(ChatChunk::Delta { content })));
-                        }
-                        Ok(Some(ParsedEvent::ToolFragments(fragments))) => {
-                            for fragment in &fragments {
-                                self.merge_tool_call_fragment(fragment);
-                            }
-                            continue;
-                        }
-                        Ok(Some(ParsedEvent::Done { usage })) => {
-                            self.finished = true;
-                            // Flush assembled tool calls (skip nameless) then
-                            // the terminal chunk.
-                            let calls: Vec<ChatChunk> = self
-                                .pending_tool_calls
-                                .drain(..)
-                                .filter(|c| !c.name.is_empty())
-                                .map(|c| ChatChunk::ToolCall {
-                                    id: c.id,
-                                    name: c.name,
-                                    arguments: c.arguments,
-                                    thought_signature: None,
-                                })
-                                .collect();
-                            self.queued.extend(calls);
-                            self.queued.push_back(ChatChunk::Done {
-                                usage: usage.clone(),
-                            });
-                            if let Some(chunk) = self.queued.pop_front() {
-                                return Poll::Ready(Some(Ok(chunk)));
-                            }
-                            return Poll::Ready(Some(Ok(ChatChunk::Done { usage })));
-                        }
-                        Ok(None) => continue,
-                        Err(err) => return Poll::Ready(Some(Err(err))),
-                    }
-                }
+            if let Some(chunk) = self.queued.pop_front() {
+                return Poll::Ready(Some(Ok(chunk)));
             }
-
-            match self.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    self.buffer.push_str(&text);
-                    continue;
-                }
-                Poll::Ready(Some(Err(err))) => {
-                    return Poll::Ready(Some(Err(AiError::Reqwest(err))));
-                }
-                Poll::Ready(None) => {
-                    self.finished = true;
-                    return Poll::Ready(None);
-                }
+            if self.finished {
+                return Poll::Ready(None);
+            }
+            let outcome = match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(payload))) => self.consume(&payload),
+                Poll::Ready(Some(Err(err))) => Err(err),
+                Poll::Ready(None) if self.saw_finish => self.finish(),
+                Poll::Ready(None) => Err(AiError::StreamError(
+                    "stream ended without a completion event".into(),
+                )),
                 Poll::Pending => return Poll::Pending,
+            };
+            if let Err(err) = outcome {
+                self.finished = true;
+                self.queued.clear();
+                return Poll::Ready(Some(Err(err)));
             }
         }
     }

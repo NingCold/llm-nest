@@ -7,6 +7,19 @@
 /* Class-based dark mode (toggle `.dark` on <html>) */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Vertically docked windows and systems without DWM attributes get a hairline.
+ * Inset overlay only: no layout change, transparent gutters or pointer interception. */
+.desktop-frame-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  border: 1px solid #9a9a9a;
+}
+.dark .desktop-frame-fallback { border-color: #686868; }
+.desktop-frame-fallback[data-focused="false"] { border-color: #bcbcbc; }
+.dark .desktop-frame-fallback[data-focused="false"] { border-color: #4c4c4c; }
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
@@ -153,6 +166,7 @@
 
   html {
     color-scheme: light;
+    background-color: var(--background);
   }
   html.dark {
     color-scheme: dark;

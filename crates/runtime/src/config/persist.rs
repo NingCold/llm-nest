@@ -46,9 +46,18 @@ pub struct ProviderModelDraft {
 /// does not manage are preserved. Fails when the document does not parse.
 pub fn persist_provider(path: &Path, draft: &ProviderDraft) -> Result<()> {
     let text = std::fs::read_to_string(path)?;
+    atomic_write(path, &render_provider(&text, draft)?)
+}
+
+pub fn render_provider(text: &str, draft: &ProviderDraft) -> Result<String> {
     let mut doc: DocumentMut = text.parse().map_err(|e| {
         RuntimeError::ConfigError(format!("failed to parse config for persistence: {e}"))
     })?;
+    if doc.get("providers").is_some_and(|item| !item.is_table()) {
+        return Err(RuntimeError::ConfigError(
+            "providers must use section form".into(),
+        ));
+    }
     let providers = match doc.get_mut("providers").and_then(Item::as_table_mut) {
         Some(table) => table,
         None => {
@@ -81,7 +90,14 @@ pub fn persist_provider(path: &Path, draft: &ProviderDraft) -> Result<()> {
     if let Some(models) = &draft.models {
         let mut models_tbl = Table::new();
         for m in models {
-            let mut entry = Table::new();
+            let mut entry = match provider_tbl.get("models").and_then(|t| t.get(&m.id)) {
+                Some(item) => item.as_table().cloned().ok_or_else(|| {
+                    RuntimeError::ConfigError(
+                        "model must use section form to preserve its settings".into(),
+                    )
+                })?,
+                None => Table::new(),
+            };
             entry["model"] = value(m.wire.clone());
             if let Some(name) = &m.display_name {
                 entry["display_name"] = value(name.clone());
@@ -91,25 +107,32 @@ pub fn persist_provider(path: &Path, draft: &ProviderDraft) -> Result<()> {
         provider_tbl.insert("models", Item::Table(models_tbl));
     }
 
-    std::fs::write(path, doc.to_string())?;
-    Ok(())
+    Ok(doc.to_string())
 }
 
 /// Remove the `[providers.<id>]` table from the document at `path`. A no-op
 /// when the provider is not present.
 pub fn persist_remove_provider(path: &Path, id: &str) -> Result<()> {
     let text = std::fs::read_to_string(path)?;
+    atomic_write(path, &render_remove_provider(&text, id)?)
+}
+
+pub fn render_remove_provider(text: &str, id: &str) -> Result<String> {
     let mut doc: DocumentMut = text.parse().map_err(|e| {
         RuntimeError::ConfigError(format!("failed to parse config for persistence: {e}"))
     })?;
     let Some(providers) = doc.get_mut("providers").and_then(Item::as_table_mut) else {
-        return Ok(());
+        return Ok(text.to_string());
     };
     if providers.contains_key(id) {
         providers.remove(id);
-        std::fs::write(path, doc.to_string())?;
+        // TOML creates an implicit parent for [providers.foo]. Once its last
+        // child is removed it would disappear, making the config unloadable.
+        if providers.is_empty() {
+            providers.set_implicit(false);
+        }
     }
-    Ok(())
+    Ok(doc.to_string())
 }
 
 /// Append `models` into `[providers.<provider>]`'s `models` table of the
@@ -117,10 +140,14 @@ pub fn persist_remove_provider(path: &Path, id: &str) -> Result<()> {
 /// document has no `[providers]`/`[providers.<provider>]` table or when
 /// `models` is an inline table (cannot be extended in place).
 pub fn persist_new_models(path: &Path, provider: &str, models: &[WireModel]) -> Result<()> {
-    if models.is_empty() {
-        return Ok(());
-    }
     let text = std::fs::read_to_string(path)?;
+    atomic_write(path, &render_new_models(&text, provider, models)?)
+}
+
+pub fn render_new_models(text: &str, provider: &str, models: &[WireModel]) -> Result<String> {
+    if models.is_empty() {
+        return Ok(text.to_string());
+    }
     let mut doc: DocumentMut = text.parse().map_err(|e| {
         RuntimeError::ConfigError(format!("failed to parse config for persistence: {e}"))
     })?;
@@ -166,8 +193,7 @@ pub fn persist_new_models(path: &Path, provider: &str, models: &[WireModel]) -> 
         models_tbl.insert(&m.id, Item::Table(entry));
     }
 
-    std::fs::write(path, doc.to_string())?;
-    Ok(())
+    Ok(doc.to_string())
 }
 
 #[cfg(test)]
@@ -404,4 +430,29 @@ protocol = "anthropic"
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// Same-directory create-new temporary file, fsync, then atomic replacement.
+pub fn atomic_write(path: &Path, text: &str) -> Result<()> {
+    use std::io::Write;
+    let name = path
+        .file_name()
+        .ok_or_else(|| RuntimeError::ConfigError("invalid config path".into()))?
+        .to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", common::SessionId::new()));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result?;
+    Ok(())
 }

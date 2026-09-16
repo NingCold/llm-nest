@@ -1,0 +1,10 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+COPY *.deb /tmp/llmn.deb
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    /tmp/llmn.deb python3 xvfb xauth dbus-x11 \
+    && rm -rf /var/lib/apt/lists/* /tmp/llmn.deb \
+    && useradd --create-home --uid 10001 llmn-test
+COPY smoke.py /opt/smoke.py
+USER llmn-test
+CMD ["python3", "/opt/smoke.py", "--binary", "/usr/bin/LLM-Nest", "--gui"]

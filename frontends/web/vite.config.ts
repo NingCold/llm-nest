@@ -4,8 +4,14 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
+const targetPlatform = process.env.TAURI_ENV_PLATFORM ?? process.platform;
 
 export default defineConfig({
+  // Tauri supplies the target platform; standalone dev uses the local OS.
+  // Only this boolean enters the bundle, never the process environment.
+  define: {
+    __LLMN_CUSTOM_WINDOW_CHROME__: ["windows", "win32"].includes(targetPlatform),
+  },
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   resolve: {
@@ -21,7 +27,7 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: process.env.LLMN_API ?? "http://127.0.0.1:8787",
-        changeOrigin: true,
+        changeOrigin: false,
       },
     },
     watch: {

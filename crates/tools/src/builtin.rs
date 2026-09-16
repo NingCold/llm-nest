@@ -26,6 +26,13 @@ impl Tool for Echo {
         })
     }
 
+    fn run<'a>(
+        &'a self,
+        args: Value,
+    ) -> futures_util::future::BoxFuture<'a, Result<Value, ToolError>> {
+        Box::pin(async move { self.run_sync(args) })
+    }
+
     fn run_sync(&self, args: Value) -> Result<Value, ToolError> {
         let text = args
             .get("text")
@@ -57,6 +64,13 @@ impl Tool for Add {
             },
             "required": ["a", "b"]
         })
+    }
+
+    fn run<'a>(
+        &'a self,
+        args: Value,
+    ) -> futures_util::future::BoxFuture<'a, Result<Value, ToolError>> {
+        Box::pin(async move { self.run_sync(args) })
     }
 
     fn run_sync(&self, args: Value) -> Result<Value, ToolError> {

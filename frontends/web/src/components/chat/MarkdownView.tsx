@@ -3,7 +3,8 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import { CodeBlock } from "@/components/chat/CodeBlock"
-import { MermaidBlock } from "@/components/chat/MermaidBlock"
+import { lazy, Suspense } from "react"
+const MermaidBlock = lazy(() => import("@/components/chat/MermaidBlock").then((m) => ({ default: m.MermaidBlock })))
 
 const components: Components = {
   a: ({ children, ...props }) => (
@@ -18,7 +19,7 @@ const components: Components = {
     const text = String(children)
     if (match) {
       if (match[1].toLowerCase() === "mermaid") {
-        return <MermaidBlock code={text} />
+        return <Suspense fallback={<pre>{text}</pre>}><MermaidBlock code={text} /></Suspense>
       }
       return <CodeBlock code={text} language={match[1]} />
     }

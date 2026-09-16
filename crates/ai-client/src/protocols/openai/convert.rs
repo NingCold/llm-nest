@@ -8,12 +8,13 @@ use common::{ContentPart, Message, Role};
 
 pub fn to_real_request(req: &ChatRequest) -> Request {
     let mut request = Request {
-        model: req.selection.model.clone(),
+        model: req.wire_model().to_string(),
         messages: req.messages.iter().map(wire_message).collect(),
         temperature: req.options.temperature,
         max_tokens: req.options.max_tokens,
         top_p: req.options.top_p,
         stream: req.options.stream,
+        stream_options: None,
         reasoning_effort: None,
         thinking: None,
         tools: req
@@ -136,6 +137,14 @@ impl TryFrom<chat::Response> for ProviderResponse {
             .message
             .get("reasoning_content")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                choice
+                    .message
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+            })
             .map(String::from);
 
         Ok(Self {
@@ -345,6 +354,24 @@ mod tests {
         let resp: super::chat::Response = serde_json::from_str(json).unwrap();
         let provider: ProviderResponse = resp.try_into().unwrap();
         assert_eq!(provider.reasoning, None);
+    }
+
+    #[test]
+    fn extracts_reasoning_alias_without_duplicating_canonical_field() {
+        for (canonical, alternate, expected) in [
+            (None, Some("思考🙂"), Some("思考🙂")),
+            (Some(""), Some("fallback"), Some("fallback")),
+            (Some("preferred"), Some("duplicate"), Some("preferred")),
+            (None, None, None),
+        ] {
+            let response: super::chat::Response = serde_json::from_value(serde_json::json!({
+                "id":"fixture", "choices":[{"index":0,"message":{
+                    "role":"assistant", "content":"answer", "reasoning_content":canonical, "reasoning":alternate
+                }}]
+            })).unwrap();
+            let response: ProviderResponse = response.try_into().unwrap();
+            assert_eq!(response.reasoning.as_deref(), expected);
+        }
     }
 
     #[test]

@@ -108,8 +108,8 @@ export function cacheHitRate(
   cached: number | undefined,
   prompt: number | undefined,
 ): string {
-  if (!cached || !prompt) return "-"
-  return `${((cached / (prompt + cached)) * 100).toFixed(1)}%`
+  if (cached == null || !prompt) return "-"
+  return `${((Math.max(0, Math.min(cached, prompt)) / prompt) * 100).toFixed(1)}%`
 }
 
 /** 消息时间（epoch ms）→ '14:32:05' */

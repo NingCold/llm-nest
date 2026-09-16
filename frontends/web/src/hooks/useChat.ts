@@ -3,12 +3,14 @@ import { useChatStore } from "@/store/chat"
 import { useSessionStore } from "@/store/session"
 import { useConfigStore } from "@/store/config"
 import { useUiStore, clampEffort } from "@/store/ui"
-import type { GuiAttachment } from "@/api/types"
+import type { ChatParams, GuiAttachment } from "@/api/types"
 
 async function getApi() {
   const mod = await import("@/api")
   return mod.getApi()
 }
+
+let runningSessionId: string | null = null
 
 export function useChat() {
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -20,8 +22,6 @@ export function useChat() {
   const failMessage = useChatStore((s) => s.failMessage)
   const cancelMessage = useChatStore((s) => s.cancelMessage)
   const addUserMessage = useChatStore((s) => s.addUserMessage)
-  const editUserMessage = useChatStore((s) => s.editUserMessage)
-  const truncateFrom = useChatStore((s) => s.truncateFrom)
   const setThinkingTime = useChatStore((s) => s.setThinkingTime)
   const setUsageTimings = useChatStore((s) => s.setUsageTimings)
   const addToolCall = useChatStore((s) => s.addToolCall)
@@ -50,10 +50,17 @@ export function useChat() {
 
   /** Stream one assistant reply into a fresh assistant message. */
   const streamReply = useCallback(
-    async (input: string, attachments?: GuiAttachment[]) => {
+    async (input: string, attachments?: GuiAttachment[], edit?: ChatParams["edit"]) => {
       const sessionId = currentSessionId
       if (!sessionId || !config) return
 
+      const previous = useChatStore.getState().getMessages(sessionId)
+      if (edit) {
+        useChatStore.getState().hydrateSession(sessionId, previous.slice(0, edit.userIndex))
+        addUserMessage(sessionId, input, attachments)
+      }
+      runningSessionId = sessionId
+      let completed = false
       const messageId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
       startAssistantMessage(sessionId, messageId)
       setStreaming(true)
@@ -68,6 +75,7 @@ export function useChat() {
           {
             sessionId,
             messageId,
+            edit,
             input,
             model: buildModel(),
             temperature: config.temperature,
@@ -101,21 +109,12 @@ export function useChat() {
                 }
                 setUsageTimings(sessionId, messageId, event.usage, event.timings)
                 finishMessage(sessionId, messageId)
-                // 统一消息 id 为 m-{index}（与后端历史加载一致；反馈持久化等
-                // 依赖 m-{idx} 格式的索引）
-                if (!messageId.startsWith("m-")) {
-                  const msgs = useChatStore.getState().getMessages(sessionId)
-                  const idx = msgs.findIndex((m) => m.id === messageId)
-                  if (idx >= 0) {
-                    useChatStore
-                      .getState()
-                      .renameMessageId(sessionId, messageId, `m-${idx}`)
-                  }
-                }
-                useSessionStore.getState().refreshSessions()
+                completed = true
+                setStreaming(true)
                 break
               case "error":
                 failMessage(sessionId, messageId, event.error ?? "unknown error")
+                setStreaming(true)
                 break
               case "tool_call":
                 addToolCall(sessionId, event.toolId, event.toolName, event.toolArguments)
@@ -131,20 +130,42 @@ export function useChat() {
                 break
               case "cancelled":
                 cancelMessage(sessionId, messageId)
+                setStreaming(true)
                 break
             }
           },
         )
+        const stored = await a.getMessages(sessionId)
+        const failure = useChatStore.getState().getMessages(sessionId).find((m) => m.id === messageId)
+        const last = stored[stored.length - 1]
+        const savedFailure = (last?.status === "error" || last?.status === "cancelled") &&
+          last.revision !== previous.find((m) => m.revision)?.revision
+        useChatStore.getState().hydrateSession(sessionId, [
+          ...stored,
+          ...(!completed && !savedFailure && failure ? [failure] : []),
+        ])
+        await useSessionStore.getState().refreshSessions()
       } catch (err) {
+        if (edit) {
+          // A rejected request must not erase the previous conversation.
+          let history = previous
+          try { history = await (await getApi()).getMessages(sessionId) } catch { /* retain snapshot */ }
+          useChatStore.getState().hydrateSession(sessionId, history)
+          startAssistantMessage(sessionId, messageId)
+        }
         failMessage(
           sessionId,
           messageId,
           err instanceof Error ? err.message : String(err),
         )
+      } finally {
+        setStreaming(false)
+        runningSessionId = null
       }
     },
     [
       currentSessionId,
+      addUserMessage,
       config,
       buildModel,
       setStreaming,
@@ -164,7 +185,7 @@ export function useChat() {
   /** Send a brand-new user message. */
   const send = useCallback(
     async (input: string, attachments?: GuiAttachment[]) => {
-      if (!currentSessionId || !config || isStreaming) return
+      if (!currentSessionId || !config || useChatStore.getState().isStreaming) return
       addUserMessage(currentSessionId, input, attachments)
       await streamReply(input, attachments)
     },
@@ -175,33 +196,39 @@ export function useChat() {
   const regenerate = useCallback(
     async (assistantMessageId: string) => {
       const sessionId = currentSessionId
-      if (!sessionId || !config || isStreaming) return
+      if (!sessionId || !config || useChatStore.getState().isStreaming) return
       const messages = useChatStore.getState().getMessages(sessionId)
       const idx = messages.findIndex((m) => m.id === assistantMessageId)
       if (idx < 1) return
-      const userMsg = messages[idx - 1]
-      if (userMsg.role !== "user") return
-      truncateFrom(sessionId, userMsg.id)
-      await streamReply(userMsg.content)
+      let userIndex = idx - 1
+      while (userIndex >= 0 && messages[userIndex].role !== "user") userIndex--
+      const userMsg = messages[userIndex]
+      if (!userMsg || !userMsg.revision) return
+      await streamReply(userMsg.content, userMsg.attachments, {
+        userIndex, userId: messages[userIndex].id, expectedMessageCount: messages.filter((m) => Boolean(m.revision)).length, expectedRevision: messages[userIndex].revision ?? "",
+      })
     },
-    [currentSessionId, config, isStreaming, truncateFrom, streamReply],
+    [currentSessionId, config, streamReply],
   )
 
-  /** Edit a user message and re-stream the answer. */
   const editAndResend = useCallback(
     async (messageId: string, newContent: string) => {
       const sessionId = currentSessionId
-      if (!sessionId || !config || isStreaming) return
-      editUserMessage(sessionId, messageId, newContent)
-      await streamReply(newContent)
+      if (!sessionId || !config || useChatStore.getState().isStreaming) return
+      const messages = useChatStore.getState().getMessages(sessionId)
+      const userIndex = messages.findIndex((m) => m.id === messageId && m.role === "user")
+      if (userIndex < 0 || !messages[userIndex].revision) return
+      await streamReply(newContent, messages[userIndex].attachments, {
+        userIndex, userId: messages[userIndex].id, expectedMessageCount: messages.filter((m) => Boolean(m.revision)).length, expectedRevision: messages[userIndex].revision ?? "",
+      })
     },
-    [currentSessionId, config, isStreaming, editUserMessage, streamReply],
+    [currentSessionId, config, streamReply],
   )
 
   const cancel = useCallback(async () => {
-    if (!currentSessionId) return
+    if (!runningSessionId) return
     const a = await getApi()
-    await a.cancelChat(currentSessionId)
+    await a.cancelChat(runningSessionId)
   }, [currentSessionId])
 
   return { send, regenerate, editAndResend, cancel, isStreaming }

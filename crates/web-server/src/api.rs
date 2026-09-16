@@ -36,14 +36,7 @@ pub struct AppInit {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GuiConfig {
-    pub current_model: ModelSelection,
-    pub temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-}
+pub use runtime::config::GuiConfig;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,6 +114,7 @@ pub struct ProviderModelPayload {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
+    pub model: Option<ModelSelection>,
     pub id: String,
     pub title: String,
     pub created_at: String,
@@ -131,6 +125,7 @@ pub struct SessionSummary {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiMessage {
+    pub revision: String,
     pub id: String,
     pub role: String,
     pub content: String,
@@ -138,6 +133,7 @@ pub struct GuiMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     pub status: String,
+    pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     /// Thinking phase duration in milliseconds (persisted per message).
@@ -194,6 +190,8 @@ pub struct GuiAttachment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiChatParams {
+    #[serde(default)]
+    pub edit: Option<runtime::session_manager::ChatEdit>,
     pub session_id: String,
     #[serde(default)]
     pub message_id: String,
@@ -378,6 +376,7 @@ pub struct CancelPayload {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedbackPayload {
+    pub revision: String,
     pub feedback: Option<common::Feedback>,
 }
 
@@ -386,6 +385,7 @@ pub struct FeedbackPayload {
 pub fn routes(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/init", get(init_app))
+        .route("/api/config", axum::routing::put(set_config))
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{id}",
@@ -393,7 +393,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         )
         .route("/api/sessions/{id}/messages", get(get_messages))
         .route(
-            "/api/sessions/{id}/messages/{idx}",
+            "/api/sessions/{id}/messages/{message_id}",
             patch(set_message_feedback),
         )
         .route("/api/sessions/{id}/chat", post(chat))
@@ -404,7 +404,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/providers/{id}", delete(delete_provider))
         // Static frontend (production: built `frontends/web/dist`).
         .fallback(serve_static)
-        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(axum::middleware::from_fn(local_request_guard))
         .with_state(state)
 }
 
@@ -514,25 +514,28 @@ impl IntoResponse for ApiError {
 pub async fn init_app(State(state): State<Arc<AppState>>) -> ApiResult<Json<AppInit>> {
     let sessions = build_sessions(&state.runtime).await;
     let providers = build_providers(&state.runtime).await;
-    let current_model = state
-        .runtime
-        .default_model()
-        .await
-        .unwrap_or_else(|| ModelSelection {
-            provider: String::new(),
-            model: String::new(),
-            reasoning_effort: None,
-        });
     Ok(Json(AppInit {
-        config: GuiConfig {
-            current_model,
-            temperature: 0.7,
-            max_tokens: None,
-        },
+        config: state
+            .runtime
+            .gui_config()
+            .await
+            .map_err(|e| e.to_string())?,
         providers,
         sessions,
         version: env!("CARGO_PKG_VERSION").to_string(),
     }))
+}
+
+pub async fn set_config(
+    State(state): State<Arc<AppState>>,
+    Json(config): Json<GuiConfig>,
+) -> ApiResult<StatusCode> {
+    state
+        .runtime
+        .set_gui_config(&config)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Builtin catalog providers the settings can materialize as real routes.
@@ -726,13 +729,13 @@ pub async fn get_messages(
 /// Set (or clear, with `feedback: null`) the feedback on one message.
 pub async fn set_message_feedback(
     State(state): State<Arc<AppState>>,
-    Path((session_id, idx)): Path<(String, usize)>,
+    Path((session_id, message_id)): Path<(String, String)>,
     Json(payload): Json<FeedbackPayload>,
 ) -> ApiResult<StatusCode> {
     let id: SessionId = session_id.parse().map_err(|e| format!("invalid id: {e}"))?;
     state
         .runtime
-        .set_message_feedback(id, idx, payload.feedback)
+        .feedback_by_id(id, &message_id, &payload.revision, payload.feedback)
         .await
         .map_err(|e| e.to_string())?;
     Ok(StatusCode::NO_CONTENT)
@@ -742,8 +745,8 @@ pub async fn cancel_chat(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CancelPayload>,
 ) -> ApiResult<StatusCode> {
-    let mut map = state.cancel_map.lock().await;
-    if let Some(token) = map.remove(&payload.session_id) {
+    let map = state.cancel_map.lock().await;
+    if let Some(token) = map.get(&payload.session_id) {
         token.cancel();
     }
     Ok(StatusCode::NO_CONTENT)
@@ -763,6 +766,11 @@ pub async fn chat(
     let cancel = CancellationToken::new();
     {
         let mut map = state.cancel_map.lock().await;
+        if map.contains_key(&session_id) {
+            return Err(ApiError(
+                "a chat is already running for this session".into(),
+            ));
+        }
         map.insert(session_id.clone(), cancel.clone());
     }
 
@@ -790,28 +798,44 @@ pub async fn chat(
         };
 
         let mut stream = match chat
-            .chat(sid, input, attachments, model, options, cancel.clone())
+            .chat_with_edit(
+                sid,
+                input,
+                attachments,
+                model,
+                options,
+                cancel.clone(),
+                params.edit,
+            )
             .await
         {
             Ok(s) => s,
             Err(e) => {
+                cleanup(cancel_map, &key).await;
                 let _ = tx
                     .send(Ok(sse_frame(&GuiEvent::error(&wire_msg_id, e.to_string()))))
                     .await;
-                cleanup(cancel_map, &key).await;
                 return;
             }
         };
 
-        while let Some(event) = stream.next().await {
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = tx.closed() => break,
+                event = stream.next() => match event { Some(event) => event, None => break },
+            };
             let (gui, is_terminal) = chat_event_to_gui(event, &wire_msg_id);
+            if is_terminal {
+                cleanup(cancel_map, &key).await;
+                let _ = tx.send(Ok(sse_frame(&gui))).await;
+                return;
+            }
             if tx.send(Ok(sse_frame(&gui))).await.is_err() {
                 break;
             }
-            if is_terminal {
-                break;
-            }
         }
+        cancel.cancel();
         cleanup(cancel_map, &key).await;
     });
 
@@ -867,9 +891,9 @@ fn messages_to_gui(session: &runtime::session::Session) -> Vec<GuiMessage> {
         .messages()
         .iter()
         .filter(|m| matches!(m.role, Role::User | Role::Assistant | Role::Tool))
-        .enumerate()
-        .map(|(i, m)| GuiMessage {
-            id: format!("m-{i}"),
+        .map(|m| GuiMessage {
+            revision: session.updated_at().to_rfc3339(),
+            id: m.id.expect("stored messages have IDs").to_string(),
             role: match m.role {
                 Role::User => "user",
                 Role::Assistant => "assistant",
@@ -879,7 +903,16 @@ fn messages_to_gui(session: &runtime::session::Session) -> Vec<GuiMessage> {
             .to_string(),
             content: m.text(),
             reasoning: m.reasoning().map(str::to_string),
-            status: "done".into(),
+            status: match &m.interruption {
+                Some(common::Interruption::Cancelled) => "cancelled",
+                Some(common::Interruption::Failed(_)) => "error",
+                None => "done",
+            }
+            .into(),
+            error: match &m.interruption {
+                Some(common::Interruption::Failed(error)) => Some(error.clone()),
+                _ => None,
+            },
             // Persisted `created_at` is Unix seconds; the frontend contract
             // (formatMessageTime / Date) is epoch milliseconds.
             created_at: m.created_at.map(|s| s * 1000),
@@ -986,6 +1019,7 @@ fn data_url_to_content_part(a: &GuiAttachment) -> Option<ContentPart> {
 
 fn to_summary(session: &runtime::session::Session) -> SessionSummary {
     SessionSummary {
+        model: session.model().cloned(),
         id: session.id().to_string(),
         title: session.title().unwrap_or("Untitled").to_string(),
         created_at: session.created_at().to_rfc3339(),
@@ -1112,5 +1146,80 @@ mod tests {
         assert_eq!(traversal.status(), StatusCode::NOT_FOUND);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+/// Loopback-only service: reject DNS rebinding and cross-site API requests.
+/// The custom header forces cross-origin browsers to preflight; CORS is not enabled.
+async fn local_request_guard(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Err(error) = validate_local_request(&req) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
+fn validate_local_request(req: &axum::extract::Request) -> Result<(), &'static str> {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    let hostname = host.split(':').next().unwrap_or("");
+    if !matches!(hostname, "localhost" | "127.0.0.1") {
+        return Err("invalid local host");
+    }
+    if req.uri().path().starts_with("/api/") {
+        if req
+            .headers()
+            .get("x-llmn-client")
+            .and_then(|v| v.to_str().ok())
+            != Some("1")
+        {
+            return Err("missing local client header");
+        }
+        if let Some(origin) = req.headers().get(header::ORIGIN) {
+            if origin.to_str().ok() != Some(format!("http://{host}").as_str()) {
+                return Err("cross-origin request rejected");
+            }
+        }
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod local_access_tests {
+    use super::*;
+    #[test]
+    fn rejects_cross_origin_rebinding_and_simple_requests() {
+        let request = |host: &str, origin: &str, client: &str| {
+            axum::http::Request::builder()
+                .uri("/api/init")
+                .header("host", host)
+                .header("origin", origin)
+                .header("x-llmn-client", client)
+                .body(Body::empty())
+                .unwrap()
+        };
+        assert!(
+            validate_local_request(&request("localhost:5173", "http://localhost:5173", "1"))
+                .is_ok()
+        );
+        assert!(
+            validate_local_request(&request("127.0.0.1:8080", "https://evil.test", "1")).is_err()
+        );
+        assert!(
+            validate_local_request(&request("evil.test:8080", "http://evil.test:8080", "1"))
+                .is_err()
+        );
+        assert!(
+            validate_local_request(&request("localhost:8080", "http://localhost:8080", ""))
+                .is_err()
+        );
     }
 }

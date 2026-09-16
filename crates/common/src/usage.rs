@@ -2,14 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
+    /// Total input tokens, including cache reads and cache writes.
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
     /// Cache-hit prompt tokens (normalized across providers: OpenAI
     /// `prompt_tokens_details.cached_tokens`, Anthropic
-    /// `cache_read_input_tokens + cache_creation_input_tokens`, Gemini
+    /// `cache_read_input_tokens`, Gemini
     /// `cachedContentTokenCount`). Cache hit rate is
-    /// `cached / (prompt + cached)`.
+    /// `cached / prompt`.
     #[serde(default)]
     pub cached_tokens: u32,
 }

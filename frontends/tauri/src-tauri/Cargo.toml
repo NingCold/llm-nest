@@ -2,6 +2,11 @@
 name = "tauri-frontend"
 version.workspace = true
 edition.workspace = true
+default-run = "LLM-Nest"
+
+[[bin]]
+name = "LLM-Nest"
+path = "src/main.rs"
 
 [lib]
 name = "tauri_frontend_lib"
@@ -29,3 +34,6 @@ events = { path = "../../../crates/events" }
 ai-client.workspace = true
 common.workspace = true
 storage.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi"] }

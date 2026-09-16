@@ -4,7 +4,7 @@
 //! Environment overrides:
 //! - `LLMN_CONFIG` – path to `llmn.toml` (default: `config/llmn.toml` next to
 //!   the working directory or the executable)
-//! - `LLMN_DATA_DIR` – session storage dir (default: platform data dir + llmn)
+//! - `LLMN_DATA_DIR` – session storage dir (default: ~/.llmn)
 //! - `LLMN_WEB_DIST` – directory with the built web frontend (default:
 //!   `frontends/web/dist`)
 //! - `LLMN_PORT` – listen port (default: 8787)
@@ -47,8 +47,9 @@ fn find_config_path() -> Result<PathBuf, String> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime::worker_entry();
     let config_path = find_config_path()?;
-    let runtime = Runtime::from_config_persistent(&config_path, storage::default_data_dir())
-        .map_err(|e| format!("failed to load config: {e}"))?;
+    let runtime =
+        Runtime::from_config_persistent(&config_path, storage::prepare_default_data_dir()?)
+            .map_err(|e| format!("failed to load config: {e}"))?;
     let runtime = Arc::new(runtime);
 
     let chat = Arc::new(chat::ChatFeature::new());

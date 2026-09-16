@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Info, Moon, Palette, SlidersHorizontal, Sun, Cpu } fr
 import { BrandMark } from "@/components/BrandMark"
 import { ProviderManager } from "@/components/settings/ProviderManager"
 import { GenerationSettings } from "@/components/settings/GenerationSettings"
+import { StorageSettings } from "@/components/settings/StorageSettings"
 import { useConfigStore } from "@/store/config"
 import { useUiStore, type SettingsSection } from "@/store/ui"
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
@@ -94,6 +95,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
                   <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">运行模式</dt><dd>{apiMode === "tauri" ? "桌面应用" : apiMode === "http" ? "Web 应用" : "本地演示"}</dd></div>
                   <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">当前模型</dt><dd className="break-all">{model?.model ? `${model.provider} / ${model.model}` : "尚未配置"}</dd></div>
                 </dl>
+                {page === "settings" && section === "about" && <StorageSettings />}
               </div>)}
             </div>
           </div>

@@ -1,24 +1,63 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub fn find_config_path() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("LLMN_CONFIG") {
-        return explicit_config(PathBuf::from(path));
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppPaths {
+    pub config_file: PathBuf,
+    pub data_dir: PathBuf,
+    #[serde(skip)]
+    legacy_dir: Option<PathBuf>,
+    #[serde(skip)]
+    create_config: bool,
+}
+
+impl AppPaths {
+    /// Freeze paths before .env loading, independent of Runtime/config validity.
+    pub fn resolve() -> Result<Self, String> {
+        let candidates = if cfg!(debug_assertions) {
+            vec![
+                PathBuf::from("config/llmn.toml"),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config/llmn.toml"),
+            ]
+        } else {
+            Vec::new()
+        };
+        Self::select(
+            storage::default_data_dir(),
+            storage::legacy_data_dir(),
+            std::env::var_os("LLMN_CONFIG").map(PathBuf::from),
+            candidates,
+        )
     }
 
-    // Development can use the repository configuration. An installed release
-    // must not depend on its working directory or write into Program Files.
-    if cfg!(debug_assertions) {
-        for path in [
-            PathBuf::from("config/llmn.toml"),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config/llmn.toml"),
-        ] {
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
+    fn select(
+        data_dir: PathBuf,
+        legacy_dir: Option<PathBuf>,
+        explicit: Option<PathBuf>,
+        candidates: Vec<PathBuf>,
+    ) -> Result<Self, String> {
+        let selected = explicit.or_else(|| candidates.into_iter().find(|p| p.is_file()));
+        let create_config = selected.is_none();
+        let config_file = selected.unwrap_or_else(|| data_dir.join("llmn.toml"));
+        Ok(Self {
+            config_file: std::path::absolute(config_file).map_err(|e| e.to_string())?,
+            data_dir: std::path::absolute(data_dir).map_err(|e| e.to_string())?,
+            legacy_dir,
+            create_config,
+        })
     }
-    ensure_user_config(&storage::default_data_dir().join("llmn.toml"))
+
+    pub fn prepare(&self) -> Result<(), String> {
+        storage::prepare_data_dir(&self.data_dir, self.legacy_dir.as_deref())
+            .map_err(|e| e.to_string())?;
+        if self.create_config {
+            ensure_user_config(&self.config_file)?;
+        } else {
+            explicit_config(self.config_file.clone())?;
+        }
+        Ok(())
+    }
 }
 
 fn explicit_config(path: PathBuf) -> Result<PathBuf, String> {
@@ -84,5 +123,35 @@ mod tests {
                 .contains("LLMN_CONFIG not found")
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn explicit_paths_win_and_remain_available_when_config_is_invalid() {
+        let dir = std::env::temp_dir().join(format!("llmn-paths-{}", uuid::Uuid::new_v4()));
+        let explicit = dir.join("custom/llmn.toml");
+        let paths =
+            AppPaths::select(dir.join("data"), None, Some(explicit.clone()), Vec::new()).unwrap();
+        assert_eq!(paths.config_file, explicit);
+        assert!(!paths.create_config);
+        assert!(paths.prepare().is_err());
+        assert!(!explicit.exists());
+        std::fs::create_dir_all(explicit.parent().unwrap()).unwrap();
+        std::fs::write(&explicit, "invalid toml [[[").unwrap();
+        paths.prepare().unwrap(); // Paths and opening the folder don't parse config.
+        assert!(runtime::config::ConfigLoader::load(&explicit).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn default_config_is_migrated_before_first_run_bootstrap() {
+        let dir = std::env::temp_dir().join(format!("llmn-paths-{}", uuid::Uuid::new_v4()));
+        let old = dir.join("old");
+        std::fs::create_dir_all(&old).unwrap();
+        let content = "# preserved settings\n[providers]\n";
+        std::fs::write(old.join("llmn.toml"), content).unwrap();
+        let paths = AppPaths::select(dir.join(".llmn"), Some(old), None, Vec::new()).unwrap();
+        paths.prepare().unwrap();
+        assert_eq!(std::fs::read_to_string(paths.config_file).unwrap(), content);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

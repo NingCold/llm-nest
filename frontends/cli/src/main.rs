@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     runtime::worker_entry();
     let runtime = Arc::new(Runtime::from_config_persistent(
         CONFIG_PATH,
-        storage::default_data_dir(),
+        storage::prepare_default_data_dir()?,
     )?);
 
     let chat = Arc::new(chat::ChatFeature::new());

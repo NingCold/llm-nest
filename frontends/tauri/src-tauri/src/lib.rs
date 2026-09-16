@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 pub mod commands;
 mod config_path;
+mod directories;
 mod window_frame;
 
 pub struct AppState {
@@ -18,6 +19,7 @@ pub struct AppState {
 
 /// A failed startup is not cached. The GUI can show the actual error and retry.
 pub struct BackendState {
+    paths: Result<config_path::AppPaths, String>,
     inner: Mutex<Option<Arc<AppState>>>,
 }
 impl BackendState {
@@ -26,9 +28,11 @@ impl BackendState {
         if let Some(state) = inner.as_ref() {
             return Ok(state.clone());
         }
-        let config_path = config_path::find_config_path()?;
+        let paths = self.paths.as_ref().map_err(Clone::clone)?;
+        paths.prepare()?;
+        let config_path = paths.config_file.clone();
         let runtime = Arc::new(
-            Runtime::from_config_persistent(&config_path, storage::default_data_dir())
+            Runtime::from_config_persistent(&config_path, &paths.data_dir)
                 .map_err(|e| e.to_string())?,
         );
         let chat = Arc::new(chat::ChatFeature::new());
@@ -65,12 +69,15 @@ pub fn run() {
         .setup(|app| {
             window_frame::setup(app);
             app.manage(BackendState {
+                paths: config_path::AppPaths::resolve(),
                 inner: Mutex::new(None),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             window_frame::set_window_appearance,
+            directories::get_app_paths,
+            directories::open_app_directory,
             commands::init_app,
             commands::chat,
             commands::cancel_chat,

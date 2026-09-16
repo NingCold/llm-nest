@@ -111,7 +111,8 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。
 - 不恢复 tao 阴影边距，不使用透明外边距、SetWindowRgn、自建阴影窗口或 CSS 裁切整个应用。窗口状态变化发事件，revision 防止迟到事件覆盖新状态。
 - Windows 10 不支持 DWM 属性时回退细边框；DWM 返回成功不等同于所有机器视觉验收通过。
-- 产品 identifier `com.llmnest.tauri`、数据目录 `llmn` 和安装路径关系不得随意更改。图标变更时保留 build.rs 对 icons 的依赖，核对实际安装器和 EXE 资源。
+- 产品 identifier `com.llmnest.tauri` 和安装路径不得随意更改。默认会话目录与桌面安装版配置目录按用户要求统一为 `~/.llmn`（Windows 使用用户主目录），`LLMN_DATA_DIR` / `LLMN_CONFIG` 覆盖仍有效。宿主在读取配置/.env 前准备数据目录；旧系统 `llmn` 仅在新目录不存在、未显式指定数据目录且旧目录可获得写锁时复制，保留源目录，不自动合并。图标变更时保留 build.rs 对 icons 的依赖，核对实际安装器和 EXE 资源。
+- 设置中的路径来自后端启动时冻结的实际路径。打开目录 IPC 只接受 config/data 枚举，不接受任意文件路径或可执行程序；Web 不提供打开服务器文件夹的接口。
 
 ## 如何验证改动
 

@@ -4523,6 +4523,7 @@ dependencies = [
  "common",
  "events",
  "futures-util",
+ "open",
  "runtime",
  "serde",
  "serde_json",

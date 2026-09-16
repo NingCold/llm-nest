@@ -8,7 +8,7 @@ pub mod file;
 pub mod record;
 pub mod store;
 
-pub use data_dir::default_data_dir;
+pub use data_dir::{default_data_dir, legacy_data_dir, prepare_data_dir, prepare_default_data_dir};
 pub use error::{Result, StorageError};
 pub use file::FileSessionStore;
 pub use record::SessionRecord;

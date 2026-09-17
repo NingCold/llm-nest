@@ -9,6 +9,8 @@ import type {
   ProviderDraft,
   ProviderInfo,
   ProviderTemplate,
+  CatalogStatus,
+  CatalogSyncResponse,
   SessionSummary,
   StoredMessage,
 } from "./types"
@@ -187,6 +189,14 @@ export const httpApi: ChatApi = {
 
   async listProviderTemplates(): Promise<ProviderTemplate[]> {
     return req<ProviderTemplate[]>("/providers/templates")
+  },
+
+  async catalogStatus(): Promise<CatalogStatus> {
+    return req<CatalogStatus>("/catalog")
+  },
+
+  async syncCatalog(): Promise<CatalogSyncResponse> {
+    return req<CatalogSyncResponse>("/catalog/sync", jsonInit("POST", {}))
   },
 
   async addProvider(draft: ProviderDraft): Promise<ProviderInfo[]> {

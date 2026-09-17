@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ai_client::AiClient;
 use storage::{FileSessionStore, SessionStore};
 
 use crate::{
@@ -14,6 +13,7 @@ pub struct RuntimeBuilder {
     state: Option<SessionManager>,
     event_bus: Option<EventBus<RuntimeEvent>>,
     storage_dir: Option<PathBuf>,
+    catalog_path: Option<PathBuf>,
 }
 
 impl RuntimeBuilder {
@@ -23,6 +23,7 @@ impl RuntimeBuilder {
             state: None,
             event_bus: None,
             storage_dir: None,
+            catalog_path: None,
         }
     }
 
@@ -55,7 +56,11 @@ impl RuntimeBuilder {
         // AiClient::from_config builds and validates the model router first:
         // configuration errors (unknown default_model, empty reasoning levels,
         // no models) fail here, at startup, naming the offending provider.
-        let llm = Arc::new(AiClient::from_config(config.providers())?);
+        let catalog_path = self
+            .catalog_path
+            .or_else(|| self.storage_dir.as_deref().map(crate::catalog::cache_path));
+        let catalog = crate::catalog::CatalogState::load(catalog_path.as_deref());
+        let llm = Arc::new(catalog.client(&config)?);
 
         let state = match (self.state, self.storage_dir) {
             (Some(_), Some(_)) => {
@@ -72,7 +77,10 @@ impl RuntimeBuilder {
         };
         let event_bus = self.event_bus.unwrap_or_default();
 
-        Ok(Runtime::new(state, event_bus, llm))
+        let mut runtime = Runtime::new(state, event_bus, llm);
+        runtime.catalog_path = catalog_path;
+        runtime.catalog_state = Arc::new(tokio::sync::RwLock::new(catalog));
+        Ok(runtime)
     }
 }
 
@@ -85,7 +93,9 @@ impl Default for RuntimeBuilder {
 impl Runtime {
     pub fn from_config(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let config = crate::config::ConfigLoader::load(&path)?;
-        let mut runtime = RuntimeBuilder::new().config(config).build()?;
+        let mut builder = RuntimeBuilder::new().config(config);
+        builder.catalog_path = path.as_ref().parent().map(crate::catalog::cache_path);
+        let mut runtime = builder.build()?;
         runtime.config_path = Some(path.as_ref().to_path_buf());
         Ok(runtime)
     }

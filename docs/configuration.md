@@ -55,6 +55,21 @@ DEEPSEEK_API_KEY=填入自己的密钥
 
 GUI 也支持直接保存 API Key，目前写入的是本地配置文件，并未使用系统凭据库加密。
 
+## 同步公共模型目录
+
+桌面和 Web 版进入 **设置 → 模型 → 同步模型目录**，按需从 [Pi](https://github.com/earendil-works/pi) 的公共目录下载模型 ID、显示名称、上下文容量和输出上限。无需提供 Pi 密钥，也不会调用模型生成内容。界面显示上次同步时间、变更数量，以及未适配条目或网络失败的提示。
+
+- 缓存写入实际数据目录的 `cache/catalog.json`，默认是 `~/.llmn/cache/catalog.json`。Web 版写在服务器；桌面可从 **设置 → 配置 → 打开数据目录** 找到。重启后继续使用缓存。
+- 优先级为 **用户显式配置 > 同步目录 > 内置目录**。同步本身不修改 `llmn.toml` 或源码 `catalog.rs`，不更换默认模型、不添加供应商账号、不删除历史模型。
+- 首版适配 Anthropic、OpenAI、Gemini、DeepSeek、Kimi、MiMo、MiniMax、xAI、OpenRouter、OpenCode Zen/Go 的对应公共来源；区域、订阅和协议不匹配的新条目会跳过。其他提供商继续使用内置目录或用户配置。
+- 新目录只应用于已配置的对应供应商，并补充“添加供应商”的模板。模型列表不代表账号权限；同步也不检查余额或试用每个模型。
+- 协议与思考能力仍受本项目适配器约束，不下载或执行远程代码，不导入远程地址、密钥和自定义请求头。目录出现新模型不等于已支持它的全部能力。
+- 全部下载失败或本地保存失败时保留旧目录；部分来源失败时保留对应旧条目，更新成功部分并显示提示。在飞请求继续使用原快照。当前只在点击时同步，没有后台定时联网。
+
+此按钮与终端的 `/refresh <provider>` 不同：后者访问已配置厂商自己的模型接口，并把新条目补入配置文件。
+
+来源接口为 `https://pi.dev/api/models/providers/<provider>`；结构参考 Pi 提交 `e4c75a73222ae2c72abb5f5314fa35ee8effc508`。Pi 项目由 Mario Zechner 等维护，许可见 [上游 MIT License](https://github.com/earendil-works/pi/blob/e4c75a73222ae2c72abb5f5314fa35ee8effc508/LICENSE)；目录是第三方汇总数据，并非各厂商的可用性承诺。
+
 ## 自定义供应商
 
 ```toml

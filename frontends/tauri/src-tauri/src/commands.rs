@@ -993,27 +993,57 @@ fn protocol_wire(p: &Protocol) -> String {
 }
 /// Builtin catalog providers the settings can materialize as real routes.
 #[tauri::command]
-pub async fn provider_templates() -> Result<Vec<ProviderTemplate>, String> {
-    let templates = ai_client::catalog::BUILTIN_PROVIDERS
-        .iter()
-        .map(|e| ProviderTemplate {
+pub async fn provider_templates(
+    state: State<'_, BackendState>,
+) -> Result<Vec<ProviderTemplate>, String> {
+    let state = state.get().await?;
+    let mut templates = Vec::new();
+    for e in ai_client::catalog::BUILTIN_PROVIDERS {
+        templates.push(ProviderTemplate {
             id: e.id.to_string(),
             display_name: e.display_name.to_string(),
             protocol: protocol_wire(&e.protocol),
             base_url: e.base_url.to_string(),
             api_key_env: e.api_key_env.to_string(),
             default_model: e.default_model.to_string(),
-            models: e
-                .models
-                .iter()
-                .map(|m| ProviderTemplateModel {
-                    id: m.id.to_string(),
-                    display_name: m.display_name.to_string(),
-                })
+            models: state
+                .runtime
+                .catalog_template_models(e.id)
+                .await
+                .into_iter()
+                .map(|(id, display_name)| ProviderTemplateModel { id, display_name })
                 .collect(),
-        })
-        .collect();
+        });
+    }
     Ok(templates)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogSyncResponse {
+    pub report: runtime::catalog::CatalogSyncReport,
+    pub providers: Vec<ProviderInfo>,
+}
+
+#[tauri::command]
+pub async fn catalog_status(
+    state: State<'_, BackendState>,
+) -> Result<runtime::catalog::CatalogStatus, String> {
+    Ok(state.get().await?.runtime.catalog_status().await)
+}
+
+#[tauri::command]
+pub async fn sync_catalog(state: State<'_, BackendState>) -> Result<CatalogSyncResponse, String> {
+    let state = state.get().await?;
+    let report = state
+        .runtime
+        .sync_catalog()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(CatalogSyncResponse {
+        report,
+        providers: build_providers(&state.runtime).await,
+    })
 }
 
 /// A route id usable as a TOML key and provider id: lowercase kebab.

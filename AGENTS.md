@@ -71,6 +71,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - 内置目录允许省略协议、地址和模型列表；自定义 provider 需要声明这些内容。空 providers 是有效的 GUI 首次启动状态，但不能发送聊天。
 - 热更新先整体校验，成功才替换；失败保留旧配置。在飞请求继续使用原快照。
 - `/refresh` 通过 `toml_edit` 定点补充模型，保留注释和其他配置；不可悄悄重写整份 TOML。
+- GUI“同步模型目录”由 `ai-client/catalog_sync` 适配 Pi 公共数据，Runtime 校验后原子保存到实际数据目录的 `cache/catalog.json`（不能放会话根目录）。优先级为用户显式字段 > 同步缓存 > 内置目录；不重写配置/源码、不导入远端凭据或端点、不改变默认模型。失败保留旧数据；所有配置重建路径必须合并缓存，在飞请求仍使用原快照。
 - `.env` 层级为进程环境 > 配置目录 > 默认数据目录，只填缺失变量。密钥解析只发生在需要凭据的边界。
 - GUI 生成设置通过 Runtime 校验并原子持久化。会话模型恢复不得覆盖用户保存的全局默认值。
 - OpenAI 兼容返回同时允许 `reasoning_content` 和 `reasoning`：优先非空前者，否则后者，不重复拼接。

@@ -1,4 +1,5 @@
 pub mod builder;
+pub mod catalog;
 pub mod command;
 pub mod config;
 pub mod error;

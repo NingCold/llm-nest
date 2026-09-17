@@ -10,6 +10,8 @@ import type {
   ProviderDraft,
   ProviderInfo,
   ProviderTemplate,
+  CatalogStatus,
+  CatalogSyncResponse,
   SessionSummary,
 } from "./types"
 import { useUiStore } from "@/store/ui"
@@ -624,6 +626,14 @@ export const webApi: ChatApi = {
       msg.feedback = feedback
       saveDB(db)
     }
+  },
+
+  async catalogStatus(): Promise<CatalogStatus> {
+    return { source: "本地演示", updatedAt: null, providerCount: 0, modelCount: 0, cachePath: null, warnings: [] }
+  },
+
+  async syncCatalog(): Promise<CatalogSyncResponse> {
+    throw new Error("本地演示不支持同步，请连接 Web 后端或使用桌面应用。")
   },
 
   async listProviderTemplates(): Promise<ProviderTemplate[]> {

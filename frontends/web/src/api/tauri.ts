@@ -13,6 +13,8 @@ import type {
   ProviderDraft,
   ProviderInfo,
   ProviderTemplate,
+  CatalogStatus,
+  CatalogSyncResponse,
   StoredMessage,
 } from "./types"
 
@@ -193,6 +195,14 @@ export const tauriApi: ChatApi = {
 
   async listProviderTemplates(): Promise<ProviderTemplate[]> {
     return invoke<ProviderTemplate[]>("provider_templates")
+  },
+
+  async catalogStatus(): Promise<CatalogStatus> {
+    return invoke<CatalogStatus>("catalog_status")
+  },
+
+  async syncCatalog(): Promise<CatalogSyncResponse> {
+    return invoke<CatalogSyncResponse>("sync_catalog")
   },
 
   async addProvider(draft: ProviderDraft): Promise<ProviderInfo[]> {

@@ -400,6 +400,8 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/cancel", post(cancel_chat))
         // Provider management (web settings): builtin templates + create/update/delete.
         .route("/api/providers/templates", get(provider_templates))
+        .route("/api/catalog", get(catalog_status))
+        .route("/api/catalog/sync", post(sync_catalog))
         .route("/api/providers", post(upsert_provider))
         .route("/api/providers/{id}", delete(delete_provider))
         // Static frontend (production: built `frontends/web/dist`).
@@ -539,27 +541,55 @@ pub async fn set_config(
 }
 
 /// Builtin catalog providers the settings can materialize as real routes.
-pub async fn provider_templates() -> ApiResult<Json<Vec<ProviderTemplate>>> {
-    let templates = ai_client::catalog::BUILTIN_PROVIDERS
-        .iter()
-        .map(|e| ProviderTemplate {
+pub async fn provider_templates(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<Vec<ProviderTemplate>>> {
+    let mut templates = Vec::new();
+    for e in ai_client::catalog::BUILTIN_PROVIDERS {
+        templates.push(ProviderTemplate {
             id: e.id.to_string(),
             display_name: e.display_name.to_string(),
             protocol: protocol_wire(&e.protocol),
             base_url: e.base_url.to_string(),
             api_key_env: e.api_key_env.to_string(),
             default_model: e.default_model.to_string(),
-            models: e
-                .models
-                .iter()
-                .map(|m| ProviderTemplateModel {
-                    id: m.id.to_string(),
-                    display_name: m.display_name.to_string(),
-                })
+            models: state
+                .runtime
+                .catalog_template_models(e.id)
+                .await
+                .into_iter()
+                .map(|(id, display_name)| ProviderTemplateModel { id, display_name })
                 .collect(),
-        })
-        .collect();
+        });
+    }
     Ok(Json(templates))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogSyncResponse {
+    pub report: runtime::catalog::CatalogSyncReport,
+    pub providers: Vec<ProviderInfo>,
+}
+
+pub async fn catalog_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<runtime::catalog::CatalogStatus> {
+    Json(state.runtime.catalog_status().await)
+}
+
+pub async fn sync_catalog(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<CatalogSyncResponse>> {
+    let report = state
+        .runtime
+        .sync_catalog()
+        .await
+        .map_err(|e| ApiError(e.to_string()))?;
+    Ok(Json(CatalogSyncResponse {
+        report,
+        providers: build_providers(&state.runtime).await,
+    }))
 }
 
 /// A route id usable as a TOML key and provider id: lowercase kebab.

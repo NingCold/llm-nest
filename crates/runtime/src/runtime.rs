@@ -19,9 +19,12 @@ use crate::session_manager::SessionManager;
 
 #[derive(Clone)]
 pub struct Runtime {
-    config_updates: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) config_updates: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) catalog_sync: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) catalog_state: Arc<RwLock<crate::catalog::CatalogState>>,
+    pub(crate) catalog_path: Option<PathBuf>,
     sessions: Arc<RwLock<SessionManager>>,
-    llm: Arc<AiClient>,
+    pub(crate) llm: Arc<AiClient>,
     event_bus: EventBus<RuntimeEvent>,
     features: Arc<RwLock<FeatureRegistry>>,
     /// Tools available to features (chat agent loop). Pre-registered with
@@ -43,6 +46,9 @@ impl Runtime {
 
         Self {
             config_updates: Arc::new(tokio::sync::Mutex::new(())),
+            catalog_sync: Arc::new(tokio::sync::Mutex::new(())),
+            catalog_state: Arc::new(RwLock::new(crate::catalog::CatalogState::default())),
+            catalog_path: None,
             sessions,
             llm,
             event_bus,
@@ -119,7 +125,7 @@ impl Runtime {
     pub async fn reload_config(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
         let _update = self.config_updates.lock().await;
         let config = crate::config::ConfigLoader::load(path)?;
-        self.llm.reload_config(config.providers()).await?;
+        self.llm.install(self.catalog_client(&config).await?).await;
         Ok(())
     }
 
@@ -136,7 +142,7 @@ impl Runtime {
         let _update = self.config_updates.lock().await;
         let candidate = if let Some(path) = &self.config_path {
             let config = crate::config::ConfigLoader::load(path)?;
-            AiClient::from_config(config.providers())?
+            self.catalog_client(&config).await?
         } else {
             self.llm.snapshot().await
         };
@@ -168,7 +174,7 @@ impl Runtime {
         let next = crate::config::persist::render_provider(&text, draft)?;
         let config: crate::config::runtime::RuntimeConfig = toml::from_str(&next)?;
         crate::config::ConfigLoader::validate(&config)?;
-        let candidate = AiClient::from_config(config.providers())?;
+        let candidate = self.catalog_client(&config).await?;
         crate::config::persist::atomic_write(&path, &next)?;
         self.llm.install(candidate).await;
         Ok(())
@@ -184,7 +190,7 @@ impl Runtime {
         let next = crate::config::persist::render_remove_provider(&text, id)?;
         let config: crate::config::runtime::RuntimeConfig = toml::from_str(&next)?;
         crate::config::ConfigLoader::validate(&config)?;
-        let candidate = AiClient::from_config(config.providers())?;
+        let candidate = self.catalog_client(&config).await?;
         crate::config::persist::atomic_write(&path, &next)?;
         self.llm.install(candidate).await;
         Ok(())

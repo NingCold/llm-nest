@@ -167,6 +167,20 @@ function seed(withTool = false) {
   assert.equal(configStore.getState().config.currentModel.provider,'');
   fetchMock = async (url, init) => { assert.equal(url,'/api/config'); assert.equal(init.method,'PUT'); assert.equal(new Headers(init.headers).get('X-LLMN-Client'),'1'); return new Response(null,{status:204}); };
   await httpApi.setConfig({currentModel:{provider:'test',model:'a'},temperature:0.7});
+  const catalogResult = {report:{status:{source:'https://pi.dev',updatedAt:'2026-09-17T00:00:00Z',warnings:['one provider unavailable']},added:2,updated:1,skipped:3},providers:[]};
+  fetchMock = async (url, init) => {
+    assert.equal(url,'/api/catalog/sync'); assert.equal(init.method,'POST');
+    assert.equal(new Headers(init.headers).get('X-LLMN-Client'),'1');
+    return new Response(JSON.stringify(catalogResult));
+  };
+  assert.deepEqual(await httpApi.syncCatalog(), catalogResult);
+  fetchMock = async () => new Response(JSON.stringify({error:'目录未更改'}),{status:400});
+  await assert.rejects(httpApi.syncCatalog(), /目录未更改/);
+  modules['@tauri-apps/api/core'].invoke = async command => {
+    assert.equal(command,'sync_catalog'); return catalogResult;
+  };
+  assert.deepEqual(await tauriApi.syncCatalog(), catalogResult);
+  console.log('PASS: catalog sync HTTP/Tauri transport, partial warnings and failed-request reporting');
   console.log('PASS: GUI save ordering, failed-save rollback, session recall, delayed save, HTTP config persistence');
   console.log('PASS: Tauri event filtering, camelCase arguments, listener cleanup, HTTP terminal/EOF handling');
   console.log('PASS: regenerate across tools, edit persistence contract, rejected edit restoration, duplicate send, cancel original session, cache ratio');

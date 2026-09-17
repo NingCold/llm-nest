@@ -89,6 +89,8 @@ pub fn run() {
             commands::list_sessions,
             commands::set_config,
             commands::provider_templates,
+            commands::catalog_status,
+            commands::sync_catalog,
             commands::upsert_provider,
             commands::delete_provider,
         ])

@@ -52,10 +52,26 @@ export interface ChatApi {
   ): Promise<void>
   /** 内置目录的供应商模板（DSH 风格"已知路由"） */
   listProviderTemplates(): Promise<ProviderTemplate[]>
+  catalogStatus(): Promise<CatalogStatus>
+  syncCatalog(): Promise<CatalogSyncResponse>
   /** 创建/更新供应商（upsert），返回刷新后的供应商列表 */
   addProvider(draft: ProviderDraft): Promise<ProviderInfo[]>
   /** 删除供应商，返回刷新后的供应商列表 */
   deleteProvider(id: string): Promise<ProviderInfo[]>
+}
+
+export interface CatalogStatus {
+  source: string
+  updatedAt: string | null
+  providerCount: number
+  modelCount: number
+  cachePath: string | null
+  warnings: string[]
+}
+
+export interface CatalogSyncResponse {
+  report: { status: CatalogStatus; added: number; updated: number; skipped: number }
+  providers: ProviderInfo[]
 }
 
 /** 内置目录模板：选中后自动填充协议/端点/模型，只需补 key */

@@ -1,5 +1,6 @@
 pub mod ai_provider;
 pub mod catalog;
+pub mod catalog_sync;
 pub mod chunk;
 pub mod client;
 pub mod config;

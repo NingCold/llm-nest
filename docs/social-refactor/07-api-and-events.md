@@ -24,6 +24,7 @@ HTTP 前缀为 `/api/social/v1`，表中 route 省略前缀。写操作使用后
 | 修改 AI 执行配置 | PUT /ai/{id}/execution | social_update_ai_execution |
 | 空间列表/创建 | GET/POST /conversations | social_list_conversations / social_create_conversation |
 | 空间详情 | GET /conversations/{id} | social_get_conversation |
+| 查看窗口摘要及来源 | GET /conversations/{id}/summaries | social_list_conversation_summaries |
 | 成员增加/修改/退出 | PUT /conversations/{id}/members/{actorId} | social_update_membership |
 | 消息分页/发送 | GET/POST /conversations/{id}/messages | social_list_messages / social_send_message |
 | 单条消息查询 | GET /messages/{id} | social_get_message |
@@ -45,6 +46,8 @@ provider、目录同步和配置等已有接口继续保留；旧 `/api/sessions
 
 创建 direct Conversation 按 Relationship 查找唯一现有空间；重复请求返回已有空间，归档后的恢复沿用同一 ID。创建 group 才建立独立群窗口。记忆查询/编辑接口由聊天详情或联系人详情使用，不对应独立记忆主入口；候选确认接口在后续提取功能加入时实现。
 
+“与某 AI 私聊继续”先获取该关系的唯一私聊，再通过发送消息的可选 contextReferences 指定来源窗口、选中消息/版本或话题范围；打开窗口本身不发送消息、不启动生成。引用字段只传标识，不由前端提供一段声称来自群的正文。后端复核来源、目标和访问权，校验后与私聊消息同事务保存；显式转发使用另一种明确共享选中内容的操作。
+
 ## 3. 发送与幂等
 
 ```json
@@ -57,6 +60,8 @@ provider、目录同步和配置等已有接口继续保留；旧 `/api/sessions
 ```
 
 以上是占位 ID 的结构示意，实际 ID 必须校验为合法 UUID。空间由 route 或命令参数指定，senderId 从后端上下文确定。
+
+contextReferences 默认为空，M2 与跨窗口接续一起实现；引用失效或无权限返回明确错误，不静默扩大可见范围或丢弃用户选中的引用。窗口摘要查询只返回当前操作者可见的分段、有效状态与来源；生成使用的 AI 视图仍由 ContextBuilder 按目标 AI 单独校验。
 
 成功返回已保存 MessageDto、conversationRevision 和 committedCursor。此响应只表示消息已保存，不保证 AI 会回答。请求失败保留前端未发送草稿；相同请求 ID 与内容重试返回同一实体，内容不同返回 conflict。
 

@@ -55,6 +55,19 @@ pnpm --dir frontends/web dev
 
 打开 `http://localhost:1420`。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。
 
+社交界面可以先独立开发和验证，无需启动 Runtime：
+
+```bash
+pnpm --dir frontends/web dev:social --host 127.0.0.1
+pnpm --dir frontends/web typecheck
+pnpm --dir frontends/web test
+pnpm --dir frontends/web build:social
+```
+
+预览仍使用 1420 端口，不能和普通 Vite 开发服务器同时占用该端口。`build:social` 输出到忽略的 `frontends/web/.social-preview-dist`。这是浏览器模拟界面：无模型请求、无 Rust 社交存储和事件同步；见 [当前预览范围](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)。普通开发页也可添加 `?social-preview=1`，Tauri 不启用该模式。
+
+若本机 pnpm 与 packageManager 锁定版本不同，优先安装固定版本；仅做本地验证时可使用 `pnpm --pm-on-fail=ignore --dir frontends/web <命令>`，不因该提示改动依赖或锁文件。
+
 多个入口若同时运行，请给每个独立 Runtime 设置不同的 `LLMN_DATA_DIR`。目录锁错误应通过关闭占用进程或选择其他目录解决，不要删除锁文件。
 
 ## 检查改动

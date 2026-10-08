@@ -8,7 +8,7 @@ LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用�
 
 已实现聊天、协议路由、会话持久化、运行中断/恢复、内置工具循环，以及桌面/Web 设置。MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留 trait 或界面按钮声称功能已经可用。
 
-下一阶段已确定转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续再扩展多人社交。目标主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部统一服务管理，按角色与空间构造请求并支持允许的群聊接续私聊；长期记忆先简单实现。目标结构与分阶段实施见 [重构总纲](docs/social-refactor/README.md)。该目录是规划，不是实现证据；新增模块、SQLite、意识系统和参与调度尚未落地。本文件其余架构与行为约束描述当前代码，实施时同步修订真正发生变化的部分。
+下一阶段已确定转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续再扩展多人社交。目标主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，目标由 SocialFeature 内部统一服务管理，按角色与空间构造请求并支持允许的群聊接续私聊；长期记忆先简单实现。目标结构与分阶段实施见 [重构总纲](docs/social-refactor/README.md)。Web 交互预览已落在 `frontends/web/src/social`，使用明确启用的模拟适配器；Rust 社交模块、SQLite、真实意识系统和参与调度尚未落地。本文件其余架构与行为约束描述现有 Harness 代码。
 
 ## 工作前先确认
 
@@ -41,6 +41,7 @@ LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用�
 | `crates/web-server` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
 | `frontends/cli` / `frontends/tui` | 命令解析与终端展示 |
 | `frontends/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
+| `frontends/web/src/social` | 社交 Web 交互预览、前端 SocialApi 契约与独立浏览器模拟适配器 |
 | `frontends/tauri/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
 | `scripts` / `docs` | 可执行验收/构建流程与证据 |
 
@@ -104,11 +105,12 @@ Runtime / SessionManager / AiClient / ToolRegistry
 ### GUI 与平台
 
 - React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`；不要用桌面打包改写已跟踪的 Web dist。
+- 社交预览仅通过 Web 的 `dev:social`/`build:social` 或 `?social-preview=1` 显式启用，Tauri 保持真实 IPC。模拟数据/草稿使用独立 key，不读写真实会话，不将后端连接失败回退为模拟回答；预览成功不代表社交 HTTP/IPC、SQLite 或模型记忆已经实现。`build:social` 输出到忽略的 `.social-preview-dist`。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 只控制 Windows 自绘窗口区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试；历史未成功加载或无模型时禁止发送。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
-- 设置路由为 `#/settings/models|generation|appearance|config|about`，聊天为 `#/chat`。切换保留输入和表单；隐藏聊天 Header 时卸载其菜单 portal。
+- 设置路由为 `#/settings/models|generation|appearance|config|about`，现有聊天为 `#/chat`。社交预览采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单；隐藏聊天 Header 时卸载其菜单 portal。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；Linux 首版使用系统装饰。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。
 - Windows 保留 `shadow=false`、透明 WebView 合成表面、不透明 HTML 背景。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
 - 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。

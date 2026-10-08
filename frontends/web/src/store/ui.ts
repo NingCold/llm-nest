@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { IS_SOCIAL_PREVIEW } from "@/lib/social-preview"
 
 export type Theme = "dark" | "light"
 export type ApiMode = "tauri" | "http" | "demo" | null
@@ -33,7 +34,7 @@ function initialTheme(): Theme {
   } catch {
     /* ignore */
   }
-  return "dark"
+  return IS_SOCIAL_PREVIEW ? "light" : "dark"
 }
 
 interface UiStore {

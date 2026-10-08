@@ -34,6 +34,8 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 ContextBuilder 输出中立的 `common::Message` 列表及必要控制信息，具体协议转换仍在 ai-client。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。
 
+上下文按 (ActorId, ConversationId) 构造，每次 AiRun 固定自己的快照。同一角色默认复用执行绑定，私聊和各群的消息范围与摘要分别选择；可选 provider 会话 ID、续接链或压缩缓存不得跨该范围复用。软件不依赖一个跨全部聊天窗口的常驻模型上下文。
+
 工具调用与结果是运行内部轨迹，仅按对应协议成对发送。不能把另一个 AI 的工具调用当成自己的历史调用；中断调用补齐失败结果并按既有规则过滤。
 
 历史思考、反馈、用量、计时、ID、中断元数据均不直接发送 provider。OpenAI 兼容 reasoning_content/reasoning 的已有处理规则继续保留。

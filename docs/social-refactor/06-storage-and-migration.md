@@ -19,7 +19,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 | 表组 | 主要表 | 主要约束 |
 | --- | --- | --- |
 | 身份 | actors、ai_profiles、execution_bindings、relationships | 身份 UUID、档案版本、无向关系对唯一 |
-| 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 每空间 message_seq 唯一，成员对唯一 |
+| 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 私聊 relationship_id 唯一，含归档；每空间 message_seq 唯一，成员对唯一 |
 | 记忆 | memories、memory_sources、summaries、summary_sources、forget_suppressions | 来源引用版本，范围显式保存 |
 | 参与 | participation_plans、contact_intents、consumer_offsets | dedupe_key 和处理进度保证幂等 |
 | 执行 | ai_runs、run_checkpoints、run_protocol_messages、tool_executions、budget_reservations | RunId 独立，轨迹归属一个 AI 与 run |
@@ -27,6 +27,8 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 | 迁移 | schema_migrations、legacy_imports、legacy_id_map | 版本迁移与来源映射可核对 |
 
 这是一份职责模型，实施时可以合并一对一表，但不能省略事务或来源约束。外键、唯一索引和 CHECK 约束要实际启用并验证；不能只在 Rust 层假设有效。
+
+direct 的 relationship_id 非空且唯一，group 不使用该字段；归档不会释放私聊唯一性。窗口完整消息是权威记录，摘要、近期消息选择和 ContextSnapshot 是派生材料，不因压缩删除原记录。上下文状态或缓存按 ActorId + ConversationId 隔离。
 
 SocialStore 接口放在 `crates/storage`，提供领域查询和类型化原子操作，例如 append_message、revise_message、begin_run、finish_run、interrupt_run、forget_memory、claim_intent。前端和 Feature 不直接拼 SQL。
 
@@ -84,7 +86,7 @@ M0 候选使用 WAL、foreign_keys=ON 和满足崩溃恢复要求的同步策略
 
 缺失 ID 的分配在事务失败时可重新生成，因为失败结果未对外发布；已成功导入的映射必须稳定。跨会话 UUID 冲突同样报错，交给显式修复流程。
 
-历史会话默认只读，不自动接话、提取记忆或创建意图。用户可明确选择与哪个新联系人接续，并授权使用哪些历史。读位置初始化到导入末尾，避免把全部旧记录显示为新消息。
+历史会话默认归档只读，不自动接话、提取记忆或创建意图。用户可明确选择与哪个新联系人接续，并授权使用哪些历史；接续使用该联系人唯一私聊，旧来源作为历史引用保留，不给同一联系人新建额外窗口。读位置初始化到导入末尾，避免把全部旧记录显示为新消息。
 
 ## 7. 备份、遗忘与回退
 

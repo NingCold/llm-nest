@@ -12,7 +12,7 @@
 
 | 对象 | 关键字段 |
 | --- | --- |
-| Conversation | id、kind(direct/group)、title、status、participation_settings、revision、context_epoch、participation_epoch、created_at |
+| Conversation | id、kind(direct/group)、relationship_id、title、status、participation_settings、revision、context_epoch、participation_epoch、created_at |
 | Membership | conversation_id、actor_id、role、status、history_from_seq、participation_mode、revision |
 | SocialMessage | id、conversation_id、sender_id、sender_snapshot、message_seq、kind、body、reply_to、mentions、bout_id、run_id、status、revision、created_at |
 | MessageRevision | message_id、revision、operation、author_id、content、changed_at |
@@ -23,7 +23,9 @@
 
 ## 3. 空间与成员
 
-direct 默认包含本地真人和一个 AI，关联 Relationship；group 包含本地真人和一个以上 AI。空间不存唯一 ModelSelection，每个 AI 使用自己的绑定。
+direct 包含本地真人和一个 AI，关联唯一 Relationship；同一参与者对只能有一个 direct Conversation，包括归档状态。重复打开和恢复归档沿用同一窗口。group 包含本地真人和一个以上 AI，每个群拥有独立窗口。空间不存唯一 ModelSelection，每个 AI 使用自己的绑定。
+
+软件的逻辑上下文范围为 (ActorId, ConversationId)。同一 AI 的私聊、群 A 和群 B 分别构造上下文；同一群内不同 AI 读取允许的群历史，各自带入自己的身份与设置。provider 会话 ID 或续接链如被使用，也必须按这个范围隔离。
 
 成员状态为 active / left / removed。首版本地真人担任 owner，AI 是 member；领域保留 human 成员的表示，但多人登录与远程权限尚未实现。
 
@@ -36,6 +38,8 @@ Conversation.status 为 active / archived。pause 属于参与设置，不禁止
 ## 4. 消息与运行
 
 SocialMessage.kind 表达 text / attachment / notice。M1 新消息发送先支持 text，notice 由后端生成，不能通过客户端伪造；历史导入保留附件。完整附件输入在上传、导出和权限链路实现并验收后启用，复用可持久化的二进制内容语义。
+
+每个窗口完整保存已提交记录，包括正文、历史附件、notice 和已经落盘的中断片段。近期上下文选取与摘要压缩只影响模型请求，不自动删减历史；用户明确撤回、删除或清除时执行对应规则。逐 token 暂态和工具内部轨迹不等于窗口聊天记录。
 
 消息状态为 generating / complete / cancelled / failed / interrupted / redacted。真人消息成功提交即为 complete。后端选中 AI 并启动 AiRun 时才创建 generating 消息；用户发送消息不预建 AI 回答。
 
@@ -81,3 +85,5 @@ Conversation 长期存在；Bout 表达某次交谈；AiRun 表达一次执行�
 4. 同一发送命令重复提交只产生一条消息；改内容重用请求 ID 被拒绝。
 5. 新入群 AI 默认读不到加入前历史和私聊内容。
 6. 结束 Bout 不删除空间；下一次聊天可以新建 Bout 并接续允许的历史。
+7. 同一参与者对并发创建私聊仍只产生一个空间；不同群的消息和上下文互不混入。
+8. 生成历史摘要或缩减模型上下文后，完整聊天记录仍可分页查阅。

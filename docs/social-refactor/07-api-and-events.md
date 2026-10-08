@@ -43,6 +43,8 @@ HTTP 前缀为 `/api/social/v1`，表中 route 省略前缀。写操作使用后
 
 provider、目录同步和配置等已有接口继续保留；旧 `/api/sessions` 与 chat-event 在过渡期明确标 legacy，不与新契约混用。初期可以按里程碑逐项实现，不提供返回假成功的占位路由。
 
+创建 direct Conversation 按 Relationship 查找唯一现有空间；重复请求返回已有空间，归档后的恢复沿用同一 ID。创建 group 才建立独立群窗口。记忆查询/编辑接口由聊天详情或联系人详情使用，不对应独立记忆主入口；候选确认接口在后续提取功能加入时实现。
+
 ## 3. 发送与幂等
 
 ```json

@@ -10,6 +10,24 @@
 | [开发指南](development.md) | 准备环境、运行四个入口、执行验证 |
 | [构建与 GitHub 发布](releases.md) | 生成 Windows/Linux 安装包，运行 CI，创建版本草稿 |
 
+## 社交转型设计（规划中）
+
+首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。以下文档描述目标结构、契约和实施顺序，尚不代表功能已实现。
+
+| 文档 | 负责内容 |
+| --- | --- |
+| [重构总纲](social-refactor/README.md) | 产品范围、统一术语、目标目录、依赖方向与里程碑 |
+| [身份与关系](social-refactor/01-identity-and-relationships.md) | Actor、AI 档案、模型绑定与关系连续性 |
+| [聊天与消息](social-refactor/02-conversations-and-messages.md) | 私聊/群聊、成员、发送者、修订与交谈生命周期 |
+| [记忆与上下文](social-refactor/03-memory-and-context.md) | 来源、范围、摘要、召回、确认与遗忘 |
+| [参与与调度](social-refactor/04-participation-and-scheduling.md) | 发言规则、队列、等待/结束、约定联系与恢复 |
+| [AI 执行](social-refactor/05-ai-execution.md) | 协议上下文、独立运行、工具、检查点与收尾 |
+| [存储与迁移](social-refactor/06-storage-and-migration.md) | SQLite、事务、目录锁、备份与旧 JSON 导入 |
+| [API 与事件](social-refactor/07-api-and-events.md) | HTTP/IPC、命令幂等、持久事件、订阅和补齐 |
+| [界面与桌面](social-refactor/08-frontend-and-desktop.md) | 导航、状态、交互、共用前端与平台基线 |
+| [运行时与配置](social-refactor/09-runtime-and-configuration.md) | 初始化、资源注入、快照、关闭与旧入口兼容 |
+| [交付与验证](social-refactor/10-delivery-and-validation.md) | M0–M3、端到端验收、兼容收尾与待细化决策 |
+
 ## 当前验收证据
 
 每份报告只证明其中列出的环境与场景。历史报告中的产物哈希可能对应旧版本，不应与最新安装包混用。

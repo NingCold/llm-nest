@@ -8,6 +8,8 @@
 
 SocialFeature 暴露具体方法，Feature trait 继续只管理 id、initialize、shutdown 和 downcast。HTTP 与 Tauri 从同一业务方法取得结果，不能分别实现记忆、权限或调度逻辑。
 
+记忆管理与摘要查询统一委托内部意识系统（ConsciousnessService），发送和原消息读取仍走聊天用例。Consciousness 是系统名，具体 API 保留 memories、summaries、contextReferences 等明确用途，不新增通用意识控制端点或第三个导航入口。
+
 增加共享 DTO 模块承载业务响应与事件 wire 类型，外部字段统一 camelCase。内部模型可用 snake_case。ActorId、MessageId、RunId、revision、sequence 和 cursor 对外均为字符串。
 
 ## 2. 目标接口清单
@@ -24,6 +26,7 @@ HTTP 前缀为 `/api/social/v1`，表中 route 省略前缀。写操作使用后
 | 修改 AI 执行配置 | PUT /ai/{id}/execution | social_update_ai_execution |
 | 空间列表/创建 | GET/POST /conversations | social_list_conversations / social_create_conversation |
 | 空间详情 | GET /conversations/{id} | social_get_conversation |
+| 修改标题/归档/恢复空间 | PATCH /conversations/{id} | social_update_conversation |
 | 查看窗口摘要及来源 | GET /conversations/{id}/summaries | social_list_conversation_summaries |
 | 成员增加/修改/退出 | PUT /conversations/{id}/members/{actorId} | social_update_membership |
 | 消息分页/发送 | GET/POST /conversations/{id}/messages | social_list_messages / social_send_message |
@@ -46,7 +49,9 @@ provider、目录同步和配置等已有接口继续保留；旧 `/api/sessions
 
 创建 direct Conversation 按 Relationship 查找唯一现有空间；重复请求返回已有空间，归档后的恢复沿用同一 ID。创建 group 才建立独立群窗口。记忆查询/编辑接口由聊天详情或联系人详情使用，不对应独立记忆主入口；候选确认接口在后续提取功能加入时实现。
 
-“与某 AI 私聊继续”先获取该关系的唯一私聊，再通过发送消息的可选 contextReferences 指定来源窗口、选中消息/版本或话题范围；打开窗口本身不发送消息、不启动生成。引用字段只传标识，不由前端提供一段声称来自群的正文。后端复核来源、目标和访问权，校验后与私聊消息同事务保存；显式转发使用另一种明确共享选中内容的操作。
+取得归档私聊只返回原空间，不自动改为 active；用户明确恢复时通过更新空间命令保存状态，恢复不重放已取消计划。
+
+“与某 AI 私聊继续”先获取该关系的唯一私聊，再通过发送消息的可选 contextReferences 指定来源窗口、选中消息/版本或话题范围；打开窗口本身不发送消息、不启动生成。引用字段只传标识，不由前端提供一段声称来自群的正文。后端与意识系统复核来源、目标和访问权，校验后与私聊消息同事务保存。用户显式分享选中的正文时，通过普通消息发送形成新的目标空间消息；它与 ContextReference 分别处理，不授予源空间读取权。
 
 ## 3. 发送与幂等
 
@@ -71,7 +76,7 @@ contextReferences 默认为空，M2 与跨窗口接续一起实现；引用失�
 
 ## 4. 持久事件
 
-SocialEvent 记录已经提交的业务变更引用。建议事件包括 actor.created/changed、conversation.created/changed、membership.changed、message.created/revised/finalized/redacted、run.started/ended、memory.changed/forgotten、intent.changed、participation.changed。
+SocialEvent 记录已经提交的业务变更引用。建议事件包括 actor.created/changed、conversation.created/changed、membership.changed、message.created/revised/finalized/redacted、run.started/ended、memory.changed/forgotten、summary.changed/invalidated、intent.changed、participation.changed。memory 与 summary 事件在 M2 加入，仍只携带实体标识、版本和范围，客户端查询当前可见状态。
 
 ```json
 {
@@ -104,7 +109,7 @@ GenerationEvent.type 初版为 generation.delta、generation.reasoning_delta、g
 
 ## 6. 启动、订阅与补齐
 
-启动快照在一致读事务中返回当前用户、联系人、空间摘要、活动运行与 snapshotCursor。较长消息列表另行分页，不把所有历史塞进 init。
+启动快照在一致读事务中返回当前用户、联系人、会话列表元数据、活动运行与 snapshotCursor。“会话列表元数据”指标题、成员、末条消息、未读等，不是意识系统生成的 ConversationSummary。较长消息列表和历史摘要分别查询，不把所有历史塞进 init，也不等待后台摘要生成才允许启动。
 
 客户端随后订阅 after=snapshotCursor：后端先准备 live 通道，再捕获持久高水位并回放到该水位，最后切到 live；重复事件去重。通道 overflow 时使用持久日志再次补齐，不能静默跳过。
 

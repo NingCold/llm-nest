@@ -6,7 +6,7 @@
 
 ## 1. Runtime 的职责
 
-Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命周期和关闭。SocialFeature 实现身份、聊天、记忆、参与与调度用例；Runtime 不堆积前端专用的业务条件。
+Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命周期和关闭。SocialFeature 实现身份、聊天、意识系统（Consciousness）、参与与调度用例；Runtime 不堆积前端专用的业务条件。ConsciousnessService 由 SocialFeature 创建和持有，使用注入的同一 SocialStore、AiClient、Clock 与预算资源，不成为独立 Runtime 或 Feature。
 
 扩展 FeatureContext 注入 SocialStore、业务变更广播、临时生成广播、Clock 与运行资源限额；保留 AiClient、ToolRegistry 和迁移期 SessionManager。具体类型以实施时最小可用接口为准，不为预留功能增加空框架。
 
@@ -30,6 +30,8 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 | --- | --- | --- |
 | providers、目录、凭据引用 | 现有 TOML/环境配置与目录缓存 | Runtime 校验与原子保存 |
 | AI 档案、关系、群参与、联系约定 | SocialStore | 社交用例事务 |
+| 意识系统记忆、摘要、来源与快照 | SocialStore；原消息/档案仍是各自权威来源 | 意识系统用例与来源版本校验 |
+| 摘要及未来后台提取/巩固的模型与预算 | 显式保存的系统配置；格式在对应阶段细化 | Runtime 校验，意识系统任务按配置快照执行 |
 | ExecutionBinding | SocialStore，引用 provider/model | Runtime 解析校验后保存 |
 | 默认新 AI 执行配置 | GUI 设置，沿用可迁移的全局默认语义 | 不覆盖已存在 AI 的绑定 |
 | 主题与本地布局 | 现有前端外观设置 | 不影响后端权限 |
@@ -42,7 +44,7 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 
 一次 run 固定 provider 配置、目录与协议路由快照，并记录档案、绑定和上下文版本。热更新整体校验成功后发布新版本，失败保留原版本；在飞请求继续原模型配置。
 
-暂停、成员退出、权限收回和遗忘是可撤销业务状态，必须在执行前及最终提交时复核，不能因固定快照忽略撤销。
+暂停、结束 Bout、归档、成员退出、权限收回和遗忘是可撤销业务状态，必须在执行前及最终提交时复核，不能因固定快照忽略撤销。
 
 provider 移除或目录更新后，重新评估依赖的 AI 配置和待执行计划。已有 run 不因普通目录更新静默换路由；用户要求撤销时显式取消。失效绑定标记需配置，不能把联系人自动映射到别的模型。
 
@@ -52,7 +54,9 @@ provider 移除或目录更新后，重新评估依赖的 AI 配置和待执行�
 
 SocialFeature.initialize 恢复消费位置并启动受控后台任务；重复初始化不能产生多个调度器。Clock 与 mock provider 可注入，业务代码不自行创建真实凭据或新的独立 Runtime。
 
-shutdown 顺序：停止接受新执行 → 停止调度领取 → 取消活动运行 → 等待中断保存与工具退出 → 刷新状态并释放事件资源 → 关闭数据库 → 释放目录锁。
+M1 初始化意识系统基本上下文服务；M2 才启动摘要任务，后续提取/巩固不因初始化自动启用。后台任务使用明确模型绑定与独立调用预算，遵守共享并发限额；没有配置或额度时显示可恢复状态，不隐式调用另一个付费模型。
+
+shutdown 顺序：停止接受新执行 → 停止参与调度和意识后台任务领取 → 取消活动运行与后台任务 → 等待中断保存与工具退出 → 刷新状态并释放事件资源 → 关闭数据库 → 释放目录锁。摘要未完成时可以依据来源重新评估，不能在重启时无条件重放已 dispatch 的外部调用；新任务仍受预算与版本约束。
 
 关闭采用有界等待并暴露保存失败。异常退出或超时留下的 running 状态在下次启动恢复为 interrupted；不能通过界面假装关闭前全部完成。宿主进程 worker 的 kill_on_drop/Job Object 行为继续验证。
 

@@ -1,12 +1,12 @@
 # 05 AI 执行
 
-[总纲](README.md) · [记忆与上下文](03-memory-and-context.md) · [参与与调度](04-participation-and-scheduling.md)
+[总纲](README.md) · [意识系统](03-consciousness.md) · [参与与调度](04-participation-and-scheduling.md)
 
 状态：目标设计，尚未实现。
 
 ## 1. 保留的运行能力
 
-保留 `crates/ai-client` 的 ModelSelection 校验、按 provider + effective protocol 路由、共享 SSE 分帧、工具配对规则和配置快照；保留工具注册表及固定白名单子进程。新执行模块放在 `features/social/execution.rs`。
+保留 `crates/ai-client` 的 ModelSelection 校验、按 provider + effective protocol 路由、共享 SSE 分帧、工具配对规则和配置快照；保留工具注册表及固定白名单子进程。新执行模块放在 `features/social/src/execution.rs`。执行通过意识系统取得背景，不另写一套摘要、召回或记忆逻辑。
 
 现有 `features/chat` 继续服务旧入口直到兼容适配完成。新执行调用不得复用“先写入一个 user 消息”的旧 chat 方法，否则 AI 主动联系或群聊接话会伪造真人输入。
 
@@ -16,13 +16,13 @@ AiRun 字段建议：id、actor_id、conversation_id、bout_id、message_id、pl
 
 RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循环属于同一 AiRun，默认只产生一个可见社交消息，内部协议消息和工具日志保存在执行记录中。
 
-状态为 queued / running / succeeded / cancelled / failed / interrupted。只有 running 可以转终态，终态不可被迟到 delta 或重复完成覆盖。queued 计划和真正 dispatch 的 running 必须可区分。
+状态为 running / succeeded / cancelled / failed / interrupted。排队状态属于 ParticipationPlan，开始事务才创建 running AiRun；dispatch 边界另外记录，不把已开始但尚未请求 provider 的运行当成已经付费调用。只有 running 可以转终态，终态不可被迟到 delta 或重复完成覆盖。
 
 ## 3. 启动流程
 
 1. 领取 ParticipationPlan，确定目标 AI、空间和触发消息范围。
 2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding。
-3. 构造允许使用的上下文，固定档案、记忆来源、成员权限与版本。
+3. 调用 ConsciousnessService.prepare_context，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
 4. 再检查暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件。
 5. 记录 dispatch 边界，调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内。
 
@@ -32,7 +32,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 目标 AI 自己的历史完整消息可以映射为 assistant；其他参与者的发言按协议允许的方式保留为带发送者标签的内容。群里其他 AI 的消息不能全部映射成目标 AI 自己的 assistant 历史。
 
-ContextBuilder 输出中立的 `common::Message` 列表及必要控制信息，具体协议转换仍在 ai-client。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。
+意识系统内部 ContextBuilder 输出中立的 `common::Message` 列表及 ContextSnapshot，ConsciousnessService 以 PreparedContext 返回；执行层与当前工具循环组合后交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。M1 先用近期原文与档案，M2 才增加摘要、显式记忆和跨窗口引用。
 
 上下文按 (ActorId, ConversationId) 构造，每次 AiRun 固定自己的快照。同一角色默认复用执行绑定，私聊和各群的消息范围与摘要分别选择；可选 provider 会话 ID、续接链或压缩缓存不得跨该范围复用。软件不依赖一个跨全部聊天窗口的常驻模型上下文。
 
@@ -52,9 +52,9 @@ ContextBuilder 输出中立的 `common::Message` 列表及必要控制信息，�
 
 ## 6. 成功、取消与错误
 
-成功：再次校验成员状态、参与 epoch 和受撤销的上下文来源；同事务保存最终消息、usage/timings、run.succeeded、计划与意图终态和持久事件。事务成功才广播完成。
+成功：再次校验 Actor/成员状态、Bout 状态、参与 epoch 和受撤销的意识系统来源；同事务保存最终消息、usage/timings、run.succeeded、计划与意图终态和持久事件。事务成功才广播完成。
 
-取消：停止 provider 消费与工具执行，补齐未回答工具调用，保存部分正文和原因，原子转 cancelled。暂停、移除成员、遗忘所用记忆等撤销操作优先于成功提交；使用事务版本检查保证竞争结果确定。
+取消：停止 provider 消费与工具执行，补齐未回答工具调用，保存部分正文和原因，原子转 cancelled。暂停、结束 Bout、移除成员、遗忘所用记忆等撤销操作优先于成功提交；使用事务版本检查保证竞争结果确定。
 
 失败：网络错误、EOF、协议错误、保存失败分别记录原因。先完成可持久化的中断收尾再通知终止；磁盘不可写时不伪报已保存，启动恢复处理仍为 running 的检查点。
 
@@ -77,3 +77,4 @@ ContextBuilder 输出中立的 `common::Message` 列表及必要控制信息，�
 5. 在成功提交前暂停或收回权限，最终结果不能覆盖停止状态。
 6. 重启将 running 标 interrupted，不重放外部调用或工具。
 7. 存储失败不显示成功，临时 delta 无法使终态消息重新生成。
+8. 结束 Bout 与成功提交竞争时，结束后该 Bout 不再发布成功回复；未来独立约定不被误删。

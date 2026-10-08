@@ -20,7 +20,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 | --- | --- | --- |
 | 身份 | actors、ai_profiles、execution_bindings、relationships | 身份 UUID、档案版本、无向关系对唯一 |
 | 聊天 | conversations、memberships、messages、message_revisions、message_context_refs、read_positions、bouts | 私聊 relationship_id 唯一，含归档；每空间 message_seq 唯一，成员对唯一；跨窗口引用追踪源消息版本 |
-| 记忆 | memories、memory_sources、summaries、summary_sources、forget_suppressions | 来源引用版本，范围显式保存；摘要按窗口分段与可见来源视图缓存 |
+| 意识系统 | memories、memory_sources、summaries、summary_sources、forget_suppressions | 来源引用版本，范围显式保存；摘要按窗口分段与可见来源视图缓存 |
 | 参与 | participation_plans、contact_intents、consumer_offsets | dedupe_key 和处理进度保证幂等 |
 | 执行 | ai_runs、run_checkpoints、run_protocol_messages、tool_executions、budget_reservations | RunId 独立，轨迹归属一个 AI 与 run |
 | 契约 | committed_events、command_receipts | 全局事件序列、幂等请求作用域唯一 |
@@ -31,6 +31,8 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 direct 的 relationship_id 非空且唯一，group 不使用该字段；归档不会释放私聊唯一性。窗口完整消息是权威记录，摘要、近期消息选择和 ContextSnapshot 是派生材料，不因压缩删除原记录。上下文状态或缓存按 ActorId + ConversationId 隔离。
 
 message_context_refs 关联目标私聊消息、目标 AI、发起者、来源窗口与消息/话题范围，不重复保存源正文或授予源权限。源修订、撤回和权限变化要覆盖所有依赖该来源的窗口。summaries 不能仅按 conversation_id 唯一保存；分段范围、来源版本和可见视图共同决定是否可复用。
+
+上述来源引用、摘要、记忆与 AiRun 中保存的 ContextSnapshot 共同支撑意识系统，存储仍统一使用 SocialStore。原消息由聊天用例写入，意识系统只持久化自身派生材料和必要依赖，不另建独立 consciousness 数据库或完整请求副本。M1 使用消息来源快照；M2 启用摘要、显式记忆与跨窗口引用。
 
 SocialStore 接口放在 `crates/storage`，提供领域查询和类型化原子操作，例如 append_message、revise_message、begin_run、finish_run、interrupt_run、forget_memory、claim_intent。前端和 Feature 不直接拼 SQL。
 
@@ -45,13 +47,16 @@ SocialStore 接口放在 `crates/storage`，提供领域查询和类型化原子
 | 完成 AI 运行 | 最终消息、run 终态、计划/意图终态、预算结算、事件 |
 | 中断 AI 运行 | 草稿、未回答工具失败结果、run/计划/意图终态、事件 |
 | 暂停或移除成员 | 参与 epoch、取消标记、排队计划状态、事件 |
+| 归档空间 | 空间 archived 状态、活动运行取消标记、未执行计划/意图终态、事件 |
+| 结束 Bout | Bout 终态、本 Bout 的活动运行取消标记与未执行计划状态、事件 |
 | 编辑/遗忘 | 修订或遗忘记录、派生内容失效、上下文版本、撤销标记、事件 |
+| 保存/失效摘要 | 来源与权限版本复核、分段摘要版本/状态、派生依赖、变更事件 |
 
 上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
 
 command_receipts 保存稳定实体引用、请求摘要和结果分类，不保存撤回后仍可取出的原响应正文。重复请求返回同一实体的当前可见状态；幂等检查先于已经成功请求的 revision 冲突判断。
 
-预算预留在开始事务创建，终态事务结算或释放；崩溃恢复要处理悬挂预留。提交最终消息须检查 participation_epoch 和可撤销来源版本，停止与完成竞争由事务顺序决定。
+预算预留在开始事务创建，终态事务结算或释放；崩溃恢复要处理悬挂预留。提交最终消息须检查 participation_epoch、Bout 状态和可撤销来源版本，停止与完成竞争由事务顺序决定。摘要任务保存同样执行来源版本校验，不能让迟到结果覆盖有效新版本。
 
 ## 4. 并发、性能与检查点
 

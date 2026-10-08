@@ -12,14 +12,14 @@
 
 ## 社交转型设计（规划中）
 
-首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。以下文档描述目标结构、契约和实施顺序，尚不代表功能已实现。
+首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。软件管理的上下文、摘要、记忆、召回与遗忘统一称为“意识系统（Consciousness）”。以下文档描述目标结构、契约和实施顺序，尚不代表功能已实现；先读总纲，再按专项职责与 M0–M3 交付计划阅读。
 
 | 文档 | 负责内容 |
 | --- | --- |
 | [重构总纲](social-refactor/README.md) | 产品范围、统一术语、目标目录、依赖方向与里程碑 |
 | [身份与关系](social-refactor/01-identity-and-relationships.md) | Actor、AI 档案、模型绑定与关系连续性 |
 | [聊天与消息](social-refactor/02-conversations-and-messages.md) | 私聊/群聊、成员、发送者、修订与交谈生命周期 |
-| [记忆与上下文](social-refactor/03-memory-and-context.md) | 来源、范围、摘要、召回、确认与遗忘 |
+| [意识系统（Consciousness）](social-refactor/03-consciousness.md) | 系统边界、分层上下文、摘要、记忆、跨窗口召回与遗忘 |
 | [参与与调度](social-refactor/04-participation-and-scheduling.md) | 发言规则、队列、等待/结束、约定联系与恢复 |
 | [AI 执行](social-refactor/05-ai-execution.md) | 协议上下文、独立运行、工具、检查点与收尾 |
 | [存储与迁移](social-refactor/06-storage-and-migration.md) | SQLite、事务、目录锁、备份与旧 JSON 导入 |

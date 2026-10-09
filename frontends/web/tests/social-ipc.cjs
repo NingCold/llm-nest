@@ -48,6 +48,7 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
     ['init', [], 'social_init', undefined],
     ['createContact', [inputs], 'social_create_contact', { input: inputs }],
     ['updateContact', ['id', inputs], 'social_update_contact', { id: 'id', input: inputs }],
+    ['controlContact', ['id', { ...inputs, action: 'archive' }], 'social_control_contact', { id: 'id', input: { ...inputs, action: 'archive' } }],
     ['openDirect', ['id', 'command'], 'social_open_direct', { id: 'id', input: { requestId: 'command' } }],
     ['messages', ['id'], 'social_messages', { id: 'id', before: null }],
     ['send', ['id', inputs], 'social_send', { id: 'id', input: inputs }],

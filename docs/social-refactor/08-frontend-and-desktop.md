@@ -10,6 +10,8 @@
 
 `build:social-runtime` 输出到忽略的 `.social-runtime-dist`，供本地服务与 GUI 验收。Web 与 Tauri 均默认显示真实社交界面，`?legacy=1`/`?demo=1` 保留迁移期旧入口。浏览器只在 `llm-nest-social-live-drafts-v1` 保存真实界面的草稿和重试 ID，历史从后端读取，不与下面的预览 key 混用。实际能力见 [已完成](completed.md)，接口与事件见 [共享契约](07-api-and-events.md)。
 
+通讯录提供“联系人 / 已归档”两组列表，联系人详情的“移除联系人”经确认后归档，归档详情提供恢复入口与已有私聊记录入口。私聊与群成员行显示联系人归档状态；群邀请只展示活动联系人，已归档成员保留身份、不可新选为接话对象，但可移出群。归档期间私聊仍可保存真人消息，界面明确提示 AI 不接话；联系人恢复不修改窗口和成员的独立控制设置。Web 与桌面共用这些组件和业务规则，验证见 [联系人生命周期记录](m1-contact-lifecycle.md)。
+
 ## 当前真实桌面
 
 共用 `social/App.tsx` 和 `live-store.ts`，`client.ts` 按 IS_DESKTOP 选择 HTTP 或 Tauri 适配器。桌面通过 invoke 发送业务命令、通过 Channel 接收共用订阅；初始化失败显示真实错误，不切换到 HTTP 或模拟回答。切换设置/通讯录/聊天不停止 AI；页面重载释放旧订阅，重新读取快照与已保存历史。

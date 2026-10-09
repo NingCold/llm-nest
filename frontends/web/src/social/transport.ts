@@ -14,6 +14,7 @@ export interface SocialClient {
   init(): Promise<Snapshot>
   createContact(input: ContactInput): Promise<Contact>
   updateContact(id: string, input: ContactInput & { expectedRevision: string }): Promise<Contact>
+  controlContact(id: string, input: VersionedCommand & { action: "archive" | "restore" }): Promise<Contact>
   openDirect(id: string, requestId: string): Promise<string>
   messages(id: string, before?: string): Promise<MessagePage>
   send(id: string, input: SendInput): Promise<SendReceipt>

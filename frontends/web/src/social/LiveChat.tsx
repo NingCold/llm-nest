@@ -26,6 +26,7 @@ export function Chat({ conversation, contact, details, memories }: { conversatio
   const timeline = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [plans, setPlans] = useState<ParticipationPlan[]>([])
+  const contactArchived = contact?.status === "archived"
   const readOnly = conversation.status === "archived" || conversation.legacy
   useEffect(() => { stick.current = true; void state.action(() => state.loadHistory(conversation.id)) }, [conversation.id, state.action, state.loadHistory])
   useEffect(() => { if (stick.current && timeline.current) timeline.current.scrollTop = timeline.current.scrollHeight }, [messages, state.generations])
@@ -46,7 +47,7 @@ export function Chat({ conversation, contact, details, memories }: { conversatio
   const reply = draft?.replyTo ? messages?.find(m => m.id === draft.replyTo) : undefined
   const name = (id: string) => snapshot.contacts.find(c => c.id === id)?.name ?? "AI"
   return <><section className="conversation-view" aria-label={`${title}聊天`}>
-    <header className="conversation-header"><IconButton label="返回消息列表" className="mobile-back" onClick={() => navigate("messages")}><ArrowLeft /></IconButton><button className="conversation-heading" onClick={() => group ? navigate("messages", conversation.id, true) : contact && navigate("contacts", contact.id)}><Avatar contact={avatar(contact)} group={group} /><span><strong>{title}{!group && <span className="ai-badge">AI</span>}</strong><small>{readOnly ? "历史记录 · 只读" : group ? `${conversation.memberIds.length} 位成员 · @ 选择接话对象` : "长期私聊 · 聊天记录持续保存"}</small></span></button><IconButton label="聊天详情" aria-pressed={details} onClick={() => navigate("messages", conversation.id, !details)}><Info /></IconButton></header>
+    <header className="conversation-header"><IconButton label="返回消息列表" className="mobile-back" onClick={() => navigate("messages")}><ArrowLeft /></IconButton><button className="conversation-heading" onClick={() => group ? navigate("messages", conversation.id, true) : contact && navigate("contacts", contact.id)}><Avatar contact={avatar(contact)} group={group} /><span><strong>{title}{!group && <span className="ai-badge">AI</span>}</strong><small>{readOnly ? "历史记录 · 只读" : group ? `${conversation.memberIds.length} 位成员 · @ 选择接话对象` : contactArchived ? "联系人已归档 · 聊天记录保留" : "长期私聊 · 聊天记录持续保存"}</small></span></button><IconButton label="聊天详情" aria-pressed={details} onClick={() => navigate("messages", conversation.id, !details)}><Info /></IconButton></header>
     <div className="chat-timeline" ref={timeline} onScroll={() => { const el = timeline.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100 }}>
       {state.hasMore[conversation.id] && <button className="social-button secondary live-load-history" disabled={state.loadingHistory[conversation.id]} onClick={() => { stick.current = false; void state.action(() => state.loadHistory(conversation.id, true)) }}>{state.loadingHistory[conversation.id] ? "加载中…" : "加载更早的消息"}</button>}
       {!messages ? <div className="list-empty"><button disabled={state.loadingHistory[conversation.id]} onClick={() => void state.action(() => state.loadHistory(conversation.id))}>{state.loadingHistory[conversation.id] ? "正在读取聊天记录…" : "加载聊天记录"}</button></div> : !messages.length ? <div className="conversation-start"><span><MessageCircle />{group ? "在这里一起聊聊" : "每次相遇，都在同一个窗口"}</span><p>{group ? "普通消息会保存；@ 选择的 AI 会依次回复。" : "从第一条消息开始你们的日常。"}</p></div> : messages.map(message => {
@@ -60,7 +61,7 @@ export function Chat({ conversation, contact, details, memories }: { conversatio
       })}
     </div>
     {readOnly ? <div className="archive-footer"><p>聊天记录保留在这个窗口中。</p></div> : <div className="composer-area">
-      {(conversation.paused || (!group && (conversation.members.some(m => m.actorId === contact?.id && m.paused) || !contact?.binding))) && <div className="chat-status-notice">{conversation.paused || conversation.members.some(m => m.actorId === contact?.id && m.paused) ? "AI 已暂停接话，仍可以发送和保存消息。" : "该 AI 尚未配置模型，发送的消息仍会保存。"}</div>}
+      {(conversation.paused || (!group && (contactArchived || conversation.members.some(m => m.actorId === contact?.id && m.paused) || !contact?.binding))) && <div className="chat-status-notice">{contactArchived ? "联系人已归档，仍可发送和保存消息；恢复后新消息才会触发回复。" : conversation.paused || conversation.members.some(m => m.actorId === contact?.id && m.paused) ? "AI 已暂停接话，仍可以发送和保存消息。" : "该 AI 尚未配置模型，发送的消息仍会保存。"}</div>}
       {!!conversation.pendingPlans.length && <div className="live-queue" role="status">接话队列：{conversation.pendingPlans.map(p => `${name(p.actorId)}${p.status === "running" ? "（回复中）" : ""}`).join(" → ")}</div>}
       {draft?.replyTo && <div className="live-reply-target"><span>回复 {reply?.senderName ?? "早前的消息"}{reply && (reply.status === "withdrawn" ? "：消息已撤回" : `：${reply.text.slice(0, 60)}`)}</span><IconButton label="取消回复" onClick={() => state.targetDraft(conversation.id, draft.mentions ?? [], null)}><X /></IconButton></div>}
       {group && <MentionChoices conversation={conversation} />}

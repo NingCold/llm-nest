@@ -26,6 +26,7 @@ export const socialClient = {
   createContact: (input: { requestId: string; name: string; persona: string; binding: Binding | null }) => request<Contact>("/contacts", "POST", input),
   updateContact: (id: string, input: { requestId: string; name: string; persona: string; binding: Binding | null; expectedRevision: string }) => request<Contact>(`/contacts/${id}`, "PATCH", input),
   openDirect: (id: string, requestId: string) => request<string>(`/contacts/${id}/direct`, "POST", { requestId }),
+  controlContact: (id: string, input: VersionedCommand & { action: "archive" | "restore" }) => request<Contact>(`/contacts/${id}/control`, "POST", input),
   messages: (id: string, before?: string) => request<MessagePage>(`/conversations/${id}/messages${before ? `?before=${before}` : ""}`),
   send: (id: string, input: SendInput) => request<SendReceipt>(`/conversations/${id}/messages`, "POST", input),
   cancel: (id: string) => request<void>(`/runs/${id}/cancel`, "POST"),

@@ -118,6 +118,9 @@ impl SocialFeature {
                 ..Default::default()
             };
             let prepared = ConsciousnessService::prepare(material, &resolved.spec)?;
+            // Contact controls span spaces. Keep run creation and token registration together
+            // so a concurrent archive cannot miss the new execution. No model call holds this lock.
+            let mut cancellations = self.cancellations.lock().await;
             let run = s
                 .resources
                 .store
@@ -132,10 +135,7 @@ impl SocialFeature {
                 )
                 .await?;
             let cancel = CancellationToken::new();
-            self.cancellations
-                .lock()
-                .await
-                .insert(run.id, cancel.clone());
+            cancellations.insert(run.id, cancel.clone());
             let request = ChatRequest {
                 selection,
                 messages: prepared.messages,

@@ -27,6 +27,7 @@ pub struct Contact {
     pub name: String,
     pub persona: String,
     pub revision: Revision,
+    pub status: EntityStatus,
     pub binding: Option<Binding>,
 }
 impl From<ContactRecord> for Contact {
@@ -36,6 +37,7 @@ impl From<ContactRecord> for Contact {
             name: c.actor.display_name,
             persona: c.profile.persona,
             revision: c.actor.revision,
+            status: c.actor.status,
             binding: c.binding.map(|b| Binding {
                 provider_id: b.provider_id,
                 model_id: b.model_id,
@@ -293,6 +295,14 @@ pub struct UpdateContactInput {
 #[serde(rename_all = "camelCase")]
 pub struct Command {
     pub request_id: CommandId,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactControlInput {
+    pub request_id: CommandId,
+    pub expected_revision: Revision,
+    pub action: storage::social::ContactAction,
 }
 
 #[derive(Debug, Clone, Deserialize)]

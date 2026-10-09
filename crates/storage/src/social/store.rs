@@ -43,6 +43,8 @@ pub struct SendMessage {
 pub struct SavedMessage {
     pub message: SocialMessage,
     pub plans: Vec<ParticipationPlan>,
+    /// Resolved response targets include paused/archived identities so the use case can explain availability.
+    pub response_targets: Vec<ActorId>,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +159,20 @@ pub struct UpdateAi {
     pub expected_revision: Revision,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactControl {
+    pub actor_id: ActorId,
+    pub expected_revision: Revision,
+    pub action: ContactAction,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContactAction {
+    Archive,
+    Restore,
+}
+
 /// Execution details remain separate from social message content and context.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -235,6 +251,11 @@ pub trait SocialStore: Send + Sync {
     async fn actor(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<Actor>;
     async fn overview(&self, operator: ActorId) -> SocialStorageResult<SocialOverview>;
     async fn contact(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<ContactRecord>;
+    async fn control_contact(
+        &self,
+        ctx: CommandContext,
+        input: ContactControl,
+    ) -> SocialStorageResult<ContactRecord>;
     async fn update_ai(
         &self,
         ctx: CommandContext,

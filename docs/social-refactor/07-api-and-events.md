@@ -18,6 +18,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌�
 | --- | --- | --- |
 | 启动快照 | GET /init | social_init |
 | 创建/修改联系人及绑定 | POST /contacts；PATCH /contacts/{id} | social_create_contact / social_update_contact |
+| 归档/恢复联系人（移除默认归档） | POST /contacts/{id}/control | social_control_contact |
 | 打开唯一私聊 | POST /contacts/{id}/direct | social_open_direct |
 | 创建独立群 | POST /groups | social_create_group |
 | 空间详情 | GET /conversations/{id} | social_conversation |
@@ -40,7 +41,8 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌�
 | 命令 | 字段与版本 |
 | --- | --- |
 | 联系人创建/修改 | requestId、name、persona、binding；修改追加联系人 expectedRevision。binding 为 providerId/modelId/reasoningEffort，可为空 |
-| 打开私聊 | requestId；归档私聊返回原 ID，不自动恢复 |
+| 联系人归档/恢复 | requestId、联系人 expectedRevision、action(archive/restore)；移除入口发送 archive，不删除记录 |
+| 打开私聊 | requestId；归档私聊或已归档联系人已有的私聊返回原 ID，不自动恢复；已归档联系人不能创建新私聊 |
 | 创建群 | requestId、title、memberIds |
 | 成员加入/移出 | requestId、actorId、action(add/remove)、空间 expectedRevision；没有历史范围选项 |
 | 发送文本 | requestId、text、replyTo；mentions 可省略，按顺序选择接话 AI |
@@ -97,7 +99,7 @@ SocialGenerationEvent 当前有 generation.delta、generation.reasoning_delta �
 
 ## 6. 启动、订阅与补齐
 
-init 在一致读取中返回本地真人、联系人、窗口列表元数据、模型选项和 cursor，不返回全部历史，也不等待摘要。列表中的 latestMessage 与意识系统的历史摘要分别处理。
+init 在一致读取中返回本地真人、全部 AI 联系人（含 archived）、窗口列表元数据、模型选项和 cursor，不返回全部历史，也不等待摘要。Contact.status 为 active/archived，通讯录按状态分组；归档身份保留在快照中供恢复、私聊和群历史署名。列表中的 latestMessage 与意识系统的历史摘要分别处理。
 
 HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cursor 读取持久引用，每 250ms 补读已提交变更，单批最多 500 条，临时广播最多保留 256 个事件。SSE 的 change/id 标识持久 cursor，generation 没有 SSE id。订阅断开只释放订阅，生成继续。
 
@@ -121,7 +123,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：联系人生命周期与独立生成参数/工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。已读位置、列表搜索等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：独立生成参数/工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。已读位置、列表搜索等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

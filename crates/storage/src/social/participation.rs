@@ -8,6 +8,28 @@ use events::SocialChange;
 use rusqlite::params;
 
 impl Db<'_> {
+    fn response_targets(
+        &self,
+        c: &Conversation,
+        operator: ActorId,
+        mentions: &[ActorId],
+        reply_to: Option<MessageId>,
+    ) -> Result<Vec<ActorId>> {
+        let mut targets = if c.kind == ConversationKind::Direct {
+            self.query_json::<Membership>("SELECT payload FROM memberships WHERE conversation_id=?1 AND actor_id!=?2 AND status='active'", params![c.id.to_string(), operator.to_string()])?.into_iter().map(|m|m.actor_id).collect()
+        } else {
+            mentions.to_vec()
+        };
+        if c.kind == ConversationKind::Group
+            && let Some(id) = reply_to
+        {
+            let reply: SocialMessage = self.get("messages", id)?;
+            if reply.sender_id != operator && !targets.contains(&reply.sender_id) {
+                targets.push(reply.sender_id);
+            }
+        }
+        Ok(targets)
+    }
     pub(super) fn save_plan(&self, p: &ParticipationPlan) -> Result<()> {
         self.execute("INSERT INTO participation_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET status=excluded.status,run_id=excluded.run_id,payload=excluded.payload", params![p.id.to_string(), p.conversation_id.to_string(), p.actor_id.to_string(), p.trigger_id.to_string(), p.trigger_sequence.get() as i64, p.ordinal, label(&p.status)?, p.run_id.map(|id| id.to_string()), serde_json::to_string(p)?])?;
         self.event(SocialChange::PlanChanged {
@@ -28,7 +50,14 @@ impl Db<'_> {
         if let Some(id) = self.receipt(ctx, "send_message", input)? {
             let message: SocialMessage = self.get("messages", &id)?;
             self.member(ctx.operator, message.conversation_id)?;
+            let c = self.get("conversations", message.conversation_id)?;
             return Ok(SavedMessage {
+                response_targets: self.response_targets(
+                    &c,
+                    ctx.operator,
+                    &message.mentions,
+                    message.reply_to,
+                )?,
                 plans: self.query_json(
                     "SELECT payload FROM participation_plans WHERE trigger_id=?1 ORDER BY ordinal",
                     [id],
@@ -50,35 +79,24 @@ impl Db<'_> {
                 mentions.push(*id);
             }
         }
-        let mut targets = mentions.clone();
-        if c.kind == ConversationKind::Direct {
-            targets = self.query_json::<Membership>("SELECT payload FROM memberships WHERE conversation_id=?1 AND actor_id!=?2 AND status='active'", params![c.id.to_string(), ctx.operator.to_string()])?.into_iter().map(|m|m.actor_id).collect();
-            if mentions.iter().any(|id| !targets.contains(id)) {
-                return Err(Error::Invalid("mention is outside this direct chat".into()));
-            }
-        }
         if let Some(id) = input.reply_to {
             let reply: SocialMessage = self.get("messages", id)?;
             if reply.conversation_id != c.id || reply.status == MessageStatus::Withdrawn {
                 return Err(Error::Invalid("invalid reply target".into()));
             }
-            if c.kind == ConversationKind::Group
-                && reply.sender_id != ctx.operator
-                && !targets.contains(&reply.sender_id)
-            {
-                targets.push(reply.sender_id);
-            }
+        }
+        let targets = self.response_targets(&c, ctx.operator, &mentions, input.reply_to)?;
+        if c.kind == ConversationKind::Direct && mentions.iter().any(|id| !targets.contains(id)) {
+            return Err(Error::Invalid("mention is outside this direct chat".into()));
         }
         let mut memberships = Vec::new();
         for id in &targets {
             let actor: Actor = self.get("actors", id)?;
-            if actor.kind != ActorKind::Ai || actor.status != EntityStatus::Active {
-                return Err(Error::Invalid(
-                    "response target must be an active AI".into(),
-                ));
+            if actor.kind != ActorKind::Ai {
+                return Err(Error::Invalid("response target must be an AI".into()));
             }
             let membership = self.member(*id, c.id)?;
-            if !membership.paused {
+            if actor.status == EntityStatus::Active && !membership.paused {
                 memberships.push(membership);
             }
         }
@@ -116,7 +134,11 @@ impl Db<'_> {
             }
         }
         self.save_receipt(ctx, "send_message", input, message.id)?;
-        Ok(SavedMessage { message, plans })
+        Ok(SavedMessage {
+            message,
+            plans,
+            response_targets: targets,
+        })
     }
     pub(super) fn begin_plan(
         &self,
@@ -198,9 +220,12 @@ impl Db<'_> {
             return Err(Error::Invalid("membership changes require a group".into()));
         }
         let actor: Actor = self.get("actors", input.actor_id)?;
-        if actor.kind != ActorKind::Ai || actor.status != EntityStatus::Active {
+        if actor.kind != ActorKind::Ai
+            || (matches!(input.action, MembershipAction::Add)
+                && actor.status != EntityStatus::Active)
+        {
             return Err(Error::Invalid(
-                "only active AI members may be added or removed".into(),
+                "only AI members may be removed; adding requires an active AI".into(),
             ));
         }
         let old = self

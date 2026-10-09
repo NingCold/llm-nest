@@ -223,6 +223,19 @@ impl SocialFeature {
         } else {
             None
         };
+        for target in &saved.response_targets {
+            let contact = s.resources.store.contact(s.human, *target).await?;
+            if contact.actor.status == EntityStatus::Archived {
+                execution_notice = Some(RunFailure {
+                    code: "contact_archived".into(),
+                    message: format!(
+                        "消息已保存；{} 已归档，恢复联系人后新消息才会触发回复",
+                        contact.actor.display_name
+                    ),
+                });
+                break;
+            }
+        }
         for plan in &saved.plans {
             let contact = s.resources.store.contact(s.human, plan.actor_id).await?;
             let binding = contact.binding.map(|b| wire::Binding {

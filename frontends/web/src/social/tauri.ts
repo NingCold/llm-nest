@@ -24,6 +24,7 @@ export const socialClient: SocialClient = {
   init: () => command("social_init"),
   createContact: input => command("social_create_contact", { input }),
   updateContact: (id, input) => command("social_update_contact", { id, input }),
+  controlContact: (id, input) => command("social_control_contact", { id, input }),
   openDirect: (id, requestId) => command("social_open_direct", { id, input: { requestId } }),
   messages: (id, before) => command("social_messages", { id, before: before ?? null }),
   send: (id, input) => command("social_send", { id, input }),

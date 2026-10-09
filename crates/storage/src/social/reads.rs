@@ -63,7 +63,7 @@ impl Db<'_> {
     pub(super) fn overview(&self, operator: ActorId) -> Result<SocialOverview> {
         let human = self.operator(operator)?;
         let actors: Vec<Actor> = self.query_json(
-            "SELECT payload FROM actors WHERE kind='ai' AND status='active' ORDER BY rowid",
+            "SELECT payload FROM actors WHERE kind='ai' ORDER BY rowid",
             [],
         )?;
         let contacts = actors

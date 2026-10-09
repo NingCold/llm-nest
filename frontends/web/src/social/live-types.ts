@@ -1,6 +1,6 @@
 // Business DTOs from features/social/src/wire.rs; counters stay decimal strings.
 export interface Binding { providerId: string; modelId: string; reasoningEffort: string | null }
-export interface Contact { id: string; name: string; persona: string; revision: string; binding: Binding | null }
+export interface Contact { id: string; name: string; persona: string; revision: string; status: "active" | "archived"; binding: Binding | null }
 export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[] }
 export interface Message {
   id: string; conversationId: string; senderId: string; senderName: string

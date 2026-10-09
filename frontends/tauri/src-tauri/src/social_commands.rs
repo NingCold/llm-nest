@@ -6,6 +6,19 @@ use social_feature::{SocialError, wire};
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
 
 #[tauri::command]
+pub async fn social_control_contact(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+    input: wire::ContactControlInput,
+) -> Result<wire::Contact> {
+    feature(state)
+        .await?
+        .control_contact(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
 pub async fn social_subscribe(
     state: tauri::State<'_, BackendState>,
     window: tauri::WebviewWindow,

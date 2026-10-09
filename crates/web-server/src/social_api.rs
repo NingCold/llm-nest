@@ -23,6 +23,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             axum::routing::patch(update_contact),
         )
         .route("/api/social/contacts/{id}/direct", post(open_direct))
+        .route("/api/social/contacts/{id}/control", post(control_contact))
         .route("/api/social/groups", post(create_group))
         .route(
             "/api/social/conversations/{id}/members",
@@ -147,6 +148,13 @@ async fn open_direct(
     Json(input): Json<wire::Command>,
 ) -> Result<ConversationId> {
     Ok(Json(s.social.open_direct(id, input).await?))
+}
+async fn control_contact(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ActorId>,
+    Json(input): Json<wire::ContactControlInput>,
+) -> Result<wire::Contact> {
+    Ok(Json(s.social.control_contact(id, input).await?))
 }
 async fn conversation(
     State(s): State<Arc<AppState>>,

@@ -50,6 +50,7 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 暂停成员 | 该成员 paused/revision、它的运行/队列终态、事件、回执；不提高全群 epoch |
 | 加入/移除成员 | 成员版本、空间 context/participation epoch、运行/计划撤销、事件、回执 |
 | 归档空间 | 空间 archived 状态、活动运行取消标记、未执行计划/意图终态、事件 |
+| 归档联系人 | Actor.status/revision、该 AI 跨空间的运行/片段终态与排队计划、事件、回执；保留关系/成员/窗口设置，恢复不重放取消计划 |
 | 结束 Bout | Bout 终态、本 Bout 的活动运行取消标记与未执行计划状态、事件 |
 | 编辑/遗忘 | 修订或遗忘记录、派生内容失效、上下文版本、撤销标记、事件 |
 | 保存/失效摘要 | 来源与权限版本复核、分段摘要版本/状态、派生依赖、变更事件 |

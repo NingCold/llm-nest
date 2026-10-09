@@ -168,6 +168,7 @@ pub fn run() {
             social_commands::social_init,
             social_commands::social_create_contact,
             social_commands::social_update_contact,
+            social_commands::social_control_contact,
             social_commands::social_open_direct,
             social_commands::social_create_group,
             social_commands::social_change_membership,

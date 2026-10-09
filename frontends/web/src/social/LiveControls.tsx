@@ -2,7 +2,7 @@ import { useRef, useState } from "react"
 import { Pencil, X } from "lucide-react"
 import { SocialApiError, socialClient } from "./client"
 import { useLiveSocialStore } from "./live-store"
-import type { ControlAction, Conversation, Membership, Message, VersionedCommand } from "./live-types"
+import type { Contact, ControlAction, Conversation, Membership, Message, VersionedCommand } from "./live-types"
 
 // Keep the same command and expected version when an acknowledgement is lost.
 function useVersionedAction() {
@@ -47,14 +47,33 @@ export function ConversationControls({ conversation }: { conversation: Conversat
   </section>
 }
 
+export function ContactControls({ contact }: { contact: Contact }) {
+  const state = useLiveSocialStore()
+  const [confirming, setConfirming] = useState(false)
+  const { busy, execute } = useVersionedAction()
+  const archived = contact.status === "archived"
+  const change = async (action: "archive" | "restore") => {
+    const result = await execute(action, contact.revision, input => socialClient.controlContact(contact.id, { ...input, action }))
+    if (result) { setConfirming(false); await state.action(state.refresh) }
+  }
+  return <section className="live-conversation-controls"><h2>{archived ? "已归档联系人" : "联系人管理"}</h2>
+    <p>{archived ? "私聊与群聊记录保留。该 AI 在所有窗口中停止接话，恢复后只有新消息会触发回复。" : "移除会将联系人归档，停止它在所有窗口中的回复与排队接话。聊天记录、群成员身份和角色设定会保留。"}</p>
+    {archived ? <button className="social-button primary" disabled={busy} onClick={() => void change("restore")}>{busy ? "恢复中…" : "恢复联系人"}</button>
+      : confirming ? <div className="live-control-buttons"><span>确认移除并归档 {contact.name}？</span><button className="social-button secondary" disabled={busy} onClick={() => setConfirming(false)}>取消</button><button className="social-button secondary" disabled={busy} onClick={() => void change("archive")}>{busy ? "归档中…" : "确认移除并归档"}</button></div>
+        : <button className="social-button secondary" disabled={busy} onClick={() => setConfirming(true)}>移除联系人</button>}
+    <p className="form-note">聊天窗口的归档和成员暂停设置分别保存，恢复联系人不会改变这些设置。</p>
+  </section>
+}
+
 export function MemberParticipation({ conversation, member }: { conversation: Conversation; member: Membership }) {
   const state = useLiveSocialStore()
   const { busy, execute } = useVersionedAction()
+  const archived = state.snapshot?.contacts.find(c => c.id === member.actorId)?.status === "archived"
   const toggle = async () => {
     const result = await execute(`pause:${!member.paused}`, member.revision, input => socialClient.pauseMember(conversation.id, { ...input, actorId: member.actorId, paused: !member.paused }))
     if (result) await state.action(state.refresh)
   }
-  return <button className="live-member-participation" disabled={busy} onClick={() => void toggle()}>{member.paused ? "恢复接话" : "暂停接话"}</button>
+  return <button className="live-member-participation" disabled={busy || archived} onClick={() => void toggle()}>{archived ? "联系人已归档" : member.paused ? "恢复接话" : "暂停接话"}</button>
 }
 
 export function OwnMessageControls({ message }: { message: Message }) {

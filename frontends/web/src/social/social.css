@@ -261,11 +261,12 @@
 .profile-intro { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 20px; padding: 0 0 27px; margin-top: -30px; position: relative; }
 .profile-intro > .social-avatar { border: 5px solid var(--s-bg); width: 86px; height: 86px; }
 .profile-intro > div { padding-top: 45px; flex: 1; }
-.profile-intro h1 { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 600; }
+.profile-intro h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 24px; font-weight: 600; }
 .profile-intro p { font-size: 12px; color: var(--s-muted); margin-top: 7px; }
 .profile-intro > button { margin-top: 51px; }
 .profile-tabs { padding: 0; gap: 30px; }
 .profile-tabs button { font-size: 12px; padding: 14px 0; }
+.live-contact-tabs { margin: 0 20px 12px; gap: 20px; flex-shrink: 0; }
 .profile-sections > section { padding: 28px 0; border-bottom: 1px solid var(--s-line); }
 .profile-sections h2 { font-size: 13px; font-weight: 600; margin-bottom: 13px; }
 .profile-sections h2 > span { font-size: 10px; color: var(--s-muted); margin-left: 5px; }

@@ -1,4 +1,5 @@
 mod consciousness;
+mod contacts;
 mod controls;
 mod execution;
 mod feature;

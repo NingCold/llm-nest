@@ -899,6 +899,14 @@ impl SocialStore for SqliteSocialStore {
         })
         .await
     }
+    async fn control_contact(
+        &self,
+        ctx: CommandContext,
+        input: ContactControl,
+    ) -> Result<ContactRecord> {
+        self.call(move |w| w.transact(|db| db.control_contact(&ctx, &input)))
+            .await
+    }
     async fn context_material(
         &self,
         operator: ActorId,
@@ -1025,7 +1033,13 @@ impl SocialStore for SqliteSocialStore {
         self.call(move |w|w.transact(|db|{
             if let Some(id) = db.receipt(&ctx,"open_direct",&ai)? {let c:Conversation=db.get("conversations",id)?;db.member(ctx.operator,c.id)?;return Ok(c);}
             let target: Actor = db.get("actors",ai)?;
-            if target.kind!=ActorKind::Ai || target.status!=EntityStatus::Active {return Err(Error::Invalid("requires an active AI".into()));}
+            if target.kind!=ActorKind::Ai {return Err(Error::Invalid("requires an AI".into()));}
+            if target.status == EntityStatus::Archived {
+                let c: Conversation = db.query_json("SELECT c.payload FROM conversations c JOIN memberships m ON m.conversation_id=c.id WHERE m.actor_id=?1 AND c.kind='direct' AND c.relationship_id IS NOT NULL", [ai.to_string()])?.into_iter().next().ok_or_else(|| Error::Invalid("restore the contact before starting a private chat".into()))?;
+                db.member(ctx.operator,c.id)?;
+                db.save_receipt(&ctx,"open_direct",&ai,c.id)?;
+                return Ok(c);
+            }
             let (a,b) = if ctx.operator.to_string()<ai.to_string() {(ctx.operator,ai)} else {(ai,ctx.operator)};
             let relationship: Relationship = match db.query_json("SELECT payload FROM relationships WHERE participant_a=?1 AND participant_b=?2",params![a.to_string(),b.to_string()])?.into_iter().next() {
                 Some(r) => r,

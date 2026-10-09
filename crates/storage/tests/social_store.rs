@@ -276,6 +276,446 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_history() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let direct = f.direct(a.id).await;
+    let group = f.group(vec![a.id, b.id]).await;
+    let other = f.group(vec![a.id, b.id]).await;
+    let private = f.send_group(direct.id, vec![]).await;
+    let collaborative = f.send_group(group.id, vec![a.id, b.id]).await;
+    let unrelated = f.send_group(other.id, vec![b.id, a.id]).await;
+    let private_run = f.begin_plan(&private.plans[0]).await.unwrap();
+    let group_run = f.begin_plan(&collaborative.plans[0]).await.unwrap();
+    let other_run = f.begin_plan(&unrelated.plans[0]).await.unwrap();
+    for run in [&private_run, &group_run] {
+        f.store
+            .checkpoint_run(
+                f.human.id,
+                run.id,
+                MessageBody::text("saved fragment"),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    let old_contact = f.store.contact(f.human.id, a.id).await.unwrap();
+    let before = f.store.overview(f.human.id).await.unwrap();
+    let ctx = f.ctx();
+    let input = ContactControl {
+        actor_id: a.id,
+        expected_revision: a.revision,
+        action: ContactAction::Archive,
+    };
+    f.inject();
+    assert!(
+        f.store
+            .control_contact(ctx.clone(), input.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        f.store.overview(f.human.id).await.unwrap().cursor,
+        before.cursor
+    );
+    assert_eq!(f.store.actor(f.human.id, a.id).await.unwrap(), a);
+    assert_eq!(
+        f.store.run(f.human.id, group_run.id).await.unwrap().status,
+        RunStatus::Running
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, other.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == unrelated.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Queued
+    );
+    f.clear();
+    let archived = f
+        .store
+        .control_contact(ctx.clone(), input.clone())
+        .await
+        .unwrap();
+    assert_eq!(archived.actor.status, EntityStatus::Archived);
+    assert_eq!(archived.actor.revision, a.revision.next().unwrap());
+    assert_eq!(archived.profile, old_contact.profile);
+    assert_eq!(archived.binding, old_contact.binding);
+    assert_eq!(
+        f.store
+            .control_contact(ctx.clone(), input.clone())
+            .await
+            .unwrap()
+            .actor,
+        archived.actor
+    );
+    for run in [&private_run, &group_run] {
+        assert_eq!(
+            f.store.run(f.human.id, run.id).await.unwrap().status,
+            RunStatus::Cancelled
+        );
+        let message = f.store.message(f.human.id, run.message_id).await.unwrap();
+        assert_eq!(message.status, MessageStatus::Interrupted);
+        assert_eq!(message.body, MessageBody::text("saved fragment"));
+        assert_eq!(message.sender_id, a.id);
+        assert_eq!(message.sender_name, "A");
+        assert!(matches!(
+            f.store
+                .finish_run(
+                    f.ctx(),
+                    FinishRun {
+                        run_id: run.id,
+                        expected_revision: run.revision,
+                        status: RunStatus::Succeeded,
+                        body: MessageBody::text("late success"),
+                        details: None
+                    }
+                )
+                .await,
+            Err(SocialStorageError::Conflict(_))
+        ));
+    }
+    assert_eq!(
+        f.store.run(f.human.id, other_run.id).await.unwrap().status,
+        RunStatus::Running
+    );
+    assert_eq!(
+        f.store
+            .next_plan(f.human.id, group.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .actor_id,
+        b.id
+    );
+    let plans = f.store.plans(f.human.id, other.id).await.unwrap();
+    assert_eq!(
+        plans
+            .iter()
+            .find(|p| p.id == unrelated.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled
+    );
+    let overview = f.store.overview(f.human.id).await.unwrap();
+    assert_eq!(
+        overview.contacts.len(),
+        2,
+        "archived identities remain discoverable for history and restore"
+    );
+    for c in [direct.id, group.id, other.id] {
+        let record = f.store.conversation_record(f.human.id, c).await.unwrap();
+        assert!(record.members.iter().any(|m| m.actor_id == a.id));
+        assert_eq!(record.conversation.status, EntityStatus::Active);
+    }
+    assert_eq!(f.direct(a.id).await.id, direct.id);
+    let saved = f.send_group(direct.id, vec![]).await;
+    assert!(saved.plans.is_empty());
+    let saved = f.send_group(group.id, vec![a.id, b.id]).await;
+    assert_eq!(saved.plans.len(), 1);
+    assert_eq!(saved.plans[0].actor_id, b.id);
+    let restored = f
+        .store
+        .control_contact(
+            f.ctx(),
+            ContactControl {
+                actor_id: a.id,
+                expected_revision: archived.actor.revision,
+                action: ContactAction::Restore,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored.actor.status, EntityStatus::Active);
+    assert_eq!(
+        f.store.control_contact(ctx, input).await.unwrap().actor,
+        restored.actor,
+        "replaying an old archive must not rearchive"
+    );
+    assert_eq!(f.direct(a.id).await.id, direct.id);
+    assert!(
+        f.store
+            .next_plan(f.human.id, direct.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(f.send_group(direct.id, vec![]).await.plans.len(), 1);
+    let events = f
+        .store
+        .events(f.human.id, before.cursor, 100)
+        .await
+        .unwrap();
+    assert!(events.iter().any(
+        |e| matches!(e.change, events::SocialChange::ActorChanged {actor_id,..} if actor_id==a.id)
+    ));
+    f.close().await;
+}
+
+#[tokio::test]
+async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_versions() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let unused = f.ai("Unused").await;
+    let private = f.direct(a.id).await;
+    let group = f.group(vec![a.id]).await;
+    let retained = f.group(vec![a.id]).await;
+    f.store
+        .pause_member(
+            f.ctx(),
+            PauseMember {
+                conversation_id: retained.id,
+                actor_id: a.id,
+                expected_revision: Revision::ONE,
+                paused: true,
+            },
+        )
+        .await
+        .unwrap();
+    f.store
+        .pause_member(
+            f.ctx(),
+            PauseMember {
+                conversation_id: group.id,
+                actor_id: a.id,
+                expected_revision: Revision::ONE,
+                paused: true,
+            },
+        )
+        .await
+        .unwrap();
+    f.store
+        .control_conversation(
+            f.ctx(),
+            ConversationControl {
+                conversation_id: private.id,
+                expected_revision: private.revision,
+                action: ConversationAction::Archive,
+            },
+        )
+        .await
+        .unwrap();
+    let ctx = f.ctx();
+    let input = ContactControl {
+        actor_id: a.id,
+        expected_revision: a.revision,
+        action: ContactAction::Archive,
+    };
+    let archived = f
+        .store
+        .control_contact(ctx.clone(), input.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store.control_contact(f.ctx(), input.clone()).await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    assert!(matches!(
+        f.store
+            .control_contact(
+                ctx,
+                ContactControl {
+                    action: ContactAction::Restore,
+                    ..input.clone()
+                }
+            )
+            .await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    assert!(
+        f.store
+            .control_contact(
+                CommandContext {
+                    operator: a.id,
+                    request_id: CommandId::new()
+                },
+                input
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        f.store
+            .control_contact(
+                f.ctx(),
+                ContactControl {
+                    actor_id: f.human.id,
+                    expected_revision: f.human.revision,
+                    action: ContactAction::Archive
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        f.store
+            .create_group(f.ctx(), "invalid".into(), vec![a.id])
+            .await
+            .is_err()
+    );
+    let other = f.group(vec![unused.id]).await;
+    assert!(
+        f.store
+            .change_membership(
+                f.ctx(),
+                ChangeMembership {
+                    conversation_id: other.id,
+                    actor_id: a.id,
+                    expected_revision: other.revision,
+                    action: MembershipAction::Add
+                }
+            )
+            .await
+            .is_err()
+    );
+    let current = f.store.conversation(f.human.id, group.id).await.unwrap();
+    f.store
+        .change_membership(
+            f.ctx(),
+            ChangeMembership {
+                conversation_id: group.id,
+                actor_id: a.id,
+                expected_revision: current.revision,
+                action: MembershipAction::Remove,
+            },
+        )
+        .await
+        .unwrap();
+    let restored = f
+        .store
+        .control_contact(
+            f.ctx(),
+            ContactControl {
+                actor_id: a.id,
+                expected_revision: archived.actor.revision,
+                action: ContactAction::Restore,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .conversation(f.human.id, private.id)
+            .await
+            .unwrap()
+            .status,
+        EntityStatus::Archived
+    );
+    assert_eq!(f.direct(a.id).await.id, private.id);
+    assert!(
+        f.store
+            .conversation_record(f.human.id, retained.id)
+            .await
+            .unwrap()
+            .members
+            .iter()
+            .find(|m| m.actor_id == a.id)
+            .unwrap()
+            .paused
+    );
+    assert!(
+        !f.store
+            .conversation_record(f.human.id, group.id)
+            .await
+            .unwrap()
+            .members
+            .iter()
+            .any(|m| m.actor_id == a.id),
+        "restore must not rejoin a removed member"
+    );
+    let no_op = f
+        .store
+        .control_contact(
+            f.ctx(),
+            ContactControl {
+                actor_id: a.id,
+                expected_revision: restored.actor.revision,
+                action: ContactAction::Restore,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_op.actor.revision, restored.actor.revision);
+    let archived_unused = f
+        .store
+        .control_contact(
+            f.ctx(),
+            ContactControl {
+                actor_id: unused.id,
+                expected_revision: unused.revision,
+                action: ContactAction::Archive,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        f.store
+            .open_direct(f.ctx(), archived_unused.actor.id)
+            .await
+            .is_err(),
+        "an archived contact cannot create a new private chat"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn contact_archive_and_finish_keep_the_first_committed_outcome() {
+    let f = Fixture::new().await;
+    for archive_first in [false, true] {
+        let ai = f.ai("Race").await;
+        let c = f.direct(ai.id).await;
+        let run = f.begin(ai.id, c.id, vec![]).await;
+        f.store
+            .checkpoint_run(f.human.id, run.id, MessageBody::text("draft"), None)
+            .await
+            .unwrap();
+        let finish = f.store.finish_run(
+            f.ctx(),
+            FinishRun {
+                run_id: run.id,
+                expected_revision: run.revision,
+                status: RunStatus::Succeeded,
+                body: MessageBody::text("complete"),
+                details: None,
+            },
+        );
+        let archive = f.store.control_contact(
+            f.ctx(),
+            ContactControl {
+                actor_id: ai.id,
+                expected_revision: ai.revision,
+                action: ContactAction::Archive,
+            },
+        );
+        let (finished, archived) = if archive_first {
+            let (archived, finished) = tokio::join!(biased; archive, finish);
+            (finished, archived)
+        } else {
+            tokio::join!(biased; finish, archive)
+        };
+        assert_eq!(archived.unwrap().actor.status, EntityStatus::Archived);
+        let current = f.store.run(f.human.id, run.id).await.unwrap();
+        let message = f.store.message(f.human.id, run.message_id).await.unwrap();
+        if archive_first {
+            assert!(matches!(finished, Err(SocialStorageError::Conflict(_))));
+            assert_eq!(current.status, RunStatus::Cancelled);
+            assert_eq!(message.status, MessageStatus::Interrupted);
+            assert_eq!(message.body, MessageBody::text("draft"));
+        } else {
+            assert_eq!(finished.unwrap().status, RunStatus::Succeeded);
+            assert_eq!(current.status, RunStatus::Succeeded);
+            assert_eq!(message.status, MessageStatus::Committed);
+            assert_eq!(message.body, MessageBody::text("complete"));
+        }
+    }
+    f.close().await;
+}
+
+#[tokio::test]
 async fn group_queue_is_atomic_idempotent_fifo_and_shares_only_its_committed_answers() {
     let f = Fixture::new().await;
     let a = f.ai("A").await;

@@ -385,6 +385,74 @@ def main():
         assert any('following-message' in str(m) for m in calls_for('new-bout')[0]['messages'])
         print('PASS: revisions/withdrawal retain history, revoke old replies, preserve receipts; per-member pause, space pause/archive/restore and independent Bout ending', flush=True)
 
+        # Contact lifecycle is global, while chat controls and group memberships remain independent.
+        lifecycle_a, lifecycle_b = contact('Lifecycle A'), contact('Lifecycle B')
+        lifecycle_private = direct(lifecycle_a)
+        lifecycle_group = group('Contact lifecycle', [lifecycle_a, lifecycle_b])
+        unrelated_group = group('Other active AI', [lifecycle_a, lifecycle_b])
+        private_trigger = send(lifecycle_private, 'slow-life-private')['message']
+        group_trigger = send(lifecycle_group, 'slow-life-group', mentions=[lifecycle_a['id'], lifecycle_b['id']])['message']
+        other_trigger = send(unrelated_group, 'slow-life-other', mentions=[lifecycle_b['id'], lifecycle_a['id']])['message']
+        private_fragment = wait_for(lambda: next((m for m in history(lifecycle_private) if m['status'] == 'generating' and m['text']), None))
+        group_fragment = wait_for(lambda: next((m for m in history(lifecycle_group) if m['status'] == 'generating' and m['text']), None))
+        wait_for(lambda: api(f'/conversations/{unrelated_group}')['activeRun'])
+        send(lifecycle_private, 'life-queued-private')
+        archive_input = {'requestId': str(uuid.uuid4()), 'expectedRevision': lifecycle_a['revision'], 'action': 'archive'}
+        contact_path = f"/contacts/{lifecycle_a['id']}/control"
+        archived_contact = api(contact_path, 'POST', archive_input)
+        assert archived_contact['status'] == 'archived' and archived_contact['binding'] == lifecycle_a['binding']
+        assert api(contact_path, 'POST', archive_input) == archived_contact
+        for cid, fragment in [(lifecycle_private, private_fragment), (lifecycle_group, group_fragment)]:
+            saved_fragment = next(m for m in history(cid) if m['id'] == fragment['id'])
+            assert saved_fragment['status'] == 'interrupted' and saved_fragment['text'].startswith(fragment['text'])
+            assert saved_fragment['senderName'] == 'Lifecycle A'
+            assert api(f'/conversations/{cid}')['status'] == 'active'
+            assert lifecycle_a['id'] in api(f'/conversations/{cid}')['memberIds']
+        other_run = api(f'/conversations/{unrelated_group}')['activeRun']
+        assert other_run and other_run['actorId'] == lifecycle_b['id'], 'archive must not cancel another AI'
+        settled(lifecycle_group); settled(unrelated_group)
+        assert [p['status'] for p in sorted(plans(lifecycle_group), key=lambda p:p['ordinal']) if p['triggerId'] == group_trigger['id']] == ['cancelled', 'succeeded']
+        assert [p['status'] for p in sorted(plans(unrelated_group), key=lambda p:p['ordinal']) if p['triggerId'] == other_trigger['id']] == ['succeeded', 'cancelled']
+        assert provider_count('life-queued-private') == 0
+        for data in [dict(archive_input, requestId=str(uuid.uuid4())), dict(archive_input, action='restore')]:
+            try:
+                api(contact_path, 'POST', data)
+                raise AssertionError('stale or reused contact control accepted')
+            except urllib.error.HTTPError as error:
+                assert error.code == 409
+        assert direct(lifecycle_a) == lifecycle_private
+        archived_send = send(lifecycle_private, 'life-archived-private')
+        assert archived_send['executionNotice']['code'] == 'contact_archived'
+        mixed_send = send(lifecycle_group, 'life-archived-group', mentions=[lifecycle_a['id'], lifecycle_b['id']])
+        assert mixed_send['executionNotice']['code'] == 'contact_archived'
+        settled(lifecycle_group)
+        assert provider_count('life-archived-private') == 0 and provider_count('life-archived-group') == 1
+        current = api(f'/conversations/{lifecycle_private}')
+        api(f'/conversations/{lifecycle_private}/control', 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':current['revision'], 'action':'pause'})
+        member = next(m for m in api(f'/conversations/{lifecycle_group}')['members'] if m['actorId'] == lifecycle_b['id'])
+        api(f'/conversations/{lifecycle_group}/members/participation', 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':member['revision'], 'actorId':lifecycle_b['id'], 'paused':True})
+        stop(); start()
+        persisted_contact = next(c for c in api('/init')['contacts'] if c['id'] == lifecycle_a['id'])
+        assert persisted_contact == archived_contact
+        assert direct(lifecycle_a) == lifecycle_private
+        assert provider_count('life-queued-private') == 0
+        restored_contact = api(contact_path, 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':archived_contact['revision'], 'action':'restore'})
+        assert restored_contact['status'] == 'active' and api(contact_path, 'POST', archive_input) == restored_contact
+        assert api(f'/conversations/{lifecycle_private}')['paused']
+        assert next(m for m in api(f'/conversations/{lifecycle_group}')['members'] if m['actorId'] == lifecycle_b['id'])['paused']
+        current = api(f'/conversations/{lifecycle_private}')
+        api(f'/conversations/{lifecycle_private}/control', 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':current['revision'], 'action':'resume'})
+        assert complete(lifecycle_private, 'life-after-restore')['senderId'] == lifecycle_a['id']
+        assert direct(lifecycle_a) == lifecycle_private and provider_count('life-queued-private') == 0
+        unused_contact = contact('Archived without chat', None)
+        api(f"/contacts/{unused_contact['id']}/control", 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':unused_contact['revision'], 'action':'archive'})
+        try:
+            direct(unused_contact)
+            raise AssertionError('archived contact created a private chat')
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+        print('PASS: contact archive/restore, cross-space cancellation and FIFO continuation, saved fragments/history, archived sends, current-state receipts/conflicts, independent pause settings, restart/no replay and unique private identity', flush=True)
+
         # Crash recovery never resends the started response; untouched queue entries resume.
         recovery_group = group('Recovery group', [alice, bob])
         trigger = send(recovery_group, 'crash', mentions=[bob['id'], alice['id']])

@@ -28,7 +28,7 @@ SocialStore → SQLite 单写线程 → 实体 + 持久事件引用 + 命令回�
 | `crates/storage/src/social/reads.rs` | 授权读取、同一事务的初始化概览与上下文材料、运行详情 |
 | `crates/storage/src/social/schema-v2.sql` | 独立 run_details 表，保存实际模型、思考、用量、耗时及错误 |
 | `crates/web-server/src/social_api.rs` | 命令、分页历史、持久事件回放与 SSE 订阅 |
-| `frontends/tauri/src-tauri/src/social_commands.rs` | 同一 DTO 与 Feature 方法的基础 IPC 命令；当前未接实时订阅 |
+| `frontends/tauri/src-tauri/src/social_commands.rs` | 同一 DTO 与 Feature 方法的基础 IPC 命令；本批未接实时订阅 |
 | `frontends/web/src/social/App.tsx` | 真实消息/通讯录、联系人编辑、私聊、详情与既有设置/Markdown 复用 |
 | `frontends/web/src/social/client.ts` / `live-store.ts` | HTTP/SSE、回执、独立草稿、游标、生成、历史合并与重连 |
 

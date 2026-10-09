@@ -53,7 +53,7 @@ cargo run -p web-server
 pnpm --dir frontends/web dev
 ```
 
-打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；`?legacy=1` 保留旧入口。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。桌面仍使用旧界面，社交实时 IPC 待后续接入。
+打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；Tauri 使用相同界面与真实 IPC，`?legacy=1` 保留旧入口。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。隔离桌面模拟模型验收见 [实时 IPC 记录](social-refactor/m1-desktop-ipc.md#复现桌面验收)。
 
 真实社交私聊、群聊与消息控制的隔离离线验收：
 

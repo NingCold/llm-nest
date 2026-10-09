@@ -8,7 +8,13 @@
 
 普通 Web 开发和生产入口使用 `social/App.tsx`，通过 HTTP 读取 SQLite 的联系人、独立绑定、唯一私聊、群聊、成员/计划和历史，使用 `live-store.ts` 管理发送回执、游标、生成及重连。基础意识系统选择本窗口近期原文，详情页明确说明摘要/长期记忆尚未接入。发送期间只等待消息保存回执，AI 生成不阻塞继续输入；没有模型仍可保存消息。设置返回原窗口并刷新可选模型；编辑/撤回、成员/窗口暂停、结束交谈和归档/恢复均走共享业务命令。
 
-`build:social-runtime` 输出到忽略的 `.social-runtime-dist`，供本地服务与 GUI 验收。`?legacy=1`/`?demo=1` 保留旧 Web 入口，Tauri 当前仍显示旧界面。浏览器只在 `llm-nest-social-live-drafts-v1` 保存真实界面的草稿和重试 ID，历史从后端读取，不与下面的预览 key 混用。实际能力见 [已完成](completed.md)，接口与事件见 [共享契约](07-api-and-events.md)。
+`build:social-runtime` 输出到忽略的 `.social-runtime-dist`，供本地服务与 GUI 验收。Web 与 Tauri 均默认显示真实社交界面，`?legacy=1`/`?demo=1` 保留迁移期旧入口。浏览器只在 `llm-nest-social-live-drafts-v1` 保存真实界面的草稿和重试 ID，历史从后端读取，不与下面的预览 key 混用。实际能力见 [已完成](completed.md)，接口与事件见 [共享契约](07-api-and-events.md)。
+
+## 当前真实桌面
+
+共用 `social/App.tsx` 和 `live-store.ts`，`client.ts` 按 IS_DESKTOP 选择 HTTP 或 Tauri 适配器。桌面通过 invoke 发送业务命令、通过 Channel 接收共用订阅；初始化失败显示真实错误，不切换到 HTTP 或模拟回答。切换设置/通讯录/聊天不停止 AI；页面重载释放旧订阅，重新读取快照与已保存历史。
+
+Windows 社交界面为现有窗口控制预留 56px 顶栏和拖动区域；Linux 保留系统装饰与真实 IPC。窗口控制和退出保存错误提示独立于业务初始化。关闭主窗口等待 Runtime 中断运行、保存片段并关闭 SQLite writer；20 秒超时或保存失败时保持窗口打开并提示再次关闭，不声称已经保存成功。验证范围见 [桌面实现记录](m1-desktop-ipc.md)。
 
 ## 当前 Web 交互预览
 
@@ -115,9 +121,9 @@ AI 创建流程先填写身份，再选择执行配置；可以保存未配置�
 
 ## 7. 平台约束
 
-目标为 Tauri 与 Web 共用真实社交组件和业务 DTO；当前真实入口使用 HTTP client，U0 预览使用独立 SocialApi 模拟适配器。实时 IPC 接入时统一真实 backend，不要求沿用简化的预览接口。demo 使用明确标记的模拟数据与独立存储，不能自动替代失败的真实后端，也不能用 demo 验收证明数据库或调度成功。
+Tauri 与 Web 已共用真实社交组件、状态和业务 DTO，分别使用 IPC 与 HTTP client；U0 预览继续使用独立 SocialApi 模拟适配器。demo 使用明确标记的模拟数据与独立存储，不能自动替代失败的真实后端，也不能用 demo 验收证明数据库或调度成功。
 
-首版不新增托盘或隐形常驻服务。窗口最小化时运行时仍可执行；应用实际退出后主动联系停止。关闭窗口沿用当前宿主语义，退出时由 Runtime 完成中断收尾。后续后台常驻需要独立的设置、状态与验收。
+首版不新增托盘或隐形常驻服务。窗口最小化时运行时仍可执行；关闭主窗口按上述流程完成中断收尾后退出。应用实际退出后主动联系停止，后续后台常驻需要独立的设置、状态与验收。
 
 保留 IS_DESKTOP 与 CUSTOM_WINDOW_CHROME 的区别，Linux 使用桌面 IPC 与系统装饰。窗口控制独立于聊天初始化，历史/配置/存储失败可提示和重试。
 

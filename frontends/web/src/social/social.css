@@ -20,6 +20,8 @@
 .social-shell button { color: inherit; }
 .is-hidden { display: none !important; }
 .social-main { display: flex; height: 100%; }
+.social-shell.desktop-chrome { padding-top: 56px; position: relative; box-sizing: border-box; }
+.social-titlebar { position: absolute; inset: 0 0 auto; height: 56px; padding: 0 150px 0 24px; display: flex; align-items: center; border-bottom: 1px solid var(--s-line); color: var(--s-muted); font-size: 12px; user-select: none; }
 .social-rail { width: 76px; flex-shrink: 0; background: var(--s-rail); border-right: 1px solid var(--s-line); display: flex; flex-direction: column; align-items: center; padding: 27px 10px 22px; gap: 34px; }
 .rail-brand { display: grid; place-items: center; width: 42px; height: 42px; }
 .rail-nav { display: flex; flex-direction: column; gap: 16px; width: 100%; }

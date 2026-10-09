@@ -10,7 +10,7 @@ LLM-Nest 正从本地 Harness 转向人与 AI 的社交空间，共用 Rust 运�
 
 首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
 
-当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。真实社交 Web 已接通，Tauri 仍显示 Harness，实时社交 IPC 未接入；浏览器模拟预览必须显式启用。本文维护修改约束，不重复维护各批测试数量。
+当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；浏览器模拟预览必须显式启用。本文维护修改约束，不重复维护各批测试数量。
 
 ## 工作前先确认
 
@@ -116,7 +116,8 @@ Runtime / SessionManager / AiClient / ToolRegistry
 
 - React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`；不要用桌面打包改写已跟踪的 Web dist。
 - 社交预览仅通过 Web 的 `dev:social`/`build:social` 或 `?social-preview=1` 显式启用，Tauri 保持真实 IPC。模拟数据/草稿使用独立 key，不读写真实会话，不将后端连接失败回退为模拟回答；预览不验证社交 HTTP/IPC 或真实意识系统，SQLite 基础通过独立 M0 测试验证。`build:social` 输出到忽略的 `.social-preview-dist`。
-- 普通 Web 默认使用真实社交界面；`?legacy=1`/`?demo=1` 保留迁移期旧入口，Tauri 默认仍是旧界面。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存草稿与重试 ID；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
+- Web 与 Tauri 默认共用真实社交界面；`?legacy=1`/`?demo=1` 保留迁移期旧入口。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存草稿与重试 ID；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
+- IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先拒绝新命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 只控制 Windows 自绘窗口区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。旧 Harness 历史未加载或无模型时禁止发送；社交保存与 AI 执行可用性分开。

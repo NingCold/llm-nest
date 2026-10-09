@@ -1,5 +1,5 @@
 """Offline full-chain acceptance. Build web-server first; no API keys/network needed.
-python scripts/acceptance.py [--serve] [--dist PATH]
+python scripts/acceptance.py [--binary PATH] [--serve] [--dist PATH]
 Uses fresh temp config/storage, a loopback mock OpenAI provider, the real server,
 real tool subprocesses and disk records. --serve keeps the fixture up for GUI QA.
 """
@@ -59,7 +59,7 @@ def free_port():
         s.bind(('127.0.0.1', 0)); return s.getsockname()[1]
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--serve', action='store_true'); parser.add_argument('--dist', type=Path)
+    parser = argparse.ArgumentParser(); parser.add_argument('--serve', action='store_true'); parser.add_argument('--dist', type=Path); parser.add_argument('--binary', type=Path)
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix='llmn-acceptance-'))
     provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -69,7 +69,7 @@ def main():
     config.write_text(f'# acceptance fixture\n[providers.test]\nprotocol="openai"\nbase_url="http://127.0.0.1:{provider.server_port}/v1"\napi_key="fixture-only"\n[providers.test.models.chat]\nmodel="chat"\n', encoding='utf-8')
     env = os.environ.copy(); env.update(LLMN_CONFIG=str(config), LLMN_DATA_DIR=str(work/'sessions'), LLMN_PORT=str(port))
     if args.dist: env['LLMN_WEB_DIST'] = str(args.dist.resolve())
-    exe = ROOT/'target/debug'/('web-server.exe' if os.name == 'nt' else 'web-server')
+    exe = (args.binary or ROOT/'target/debug'/('web-server.exe' if os.name == 'nt' else 'web-server')).resolve()
     log = (work/'server.log').open('w', encoding='utf-8')
     proc = None
     def request(path, method='GET', data=None):

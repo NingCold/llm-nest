@@ -12,7 +12,7 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 ## 2. 当前接口
 
-HTTP 前缀为 `/api/social`。下面的 IPC 命令已注册，但桌面界面与实时订阅尚未接入。联系人和空间列表由 init 返回，暂没有独立列表接口。
+HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌面实时订阅通过 Channel 接入同一 SocialFeature。联系人和空间列表由 init 返回，暂没有独立列表接口。
 
 | 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
@@ -31,7 +31,9 @@ HTTP 前缀为 `/api/social`。下面的 IPC 命令已注册，但桌面界面�
 | 运行详情 | GET /runs/{id} | social_run_details |
 | 停止一次运行 | POST /runs/{id}/cancel | social_cancel_run |
 | 持久变更回放 | GET /events?after={cursor} | social_events |
-| 长期订阅 | GET /subscribe?after={cursor} | 尚未实现 |
+| 长期订阅 | GET /subscribe?after={cursor} | social_subscribe |
+| 确认一次桌面推送 | 由 SSE 读取提供传输背压 | social_ack_subscription |
+| 释放桌面订阅 | 关闭 SSE 连接 | social_unsubscribe |
 
 主要命令输入：
 
@@ -97,9 +99,21 @@ SocialGenerationEvent 当前有 generation.delta、generation.reasoning_delta �
 
 init 在一致读取中返回本地真人、联系人、窗口列表元数据、模型选项和 cursor，不返回全部历史，也不等待摘要。列表中的 latestMessage 与意识系统的历史摘要分别处理。
 
-HTTP 随后以 after=cursor 订阅：先监听临时广播，再读取持久引用；SSE 的 change/id 推进持久 cursor，generation 没有 SSE id。当前每 250ms 补读已提交变更，单批最多 500 条。订阅断开只释放订阅，生成继续。
+HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cursor 读取持久引用，每 250ms 补读已提交变更，单批最多 500 条，临时广播最多保留 256 个事件。SSE 的 change/id 标识持久 cursor，generation 没有 SSE id。订阅断开只释放订阅，生成继续。
 
-持久日志当前不压缩，尚未实现游标过期、空间过滤 watermark 和统一的所有边界错误。后续实时 IPC 应先注册监听，再建立订阅，显式取消释放资源；HTTP/IPC 在重放、溢出和退出时使用同一业务语义。具体订阅命令与字段在接入时确定。
+桌面命令与推送：
+
+| 项目 | 契约 |
+| --- | --- |
+| social_subscribe | 输入 id（客户端 UUID）、after（十进制字符串游标）、channel；前端先注册 Channel callback。初始化和首批读取成功后返回空结果，事件可以早于命令返回到达 |
+| Channel 事件 | `{kind:"event", sequence:1, event:{kind:"change",event:SocialEvent}}`；内层还支持 generation/event 和 resync。sequence 为本次订阅的 u32 序号，不是持久 cursor |
+| social_ack_subscription | 输入 id/sequence，状态应用成功后确认；正文/思考片段和 resync 也按序确认。重复已确认序号成功，提前确认或不匹配序号报 invalid_input |
+| social_unsubscribe | 输入 id，幂等释放调用窗口拥有的该订阅；不会取消 AI run，也不能释放其他窗口或替代订阅 |
+| 终止推送 | `{kind:"error",error:{code,message,retryable}}` 或 `{kind:"closed"}`；异常关闭触发重连 |
+
+每个 WebView 只有一个社交订阅。替代订阅、页面开始重载、窗口销毁和应用退出释放旧订阅及 callback；后端至多有一条未确认推送，30 秒未确认则关闭并给出错误。模型不等待订阅者，临时广播溢出用 resync 补齐。前端按状态应用成功后的持久 cursor 重连，失败连接中的迟到读取不推进新连接游标。
+
+持久日志当前不压缩，尚未实现游标过期、空间过滤 watermark 和统一的所有边界错误。HTTP/IPC 在重放、溢出和订阅释放时使用同一业务语义；宿主退出等待运行中断保存和数据库 writer 收尾，见 [运行时](09-runtime-and-configuration.md#5-生命周期与关闭)。
 
 ## 7. 错误与后续能力
 
@@ -107,7 +121,7 @@ HTTP 随后以 after=cursor 订阅：先监听临时广播，再读取持久引�
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：联系人生命周期与独立生成参数/工具授权、实时 IPC 和双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。已读位置、列表搜索等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：联系人生命周期与独立生成参数/工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。已读位置、列表搜索等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 
@@ -115,7 +129,7 @@ HTTP 随后以 after=cursor 订阅：先监听临时广播，再读取持久引�
 
 ## 8. 验收
 
-1. HTTP/IPC 字段、业务状态、错误与顺序一致；框架拒绝和实时 IPC 的剩余部分单独验收。
+1. HTTP/IPC 字段、业务状态、错误与顺序一致；框架拒绝和阶段完整异常场景单独验收。
 2. 初始化到订阅的间隙不漏事件，重复回放不重复消息，状态应用失败不推进游标。
 3. 断开订阅仍完成保存；重连和 resync 后终态覆盖 delta，旧读取不能恢复撤回内容。
 4. 幂等命令、revision 冲突、无效成员、越权读取和写入失败均有明确结果。

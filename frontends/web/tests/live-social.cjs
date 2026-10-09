@@ -113,13 +113,24 @@ function harness() {
   const exports={}; let requestHeaders;
   const frames=': ping\r\n\r\nevent: change\r\ndata: '+JSON.stringify({ ...event,cursor:'9007199254740993' })+'\r\n\r\nevent: generation\r\ndata: '+JSON.stringify(live(1,'你好🙂'))+'\r\n\r\nevent: resync\r\ndata: {}\r\n\r\n';
   const bytes=new TextEncoder().encode(frames);
-  vm.runInNewContext(compile('client'),{
-    exports,Headers,TextDecoder,
+  vm.runInNewContext(compile('http'),{
+    exports,Headers,TextDecoder,require:()=>({SocialApiError: class extends Error { constructor(message,code) {super(message);this.code=code;} }}),
     fetch:async(_,init)=> { requestHeaders=init.headers; return new Response(new ReadableStream({ start(controller) { for(let i=0;i<bytes.length;i+=3)controller.enqueue(bytes.slice(i,i+3));controller.close(); } }),{ status:200 }); },
   });
   const applied=[];
   await assert.rejects(exports.subscribe('0',new AbortController().signal,async e=>{ await Promise.resolve(); applied.push(e.cursor); },e=>applied.push(e.text),async()=>applied.push('resync'),()=>{}),/消息订阅已断开/);
   assert.deepEqual(applied,['9007199254740993','你好🙂','resync']);
   assert.equal(requestHeaders.get('X-LLMN-Client'),'1');
+  const previous = h.handlers();
+  h.store.getState().disconnect();
+  assert.equal(previous.signal.aborted, true);
+  previous.live(live(1,'late old subscription'));
+  assert.equal(h.store.getState().generations['live-message'],undefined);
+  let lateReads=0;
+  h.api.init=async()=> { lateReads++; return snapshot('99'); };
+  await previous.change({ cursor:'99',change:{ kind:'actor_changed',actorId:'ai',revision:'1' } });
+  assert.equal(lateReads,0,'released subscriptions cannot read state or advance cursor');
+  await h.store.getState().initialize();
+  assert.equal(h.handlers().signal.aborted,false,'root remount creates a fresh subscription');
   console.log('PASS: live social structured mentions/replies, retry identity, committed acknowledgements, independent drafts, cursor application, terminal revisions, older message refresh/withdrawal, stale-page resync, Unicode SSE and local headers');
 })().catch(error=> { console.error(error);process.exitCode=1; });

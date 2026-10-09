@@ -4,6 +4,46 @@ use social::{ActorId, ConversationId, EventCursor, MessageId, RunId, Sequence};
 use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
+
+#[tauri::command]
+pub async fn social_subscribe(
+    state: tauri::State<'_, BackendState>,
+    window: tauri::WebviewWindow,
+    id: uuid::Uuid,
+    after: EventCursor,
+    channel: tauri::ipc::Channel<crate::social_subscription::Delivery>,
+) -> Result<()> {
+    // Register before async initialization so reload/unsubscribe also stops pending startup.
+    let lease = state.subscriptions.start(window.label(), id)?;
+    let feature = feature(state.clone()).await?;
+    if lease.stop.is_cancelled() {
+        return Err(crate::social_subscription::unavailable("订阅已释放"));
+    }
+    let subscription = feature
+        .subscribe(after)
+        .await
+        .map_err(|error| error.wire())?;
+    state.subscriptions.spawn(lease, subscription, channel)
+}
+#[tauri::command]
+pub fn social_ack_subscription(
+    state: tauri::State<'_, BackendState>,
+    window: tauri::WebviewWindow,
+    id: uuid::Uuid,
+    sequence: u32,
+) -> Result<()> {
+    state
+        .subscriptions
+        .acknowledge(window.label(), id, sequence)
+}
+#[tauri::command]
+pub fn social_unsubscribe(
+    state: tauri::State<'_, BackendState>,
+    window: tauri::WebviewWindow,
+    id: uuid::Uuid,
+) {
+    state.subscriptions.remove(window.label(), id);
+}
 #[tauri::command]
 pub async fn social_create_group(
     state: tauri::State<'_, BackendState>,

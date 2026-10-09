@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { useInit } from "@/hooks/useInit"
 import { useUiStore } from "@/store/ui"
 import { useConfigStore } from "@/store/config"
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { Avatar, EmptyState, IconButton, shortTime } from "./components/common"
 import { navigate, parseSocialRoute } from "./router"
 import { socialClient } from "./client"
@@ -61,7 +62,17 @@ export default function SocialApp() {
   const [settingsMounted, setSettingsMounted] = useState(route.page === "settings")
   const previousPage = useRef(route.page)
   const lastMessage = useRef<string | undefined>(undefined), lastContact = useRef<string | undefined>(undefined)
-  useEffect(() => { void state.initialize() }, [state.initialize])
+  useEffect(() => {
+    const initialize = () => { void state.initialize() }
+    initialize()
+    window.addEventListener("pagehide", state.disconnect)
+    window.addEventListener("pageshow", initialize)
+    return () => {
+      window.removeEventListener("pagehide", state.disconnect)
+      window.removeEventListener("pageshow", initialize)
+      state.disconnect()
+    }
+  }, [state.initialize, state.disconnect])
   useEffect(() => {
     const sync = () => {
       const next = parseSocialRoute(location.hash)
@@ -83,7 +94,9 @@ export default function SocialApp() {
   const contacts = snapshot?.contacts.filter(c => `${c.name} ${c.persona}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) ?? []
   const conversations = snapshot?.conversations.filter(c => `${c.title} ${snapshot.contacts.filter(a => c.memberIds.includes(a.id)).map(a => a.name).join(" ")}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) ?? []
   const openDirect = (actor: Contact) => void state.action(async () => { const id = await socialClient.openDirect(actor.id, crypto.randomUUID()); await state.refresh(); navigate("messages", id) })
-  return <div className="social-shell"><div className={`social-main ${route.page === "settings" ? "is-hidden" : ""} ${route.id ? "has-selection" : ""}`}>
+  return <div className={`social-shell${CUSTOM_WINDOW_CHROME ? " desktop-chrome" : ""}`}>
+    {CUSTOM_WINDOW_CHROME && <div className="social-titlebar" data-tauri-drag-region><span data-tauri-drag-region>LLM Nest</span></div>}
+    <div className={`social-main ${route.page === "settings" ? "is-hidden" : ""} ${route.id ? "has-selection" : ""}`}>
     <nav className="social-rail" aria-label="主导航"><div className="rail-brand"><BrandMark className="h-8 w-8" /></div><div className="rail-nav"><button className={route.page === "messages" ? "selected" : ""} onClick={() => navigate("messages", lastMessage.current)}><MessageCircle /><small>消息</small></button><button className={route.page === "contacts" ? "selected" : ""} onClick={() => navigate("contacts", lastContact.current)}><Users /><small>通讯录</small></button></div><div className="rail-bottom"><IconButton label={theme === "light" ? "切换深色主题" : "切换浅色主题"} onClick={toggleTheme}>{theme === "light" ? <Moon /> : <Sun />}</IconButton><IconButton label="设置" onClick={() => showSettings()}><Settings /></IconButton><Avatar self size="small" /></div></nav>
     <aside className="social-list-pane"><header className="list-header"><div><h1>{route.page === "contacts" ? "通讯录" : "消息"}</h1><p>{snapshot ? route.page === "contacts" ? `${snapshot.contacts.length} 位 AI 联系人` : "把每一次对话，连成日常" : "正在连接本地服务"}</p></div><div className="live-list-actions"><IconButton label="创建群聊" disabled={!snapshot?.contacts.length} onClick={() => { state.dismissError(); setCreatingGroup(true) }}><Users /></IconButton><IconButton label="添加 AI 联系人" disabled={!snapshot} onClick={() => { state.dismissError(); setEditing("new") }}><Plus /></IconButton></div></header><div className="list-search"><Search /><input aria-label={route.page === "contacts" ? "搜索联系人" : "搜索聊天"} placeholder={route.page === "contacts" ? "搜索联系人…" : "搜索聊天…"} value={query} onChange={e => setQuery(e.target.value)} /></div><div className="social-list">{route.page === "contacts" ? contacts.map(c => <button key={c.id} className={`contact-list-item ${contact?.id === c.id ? "selected" : ""}`} onClick={() => navigate("contacts", c.id)}><Avatar contact={avatar(c)} /><span><strong>{c.name}<span className="ai-badge">AI</span></strong><small>{c.persona}</small></span><ArrowRight /></button>) : conversations.map(c => {
       const actor = snapshot!.contacts.find(a => c.memberIds.includes(a.id))

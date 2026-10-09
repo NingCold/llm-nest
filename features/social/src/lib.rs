@@ -2,9 +2,11 @@ mod consciousness;
 mod controls;
 mod execution;
 mod feature;
+mod subscription;
 pub mod wire;
 
 pub use feature::SocialFeature;
+pub use subscription::SocialSubscription;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SocialError {

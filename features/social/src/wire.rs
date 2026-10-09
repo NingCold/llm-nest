@@ -323,6 +323,14 @@ pub struct MessagePage {
 pub use events::SocialGenerationEvent as LiveEvent;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubscriptionEvent {
+    Change { event: events::SocialEvent },
+    Generation { event: LiveEvent },
+    Resync,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ErrorBody {
     pub code: &'static str,

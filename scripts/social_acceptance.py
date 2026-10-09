@@ -57,7 +57,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
                 emit({'content': '回应：' + text})
                 if text.startswith('slow') or text == 'crash':
                     for _ in range(100):
-                        time.sleep(.05)
+                        time.sleep(getattr(self, 'stream_delay', .05))
                         emit({'content': '…'})
                 if text == 'eof':
                     return

@@ -1,8 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use runtime::runtime::Runtime;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -10,6 +13,7 @@ pub mod commands;
 mod config_path;
 mod directories;
 mod social_commands;
+mod social_subscription;
 mod window_frame;
 
 pub struct AppState {
@@ -23,10 +27,17 @@ pub struct AppState {
 pub struct BackendState {
     paths: Result<config_path::AppPaths, String>,
     inner: Mutex<Option<Arc<AppState>>>,
+    subscriptions: Arc<social_subscription::Subscriptions>,
+    closing: AtomicBool,
+    shutdown_started: AtomicBool,
+    exit_ready: AtomicBool,
 }
 impl BackendState {
     pub async fn get(&self) -> Result<Arc<AppState>, String> {
         let mut inner = self.inner.lock().await;
+        if self.closing.load(Ordering::Acquire) {
+            return Err("应用正在关闭".into());
+        }
         if let Some(state) = inner.as_ref() {
             return Ok(state.clone());
         }
@@ -65,6 +76,50 @@ impl BackendState {
         *inner = Some(state.clone());
         Ok(state)
     }
+
+    async fn shutdown(&self) -> Result<(), String> {
+        self.subscriptions.shutdown().await;
+        // Also waits for an initialization already in progress, without starting one.
+        let inner = self.inner.lock().await;
+        if let Some(state) = inner.as_ref() {
+            state
+                .runtime
+                .shutdown_features()
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+fn request_shutdown(app: &tauri::AppHandle) {
+    let state = app.state::<BackendState>();
+    state.closing.store(true, Ordering::Release);
+    if state.shutdown_started.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<BackendState>();
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(20), state.shutdown()).await;
+        match result {
+            Ok(Ok(())) => {
+                state.exit_ready.store(true, Ordering::Release);
+                app.exit(0);
+            }
+            failed => {
+                let message = match failed {
+                    Ok(Err(error)) => format!("退出保存失败：{error}。请检查数据目录后再次关闭。"),
+                    Err(_) => "退出保存超时，应用仍保持打开。请稍后再次关闭。".into(),
+                    Ok(Ok(())) => unreachable!(),
+                };
+                eprintln!("{message}");
+                let _ = app.emit("backend-shutdown-failed", message);
+                state.shutdown_started.store(false, Ordering::Release);
+            }
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -77,8 +132,19 @@ pub fn run() {
             app.manage(BackendState {
                 paths: config_path::AppPaths::resolve(),
                 inner: Mutex::new(None),
+                subscriptions: Arc::new(social_subscription::Subscriptions::default()),
+                closing: AtomicBool::new(false),
+                shutdown_started: AtomicBool::new(false),
+                exit_ready: AtomicBool::new(false),
             });
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started
+                && let Some(state) = webview.app_handle().try_state::<BackendState>()
+            {
+                state.subscriptions.release_owner(webview.label());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             window_frame::set_window_appearance,
@@ -117,7 +183,41 @@ pub fn run() {
             social_commands::social_events,
             social_commands::social_run_details,
             social_commands::social_cancel_run,
+            social_commands::social_subscribe,
+            social_commands::social_ack_subscription,
+            social_commands::social_unsubscribe,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                if label == "main" {
+                    api.prevent_close();
+                    request_shutdown(app);
+                }
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } => {
+                app.state::<BackendState>()
+                    .subscriptions
+                    .release_owner(&label);
+            }
+            tauri::RunEvent::ExitRequested { api, .. }
+                if !app
+                    .state::<BackendState>()
+                    .exit_ready
+                    .load(Ordering::Acquire) =>
+            {
+                api.prevent_exit();
+                request_shutdown(app);
+            }
+            _ => {}
+        });
 }

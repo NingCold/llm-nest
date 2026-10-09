@@ -18,6 +18,7 @@ interface SocialState {
   histories: Record<string, Message[]>; hasMore: Record<string, boolean>; loadingHistory: Record<string, boolean>
   generations: Record<string, Generation>; details: Record<string, RunDetails>; drafts: Record<string, Draft>; sending: Record<string, boolean>
   initialize(): Promise<void>
+  disconnect(): void
   refresh(): Promise<void>
   loadHistory(id: string, older?: boolean): Promise<void>
   loadDetails(id: string): Promise<void>
@@ -34,23 +35,31 @@ let initialization: Promise<void> | null = null
 let connection: AbortController | null = null
 let cursor = "0"
 let historyGeneration = 0
+let active = false
 
 export const useLiveSocialStore = create<SocialState>((set, get) => ({
   snapshot: null, loading: false, error: null, connectionError: null, connected: false,
   histories: {}, hasMore: {}, loadingHistory: {}, generations: {}, details: {}, drafts: readDrafts(), sending: {},
   initialize() {
+    active = true
     if (initialization) return initialization
     set({ loading: true, error: null })
     initialization = (async () => {
       try {
         const snapshot = await socialClient.init()
-        cursor = snapshot.cursor
+        if (!get().snapshot) cursor = snapshot.cursor
         set({ snapshot, loading: false })
-        startSubscription()
+        if (active) startSubscription()
       } catch (error) { set({ loading: false, error: String(error) }) }
       finally { initialization = null }
     })()
     return initialization
+  },
+  disconnect() {
+    active = false
+    connection?.abort(); connection = null
+    historyGeneration++
+    set({ connected: false, generations: {} })
   },
   async refresh() {
     const snapshot = await socialClient.init()
@@ -138,16 +147,18 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
   dismissError() { set({ error: null, connectionError: null }) },
 }))
 
-async function applyChange(event: Change) {
+async function applyChange(event: Change, signal: AbortSignal) {
+  if (signal.aborted) return
   if (BigInt(event.cursor) <= BigInt(cursor)) return
   const store = useLiveSocialStore.getState()
   await store.refresh()
+  if (signal.aborted) return
   if (event.change.conversationId && store.histories[event.change.conversationId]) {
     if (event.change.messageId) await store.loadMessage(event.change.messageId)
     else await store.loadHistory(event.change.conversationId)
   }
-  if (event.change.runId) await store.loadDetails(event.change.runId)
-  cursor = event.cursor
+  if (event.change.runId && !signal.aborted) await store.loadDetails(event.change.runId)
+  if (!signal.aborted) cursor = event.cursor
 }
 
 function applyLive(event: LiveEvent) {
@@ -175,19 +186,31 @@ function startSubscription() {
   const signal = connection.signal
   void (async () => {
     while (!signal.aborted) {
+      const attempt = new AbortController()
+      const abort = () => attempt.abort()
+      signal.addEventListener("abort", abort, { once: true })
+      const attemptSignal = attempt.signal
       try {
-        await subscribe(cursor, signal, applyChange, applyLive, async () => {
+        await subscribe(cursor, attemptSignal, event => applyChange(event, attemptSignal), event => {
+          if (!attemptSignal.aborted) applyLive(event)
+        }, async () => {
+          if (attemptSignal.aborted) return
           const store = useLiveSocialStore.getState()
           const ids = Object.keys(store.histories)
           historyGeneration++
           useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {} })
           await store.refresh()
-          for (const id of ids) await store.loadHistory(id)
-        }, () => useLiveSocialStore.setState({ connected: true, connectionError: null }))
+          for (const id of ids) { if (attemptSignal.aborted) return; await store.loadHistory(id) }
+        }, () => { if (!attemptSignal.aborted) useLiveSocialStore.setState({ connected: true, connectionError: null }) })
       } catch (error) {
+        attempt.abort()
         if (signal.aborted) return
+        historyGeneration++
         useLiveSocialStore.setState({ connected: false, generations: {}, connectionError: `${String(error)}，正在重新连接…` })
         await new Promise(resolve => setTimeout(resolve, 1000))
+      } finally {
+        attempt.abort()
+        signal.removeEventListener("abort", abort)
       }
     }
   })()

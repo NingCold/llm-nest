@@ -14,9 +14,9 @@
   <a href="https://github.com/NingCold/llm-nest/issues">反馈问题</a>
 </p>
 
-LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已采用“消息”和“通讯录”，支持稳定 AI 联系人、独立模型配置和持续私聊、独立群聊；桌面、CLI/TUI 暂时保留原有 Harness 入口，共用 Rust 运行时和模型协议能力。
+LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 与桌面已采用“消息”和“通讯录”，支持稳定 AI 联系人、独立模型配置和持续私聊、独立群聊；CLI/TUI 暂时保留原有 Harness 入口，共用 Rust 运行时和模型协议能力。
 
-**当前处于开发预览阶段。** 真实 Web 已接通私聊、群聊和消息控制；桌面社交界面、摘要、长期记忆与群话题接续尚未完成。实际能力见 [已完成](docs/social-refactor/completed.md)，剩余范围与顺序见 [TODO](docs/social-refactor/TODO.md)。
+**当前处于开发预览阶段。** Web 与桌面已接通真实私聊、群聊、消息控制和实时订阅；摘要、长期记忆与群话题接续尚未完成。实际能力见 [已完成](docs/social-refactor/completed.md)，剩余范围与顺序见 [TODO](docs/social-refactor/TODO.md)。
 
 ## 为什么做 LLM Nest
 
@@ -26,7 +26,7 @@ LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已�
 
 ## 现在能做什么
 
-### 真实社交 Web
+### 真实社交 Web 与桌面
 
 | 能力 | 当前实现 |
 | --- | --- |
@@ -59,7 +59,7 @@ LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已�
 
 | 入口 | 状态 |
 | --- | --- |
-| Windows 桌面 x64 | NSIS 实机安装、图标、设置及窗口边框已验收；干净系统、缺少 WebView2 和 MSI 系统级安装仍待验收 |
+| Windows 桌面 x64 | 社交界面/IPC 的 MSVC 嵌入前端 debug EXE 已验收；既有 NSIS、图标、设置及窗口基线见历史记录，社交安装包与干净系统等仍待阶段验收 |
 | Linux 桌面 x64 | Ubuntu 24.04 基线的 deb/AppImage 已构建；干净容器安装、包内 worker 和无界面启动通过，GNOME 实机操作待验收；见 [记录](docs/linux-acceptance-2026-09-13.md) |
 | Web | 真实社交 HTTP/SQLite 与浏览器界面通过模拟 provider 验收；保留的 Harness 另有历史真实 API 验收 |
 | CLI / TUI | 已实现，命令分别为 `llmn` / `llmnt` |
@@ -147,7 +147,7 @@ frontends/cli · frontends/tui · frontends/tauri · crates/web-server
 
 ## 接下来重点做什么
 
-1. 接入桌面实时 IPC 和共用社交界面，补齐 M1 剩余能力与双适配验收。
+1. 补齐 M1 联系人生命周期、独立生成参数与工具授权，完成阶段双适配与平台验收。
 2. M2 完善摘要、显式记忆和群话题接续；M3 加入有限自动接话与约定联系。
 3. 维持平台与发布基线，按对应阶段继续安装和实机验收。
 

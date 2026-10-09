@@ -38,6 +38,7 @@
 | [M1 私聊实现与验证](social-refactor/m1-private-chat.md) | 首条真实 Web/HTTP 链路、模型模拟、SQLite v2 与恢复 |
 | [M1 群聊实现与验证](social-refactor/m1-group-chat.md) | 共享群历史、结构化 @ / 回复、持久 FIFO、多 AI 上下文与 v3/v4 迁移 |
 | [M1 消息与控制实现验证](social-refactor/m1-message-controls.md) | 修订/撤回、来源失效、成员/窗口暂停、结束交谈、归档/恢复及 v5 迁移 |
+| [M1 实时 IPC 与桌面](social-refactor/m1-desktop-ipc.md) | 共用订阅、Channel 确认与恢复、共用社交 GUI、退出保存及双平台编译/测试 |
 | [M0 领域与存储基础](social-refactor/m0-implementation.md) | 中立类型、事务/锁、旧 JSON 导入和跨平台验证 |
 | [用户目录迁移与设置入口](home-directory-2026-09-16.md) | Windows/Linux 路径与迁移测试、目录入口、尚待点击确认的项目 |
 | [Linux 桌面接续验收](linux-acceptance-2026-09-16.md) | 已有包、XWayland/Wayland 自动 GUI、修复重建与待人工项 |

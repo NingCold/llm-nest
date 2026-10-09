@@ -204,48 +204,41 @@ async fn subscribe(
     Sse<impl futures_util::Stream<Item = std::result::Result<Event, Infallible>>>,
     ApiError,
 > {
-    // Listen before reading durable changes. Periodic replay also covers a lost live wakeup.
-    let live = s.social.subscribe_live();
-    let initial = s.social.events(q.after).await?;
-    let state = (
-        s,
-        q.after,
-        live,
-        initial.into_iter(),
-        tokio::time::interval(Duration::from_millis(250)),
-    );
+    let subscription = s.social.subscribe(q.after).await?;
     let stream = futures_util::stream::unfold(
-        state,
-        |(s, mut cursor, mut live, mut pending, mut tick)| async move {
-            loop {
-                if let Some(event) = pending.next() {
-                    cursor = event.cursor;
-                    let frame = Event::default()
-                        .event("change")
-                        .id(cursor.to_string())
-                        .json_data(&event)
-                        .expect("social change serializes");
-                    return Some((Ok(frame), (s, cursor, live, pending, tick)));
-                }
-                tokio::select! {
-                    _=s.shutdown.cancelled()=>return None,
-                    _=tick.tick()=>match s.social.events(cursor).await {
-                        Ok(events)=>pending=events.into_iter(),
-                        Err(error)=> {
-                            let frame=Event::default().event("error").json_data(error.wire()).expect("error serializes");
-                            return Some((Ok(frame),(s,cursor,live,pending,tick)));
-                        }
-                    },
-                    event=live.recv()=> {
-                        let frame=match event {
-                            Ok(event)=>Event::default().event("generation").json_data(event).expect("generation serializes"),
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>Event::default().event("resync").data("{}"),
-                            Err(tokio::sync::broadcast::error::RecvError::Closed)=>return None,
-                        };
-                        return Some((Ok(frame),(s,cursor,live,pending,tick)));
-                    }
-                }
+        (subscription, s.shutdown.clone(), false),
+        |(mut subscription, shutdown, failed)| async move {
+            if failed {
+                return None;
             }
+            let next = tokio::select! {
+                _ = shutdown.cancelled() => return None,
+                event = subscription.next() => event,
+            };
+            let (frame, failed) = match next {
+                Ok(Some(wire::SubscriptionEvent::Change { event })) => (
+                    Event::default()
+                        .event("change")
+                        .id(event.cursor.to_string())
+                        .json_data(event),
+                    false,
+                ),
+                Ok(Some(wire::SubscriptionEvent::Generation { event })) => {
+                    (Event::default().event("generation").json_data(event), false)
+                }
+                Ok(Some(wire::SubscriptionEvent::Resync)) => {
+                    (Ok(Event::default().event("resync").data("{}")), false)
+                }
+                Ok(None) => return None,
+                Err(error) => (
+                    Event::default().event("error").json_data(error.wire()),
+                    true,
+                ),
+            };
+            Some((
+                Ok(frame.expect("social event serializes")),
+                (subscription, shutdown, failed),
+            ))
         },
     );
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10))))

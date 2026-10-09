@@ -63,7 +63,7 @@ CLI/TUI 与显式 `?legacy=1` 的桌面/Web 入口仍使用以下行为，和社
 
 | 入口 | 状态 |
 | --- | --- |
-| Windows 桌面 x64 | MSVC 社交 NSIS/MSI 已构建；NSIS 覆盖升级、安装版 IPC/保存/恢复与资源检查通过，干净系统首次安装及卸载重装待验收；见 [记录](docs/social-refactor/m1-stage-validation.md) |
+| Windows 桌面 x64 | MSVC 社交 NSIS/MSI 已构建；NSIS 覆盖升级、安装版 IPC/保存/恢复与资源检查通过，见 [阶段记录](docs/social-refactor/m1-stage-validation.md)；[本机 NSIS 卸载重装](docs/windows-reinstall-2026-10-09.md)通过，干净系统与 MSI 实际安装验收仍待完成 |
 | Linux 桌面 x64 | Ubuntu 24.04 基线 deb/AppImage、包内 worker 与社交 IPC 通过；Ubuntu 26.04 GNOME 的 Wayland/XWayland/FUSE 自动检查和用户人工确认通过；见 [记录](docs/social-refactor/m1-stage-validation.md) |
 | Web | 真实社交 HTTP/SQLite 与浏览器界面通过模拟 provider 验收；保留的 Harness 另有历史真实 API 验收 |
 | CLI / TUI | 已实现，命令分别为 `llmn` / `llmnt` |
@@ -151,7 +151,7 @@ frontends/cli · frontends/tui · frontends/tauri · crates/web-server
 
 ## 接下来重点做什么
 
-1. M1 业务、界面、异常与包验证已完成，补齐干净 Windows 首次安装/卸载重装验收；工具授权按具体需求作为独立链路实施。
+1. M1 业务、界面、异常与包验证、本机 NSIS 卸载重装已完成，补齐干净 Windows 与 MSI 实际安装/卸载重装验收；工具授权按具体需求作为独立链路实施。
 2. M2 完善摘要、显式记忆和群话题接续；M3 加入有限自动接话与约定联系。
 3. 维持平台与发布基线，按对应阶段继续安装和实机验收。
 

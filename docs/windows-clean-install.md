@@ -2,6 +2,8 @@
 
 此文是待执行步骤，不代表干净系统已通过验收。先在一台已具备 Windows Sandbox 的主机，或可重置的 Windows 虚拟机中执行。当前开发机没有可启动的 Sandbox；准备脚本不会启用 Windows 功能、申请管理员权限或启动沙盒。
 
+已有开发机的 NSIS 卸载重装已通过，见 [2026-10-09 本机记录](windows-reinstall-2026-10-09.md)。该结果覆盖普通卸载、原路径重装和数据保留；以下干净环境、WebView2 缺失及 MSI 实际安装检查仍需执行。
+
 ## 准备
 
 在仓库根目录执行 `./scripts/prepare-windows-sandbox.ps1`。它将最新 NSIS 安装包、SHA-256 和本清单复制到独立的 `target/sandbox-acceptance-<id>/package`，输出 `.wsb` 路径。也可用 `-InstallerPath` 指定 MSI。双击 `.wsb` 后，文件夹会只读映射到客户系统的 `C:\LLM-Nest-Package` 并在资源管理器中打开。网络保持 Sandbox 默认行为。

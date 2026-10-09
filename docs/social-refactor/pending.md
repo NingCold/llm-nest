@@ -6,7 +6,7 @@
 
 ## M1 剩余范围
 
-- 干净 Windows 客户系统上的 NSIS / MSI 首次安装、缺少 WebView2、卸载重装及窗口基线检查；包和隔离清单已准备。阶段异常、Windows 覆盖升级与安装版退出保存、GNOME 自动/人工检查已完成，范围见 [本批记录](m1-stage-validation.md)。
+- 干净 Windows 客户系统上的 NSIS / MSI 首次安装、缺少 WebView2、卸载重装及窗口基线检查，MSI 实际安装与卸载重装尚未执行；包和隔离清单已准备。阶段异常、Windows 覆盖升级与安装版退出保存、GNOME 自动/人工检查已完成，范围见 [阶段记录](m1-stage-validation.md)。已有开发机的 NSIS 卸载重装已通过，范围见 [本机记录](../windows-reinstall-2026-10-09.md)，不替代干净系统或 MSI 验收。
 
 ## 明确工具授权独立链路
 

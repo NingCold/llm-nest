@@ -91,3 +91,5 @@ Windows 11 开发宿主使用稳定 MSVC 工具链，通过 Tauri CLI 嵌入生�
 | `LLM Nest_0.1.1-alpha.3_amd64.AppImage` | `370a2665fe8f880acc4b04dcb4d7c7b03c8dba21969fd1fc9d3f670bfec51577` |
 
 Windows 日志、最终安装版生成/恢复截图和 Linux 报告保留于 `target/`，未提交合成库、临时配置或用户远程地址。复验命令见 [发布指南](../releases.md#本地-linux-打包)；当前里程碑及下一批工作仅在 [正在推进](in-progress.md) 维护。
+
+后续独立完成的本机 NSIS 卸载重装见 [2026-10-09 重装记录](../windows-reinstall-2026-10-09.md)，不改写本阶段当时未执行该项的结论。

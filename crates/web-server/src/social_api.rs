@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use social::{ActorId, ConversationId, EventCursor, RunId, Sequence};
+use social::{ActorId, ConversationId, EventCursor, MessageId, RunId, Sequence};
 use social_feature::{SocialError, wire};
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
@@ -29,6 +29,17 @@ pub fn routes() -> Router<Arc<AppState>> {
             post(change_membership),
         )
         .route("/api/social/conversations/{id}/plans", get(plans))
+        .route(
+            "/api/social/conversations/{id}/control",
+            post(control_conversation),
+        )
+        .route(
+            "/api/social/conversations/{id}/members/participation",
+            post(pause_member),
+        )
+        .route("/api/social/messages/{id}", get(message))
+        .route("/api/social/messages/{id}/revise", post(revise_message))
+        .route("/api/social/messages/{id}/withdraw", post(withdraw_message))
         .route("/api/social/conversations/{id}", get(conversation))
         .route(
             "/api/social/conversations/{id}/messages",
@@ -73,6 +84,40 @@ async fn change_membership(
     Json(input): Json<wire::MembershipInput>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.change_membership(id, input).await?))
+}
+async fn control_conversation(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ConversationId>,
+    Json(input): Json<wire::ControlInput>,
+) -> Result<wire::Conversation> {
+    Ok(Json(s.social.control_conversation(id, input).await?))
+}
+async fn pause_member(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ConversationId>,
+    Json(input): Json<wire::PauseMemberInput>,
+) -> Result<wire::Conversation> {
+    Ok(Json(s.social.pause_member(id, input).await?))
+}
+async fn revise_message(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<MessageId>,
+    Json(input): Json<wire::ReviseInput>,
+) -> Result<wire::Message> {
+    Ok(Json(s.social.revise_message(id, input).await?))
+}
+async fn withdraw_message(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<MessageId>,
+    Json(input): Json<wire::VersionedCommand>,
+) -> Result<wire::Message> {
+    Ok(Json(s.social.withdraw_message(id, input).await?))
+}
+async fn message(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<MessageId>,
+) -> Result<wire::Message> {
+    Ok(Json(s.social.message(id).await?))
 }
 async fn plans(
     State(s): State<Arc<AppState>>,

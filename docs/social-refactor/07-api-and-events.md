@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [存储与迁移](06-storage-and-migration.md) · [界面与桌面](08-frontend-and-desktop.md)
 
-状态：完整目标契约；M1 已实现联系人/私聊/群聊 HTTP、共享 DTO 的基础 IPC 命令、持久引用回放与临时生成 SSE。完整控制/记忆契约及实时 IPC 待后续；可调用路由、字段与限制见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)，不可按目标表推断完整接口已可用。
+状态：完整目标契约；M1 已实现联系人/私聊/群聊 HTTP、共享 DTO 的基础 IPC 命令、持久引用回放与临时生成 SSE。消息修订/撤回与显式控制命令已接通；记忆契约及实时 IPC 待后续。可调用路由、字段与限制见 [私聊](m1-private-chat.md)、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)，不可按目标表推断完整接口已可用。
 
 ## 1. 共享业务入口
 

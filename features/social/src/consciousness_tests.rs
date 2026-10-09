@@ -52,6 +52,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
             conversation_id: id,
             actor_id,
             status: MembershipStatus::Active,
+            paused: false,
             revision: Counter::new(5).unwrap(),
         })
         .collect();

@@ -64,11 +64,35 @@ pub struct ReviseMessage {
     pub expected_revision: Revision,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WithdrawMessage {
+    pub message_id: MessageId,
+    pub expected_revision: Revision,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseMember {
+    pub conversation_id: ConversationId,
+    pub actor_id: ActorId,
+    pub expected_revision: Revision,
+    pub paused: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndConversation {
+    pub conversation_id: ConversationId,
+    pub expected_revision: Revision,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationControl {
     pub conversation_id: ConversationId,
     pub expected_revision: Revision,
-    pub status: EntityStatus,
-    pub paused: bool,
+    pub action: ConversationAction,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationAction {
+    Pause,
+    Resume,
+    Archive,
+    Restore,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BeginRun {
@@ -100,6 +124,7 @@ pub struct ConversationRecord {
     pub members: Vec<Membership>,
     pub latest_message: Option<SocialMessage>,
     pub active_run: Option<AiRun>,
+    pub current_bout: Option<Bout>,
     pub pending_plans: Vec<ParticipationPlan>,
 }
 
@@ -152,6 +177,24 @@ pub use events::SocialFailure as RunFailure;
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn message(&self, operator: ActorId, id: MessageId)
+    -> SocialStorageResult<SocialMessage>;
+    async fn withdraw_message(
+        &self,
+        ctx: CommandContext,
+        input: WithdrawMessage,
+    ) -> SocialStorageResult<SocialMessage>;
+    async fn pause_member(
+        &self,
+        ctx: CommandContext,
+        input: PauseMember,
+    ) -> SocialStorageResult<Conversation>;
+    async fn end_conversation(
+        &self,
+        ctx: CommandContext,
+        input: EndConversation,
+    ) -> SocialStorageResult<Conversation>;
+    async fn cancel_run(&self, operator: ActorId, id: RunId) -> SocialStorageResult<AiRun>;
     async fn send_message(
         &self,
         ctx: CommandContext,

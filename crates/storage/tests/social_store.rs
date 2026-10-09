@@ -558,6 +558,366 @@ async fn group_shared_history_removal_and_plan_failure_rollback_preserve_origina
 }
 
 #[tokio::test]
+async fn revisions_and_withdrawal_preserve_later_history_and_revoke_old_replies_atomically() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let c = f.group(vec![a.id, b.id]).await;
+    let sent = f.send_group(c.id, vec![a.id, b.id]).await;
+    let run = f.begin_plan(&sent.plans[0]).await.unwrap();
+    f.store
+        .checkpoint_run(f.human.id, run.id, MessageBody::text("saved partial"), None)
+        .await
+        .unwrap();
+    let later = f.send_group(c.id, vec![]).await.message;
+    let edit_ctx = f.ctx();
+    let edit = ReviseMessage {
+        message_id: sent.message.id,
+        body: MessageBody::text("edited source"),
+        expected_revision: sent.message.revision,
+    };
+    let revised = f
+        .store
+        .revise_message(edit_ctx.clone(), edit.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .revise_message(edit_ctx.clone(), edit.clone())
+            .await
+            .unwrap(),
+        revised
+    );
+    assert_eq!(
+        f.store.run(f.human.id, run.id).await.unwrap().status,
+        RunStatus::Interrupted
+    );
+    assert_eq!(
+        f.store
+            .message(f.human.id, run.message_id)
+            .await
+            .unwrap()
+            .body,
+        MessageBody::text("saved partial")
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == sent.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled
+    );
+    assert!(
+        f.store.revise_message(f.ctx(), edit.clone()).await.is_err(),
+        "stale edits are rejected"
+    );
+    let mut changed = edit.clone();
+    changed.body = MessageBody::text("different retry");
+    assert!(
+        f.store
+            .revise_message(edit_ctx.clone(), changed)
+            .await
+            .is_err()
+    );
+    let quoted = f
+        .store
+        .send_message(
+            f.ctx(),
+            SendMessage {
+                conversation_id: c.id,
+                body: MessageBody::text("replying to revised source"),
+                reply_to: Some(revised.id),
+                mentions: vec![a.id],
+            },
+        )
+        .await
+        .unwrap();
+    let input = WithdrawMessage {
+        message_id: revised.id,
+        expected_revision: revised.revision,
+    };
+    let ctx = f.ctx();
+    let cursor = f.store.overview(f.human.id).await.unwrap().cursor;
+    f.sql().execute_batch("CREATE TRIGGER reject_withdraw BEFORE UPDATE ON messages WHEN NEW.status='withdrawn' BEGIN SELECT RAISE(ABORT,'synthetic'); END;").unwrap();
+    assert!(
+        f.store
+            .withdraw_message(ctx.clone(), input.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        f.store.message(f.human.id, revised.id).await.unwrap(),
+        revised
+    );
+    assert_eq!(f.store.overview(f.human.id).await.unwrap().cursor, cursor);
+    f.sql()
+        .execute_batch("DROP TRIGGER reject_withdraw")
+        .unwrap();
+    let withdrawn = f
+        .store
+        .withdraw_message(ctx.clone(), input.clone())
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.status, MessageStatus::Withdrawn);
+    assert!(withdrawn.body.0.is_empty());
+    assert_eq!(
+        f.store.withdraw_message(ctx, input).await.unwrap(),
+        withdrawn
+    );
+    assert_eq!(
+        f.store.revise_message(edit_ctx, edit).await.unwrap(),
+        withdrawn,
+        "old receipts read the current placeholder"
+    );
+    let history = f
+        .store
+        .messages(f.human.id, c.id, Sequence::ZERO, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        history.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![sent.message.id, run.message_id, later.id, quoted.message.id]
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == quoted.plans[0].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled,
+        "withdrawing an explicit reply source revokes waiting replies to it"
+    );
+    let old_texts:i64=f.sql().query_row("SELECT count(*) FROM message_revisions WHERE message_id=?1 AND json_array_length(json_extract(payload,'$.body'))>0",[withdrawn.id.to_string()],|r|r.get(0)).unwrap();
+    assert_eq!(
+        old_texts, 0,
+        "withdrawn original revisions cannot revive text"
+    );
+    let material = f
+        .store
+        .context_material(
+            f.human.id,
+            ContextScope {
+                actor_id: a.id,
+                conversation_id: c.id,
+            },
+            later.id,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !material
+            .messages
+            .iter()
+            .any(|m| m.id == withdrawn.id || m.id == run.message_id)
+    );
+    assert!(
+        f.store
+            .withdraw_message(
+                f.ctx(),
+                WithdrawMessage {
+                    message_id: run.message_id,
+                    expected_revision: history[1].revision
+                }
+            )
+            .await
+            .is_err(),
+        "human cannot withdraw another sender's message"
+    );
+    f.store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn participation_controls_preserve_shared_history_and_never_revive_cancelled_plans() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let c = f.group(vec![a.id, b.id]).await;
+    let saved = f.send_group(c.id, vec![a.id, b.id]).await;
+    let run = f.begin_plan(&saved.plans[0]).await.unwrap();
+    f.store
+        .pause_member(
+            f.ctx(),
+            PauseMember {
+                conversation_id: c.id,
+                actor_id: b.id,
+                expected_revision: Revision::ONE,
+                paused: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store.run(f.human.id, run.id).await.unwrap().status,
+        RunStatus::Running,
+        "pausing B does not stop A"
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == saved.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled
+    );
+    assert!(
+        f.store
+            .context_material(
+                f.human.id,
+                ContextScope {
+                    actor_id: b.id,
+                    conversation_id: c.id
+                },
+                saved.message.id
+            )
+            .await
+            .unwrap()
+            .messages
+            .iter()
+            .any(|m| m.id == saved.message.id)
+    );
+    let cancelled = f.store.cancel_run(f.human.id, run.id).await.unwrap();
+    assert_eq!(cancelled.status, RunStatus::Cancelled);
+    assert_eq!(
+        f.store.cancel_run(f.human.id, run.id).await.unwrap(),
+        cancelled
+    );
+    let next = f.send_group(c.id, vec![b.id, a.id]).await;
+    assert_eq!(
+        next.plans.iter().map(|p| p.actor_id).collect::<Vec<_>>(),
+        vec![a.id]
+    );
+    let run2 = f.begin_plan(&next.plans[0]).await.unwrap();
+    let record = f.store.conversation_record(f.human.id, c.id).await.unwrap();
+    let old_bout = record.current_bout.unwrap().id;
+    let ctx = f.ctx();
+    let end = EndConversation {
+        conversation_id: c.id,
+        expected_revision: record.conversation.revision,
+    };
+    f.store
+        .end_conversation(ctx.clone(), end.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store.run(f.human.id, run2.id).await.unwrap().status,
+        RunStatus::Cancelled
+    );
+    f.store.end_conversation(ctx, end).await.unwrap();
+    assert!(
+        f.store
+            .conversation_record(f.human.id, c.id)
+            .await
+            .unwrap()
+            .current_bout
+            .is_none()
+    );
+    let fresh = f.send_group(c.id, vec![a.id]).await;
+    assert_ne!(
+        f.begin_plan(&fresh.plans[0]).await.unwrap().bout_id,
+        old_bout
+    );
+    let current = f.store.conversation(f.human.id, c.id).await.unwrap();
+    f.store
+        .control_conversation(
+            f.ctx(),
+            ConversationControl {
+                conversation_id: c.id,
+                expected_revision: current.revision,
+                action: ConversationAction::Pause,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(f.send_group(c.id, vec![a.id, b.id]).await.plans.is_empty());
+    let current = f.store.conversation(f.human.id, c.id).await.unwrap();
+    let archived = f
+        .store
+        .control_conversation(
+            f.ctx(),
+            ConversationControl {
+                conversation_id: c.id,
+                expected_revision: current.revision,
+                action: ConversationAction::Archive,
+            },
+        )
+        .await
+        .unwrap();
+    let restored = f
+        .store
+        .control_conversation(
+            f.ctx(),
+            ConversationControl {
+                conversation_id: c.id,
+                expected_revision: archived.revision,
+                action: ConversationAction::Restore,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        restored.paused,
+        "restoring a chat preserves participation settings"
+    );
+    f.store
+        .control_conversation(
+            f.ctx(),
+            ConversationControl {
+                conversation_id: c.id,
+                expected_revision: restored.revision,
+                action: ConversationAction::Resume,
+            },
+        )
+        .await
+        .unwrap();
+    let b_member = f
+        .store
+        .conversation_record(f.human.id, c.id)
+        .await
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.actor_id == b.id)
+        .unwrap();
+    let resumed = f
+        .store
+        .pause_member(
+            f.ctx(),
+            PauseMember {
+                conversation_id: c.id,
+                actor_id: b.id,
+                expected_revision: b_member.revision,
+                paused: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!resumed.paused);
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == saved.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled
+    );
+    assert_eq!(f.send_group(c.id, vec![a.id, b.id]).await.plans.len(), 2);
+    f.store.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn group_recovery_keeps_unstarted_plans_and_never_replays_started_runs() {
     let f = Fixture::new().await;
     let a = f.ai("A").await;
@@ -640,8 +1000,7 @@ async fn identities_direct_uniqueness_archive_restore_and_clock() {
             ConversationControl {
                 conversation_id: c.id,
                 expected_revision: c.revision,
-                status: EntityStatus::Archived,
-                paused: true,
+                action: ConversationAction::Archive,
             },
         )
         .await
@@ -668,8 +1027,7 @@ async fn identities_direct_uniqueness_archive_restore_and_clock() {
             ConversationControl {
                 conversation_id: c.id,
                 expected_revision: archived.revision,
-                status: EntityStatus::Active,
-                paused: false,
+                action: ConversationAction::Restore,
             },
         )
         .await
@@ -831,8 +1189,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
                 ConversationControl {
                     conversation_id: c.id,
                     expected_revision: current.revision,
-                    status: EntityStatus::Archived,
-                    paused: true
+                    action: ConversationAction::Archive,
                 }
             )
             .await
@@ -1007,19 +1364,21 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             .await
             .is_err()
     );
-    f.store
-        .finish_run(
-            f.ctx(),
-            FinishRun {
-                details: None,
-                run_id: run.id,
-                expected_revision: run.revision,
-                status: RunStatus::Interrupted,
-                body: MessageBody::text("draft"),
-            },
-        )
-        .await
-        .unwrap();
+    assert_eq!(
+        f.store.run(f.human.id, run.id).await.unwrap().status,
+        RunStatus::Interrupted
+    );
+    assert_eq!(
+        f.store
+            .run_details(f.human.id, run.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .error
+            .unwrap()
+            .code,
+        "context_changed"
+    );
     let run = f.begin(ai.id, c.id, vec![]).await;
     let current = f.store.conversation(f.human.id, c.id).await.unwrap();
     f.store
@@ -1028,8 +1387,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             ConversationControl {
                 conversation_id: c.id,
                 expected_revision: current.revision,
-                status: EntityStatus::Active,
-                paused: true,
+                action: ConversationAction::Pause,
             },
         )
         .await
@@ -1057,8 +1415,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             ConversationControl {
                 conversation_id: c.id,
                 expected_revision: current.revision,
-                status: EntityStatus::Active,
-                paused: false,
+                action: ConversationAction::Resume,
             },
         )
         .await

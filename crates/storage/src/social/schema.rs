@@ -10,6 +10,7 @@ const SCHEMA: &str = include_str!("schema.sql");
 const SCHEMA_V2: &str = include_str!("schema-v2.sql");
 const SCHEMA_V3: &str = include_str!("schema-v3.sql");
 const SCHEMA_V4: &str = include_str!("schema-v4.sql");
+const SCHEMA_V5: &str = include_str!("schema-v5.sql");
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -75,10 +76,10 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| sql_error(path, e))?;
-    if !(0..=4).contains(&version) {
+    if !(0..=5).contains(&version) {
         return Err(Error::Schema {
             path: path.to_owned(),
-            detail: format!("unsupported version {version}; expected 0..=4"),
+            detail: format!("unsupported version {version}; expected 0..=5"),
         });
     }
     let tables: i64 = connection
@@ -108,6 +109,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
             (2, migration_digest(SCHEMA_V2)),
             (3, migration_digest(SCHEMA_V3)),
             (4, migration_digest(SCHEMA_V4)),
+            (5, migration_digest(SCHEMA_V5)),
         ];
         if ledger != expected[..version as usize] {
             return Err(Error::Schema {
@@ -124,7 +126,12 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         backup(&connection, &backup_path)?;
         apply_initial_migration(&mut connection, path, now, SCHEMA)?;
     }
-    for (next, script) in [(2, SCHEMA_V2), (3, SCHEMA_V3), (4, SCHEMA_V4)] {
+    for (next, script) in [
+        (2, SCHEMA_V2),
+        (3, SCHEMA_V3),
+        (4, SCHEMA_V4),
+        (5, SCHEMA_V5),
+    ] {
         if version >= next {
             continue;
         }
@@ -211,7 +218,7 @@ mod tests {
             current
                 .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             current
@@ -224,7 +231,7 @@ mod tests {
             current
                 .query_row::<i64, _, _>("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap(),
-            4
+            5
         );
         let backup_path = std::fs::read_dir(dir.path())
             .unwrap()

@@ -1,6 +1,6 @@
 //! The same business DTOs and feature methods as the HTTP adapter.
 use crate::BackendState;
-use social::{ActorId, ConversationId, EventCursor, RunId, Sequence};
+use social::{ActorId, ConversationId, EventCursor, MessageId, RunId, Sequence};
 use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
@@ -150,4 +150,68 @@ pub async fn social_cancel_run(state: tauri::State<'_, BackendState>, id: RunId)
         .cancel_run(id)
         .await
         .map_err(|e: SocialError| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_control_conversation(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::ControlInput,
+) -> Result<wire::Conversation> {
+    feature(state)
+        .await?
+        .control_conversation(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_pause_member(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::PauseMemberInput,
+) -> Result<wire::Conversation> {
+    feature(state)
+        .await?
+        .pause_member(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_revise_message(
+    state: tauri::State<'_, BackendState>,
+    id: MessageId,
+    input: wire::ReviseInput,
+) -> Result<wire::Message> {
+    feature(state)
+        .await?
+        .revise_message(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_withdraw_message(
+    state: tauri::State<'_, BackendState>,
+    id: MessageId,
+    input: wire::VersionedCommand,
+) -> Result<wire::Message> {
+    feature(state)
+        .await?
+        .withdraw_message(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_message(
+    state: tauri::State<'_, BackendState>,
+    id: MessageId,
+) -> Result<wire::Message> {
+    feature(state)
+        .await?
+        .message(id)
+        .await
+        .map_err(|e| e.wire())
 }

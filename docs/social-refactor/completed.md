@@ -35,3 +35,9 @@ Windows/Linux 各 193 项相关 Rust 测试、模拟 HTTP、前端回归/构建�
 已有 Harness 的协议、配置、工具进程、旧历史与平台基线继续保留；当前保留哪些入口见 [AGENTS](../../AGENTS.md)。
 
 群历史简化已完成：所有当前成员共享完整本群历史，包括加入前的记录；移除成员历史起点与界面选项，v3 → v4 先备份再迁移。Windows MSVC/Linux 各 41 项相关 Rust 测试、Windows 模拟 HTTP 验收、strict clippy、前端类型检查/回归/构建通过。
+
+## M1 第三批：消息修订与交谈控制
+
+真实 Web 的真人消息编辑/撤回、单次停止、成员/窗口暂停、结束交谈及归档/恢复已完成。修订保留后续历史，撤回清空旧修订内容并留下占位；来源变化原子中断依赖运行，恢复不重放已取消计划。HTTP 与基础 IPC 命令复用同一业务方法，桌面社交界面与实时 IPC 仍待下一批。
+
+Windows MSVC/Linux 各 43 项相关 Rust 测试、Windows 模拟 HTTP、业务 strict clippy、前端类型检查/回归/构建、Chrome 实际操作和 Tauri 命令编译通过。完整范围、接口、验证与限制见[本批记录](m1-message-controls.md)。

@@ -1,17 +1,24 @@
-import type { Binding, Change, Contact, Conversation, LiveEvent, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
+import type { Binding, Change, Contact, ControlAction, Conversation, LiveEvent, Message, VersionedCommand, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
+
+export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const headers = new Headers({ "X-LLMN-Client": "1" })
   if (body !== undefined) headers.set("Content-Type", "application/json")
   const response = await fetch(`/api/social${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) })
   if (!response.ok) {
-    const error = response.headers.get("content-type")?.includes("application/json") ? await response.json() as { message: string } : { message: `请求失败（${response.status}）` }
-    throw new Error(error.message)
+    const error = response.headers.get("content-type")?.includes("application/json") ? await response.json() as { message: string; code?: string } : { code: "http_error", message: `请求失败（${response.status}）` }
+    throw new SocialApiError(error.message, error.code ?? "http_error")
   }
   return response.status === 204 ? undefined as T : await response.json() as T
 }
 
 export const socialClient = {
+  message: (id: string) => request<Message>(`/messages/${id}`),
+  revise: (id: string, input: VersionedCommand & { text: string }) => request<Message>(`/messages/${id}/revise`, "POST", input),
+  withdraw: (id: string, input: VersionedCommand) => request<Message>(`/messages/${id}/withdraw`, "POST", input),
+  control: (id: string, input: VersionedCommand & { action: ControlAction }) => request<Conversation>(`/conversations/${id}/control`, "POST", input),
+  pauseMember: (id: string, input: VersionedCommand & { actorId: string; paused: boolean }) => request<Conversation>(`/conversations/${id}/members/participation`, "POST", input),
   createGroup: (input: { requestId: string; title: string; memberIds: string[] }) => request<string>("/groups", "POST", input),
   changeMembership: (id: string, input: { requestId: string; actorId: string; expectedRevision: string; action: "add" | "remove" }) => request<Conversation>(`/conversations/${id}/members`, "POST", input),
   plans: (id: string) => request<ParticipationPlan[]>(`/conversations/${id}/plans`),

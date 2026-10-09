@@ -21,6 +21,8 @@ interface SocialState {
   refresh(): Promise<void>
   loadHistory(id: string, older?: boolean): Promise<void>
   loadDetails(id: string): Promise<void>
+  loadMessage(id: string): Promise<void>
+  applyMessage(message: Message): void
   updateDraft(id: string, text: string): void
   targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
@@ -31,6 +33,7 @@ interface SocialState {
 let initialization: Promise<void> | null = null
 let connection: AbortController | null = null
 let cursor = "0"
+let historyGeneration = 0
 
 export const useLiveSocialStore = create<SocialState>((set, get) => ({
   snapshot: null, loading: false, error: null, connectionError: null, connected: false,
@@ -54,10 +57,12 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     if (!get().snapshot || BigInt(snapshot.cursor) >= BigInt(get().snapshot!.cursor)) set({ snapshot })
   },
   async loadHistory(id, older = false) {
+    const generation = historyGeneration
     const previous = get().histories[id] ?? []
     set({ loadingHistory: { ...get().loadingHistory, [id]: true } })
     try {
     const page = await socialClient.messages(id, older ? previous[0]?.sequence : undefined)
+    if (generation !== historyGeneration) return
     const messages = new Map((get().histories[id] ?? []).map(m => [m.id, m]))
     for (const message of page.messages) {
       const current = messages.get(message.id)
@@ -70,6 +75,20 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     set({ histories: { ...get().histories, [id]: history }, generations,
       hasMore: { ...get().hasMore, [id]: older || get().hasMore[id] === undefined ? page.hasMore : get().hasMore[id] } })
     } finally { set({ loadingHistory: { ...get().loadingHistory, [id]: false } }) }
+  },
+  async loadMessage(id) {
+    const generation = historyGeneration
+    const message = await socialClient.message(id)
+    if (generation === historyGeneration) get().applyMessage(message)
+  },
+  applyMessage(message) {
+    const previous = get().histories[message.conversationId] ?? []
+    const current = previous.find(m => m.id === message.id)
+    if (current && (BigInt(current.revision) > BigInt(message.revision) || (current.revision === message.revision && message.status === "generating" && current.text.length > message.text.length))) return
+    const messages = previous.filter(m => m.id !== message.id).concat(message).sort((a, b) => BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1)
+    const generations = { ...get().generations }
+    if (message.status !== "generating") delete generations[message.id]
+    set({ histories: { ...get().histories, [message.conversationId]: messages }, generations })
   },
   async loadDetails(id) {
     const details = await socialClient.runDetails(id)
@@ -91,6 +110,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     if (get().sending[id]) return
     const draft = get().drafts[id] ?? emptyDraft()
     if (!draft.text.trim()) return
+    const generation = historyGeneration
     const requestId = draft.requestId ?? crypto.randomUUID()
     set({ sending: { ...get().sending, [id]: true }, drafts: { ...get().drafts, [id]: { ...draft, requestId } }, error: null })
     try {
@@ -104,7 +124,8 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
       }
       // The acknowledgement is already committed; a subsequent refresh error must not undo it.
       const messages = get().histories[id] ?? []
-      if (!messages.some(m => m.id === receipt.message.id)) set({ histories: { ...get().histories, [id]: [...messages, receipt.message] } })
+      if (generation !== historyGeneration) await get().loadMessage(receipt.message.id)
+      else if (!messages.some(m => m.id === receipt.message.id)) get().applyMessage(receipt.message)
       if (receipt.executionNotice) set({ error: receipt.executionNotice.message })
       await get().refresh()
     } catch (error) { set({ error: String(error) }) }
@@ -121,7 +142,10 @@ async function applyChange(event: Change) {
   if (BigInt(event.cursor) <= BigInt(cursor)) return
   const store = useLiveSocialStore.getState()
   await store.refresh()
-  if (event.change.conversationId && store.histories[event.change.conversationId]) await store.loadHistory(event.change.conversationId)
+  if (event.change.conversationId && store.histories[event.change.conversationId]) {
+    if (event.change.messageId) await store.loadMessage(event.change.messageId)
+    else await store.loadHistory(event.change.conversationId)
+  }
   if (event.change.runId) await store.loadDetails(event.change.runId)
   cursor = event.cursor
 }
@@ -154,9 +178,11 @@ function startSubscription() {
       try {
         await subscribe(cursor, signal, applyChange, applyLive, async () => {
           const store = useLiveSocialStore.getState()
-          useLiveSocialStore.setState({ generations: {} })
+          const ids = Object.keys(store.histories)
+          historyGeneration++
+          useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {} })
           await store.refresh()
-          for (const id of Object.keys(store.histories)) await store.loadHistory(id)
+          for (const id of ids) await store.loadHistory(id)
         }, () => useLiveSocialStore.setState({ connected: true, connectionError: null }))
       } catch (error) {
         if (signal.aborted) return

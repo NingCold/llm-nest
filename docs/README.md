@@ -12,7 +12,7 @@
 
 ## 社交转型设计与实现
 
-首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。软件管理的上下文、摘要、记忆、召回与遗忘统一称为“意识系统（Consciousness）”。U0/M0 与 M1 [真实私聊](social-refactor/m1-private-chat.md)、[群聊及持久队列](social-refactor/m1-group-chat.md)已实现，普通 Web 已接入 SQLite、模型执行与近期上下文；消息修订、完整控制和意识系统完善仍待后续。[独立模拟预览](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)继续保留。以下专项文档主要描述完整目标，按 [TODO](social-refactor/TODO.md) 实施。
+首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。软件管理的上下文、摘要、记忆、召回与遗忘统一称为“意识系统（Consciousness）”。U0/M0 与 M1 [真实私聊](social-refactor/m1-private-chat.md)、[群聊及持久队列](social-refactor/m1-group-chat.md)与[消息修订/交谈控制](social-refactor/m1-message-controls.md)已实现，普通 Web 已接入 SQLite、模型执行与近期上下文；桌面实时 IPC、双适配验收和意识系统完善仍待后续。[独立模拟预览](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)继续保留。以下专项文档主要描述完整目标，按 [TODO](social-refactor/TODO.md) 实施。
 
 | 文档 | 负责内容 |
 | --- | --- |

@@ -15,7 +15,7 @@ function harness() {
   const values = new Map([['llm-nest-social-preview-drafts-v1', JSON.stringify({ chat:{ text:'preview-only' } })]]);
   const storage = { getItem:key=>values.get(key)??null, setItem:(key,value)=>values.set(key,value) };
   let handlers;
-  const api = { init:async()=>snapshot('0'), messages:async()=>({ messages:[],hasMore:false }),runDetails:async()=>null,send:async(_,input)=>({ message:message(input.text),executionNotice:null }) };
+  const api = { init:async()=>snapshot('0'), messages:async()=>({ messages:[],hasMore:false }),message:async()=>message(""),runDetails:async()=>null,send:async(_,input)=>({ message:message(input.text),executionNotice:null }) };
   const exports={};
   vm.runInNewContext(compile('live-store'), {
     exports,require:spec=> {
@@ -73,7 +73,7 @@ function harness() {
   h.api.init=async()=>snapshot('2');
 
   let reads=0;
-  h.api.messages=async()=> { reads++; if(reads===1)throw new Error('state reload failed'); return { messages:[message('final','2')],hasMore:false }; };
+  h.api.message=async()=> { reads++; if(reads===1)throw new Error('state reload failed'); return message('final','2'); };
   const event={ cursor:'2',change:{ kind:'message_changed',conversationId:'chat',messageId:'message',revision:'2' } };
   await assert.rejects(h.handlers().change(event),/state reload failed/);
   await h.handlers().change(event);
@@ -82,6 +82,26 @@ function harness() {
   h.api.messages=async()=>({ messages:[message('stale','1','generating')],hasMore:false });
   await h.store.getState().loadHistory('chat');
   assert.equal(h.store.getState().histories.chat[0].status,'committed','late drafts cannot overwrite the final message');
+  const older = { ...message('old text'), id:'older', sequence:'1' };
+  h.store.setState({ histories: { ...h.store.getState().histories, chat:[older, { ...message('latest'),id:'latest',sequence:'301' }] } });
+  h.api.message=async()=>({ ...older, text:'', revision:'2', status:'withdrawn' });
+  await h.handlers().change({ cursor:'3',change:{ kind:'message_changed',conversationId:'chat',messageId:'older',revision:'2' } });
+  assert.equal(h.store.getState().histories.chat[0].text,'','older loaded messages are refreshed by ID beyond the latest page');
+  assert.equal(h.store.getState().histories.chat[0].status,'withdrawn');
+  assert.equal(h.store.getState().histories.chat[1].id,'latest','revision updates preserve subsequent history');
+  h.store.getState().applyMessage(older);
+  assert.equal(h.store.getState().histories.chat[0].status,'withdrawn','late acknowledgements cannot revive withdrawn content');
+  const staleHistory = defer();
+  h.api.messages=()=>staleHistory.promise;
+  const staleRead=h.store.getState().loadHistory('chat',true);
+  h.api.init=async()=>snapshot('3');
+  h.api.messages=async()=>({ messages:[{ ...message('latest'),id:'latest',sequence:'301' }],hasMore:true });
+  await h.handlers().resync();
+  staleHistory.resolve({ messages:[older],hasMore:false }); await staleRead;
+  assert.equal(h.store.getState().histories.chat.length,1,'resync discards old loaded pages and pre-resync read responses');
+  assert.equal(h.store.getState().histories.chat[0].id,'latest');
+
+
 
   const live=(deltaSeq,text)=>({ type:'generation.delta',conversationId:'other',runId:'run',messageId:'live-message',actorId:'ai',deltaSeq,text });
   h.handlers().live(live(7,'gap')); assert.equal(h.store.getState().generations['live-message'],undefined);
@@ -101,5 +121,5 @@ function harness() {
   await assert.rejects(exports.subscribe('0',new AbortController().signal,async e=>{ await Promise.resolve(); applied.push(e.cursor); },e=>applied.push(e.text),async()=>applied.push('resync'),()=>{}),/消息订阅已断开/);
   assert.deepEqual(applied,['9007199254740993','你好🙂','resync']);
   assert.equal(requestHeaders.get('X-LLMN-Client'),'1');
-  console.log('PASS: live social structured mentions/replies, retry identity, committed acknowledgements, independent drafts, cursor application, terminal revisions, incomplete stream resync, Unicode SSE and local headers');
+  console.log('PASS: live social structured mentions/replies, retry identity, committed acknowledgements, independent drafts, cursor application, terminal revisions, older message refresh/withdrawal, stale-page resync, Unicode SSE and local headers');
 })().catch(error=> { console.error(error);process.exitCode=1; });

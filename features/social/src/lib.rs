@@ -1,4 +1,5 @@
 mod consciousness;
+mod controls;
 mod execution;
 mod feature;
 pub mod wire;

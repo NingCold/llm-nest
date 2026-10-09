@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [API 与事件](07-api-and-events.md) · [运行时与配置](09-runtime-and-configuration.md)
 
-状态：U0 模拟预览及 M1 真实 Web 私聊/群聊已实现；群创建、成员管理与共享群历史、@ / 回复与队列见 [群聊说明](m1-group-chat.md)。以下编号章节描述完整目标。Tauri 界面切换和实时 IPC 仍待后续，React 源码只维护在 `frontends/web`。
+状态：U0 模拟预览及 M1 真实 Web 私聊/群聊已实现；群创建、成员管理与共享群历史、@ / 回复与队列见 [群聊说明](m1-group-chat.md)，编辑/撤回和交谈控制见 [本批记录](m1-message-controls.md)。以下编号章节描述完整目标。Tauri 界面切换和实时 IPC 仍待后续，React 源码只维护在 `frontends/web`。
 
 ## 当前真实 Web 私聊
 

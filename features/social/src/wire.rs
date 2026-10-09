@@ -128,6 +128,7 @@ pub struct Conversation {
     pub legacy: bool,
     pub latest_message: Option<Message>,
     pub active_run: Option<Run>,
+    pub current_bout: Option<Bout>,
 }
 impl From<ConversationRecord> for Conversation {
     fn from(c: ConversationRecord) -> Self {
@@ -145,20 +146,77 @@ impl From<ConversationRecord> for Conversation {
             legacy: c.conversation.legacy,
             latest_message: c.latest_message.map(Into::into),
             active_run: c.active_run.map(Into::into),
+            current_bout: c.current_bout.map(Into::into),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Bout {
+    pub id: BoutId,
+    pub status: BoutStatus,
+    pub revision: Revision,
+}
+impl From<social::Bout> for Bout {
+    fn from(b: social::Bout) -> Self {
+        Self {
+            id: b.id,
+            status: b.status,
+            revision: b.revision,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviseInput {
+    pub request_id: CommandId,
+    pub expected_revision: Revision,
+    pub text: String,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionedCommand {
+    pub request_id: CommandId,
+    pub expected_revision: Revision,
+}
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlAction {
+    Pause,
+    Resume,
+    Archive,
+    Restore,
+    End,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlInput {
+    pub request_id: CommandId,
+    pub expected_revision: Revision,
+    pub action: ControlAction,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseMemberInput {
+    pub request_id: CommandId,
+    pub actor_id: ActorId,
+    pub expected_revision: Revision,
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
     pub actor_id: ActorId,
+    pub paused: bool,
     pub revision: Revision,
 }
 impl From<Membership> for Member {
     fn from(m: Membership) -> Self {
         Self {
             actor_id: m.actor_id,
+            paused: m.paused,
             revision: m.revision,
         }
     }

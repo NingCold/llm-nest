@@ -18,7 +18,7 @@ LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已�
 
 **当前处于开发预览阶段。** 聊天、设置、持久化和内置工具循环已经落地；通用编码代理、MCP、知识库和工作流编排尚未实现。
 
-**M1 真实私聊与群聊批次已接通。** 每个 AI 与你保持唯一长期私聊，每个群有独立窗口和完整 SQLite 历史。群内通过 @ 选择或回复 AI 安排接话，多个 AI 按持久队列回复，各自使用原有身份和模型。意识系统（Consciousness）准备当前窗口的近期上下文；未配置模型仍可保存真人消息，生成期间可继续输入。所有当前群成员共享完整群历史，包括加入前的记录，重启保留中断片段并继续尚未开始的计划。完整修订/交谈控制、摘要、长期记忆和群话题接续待后续。[私聊](docs/social-refactor/m1-private-chat.md)与[群聊实现记录](docs/social-refactor/m1-group-chat.md)说明实际范围；[独立模拟预览](#社交-web-交互预览)继续保留。目标见 [总纲](docs/social-refactor/README.md)，进度见 [TODO](docs/social-refactor/TODO.md)，下表描述保留的 Harness 功能。
+**M1 真实私聊与群聊批次已接通。** 每个 AI 与你保持唯一长期私聊，每个群有独立窗口和完整 SQLite 历史。群内通过 @ 选择或回复 AI 安排接话，多个 AI 按持久队列回复，各自使用原有身份和模型。意识系统（Consciousness）准备当前窗口的近期上下文；未配置模型仍可保存真人消息，生成期间可继续输入。所有当前群成员共享完整群历史，包括加入前的记录，重启保留中断片段并继续尚未开始的计划。编辑/撤回保留后续历史，支持单次停止、成员/窗口暂停、结束交谈与归档/恢复。摘要、长期记忆和群话题接续待后续。[私聊](docs/social-refactor/m1-private-chat.md)、[群聊](docs/social-refactor/m1-group-chat.md)与[消息/控制实现记录](docs/social-refactor/m1-message-controls.md)说明实际范围；[独立模拟预览](#社交-web-交互预览)继续保留。目标见 [总纲](docs/social-refactor/README.md)，进度见 [TODO](docs/social-refactor/TODO.md)，下表描述保留的 Harness 功能。
 
 ## 为什么做 LLM Nest
 
@@ -139,7 +139,7 @@ frontends/cli · frontends/tui · frontends/tauri · crates/web-server
 ## 接下来重点做什么
 
 1. 接通独立群聊、成员和多 AI @ 队列，继续完成 M1。
-2. 补齐消息修订、暂停/结束和桌面实时接入，再完善意识系统与参与节奏。
+2. 补齐桌面实时接入与双适配验收，再完善意识系统与参与节奏。
 3. 维持平台与发布基线，按对应阶段继续安装和实机验收。
 
 欢迎提供具体任务和复现步骤：你当时想做什么、选了什么模型、期望和实际结果分别是什么。请勿在 Issue、日志或截图中附带 API Key。

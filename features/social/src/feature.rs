@@ -334,12 +334,8 @@ impl SocialFeature {
     }
     pub async fn cancel_run(&self, id: RunId) -> Result<()> {
         let s = self.services()?;
-        let run = s.resources.store.run(s.human, id).await?;
-        if run.status == RunStatus::Running
-            && let Some(cancel) = self.cancellations.lock().await.get(&id)
-        {
-            cancel.cancel();
-        }
+        s.resources.store.cancel_run(s.human, id).await?;
+        self.stop_terminal_executions().await?;
         Ok(())
     }
 }

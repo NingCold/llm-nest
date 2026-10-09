@@ -1,4 +1,5 @@
 //! Social persistence, independent of runtime and frontend transports.
+mod controls;
 mod error;
 mod legacy;
 mod participation;

@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [身份与关系](01-identity-and-relationships.md) · [API 与事件](07-api-and-events.md)
 
-状态：完整目标设计；M1 已实现唯一长期私聊、独立群、成员管理与共享群历史、结构化 @ 与回复、真人文本发送、多 AI 队列和分页历史。修订与完整交谈控制仍待后续，当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
+状态：完整目标设计；M1 已实现唯一长期私聊、独立群、成员管理与共享群历史、结构化 @ 与回复、真人文本发送、多 AI 队列和分页历史。修订/撤回、成员/窗口暂停、结束交谈与归档/恢复已接通，当前范围见 [私聊](m1-private-chat.md) 、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)。
 
 ## 1. 职责
 

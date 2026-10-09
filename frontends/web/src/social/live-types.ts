@@ -11,9 +11,9 @@ export interface Run { id: string; conversationId: string; actorId: string; mess
 export interface Conversation {
   id: string; kind: "direct" | "group"; title: string; memberIds: string[]; status: "active" | "archived"
   paused: boolean; revision: string; lastSequence: string; legacy: boolean; latestMessage: Message | null; activeRun: Run | null
-  members: Membership[]; pendingPlans: ParticipationPlan[]
+  members: Membership[]; pendingPlans: ParticipationPlan[]; currentBout: { id: string; status: "open" | "ended"; revision: string } | null
 }
-export interface Membership { actorId: string; revision: string }
+export interface Membership { actorId: string; paused: boolean; revision: string }
 export interface ParticipationPlan { id: string; actorId: string; triggerId: string; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
 export interface Snapshot { selfId: string; selfName: string; contacts: Contact[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
 export interface Failure { code: string; message: string }
@@ -28,3 +28,6 @@ export interface MessagePage { messages: Message[]; hasMore: boolean }
 export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; runId?: string; actorId?: string; revision: string } }
 export type LiveEvent = { type: "execution.notice"; conversationId: string; error: Failure }
   | { type: "generation.delta" | "generation.reasoning_delta"; conversationId: string; runId: string; messageId: string; actorId: string; deltaSeq: number; text: string }
+
+export type ControlAction = "pause" | "resume" | "archive" | "restore" | "end"
+export interface VersionedCommand { requestId: string; expectedRevision: string }

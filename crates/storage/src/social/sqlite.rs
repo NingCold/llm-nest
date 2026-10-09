@@ -384,10 +384,11 @@ impl Db<'_> {
                 conversation_id: c.id,
                 actor_id: *actor,
                 status: MembershipStatus::Active,
+                paused: false,
                 revision: Revision::ONE,
             };
             self.execute(
-                "INSERT INTO memberships VALUES(?1,?2,'active',1,?3)",
+                "INSERT INTO memberships(conversation_id,actor_id,status,revision,payload) VALUES(?1,?2,'active',1,?3)",
                 params![
                     c.id.to_string(),
                     actor.to_string(),
@@ -653,8 +654,8 @@ impl Db<'_> {
         }
         self.writable(&c)?;
         self.member(operator, c.id)?;
-        self.member(ai.id, c.id)?;
-        if c.paused || c.participation_epoch != snapshot.participation_epoch {
+        let membership = self.member(ai.id, c.id)?;
+        if membership.paused || c.paused || c.participation_epoch != snapshot.participation_epoch {
             return Err(Error::Conflict("participation changed or paused".into()));
         }
         let profiles: Vec<AiProfile> = self.query_json(
@@ -749,6 +750,51 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn message(&self, operator: ActorId, id: MessageId) -> Result<SocialMessage> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.operator(operator)?;
+                let m: SocialMessage = db.get("messages", id)?;
+                db.member(operator, m.conversation_id)?;
+                Ok(m)
+            })
+        })
+        .await
+    }
+    async fn withdraw_message(
+        &self,
+        ctx: CommandContext,
+        input: WithdrawMessage,
+    ) -> Result<SocialMessage> {
+        self.call(move |w| w.transact(|db| db.withdraw_message(&ctx, &input)))
+            .await
+    }
+    async fn pause_member(&self, ctx: CommandContext, input: PauseMember) -> Result<Conversation> {
+        self.call(move |w| w.transact(|db| db.pause_member(&ctx, &input)))
+            .await
+    }
+    async fn end_conversation(
+        &self,
+        ctx: CommandContext,
+        input: EndConversation,
+    ) -> Result<Conversation> {
+        self.call(move |w| w.transact(|db| db.end_conversation(&ctx, &input)))
+            .await
+    }
+    async fn cancel_run(&self, operator: ActorId, id: RunId) -> Result<AiRun> {
+        self.call(move |w| {
+            w.transact(|db| {
+                let run = db.authorized_run(operator, id)?;
+                if run.status.is_terminal() {
+                    Ok(run)
+                } else {
+                    db.terminate(run, RunStatus::Cancelled, None)
+                }
+            })
+        })
+        .await
+    }
+
     async fn send_message(&self, ctx: CommandContext, input: SendMessage) -> Result<SavedMessage> {
         self.call(move |w| w.transact(|db| db.send_message(&ctx, &input)))
             .await
@@ -1112,6 +1158,8 @@ impl SocialStore for SqliteSocialStore {
                 c.context_epoch = c.context_epoch.next()?;
                 c.revision = c.revision.next()?;
                 db.update_message(&m, ctx.operator)?;
+                db.invalidate_context(c.id)?;
+                db.cancel_trigger_plans(m.id)?;
                 db.save_conversation(&c)?;
                 db.save_receipt(&ctx, "revise_message", &input, m.id)?;
                 Ok(m)
@@ -1139,8 +1187,18 @@ impl SocialStore for SqliteSocialStore {
                     ));
                 }
                 db.expected(c.revision, input.expected_revision)?;
-                c.status = input.status;
-                c.paused = input.paused;
+                match input.action {
+                    ConversationAction::Pause => {
+                        db.writable(&c)?;
+                        c.paused = true;
+                    }
+                    ConversationAction::Resume => {
+                        db.writable(&c)?;
+                        c.paused = false;
+                    }
+                    ConversationAction::Archive => c.status = EntityStatus::Archived,
+                    ConversationAction::Restore => c.status = EntityStatus::Active,
+                }
                 c.revision = c.revision.next()?;
                 c.participation_epoch = c.participation_epoch.next()?;
                 if c.paused || c.status == EntityStatus::Archived {
@@ -1264,19 +1322,7 @@ impl SocialStore for SqliteSocialStore {
                 let mut bout: Bout = db.get("bouts", bout_id)?;
                 db.member(ctx.operator, bout.conversation_id)?;
                 db.expected(bout.revision, expected_revision)?;
-                bout.status = BoutStatus::Ended;
-                bout.revision = bout.revision.next()?;
-                db.cancel_runs(bout.conversation_id, RunStatus::Cancelled)?;
-                db.cancel_queued(bout.conversation_id, None)?;
-                db.execute(
-                    "UPDATE bouts SET status='ended',payload=?2 WHERE id=?1",
-                    params![bout.id.to_string(), serde_json::to_string(&bout)?],
-                )?;
-                db.event(SocialChange::BoutChanged {
-                    conversation_id: bout.conversation_id,
-                    bout_id,
-                    revision: bout.revision,
-                })?;
+                bout = db.close_bout(bout)?;
                 db.save_receipt(&ctx, "end_bout", &input, bout_id)?;
                 Ok(bout)
             })

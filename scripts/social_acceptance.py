@@ -328,6 +328,63 @@ def main():
         settled(scoped)
         assert any('shared-before-join' in str(m) for m in calls_for('visible-after-rejoin')[0]['messages'])
 
+        # Revisions retain following messages; withdrawal and controls commit before returning.
+        controls = group('Conversation controls', [alice, bob])
+        original = send(controls, 'slow-edit-source', mentions=[bob['id'], alice['id']])['message']
+        old_run = wait_for(lambda: api(f'/conversations/{controls}')['activeRun'])
+        following = send(controls, 'following-message')['message']
+        edit = {'requestId': str(uuid.uuid4()), 'expectedRevision': original['revision'], 'text': 'edited-source'}
+        revised = api(f"/messages/{original['id']}/revise", 'POST', edit)
+        assert revised['id'] == original['id'] and revised['text'] == 'edited-source'
+        assert api(f"/messages/{original['id']}/revise", 'POST', edit) == revised
+        settled(controls)
+        assert next(p for p in plans(controls) if p['runId'] == old_run['id'])['status'] == 'interrupted'
+        assert [p['status'] for p in plans(controls) if p['triggerId'] == original['id'] and p['actorId'] == alice['id']] == ['cancelled']
+        assert any(m['id'] == following['id'] for m in history(controls))
+        assert api(f"/runs/{old_run['id']}")['error']['code'] == 'context_changed'
+        withdraw = {'requestId': str(uuid.uuid4()), 'expectedRevision': revised['revision']}
+        withdrawn = api(f"/messages/{original['id']}/withdraw", 'POST', withdraw)
+        assert withdrawn['status'] == 'withdrawn' and withdrawn['text'] == ''
+        assert api(f"/messages/{original['id']}/revise", 'POST', edit) == withdrawn
+        assert api(f"/messages/{original['id']}") == withdrawn
+        def control(action):
+            current = api(f'/conversations/{controls}')
+            return api(f'/conversations/{controls}/control', 'POST', {'requestId': str(uuid.uuid4()), 'expectedRevision': current['revision'], 'action': action})
+        def pause_member(actor, paused):
+            current = api(f'/conversations/{controls}')
+            membership = next(m for m in current['members'] if m['actorId'] == actor['id'])
+            return api(f'/conversations/{controls}/members/participation', 'POST', {'requestId': str(uuid.uuid4()), 'expectedRevision': membership['revision'], 'actorId': actor['id'], 'paused': paused})
+        pause_member(bob, True)
+        shared = send(controls, 'member-paused', mentions=[bob['id'], alice['id']])['message']
+        settled(controls)
+        assert provider_count('member-paused') == 1 and 'persona-Alice-v2' in calls_for('member-paused')[0]['messages'][0]['content']
+        assert all('slow-edit-source' not in str(m) and 'edited-source' not in str(m) for m in calls_for('member-paused')[0]['messages'])
+        control('pause')
+        paused_msg = send(controls, 'space-paused', mentions=[alice['id']])
+        assert paused_msg['executionNotice']['code'] == 'paused'
+        assert not any(p['triggerId'] == paused_msg['message']['id'] for p in plans(controls))
+        archived = control('archive')
+        assert archived['status'] == 'archived'
+        try:
+            send(controls, 'cannot-send-to-archive')
+            raise AssertionError('archived chat accepted a message')
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+        assert control('restore')['paused']
+        control('resume')
+        assert provider_count('space-paused') == 0
+        pause_member(bob, False)
+        ending = send(controls, 'slow-end-bout', mentions=[bob['id'], alice['id']])['message']
+        active = wait_for(lambda: api(f'/conversations/{controls}')['activeRun'])
+        previous_bout = api(f'/conversations/{controls}')['currentBout']['id']
+        ended = control('end')
+        assert ended['currentBout'] is None and ended['activeRun'] is None and not ended['pendingPlans']
+        assert all(p['status'] == 'cancelled' for p in plans(controls) if p['triggerId'] == ending['id'])
+        send(controls, 'new-bout', mentions=[bob['id']]); settled(controls)
+        assert api(f'/conversations/{controls}')['currentBout']['id'] != previous_bout
+        assert any('following-message' in str(m) for m in calls_for('new-bout')[0]['messages'])
+        print('PASS: revisions/withdrawal retain history, revoke old replies, preserve receipts; per-member pause, space pause/archive/restore and independent Bout ending', flush=True)
+
         # Crash recovery never resends the started response; untouched queue entries resume.
         recovery_group = group('Recovery group', [alice, bob])
         trigger = send(recovery_group, 'crash', mentions=[bob['id'], alice['id']])

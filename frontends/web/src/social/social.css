@@ -391,3 +391,18 @@
 .live-plan-history summary { cursor:pointer; }
 .live-plan-history p { margin-top:10px; }
 .live-plan-history small { display:block; opacity:.7; }
+
+.live-conversation-controls { margin: 20px 0; padding: 16px; border: 1px solid var(--s-line); border-radius: 12px; }
+.live-conversation-controls h3 { margin: 0 0 8px; }
+.live-conversation-controls p { color: var(--s-muted); font-size: 12px; line-height: 1.7; }
+.live-control-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-member-participation { flex-shrink: 0; font-size: 11px; color: var(--s-accent); padding: 6px; }
+.live-message-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; color: var(--s-muted); font-size: 11px; }
+.live-message-actions button, .live-message-editor button { display: inline-flex; align-items: center; gap: 4px; }
+.live-message-actions svg, .live-message-editor svg { width: 12px; height: 12px; }
+.live-message-editor, .live-withdraw-confirm { margin-top: 10px; padding: 12px; border: 1px solid var(--s-line); border-radius: 10px; background: var(--s-panel); }
+.live-message-editor textarea { width: 100%; resize: vertical; color: var(--s-text); background: var(--s-bg); padding: 10px; border: 1px solid var(--s-line); border-radius: 8px; }
+.live-message-editor p, .live-withdraw-confirm p { font-size: 11px; color: var(--s-muted); line-height: 1.7; }
+.live-message-editor div, .live-withdraw-confirm { display: flex; flex-wrap: wrap; gap: 12px; }
+.live-withdraw-confirm p { width: 100%; margin: 0; }
+.live-message-editor button, .live-withdraw-confirm button { color: var(--s-accent); font-size: 12px; }

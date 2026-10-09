@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
-状态：完整目标设计；M1 已实现近期原文、角色设定、文本预算和版本化来源快照，按目标 AI 与私聊/群空间读取可见 committed 消息。后续接话者可读同一条消息前面的完成回答；摘要、显式记忆与跨窗口接续留到 M2，实际范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
+状态：完整目标设计；M1 已实现近期原文、角色设定、文本预算和版本化来源快照，按目标 AI 与私聊/群空间读取可见 committed 消息。后续接话者可读同一条消息前面的完成回答；摘要、显式记忆与跨窗口接续留到 M2，来源修改/撤回会立即中断依赖运行，见 [消息/控制](m1-message-controls.md)；实际范围另见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 0. 名称与定义
 

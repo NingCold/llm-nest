@@ -43,11 +43,19 @@ impl Db<'_> {
             .into_iter()
             .next();
         let pending_plans = self.query_json("SELECT payload FROM participation_plans WHERE conversation_id=?1 AND status IN ('queued','running') ORDER BY trigger_sequence,ordinal", [conversation.id.to_string()])?;
+        let current_bout = self
+            .query_json(
+                "SELECT payload FROM bouts WHERE conversation_id=?1 AND status='open'",
+                [conversation.id.to_string()],
+            )?
+            .into_iter()
+            .next();
         Ok(ConversationRecord {
             conversation,
             members,
             latest_message,
             active_run,
+            current_bout,
             pending_plans,
         })
     }

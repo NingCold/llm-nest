@@ -34,5 +34,7 @@ pub struct Membership {
     pub conversation_id: ConversationId,
     pub actor_id: ActorId,
     pub status: MembershipStatus,
+    #[serde(default)]
+    pub paused: bool,
     pub revision: Revision,
 }

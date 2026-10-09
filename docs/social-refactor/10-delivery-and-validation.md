@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [当前开发指南](../development.md) · [当前约束](../../AGENTS.md)
 
-状态：U0/M0 与 M1 私聊/群聊批次已完成；修订、完整控制和桌面实时接入继续按批次推进，M2/M3 未开始。实际范围见 [M0](m0-implementation.md)、[私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)，持续顺序见 [TODO](TODO.md)。
+状态：U0/M0 与 M1 私聊/群聊、消息修订/显式控制批次已完成；下一批接桌面实时 IPC 与共用界面，M2/M3 未开始。实际范围见 [M0](m0-implementation.md)、[私聊](m1-private-chat.md)、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)，持续顺序见 [TODO](TODO.md)。
 
 ## 1. 实施原则
 

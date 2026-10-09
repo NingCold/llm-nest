@@ -77,7 +77,10 @@ impl Db<'_> {
                     "response target must be an active AI".into(),
                 ));
             }
-            memberships.push(self.member(*id, c.id)?);
+            let membership = self.member(*id, c.id)?;
+            if !membership.paused {
+                memberships.push(membership);
+            }
         }
         let message = self.allocate_message(
             &mut c,
@@ -233,13 +236,14 @@ impl Db<'_> {
             conversation_id: c.id,
             actor_id: actor.id,
             status,
+            paused: false,
             revision: old
                 .as_ref()
                 .map(|m| m.revision.next())
                 .transpose()?
                 .unwrap_or(Revision::ONE),
         };
-        self.execute("INSERT INTO memberships VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,actor_id) DO UPDATE SET status=excluded.status,revision=excluded.revision,payload=excluded.payload",params![c.id.to_string(),actor.id.to_string(),label(&m.status)?,m.revision.get() as i64,serde_json::to_string(&m)?])?;
+        self.execute("INSERT INTO memberships(conversation_id,actor_id,status,revision,payload) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,actor_id) DO UPDATE SET status=excluded.status,paused=0,revision=excluded.revision,payload=excluded.payload",params![c.id.to_string(),actor.id.to_string(),label(&m.status)?,m.revision.get() as i64,serde_json::to_string(&m)?])?;
         c.revision = c.revision.next()?;
         c.context_epoch = c.context_epoch.next()?;
         c.participation_epoch = c.participation_epoch.next()?;

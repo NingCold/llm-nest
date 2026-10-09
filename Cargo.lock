@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "ai-client"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -450,7 +450,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chat"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "anyhow",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "anyhow",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "events"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "common",
  "serde",
@@ -3648,7 +3648,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "anyhow",
@@ -4199,7 +4199,7 @@ checksum = "e8e2fb0f499abb4d162f2bedad68f5ef91a1682b5a03596ddb67efd37768d100"
 
 [[package]]
 name = "social"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "chrono",
  "serde",
@@ -4210,7 +4210,7 @@ dependencies = [
 
 [[package]]
 name = "social-feature"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "common",
@@ -4311,7 +4311,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "async-trait",
@@ -4622,7 +4622,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-frontend"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "anyhow",
@@ -5228,7 +5228,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tools"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "common",
  "futures-util",
@@ -5395,7 +5395,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "anyhow",
@@ -5737,7 +5737,7 @@ dependencies = [
 
 [[package]]
 name = "web-server"
-version = "0.1.1-alpha.2"
+version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "anyhow",

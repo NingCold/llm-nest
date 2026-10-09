@@ -1,4 +1,4 @@
-"""Exercise an existing Linux desktop package through WebKit WebDriver.
+"""Exercise the explicit legacy Harness UI through WebKit WebDriver.
 
 Requires a running graphical session and a matching WebKitWebDriver (Ubuntu:
 webkit2gtk-driver / webkitgtk-webdriver). No Selenium, model keys or Rust build.
@@ -61,12 +61,17 @@ class Driver:
             "webkitgtk:browserOptions": {"binary": self.binary},
         }}})
         self.session = result["sessionId"]
+        wait_for(lambda: self.js("return !!window.__TAURI_INTERNALS__"))
+        self.js("window.location.search = '?legacy=1'; return true")
         wait_for(lambda: "桌面模式" in self.text())
         return result["capabilities"]
 
     def close(self):
         if self.session:
             try:
+                if self.app_pids():
+                    self.js("window.__TAURI_INTERNALS__.invoke('plugin:window|close', {label:'main'}); return true")
+                    wait_for(lambda: not self.app_pids(), timeout=25)
                 self.call("DELETE", "")
             finally:
                 self.session = None
@@ -105,22 +110,29 @@ class Driver:
     def streaming(self):
         return self.js("return !!document.querySelector(arguments[0])", 'button[title="停止生成"]')
 
-    def crash_app(self):
+    def app_pids(self):
         # Target only the app in this driver's private process group.
         candidates = []
         for path in Path("/proc").glob("[0-9]*/comm"):
             try:
                 pid = int(path.parent.name)
-                if path.read_text().strip() == "LLM-Nest" and os.getpgid(pid) == self.process_group:
+                state = (path.parent / "stat").read_text().rsplit(") ", 1)[1].split()[0]
+                if path.read_text().strip() == "LLM-Nest" and state != "Z" and os.getpgid(pid) == self.process_group:
                     candidates.append(pid)
             except (OSError, ProcessLookupError):
                 pass
+        return candidates
+
+    def crash_app(self):
+        candidates = self.app_pids()
         assert len(candidates) == 1, candidates
         os.kill(candidates[0], signal.SIGKILL)
         try:
-            self.close()
+            self.call("DELETE", "")
         except RuntimeError:
             pass  # The driver reports the page crash after SIGKILL.
+        finally:
+            self.session = None
 
 
 def run_checks(driver, work, passed, failures):

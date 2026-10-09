@@ -73,9 +73,10 @@ jobs:
           cargo test --workspace --locked
           cargo build -p web-server --locked
           python scripts/acceptance.py
+          python scripts/social_acceptance.py
       - name: Build embedded desktop installers
         working-directory: frontends/tauri
-        run: pnpm exec tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+        run: node node_modules/@tauri-apps/cli/tauri.js build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --ci -- --locked
       - name: Check Windows icons and install identity
         if: runner.os == 'Windows'
         shell: pwsh

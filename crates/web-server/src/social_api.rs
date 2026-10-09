@@ -1,15 +1,15 @@
 use crate::AppState;
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    http::StatusCode,
+    extract::{FromRequest, FromRequestParts, Path, Query, Request, State},
+    http::{StatusCode, request::Parts},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use social::{ActorId, ConversationId, EventCursor, MessageId, RunId, Sequence};
 use social_feature::{SocialError, wire};
 use std::{convert::Infallible, sync::Arc, time::Duration};
@@ -72,16 +72,14 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/social/subscribe", get(subscribe))
 }
 
-struct ApiError(SocialError);
+struct ApiError {
+    status: StatusCode,
+    body: wire::ErrorBody,
+}
 impl From<SocialError> for ApiError {
     fn from(e: SocialError) -> Self {
-        Self(e)
-    }
-}
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let error = self.0.wire();
-        let status = match error.code {
+        let body = e.wire();
+        let status = match body.code {
             "invalid_input" => StatusCode::BAD_REQUEST,
             "not_found" => StatusCode::NOT_FOUND,
             "not_authorized" => StatusCode::FORBIDDEN,
@@ -89,60 +87,111 @@ impl IntoResponse for ApiError {
             "model_unavailable" | "budget_exhausted" => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::SERVICE_UNAVAILABLE,
         };
-        (status, Json(error)).into_response()
+        Self { status, body }
+    }
+}
+impl ApiError {
+    fn invalid(status: StatusCode, message: String) -> Self {
+        Self {
+            status,
+            body: SocialError::Invalid(message).wire(),
+        }
+    }
+}
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (self.status, Json(self.body)).into_response()
+    }
+}
+
+// Keep transport parsing failures in the same error envelope as business failures.
+struct ApiJson<T>(T);
+impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for ApiJson<T> {
+    type Rejection = ApiError;
+    async fn from_request(request: Request, state: &S) -> std::result::Result<Self, ApiError> {
+        Json::<T>::from_request(request, state)
+            .await
+            .map(|Json(value)| Self(value))
+            .map_err(|e| ApiError::invalid(e.status(), format!("请求正文无效：{}", e.body_text())))
+    }
+}
+struct ApiPath<T>(T);
+impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequestParts<S> for ApiPath<T> {
+    type Rejection = ApiError;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> std::result::Result<Self, ApiError> {
+        Path::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Path(value)| Self(value))
+            .map_err(|e| ApiError::invalid(e.status(), format!("路径参数无效：{}", e.body_text())))
+    }
+}
+struct ApiQuery<T>(T);
+impl<S: Send + Sync, T: DeserializeOwned> FromRequestParts<S> for ApiQuery<T> {
+    type Rejection = ApiError;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> std::result::Result<Self, ApiError> {
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(value)| Self(value))
+            .map_err(|e| ApiError::invalid(e.status(), format!("查询参数无效：{}", e.body_text())))
     }
 }
 type Result<T> = std::result::Result<Json<T>, ApiError>;
 async fn create_group(
     State(s): State<Arc<AppState>>,
-    Json(input): Json<wire::CreateGroupInput>,
+    ApiJson(input): ApiJson<wire::CreateGroupInput>,
 ) -> Result<ConversationId> {
     Ok(Json(s.social.create_group(input).await?))
 }
 async fn change_membership(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
-    Json(input): Json<wire::MembershipInput>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::MembershipInput>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.change_membership(id, input).await?))
 }
 async fn control_conversation(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
-    Json(input): Json<wire::ControlInput>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::ControlInput>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.control_conversation(id, input).await?))
 }
 async fn pause_member(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
-    Json(input): Json<wire::PauseMemberInput>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::PauseMemberInput>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.pause_member(id, input).await?))
 }
 async fn revise_message(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<MessageId>,
-    Json(input): Json<wire::ReviseInput>,
+    ApiPath(id): ApiPath<MessageId>,
+    ApiJson(input): ApiJson<wire::ReviseInput>,
 ) -> Result<wire::Message> {
     Ok(Json(s.social.revise_message(id, input).await?))
 }
 async fn withdraw_message(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<MessageId>,
-    Json(input): Json<wire::VersionedCommand>,
+    ApiPath(id): ApiPath<MessageId>,
+    ApiJson(input): ApiJson<wire::VersionedCommand>,
 ) -> Result<wire::Message> {
     Ok(Json(s.social.withdraw_message(id, input).await?))
 }
 async fn message(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<MessageId>,
+    ApiPath(id): ApiPath<MessageId>,
 ) -> Result<wire::Message> {
     Ok(Json(s.social.message(id).await?))
 }
 async fn plans(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
+    ApiPath(id): ApiPath<ConversationId>,
 ) -> Result<Vec<wire::Plan>> {
     Ok(Json(s.social.plans(id).await?))
 }
@@ -151,34 +200,34 @@ async fn init(State(s): State<Arc<AppState>>) -> Result<wire::Init> {
 }
 async fn create_ai(
     State(s): State<Arc<AppState>>,
-    Json(input): Json<wire::AiInput>,
+    ApiJson(input): ApiJson<wire::AiInput>,
 ) -> Result<wire::ManagedAi> {
     Ok(Json(s.social.create_ai(input).await?))
 }
 async fn update_ai(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
-    Json(input): Json<wire::UpdateAiInput>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<wire::UpdateAiInput>,
 ) -> Result<wire::ManagedAi> {
     Ok(Json(s.social.update_ai(id, input).await?))
 }
 async fn open_direct(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
-    Json(input): Json<wire::Command>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<wire::Command>,
 ) -> Result<ConversationId> {
     Ok(Json(s.social.open_direct(id, input).await?))
 }
 async fn control_account(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
-    Json(input): Json<wire::AccountControlInput>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<wire::AccountControlInput>,
 ) -> Result<wire::Account> {
     Ok(Json(s.social.control_account(id, input).await?))
 }
 async fn conversation(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
+    ApiPath(id): ApiPath<ConversationId>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.conversation(id).await?))
 }
@@ -188,27 +237,27 @@ struct MessageQuery {
 }
 async fn messages(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
-    Query(q): Query<MessageQuery>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiQuery(q): ApiQuery<MessageQuery>,
 ) -> Result<wire::MessagePage> {
     Ok(Json(s.social.messages(id, q.before).await?))
 }
 async fn send(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ConversationId>,
-    Json(input): Json<wire::SendInput>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::SendInput>,
 ) -> Result<wire::SendReceipt> {
     Ok(Json(s.social.send(id, input).await?))
 }
 async fn run_details(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<RunId>,
+    ApiPath(id): ApiPath<RunId>,
 ) -> Result<Option<storage::social::RunDetails>> {
     Ok(Json(s.social.run_details(id).await?))
 }
 async fn cancel(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<RunId>,
+    ApiPath(id): ApiPath<RunId>,
 ) -> std::result::Result<StatusCode, ApiError> {
     s.social.cancel_run(id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -220,14 +269,14 @@ struct EventQuery {
 }
 async fn events(
     State(s): State<Arc<AppState>>,
-    Query(q): Query<EventQuery>,
+    ApiQuery(q): ApiQuery<EventQuery>,
 ) -> Result<Vec<events::SocialEvent>> {
     Ok(Json(s.social.events(q.after).await?))
 }
 
 async fn subscribe(
     State(s): State<Arc<AppState>>,
-    Query(q): Query<EventQuery>,
+    ApiQuery(q): ApiQuery<EventQuery>,
 ) -> std::result::Result<
     Sse<impl futures_util::Stream<Item = std::result::Result<Event, Infallible>>>,
     ApiError,
@@ -272,7 +321,10 @@ async fn subscribe(
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10))))
 }
 
-async fn account(State(s): State<Arc<AppState>>, Path(id): Path<ActorId>) -> Result<wire::Account> {
+async fn account(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ActorId>,
+) -> Result<wire::Account> {
     Ok(Json(s.social.account(id).await?))
 }
 async fn managed_accounts(State(s): State<Arc<AppState>>) -> Result<Vec<wire::ManagedAi>> {
@@ -280,41 +332,41 @@ async fn managed_accounts(State(s): State<Arc<AppState>>) -> Result<Vec<wire::Ma
 }
 async fn managed_account(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
+    ApiPath(id): ApiPath<ActorId>,
 ) -> Result<wire::ManagedAi> {
     Ok(Json(s.social.managed_account(id).await?))
 }
 async fn set_administrator(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
-    Json(input): Json<social_feature::AdministratorInput>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<social_feature::AdministratorInput>,
 ) -> Result<wire::ManagedAi> {
     Ok(Json(s.social.set_administrator(id, input).await?))
 }
 async fn set_contact(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
-    Json(input): Json<social_feature::SetContactInput>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<social_feature::SetContactInput>,
 ) -> Result<social::ContactEntry> {
     Ok(Json(s.social.set_contact(id, input).await?))
 }
 async fn update_account(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
-    Json(input): Json<social_feature::AccountInput>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<social_feature::AccountInput>,
 ) -> Result<wire::Account> {
     Ok(Json(s.social.update_account(id, input).await?))
 }
 async fn account_view(
     State(s): State<Arc<AppState>>,
-    Path(id): Path<ActorId>,
+    ApiPath(id): ApiPath<ActorId>,
 ) -> Result<wire::AccountView> {
     Ok(Json(s.social.account_view(id).await?))
 }
 async fn account_view_messages(
     State(s): State<Arc<AppState>>,
-    Path((id, conversation)): Path<(ActorId, ConversationId)>,
-    Query(q): Query<MessageQuery>,
+    ApiPath((id, conversation)): ApiPath<(ActorId, ConversationId)>,
+    ApiQuery(q): ApiQuery<MessageQuery>,
 ) -> Result<wire::MessagePage> {
     Ok(Json(
         s.social

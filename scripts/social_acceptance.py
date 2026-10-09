@@ -171,6 +171,35 @@ def main():
         initial = api('/init')
         self_id = initial['selfId']
         assert initial['addressBook'] == [] and len(initial['accounts']) == 1 and initial['conversations'] == []
+        # Parsing must fail before a command can write, and still return the shared error body.
+        invalid_requests = [
+            ('/ai-accounts', 'POST', b'{', 'application/json', 400),
+            ('/ai-accounts', 'POST', b'{}', 'application/json', 422),
+            ('/ai-accounts', 'POST', b'{"requestId":"bad-id","name":"invalid","persona":""}', 'application/json', 422),
+            ('/ai-accounts', 'POST', b'[]', 'application/json', 422),
+            ('/ai-accounts', 'POST', b'{}', 'text/plain', 415),
+            ('/ai-accounts', 'POST', b'"' + b'x' * (2 * 1024 * 1024) + b'"', 'application/json', 413),
+            ('/accounts/bad-id', 'GET', None, 'application/json', 400),
+            ('/conversations/bad-id/messages', 'GET', None, 'application/json', 400),
+            ('/messages/bad-id', 'GET', None, 'application/json', 400),
+            ('/runs/bad-id/cancel', 'POST', None, 'application/json', 400),
+            ('/ai-accounts/' + str(uuid.uuid4()) + '/view/conversations/bad-id/messages', 'GET', None, 'application/json', 400),
+            ('/events?after=invalid', 'GET', None, 'application/json', 400),
+            ('/subscribe?after=-1', 'GET', None, 'application/json', 400),
+            ('/conversations/' + str(uuid.uuid4()) + '/messages?before=invalid', 'GET', None, 'application/json', 400),
+        ]
+        for path, method, body, content_type, status in invalid_requests:
+            try:
+                urllib.request.urlopen(urllib.request.Request(base + path, data=body, method=method,
+                    headers={'X-LLMN-Client': '1', 'Content-Type': content_type}), timeout=15)
+                raise AssertionError('malformed request accepted: ' + path)
+            except urllib.error.HTTPError as error:
+                assert error.code == status, (path, error.code)
+                assert error.headers.get_content_type() == 'application/json', path
+                rejection = json.load(error)
+                assert rejection['code'] == 'invalid_input' and rejection['retryable'] is False and rejection['message'], rejection
+        assert api('/init') == initial and not REQUESTS
+        print('PASS: malformed JSON/path/query, unsupported content type and oversized body use structured non-retryable errors without writes', flush=True)
         alice, bob, draft = contact('Alice'), contact('Bob'), contact('Draft', None)
         private = direct(alice)
         assert private == direct(alice)

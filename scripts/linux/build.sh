@@ -14,6 +14,7 @@ pnpm --dir frontends/web test
 cargo test --workspace --locked
 cargo build -p web-server --locked
 python3 scripts/acceptance.py
+python3 scripts/social_acceptance.py
 
 # Use Tauri CLI: it builds the shared UI and embeds it with custom-protocol.
 cd frontends/tauri

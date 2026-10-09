@@ -98,6 +98,8 @@ python scripts/acceptance.py
 
 桌面视觉验收应检查实际安装包，并注明 OS、显示缩放、桌面环境和产物哈希。Xvfb 启动、编译成功或截取完成后的窗口图像，都不能替代完整的用户交互验收。
 
+安装版社交 GUI/IPC 使用 `scripts/linux/social_gui_acceptance.py`，旧 Harness 使用显式旧入口的 `scripts/linux/gui_acceptance.py`。前者支持原生 Wayland、GTK 整数缩放及 `--manual` 隔离人工环境；Windows 包内 EXE 与空环境 worker 使用 `scripts/windows_package_acceptance.py`。参数和包检查步骤见 [发布指南](releases.md#本地-linux-打包)，实际范围见 [M1 阶段记录](social-refactor/m1-stage-validation.md)。
+
 ## 架构与贡献
 
 修改边界和数据不变量见 [AGENTS.md](../AGENTS.md)。提交应说明具体问题、最终行为、验证方式和未覆盖范围；当协议、持久化字段或 GUI DTO 改变时，同步修改两个 GUI backend。

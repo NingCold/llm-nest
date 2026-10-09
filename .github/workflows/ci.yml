@@ -63,5 +63,6 @@ jobs:
         run: |
           cargo build -p web-server --locked
           python scripts/acceptance.py
+          python scripts/social_acceptance.py
           python scripts/release.py validate
           python scripts/test_release.py

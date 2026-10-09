@@ -32,11 +32,11 @@ Linux 以 Ubuntu 24.04 为构建基线，不能据此承诺所有 Linux 发行�
 
 ### 开发版与版本递增
 
-当前版本为 `0.1.1-alpha.2`，用于开发测试，产品显示名称为 LLM Nest。历史安装包已使用 `0.1.0`，因此在更高的基础版本上开始预发布序列。遵循 [SemVer 预发布规则](https://semver.org/lang/zh-CN/)，同一基础版本可依次使用 `alpha.1`、`alpha.2`、`beta.1`、`rc.1`，验收完成后去掉后缀。
+当前版本为 `0.1.1-alpha.3`，用于开发测试，产品显示名称为 LLM Nest。历史安装包已使用 `0.1.0`，因此在更高的基础版本上开始预发布序列。遵循 [SemVer 预发布规则](https://semver.org/lang/zh-CN/)，同一基础版本可依次使用 `alpha.1`、`alpha.2`、`beta.1`、`rc.1`，验收完成后去掉后缀。
 
 每次向测试者交付新安装包时递增版本；普通代码提交不必都改版本。Alpha 表示功能与交互仍会调整，Beta 表示进入较完整的测试，RC 表示正式版候选。修改版本、生成安装包、创建 Git 标签和公开 Release 是分别执行的动作；改成预发布版本不会自动发布。
 
-Windows MSI 要求纯数字安装器版本，本轮通过 `bundle.windows.wix.version = "0.1.1.2"` 适配，应用显示和安装包文件名仍使用 `0.1.1-alpha.2`。修改版本时同步检查此字段：前三段与应用基础版本相同，第四段是安装器构建号。Windows Installer 的产品版本比较主要使用前三段，不应把第四段当作完整的 SemVer 升级/降级保护；不同预发布包的覆盖安装仍需实际验收。见 [Tauri WiX 配置](https://v2.tauri.app/reference/config/#wixconfig) 与 [Windows Installer ProductVersion](https://learn.microsoft.com/en-us/windows/win32/msi/productversion)。`release.py validate` 会拒绝缺失映射、基础版本不匹配或数字超限的配置。
+Windows MSI 要求纯数字安装器版本，本轮通过 `bundle.windows.wix.version = "0.1.1.3"` 适配，应用显示和安装包文件名仍使用 `0.1.1-alpha.3`。修改版本时同步检查此字段：前三段与应用基础版本相同，第四段是安装器构建号。Windows Installer 的产品版本比较主要使用前三段，不应把第四段当作完整的 SemVer 升级/降级保护；不同预发布包的覆盖安装仍需实际验收。见 [Tauri WiX 配置](https://v2.tauri.app/reference/config/#wixconfig) 与 [Windows Installer ProductVersion](https://learn.microsoft.com/en-us/windows/win32/msi/productversion)。`release.py validate` 会拒绝缺失映射、基础版本不匹配或数字超限的配置。
 
 ### 发布一个版本
 
@@ -52,24 +52,24 @@ Windows MSI 要求纯数字安装器版本，本轮通过 `bundle.windows.wix.ve
 修改 Cargo 版本后，运行 `cargo check -p cli` 更新工作区包在 `Cargo.lock` 中的版本，一并提交锁文件。随后检查：
 
 ```bash
-python scripts/release.py validate --tag v0.1.1-alpha.2
+python scripts/release.py validate --tag v0.1.1-alpha.3
 python scripts/test_release.py
 ```
 
-将 `v0.1.1-alpha.2` 换成要发布的实际版本。确认检查通过、改动已合入并推送后，在该提交上打标签：
+将 `v0.1.1-alpha.3` 换成要发布的实际版本。确认检查通过、改动已合入并推送后，在该提交上打标签：
 
 ```bash
-git tag -a v0.1.1-alpha.2 -m "LLM Nest 0.1.1-alpha.2"
-git push origin v0.1.1-alpha.2
+git tag -a v0.1.1-alpha.3 -m "LLM Nest 0.1.1-alpha.3"
+git push origin v0.1.1-alpha.3
 ```
 
-标签会触发打包；进入仓库 Releases 查看生成的草稿。`v0.1.1-alpha.2` 这类预发布标签也必须与四处版本完整匹配，草稿会标记为 prerelease。已发布版本有问题时应修复后发新版本，避免修改旧标签和旧资产。
+标签会触发打包；进入仓库 Releases 查看生成的草稿。`v0.1.1-alpha.3` 这类预发布标签也必须与四处版本完整匹配，草稿会标记为 prerelease。已发布版本有问题时应修复后发新版本，避免修改旧标签和旧资产。
 
 校验下载文件：Linux 使用 `sha256sum -c SHA256SUMS.txt`（全部产物在同目录时）；Windows 使用 `Get-FileHash <安装包> -Algorithm SHA256` 与清单对照。
 
 **工作流已在本地做语法和脚本验证，尚未在 GitHub 托管 runner 上实际运行。** 第一次手动运行是剩余的 CI 验收步骤。当前流程不执行真实模型测试，也不会自动公开草稿。
 
-应用改名为 **LLM Nest** 后，Windows 安装包文件名也使用空格，例如 `LLM Nest_0.1.1-alpha.2_x64_en-US.msi`。内部二进制名、安装目录和注册项继续使用原有 `LLM-Nest`，用户数据仍在 `~/.llmn`。安装器模板来源与修改约束见 [模板说明](../frontends/tauri/src-tauri/packaging/windows/README.md)。
+应用改名为 **LLM Nest** 后，Windows 安装包文件名也使用空格，例如 `LLM Nest_0.1.1-alpha.3_x64_en-US.msi`。内部二进制名、安装目录和注册项继续使用原有 `LLM-Nest`，用户数据仍在 `~/.llmn`。安装器模板来源与修改约束见 [模板说明](../frontends/tauri/src-tauri/packaging/windows/README.md)。
 
 ## 本地 Windows 打包
 
@@ -77,7 +77,9 @@ git push origin v0.1.1-alpha.2
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-pnpm --dir frontends/tauri exec tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi --ci -- --locked
+Push-Location frontends/tauri
+./node_modules/.bin/tauri.cmd build --target x86_64-pc-windows-msvc --bundles nsis msi --ci --config src-tauri/tauri.windows.conf.json -- --locked
+Pop-Location
 ./scripts/verify-windows-icons.ps1
 ./scripts/verify-windows-branding.ps1
 ```
@@ -122,6 +124,22 @@ python3 scripts/linux/smoke.py --appimage target/release/bundle/appimage/*.AppIm
 
 脚本验证包内 worker 在空环境变量下工作、拒绝非白名单工具，并在隔离配置/存储中检查 GUI 启动与前端到 Runtime 的 IPC。AppImage 使用解包入口，**不验证 FUSE 挂载或文件管理器双击启动**。
 
+默认社交界面的 GUI / 实际 IPC 验收使用 WebKitWebDriver 与独立临时配置、SQLite 和 loopback 模拟 provider。先解包 deb 或安装到测试系统，再执行（Ubuntu 24.04 使用 `webkit2gtk-driver`，26.04 使用 `webkitgtk-webdriver`；无桌面时还需要 `xvfb`、`xauth`、`dbus-x11`）：
+
+```bash
+dbus-run-session -- xvfb-run -a python3 scripts/linux/social_gui_acceptance.py \
+ --binary /usr/bin/LLM-Nest --driver /usr/bin/WebKitWebDriver
+
+# 已登录 GNOME 的本地终端中验证原生 Wayland
+python3 scripts/linux/social_gui_acceptance.py --binary /usr/bin/LLM-Nest \
+  --driver /usr/bin/WebKitWebDriver --backend wayland
+
+# 为真人准备独立的社交模拟 provider，关闭窗口结束
+python3 scripts/linux/social_gui_acceptance.py --binary /usr/bin/LLM-Nest --manual --backend wayland
+```
+
+该脚本覆盖私聊 / 三 AI 群聊、公开与内部设定隔离、实际 IPC 错误、写入失败保留草稿、最小窗口和崩溃恢复；输出截图与报告。`scripts/linux/gui_acceptance.py` 显式进入 `?legacy=1` 验证旧 Harness。Xvfb / WebDriver 不代替 GNOME 输入法、分数缩放或启动器人工检查。
+
 干净系统依赖检查使用一个仅包含包和脚本的构建目录：
 
 ```bash
@@ -133,4 +151,4 @@ docker build -t llmn-smoke:ubuntu24 target/linux-smoke-context
 docker run --rm llmn-smoke:ubuntu24
 ```
 
-真实 GNOME/Wayland 的输入法、剪贴板、窗口缩放、主题和完整聊天仍需要桌面操作验收，清单见 [本轮 Linux 记录](linux-acceptance-2026-09-13.md)。自动打包、系统代码签名和应用内自动更新是三个独立事项，当前只落地了自动打包及草稿发布。
+GNOME/Wayland 的输入法、剪贴板、窗口缩放、主题和完整聊天需要桌面操作验收；本批已取得 Ubuntu 26.04 GNOME 的人工确认，范围与剩余 Windows 项见 [本批记录](social-refactor/m1-stage-validation.md)。自动打包、系统代码签名和应用内自动更新是三个独立事项，当前只落地了自动打包及草稿发布。

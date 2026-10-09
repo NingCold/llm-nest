@@ -134,7 +134,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 ## 7. 错误与后续能力
 
-共享业务错误为 code/message/retryable。目前 invalid_input → 400，not_found → 404，not_authorized → 403，revision_conflict → 409，model_unavailable/budget_exhausted → 422，storage_failure/unavailable → 503。IPC 使用相同业务错误体；Axum 的 JSON/Path/Query 拒绝响应仍由框架产生，统一这部分错误是 M1 剩余工作。当前不返回 currentRevision。
+共享业务错误为 code/message/retryable。目前 invalid_input → 400，not_found → 404，not_authorized → 403，revision_conflict → 409，model_unavailable/budget_exhausted → 422，storage_failure/unavailable → 503。IPC 使用相同业务错误体。社交 HTTP 的 JSON/Path/Query 解析失败也返回该结构，code 为 invalid_input、retryable 为 false；保留传输状态码：非法 JSON 语法、路径和查询为 400，JSON 字段/类型错误为 422，缺少 JSON Content-Type 为 415，超过正文上限为 413。当前不返回 currentRevision。
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 

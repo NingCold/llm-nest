@@ -65,8 +65,8 @@ def main():
                         time.sleep(.1)
                 else:
                     raise TimeoutError('Seed server did not start')
-                actors = [api('/contacts', {'requestId': str(uuid.uuid4()), 'name': name, 'persona': '桌面验收角色', 'binding': {'providerId': 'test', 'modelId': 'chat', 'reasoningEffort': None}})['id'] for name in ['桌面甲', '桌面乙', '桌面丙']]
-                direct = api(f'/contacts/{actors[0]}/direct', {'requestId': str(uuid.uuid4())})
+                actors = [api('/ai-accounts', {'requestId': str(uuid.uuid4()), 'name': name, 'bio':'公开验收简介', 'persona': '桌面验收角色', 'binding': {'providerId': 'test', 'modelId': 'chat', 'reasoningEffort': None}})['account']['id'] for name in ['桌面甲', '桌面乙', '桌面丙']]
+                direct = api(f'/accounts/{actors[0]}/direct', {'requestId': str(uuid.uuid4())})
                 group = api('/groups', {'requestId': str(uuid.uuid4()), 'title': 'IPC 验收群', 'memberIds': actors})
             finally:
                 server.terminate()

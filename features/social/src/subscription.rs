@@ -74,16 +74,18 @@ mod tests {
         runtime.initialize_features().await.unwrap();
         (directory, runtime, feature)
     }
-    async fn contact(feature: &SocialFeature, name: &str) -> wire::Contact {
+    async fn contact(feature: &SocialFeature, name: &str) -> wire::Account {
         feature
-            .create_contact(wire::ContactInput {
+            .create_ai(wire::AiInput {
                 request_id: CommandId::new(),
                 name: name.into(),
+                bio: String::new(),
                 persona: "fixture".into(),
                 binding: None,
             })
             .await
             .unwrap()
+            .account
     }
 
     #[tokio::test]

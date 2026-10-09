@@ -211,8 +211,8 @@ impl Db<'_> {
     }
     pub fn operator(&self, id: ActorId) -> Result<Actor> {
         let actor: Actor = self.get("actors", id)?;
-        if actor.kind != ActorKind::Human || actor.status != EntityStatus::Active {
-            return Err(Error::Forbidden("requires the local human".into()));
+        if actor.status != EntityStatus::Active {
+            return Err(Error::Forbidden("requires an active account".into()));
         }
         Ok(actor)
     }
@@ -300,6 +300,7 @@ impl Db<'_> {
             kind,
             display_name: name,
             avatar_ref: None,
+            bio: String::new(),
             status: EntityStatus::Active,
             revision: Revision::ONE,
             created_at: self.now,
@@ -310,6 +311,7 @@ impl Db<'_> {
         actor: &Actor,
         persona: String,
         binding: Option<&BindingCandidate>,
+        creator: ActorId,
     ) -> Result<()> {
         self.insert_actor(actor)?;
         let profile = AiProfile {
@@ -333,6 +335,16 @@ impl Db<'_> {
             self.execute(
                 "INSERT INTO execution_bindings VALUES(?1,1,?2)",
                 params![actor.id.to_string(), serde_json::to_string(&binding)?],
+            )?;
+        }
+        self.execute(
+            "INSERT INTO account_admins VALUES(?1,?2,1)",
+            params![actor.id.to_string(), creator.to_string()],
+        )?;
+        for (owner, target) in [(creator, actor.id), (actor.id, creator)] {
+            self.execute(
+                "INSERT INTO address_book VALUES(?1,?2,1,1)",
+                params![owner.to_string(), target.to_string()],
             )?;
         }
         Ok(())
@@ -551,6 +563,14 @@ impl Db<'_> {
         reply_to: Option<MessageId>,
     ) -> Result<AiRun> {
         self.validate_snapshot(&input.snapshot, operator)?;
+        let contact = self.contact_record(input.snapshot.scope.actor_id)?;
+        if contact.profile.revision != input.snapshot.profile_revision
+            || contact.binding.as_ref().map(|b| b.revision) != Some(input.snapshot.binding_revision)
+        {
+            return Err(Error::Conflict(
+                "profile/binding changed before starting the run".into(),
+            ));
+        }
         let mut c: Conversation =
             self.get("conversations", input.snapshot.scope.conversation_id)?;
         self.expected(c.revision, input.expected_revision)?;
@@ -658,21 +678,6 @@ impl Db<'_> {
         if membership.paused || c.paused || c.participation_epoch != snapshot.participation_epoch {
             return Err(Error::Conflict("participation changed or paused".into()));
         }
-        let profiles: Vec<AiProfile> = self.query_json(
-            "SELECT payload FROM ai_profiles WHERE actor_id=?1",
-            [ai.id.to_string()],
-        )?;
-        let bindings: Vec<ExecutionBinding> = self.query_json(
-            "SELECT payload FROM execution_bindings WHERE actor_id=?1",
-            [ai.id.to_string()],
-        )?;
-        if profiles.first().map(|p| p.revision) != Some(snapshot.profile_revision)
-            || bindings.first().map(|b| b.revision) != Some(snapshot.binding_revision)
-        {
-            return Err(Error::Conflict(
-                "profile/binding snapshot unavailable or changed".into(),
-            ));
-        }
         for d in &snapshot.dependencies {
             if d.actor_id != ai.id && d.actor_id != operator {
                 return Err(Error::Forbidden("unexpected visibility dependency".into()));
@@ -735,7 +740,7 @@ pub(super) fn label(value: &impl Serialize) -> Result<String> {
         .map(str::to_owned)
         .ok_or_else(|| Error::Invalid("expected enum label".into()))
 }
-fn validate_text(value: &str, max: usize, field: &str) -> Result<()> {
+pub(super) fn validate_text(value: &str, max: usize, field: &str) -> Result<()> {
     if value.trim().is_empty() || value.len() > max {
         return Err(Error::Invalid(format!("invalid {field}")));
     }
@@ -750,6 +755,63 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn managed_accounts(&self, operator: ActorId) -> Result<Vec<ManagedAccount>> {
+        self.call(move |w|w.read(|db| {
+            db.operator(operator)?;
+            let actors:Vec<Actor>=db.query_json("SELECT a.payload FROM actors a JOIN account_admins g ON g.ai_id=a.id WHERE g.account_id=?1 ORDER BY a.rowid",[operator.to_string()])?;
+            actors.into_iter().map(|a|db.managed_account(operator,a.id)).collect()
+        })).await
+    }
+    async fn managed_account(&self, operator: ActorId, id: ActorId) -> Result<ManagedAccount> {
+        self.call(move |w| w.read(|db| db.managed_account(operator, id)))
+            .await
+    }
+    async fn set_administrator(
+        &self,
+        ctx: CommandContext,
+        id: ActorId,
+        input: SetAdministrator,
+    ) -> Result<ManagedAccount> {
+        self.call(move |w| w.transact(|db| db.set_administrator(&ctx, id, &input)))
+            .await
+    }
+    async fn set_contact(&self, ctx: CommandContext, input: SetContact) -> Result<ContactEntry> {
+        self.call(move |w| w.transact(|db| db.set_contact(&ctx, &input)))
+            .await
+    }
+    async fn update_account(
+        &self,
+        ctx: CommandContext,
+        id: ActorId,
+        input: UpdateAccount,
+    ) -> Result<Actor> {
+        self.call(move |w| w.transact(|db| db.update_account(&ctx, id, &input)))
+            .await
+    }
+    async fn account_view(&self, operator: ActorId, id: ActorId) -> Result<SocialOverview> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.administrator(operator, id)?;
+                db.overview_for(id)
+            })
+        })
+        .await
+    }
+    async fn account_view_messages(
+        &self,
+        operator: ActorId,
+        id: ActorId,
+        conversation: ConversationId,
+        before: Option<Sequence>,
+    ) -> Result<(Vec<SocialMessage>, bool)> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.administrator(operator, id)?;
+                db.message_page_for(id, conversation, before)
+            })
+        })
+        .await
+    }
     async fn message(&self, operator: ActorId, id: MessageId) -> Result<SocialMessage> {
         self.call(move |w| {
             w.read(|db| {
@@ -865,14 +927,13 @@ impl SocialStore for SqliteSocialStore {
         id: ConversationId,
         before: Option<Sequence>,
     ) -> Result<(Vec<SocialMessage>, bool)> {
-        self.call(move |w| w.read(|db| {
-            db.operator(operator)?;
-            db.member(operator,id)?;
-            let mut messages:Vec<SocialMessage>=db.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND (?2 IS NULL OR sequence<?2) ORDER BY sequence DESC LIMIT 201",params![id.to_string(),before.map(|s|s.get() as i64)])?;
-            let more=messages.len()>200;
-            messages.truncate(200); messages.reverse();
-            Ok((messages,more))
-        })).await
+        self.call(move |w| {
+            w.read(|db| {
+                db.operator(operator)?;
+                db.message_page_for(operator, id, before)
+            })
+        })
+        .await
     }
     async fn conversation_record(
         &self,
@@ -899,12 +960,12 @@ impl SocialStore for SqliteSocialStore {
         })
         .await
     }
-    async fn control_contact(
+    async fn control_account(
         &self,
         ctx: CommandContext,
-        input: ContactControl,
+        input: AccountControl,
     ) -> Result<ContactRecord> {
-        self.call(move |w| w.transact(|db| db.control_contact(&ctx, &input)))
+        self.call(move |w| w.transact(|db| db.control_account(&ctx, &input)))
             .await
     }
     async fn context_material(
@@ -955,13 +1016,16 @@ impl SocialStore for SqliteSocialStore {
         id: ActorId,
     ) -> Result<ContactRecord> {
         self.call(move |w| w.transact(|db| {
+            db.administrator(ctx.operator,id)?;
             if db.receipt(&ctx,"update_ai",&(id,&input))?.is_some() { return db.contact_record(id); }
             let mut record = db.contact_record(id)?;
-            if record.actor.status != EntityStatus::Active { return Err(Error::Invalid("AI is archived".into())); }
             db.expected(record.actor.revision,input.expected_revision)?;
             validate_text(&input.display_name,120,"display name")?;
+            Db::validate_bio(&input.bio)?;
             validate_text(&input.persona,32*1024,"persona")?;
             record.actor.display_name = input.display_name.clone();
+            record.actor.bio = input.bio.clone();
+            record.actor.avatar_ref = input.avatar_ref.clone();
             record.actor.revision = record.actor.revision.next()?;
             record.profile.persona = input.persona.clone();
             record.profile.revision = record.profile.revision.next()?;
@@ -1021,8 +1085,16 @@ impl SocialStore for SqliteSocialStore {
                     validate_text(&b.provider_id, 256, "provider")?;
                     validate_text(&b.model_id, 256, "model")?;
                 }
-                let actor = db.new_actor(ActorKind::Ai, input.display_name.clone());
-                db.insert_ai(&actor, input.persona.clone(), input.binding.as_ref())?;
+                Db::validate_bio(&input.bio)?;
+                let mut actor = db.new_actor(ActorKind::Ai, input.display_name.clone());
+                actor.bio = input.bio.clone();
+                actor.avatar_ref = input.avatar_ref.clone();
+                db.insert_ai(
+                    &actor,
+                    input.persona.clone(),
+                    input.binding.as_ref(),
+                    ctx.operator,
+                )?;
                 db.save_receipt(&ctx, "create_ai", &input, actor.id)?;
                 Ok(actor)
             })
@@ -1034,16 +1106,12 @@ impl SocialStore for SqliteSocialStore {
             if let Some(id) = db.receipt(&ctx,"open_direct",&ai)? {let c:Conversation=db.get("conversations",id)?;db.member(ctx.operator,c.id)?;return Ok(c);}
             let target: Actor = db.get("actors",ai)?;
             if target.kind!=ActorKind::Ai {return Err(Error::Invalid("requires an AI".into()));}
-            if target.status == EntityStatus::Archived {
-                let c: Conversation = db.query_json("SELECT c.payload FROM conversations c JOIN memberships m ON m.conversation_id=c.id WHERE m.actor_id=?1 AND c.kind='direct' AND c.relationship_id IS NOT NULL", [ai.to_string()])?.into_iter().next().ok_or_else(|| Error::Invalid("restore the contact before starting a private chat".into()))?;
-                db.member(ctx.operator,c.id)?;
-                db.save_receipt(&ctx,"open_direct",&ai,c.id)?;
-                return Ok(c);
-            }
+            if ctx.operator == ai { return Err(Error::Invalid("cannot open a private chat with yourself".into())); }
             let (a,b) = if ctx.operator.to_string()<ai.to_string() {(ctx.operator,ai)} else {(ai,ctx.operator)};
             let relationship: Relationship = match db.query_json("SELECT payload FROM relationships WHERE participant_a=?1 AND participant_b=?2",params![a.to_string(),b.to_string()])?.into_iter().next() {
                 Some(r) => r,
                 None => {
+                    if target.status == EntityStatus::Archived { return Err(Error::Invalid("restore the AI account before starting a private chat".into())); }
                     let r=Relationship{id:RelationshipId::new(),participant_a:a,participant_b:b,revision:Revision::ONE};
                     db.execute("INSERT INTO relationships VALUES(?1,?2,?3,?4)",params![r.id.to_string(),a.to_string(),b.to_string(),serde_json::to_string(&r)?])?;r
                 }

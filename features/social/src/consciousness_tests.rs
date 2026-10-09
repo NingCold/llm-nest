@@ -12,6 +12,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         kind: ActorKind::Ai,
         display_name: "A".into(),
         avatar_ref: None,
+        bio: String::new(),
         status: EntityStatus::Active,
         revision: Revision::ONE,
         created_at: "2026-10-09T00:00:00Z".parse().unwrap(),

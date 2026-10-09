@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// The application supplies the persisted local operator, never a client sender.
-/// Store validates it against the single persisted human, never an arbitrary sender.
+/// Store checks account status and use-case permissions. GUI supplies its trusted local human;
+/// entering an AI's read-only viewpoint never changes this operator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandContext {
     pub operator: ActorId,
@@ -15,6 +16,8 @@ pub struct CommandContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAi {
     pub display_name: String,
+    pub bio: String,
+    pub avatar_ref: Option<String>,
     pub persona: String,
     pub binding: Option<BindingCandidate>,
 }
@@ -132,8 +135,9 @@ pub struct ConversationRecord {
 
 #[derive(Debug, Clone)]
 pub struct SocialOverview {
-    pub human: Actor,
-    pub contacts: Vec<ContactRecord>,
+    pub account: Actor,
+    pub accounts: Vec<Actor>,
+    pub address_book: Vec<ContactEntry>,
     pub conversations: Vec<ConversationRecord>,
     pub cursor: EventCursor,
 }
@@ -154,23 +158,50 @@ pub struct ContextMaterial {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateAi {
     pub display_name: String,
+    pub bio: String,
+    pub avatar_ref: Option<String>,
     pub persona: String,
     pub binding: Option<BindingCandidate>,
     pub expected_revision: Revision,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContactControl {
+pub struct AccountControl {
     pub actor_id: ActorId,
     pub expected_revision: Revision,
-    pub action: ContactAction,
+    pub action: AccountAction,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ContactAction {
+pub enum AccountAction {
     Archive,
     Restore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetContact {
+    pub account_id: ActorId,
+    pub listed: bool,
+    pub expected_revision: Option<Revision>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetAdministrator {
+    pub account_id: ActorId,
+    pub granted: bool,
+    pub expected_revision: Revision,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAccount {
+    pub display_name: String,
+    pub bio: String,
+    pub expected_revision: Revision,
+}
+#[derive(Debug, Clone)]
+pub struct ManagedAccount {
+    pub contact: ContactRecord,
+    pub administrators: Vec<Administrator>,
+    pub is_initial_administrator: bool,
 }
 
 /// Execution details remain separate from social message content and context.
@@ -193,6 +224,42 @@ pub use events::SocialFailure as RunFailure;
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn managed_accounts(&self, operator: ActorId)
+    -> SocialStorageResult<Vec<ManagedAccount>>;
+    async fn managed_account(
+        &self,
+        operator: ActorId,
+        id: ActorId,
+    ) -> SocialStorageResult<ManagedAccount>;
+    async fn set_administrator(
+        &self,
+        ctx: CommandContext,
+        id: ActorId,
+        input: SetAdministrator,
+    ) -> SocialStorageResult<ManagedAccount>;
+    async fn set_contact(
+        &self,
+        ctx: CommandContext,
+        input: SetContact,
+    ) -> SocialStorageResult<ContactEntry>;
+    async fn update_account(
+        &self,
+        ctx: CommandContext,
+        id: ActorId,
+        input: UpdateAccount,
+    ) -> SocialStorageResult<Actor>;
+    async fn account_view(
+        &self,
+        operator: ActorId,
+        id: ActorId,
+    ) -> SocialStorageResult<SocialOverview>;
+    async fn account_view_messages(
+        &self,
+        operator: ActorId,
+        id: ActorId,
+        conversation: ConversationId,
+        before: Option<Sequence>,
+    ) -> SocialStorageResult<(Vec<SocialMessage>, bool)>;
     async fn message(&self, operator: ActorId, id: MessageId)
     -> SocialStorageResult<SocialMessage>;
     async fn withdraw_message(
@@ -251,10 +318,10 @@ pub trait SocialStore: Send + Sync {
     async fn actor(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<Actor>;
     async fn overview(&self, operator: ActorId) -> SocialStorageResult<SocialOverview>;
     async fn contact(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<ContactRecord>;
-    async fn control_contact(
+    async fn control_account(
         &self,
         ctx: CommandContext,
-        input: ContactControl,
+        input: AccountControl,
     ) -> SocialStorageResult<ContactRecord>;
     async fn update_ai(
         &self,

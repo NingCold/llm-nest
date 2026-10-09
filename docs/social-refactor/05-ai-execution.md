@@ -23,7 +23,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 1. 领取 ParticipationPlan，确定目标 AI、空间和触发消息范围。
 2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding。
 3. 调用 ConsciousnessService.prepare_context，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
-4. 再检查暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件。
+4. 再检查档案/绑定版本、暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件。
 5. 调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内；后续扩展外部 dispatch 审计时明确记录边界。
 
 无法解析模型时返回候选与可恢复错误，终结计划，不更换身份或静默替换模型。授权和版本在启动过程中变化时，放弃旧计划并重新评估。
@@ -51,6 +51,8 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 每条临时事件包含 runId、messageId、actorId、conversationId 和单 run 内递增 deltaSeq。重连不重放 token，而是读取持久草稿或最终消息；客户端收到终态后忽略迟到片段。
 
 ## 6. 成功、取消与错误
+
+角色设定与绑定修改只影响新运行，已经开始的请求保留原配置；旧准备若在启动前发生配置变化则拒绝启动。
 
 成功：再次校验 Actor/成员状态、Bout 状态、参与 epoch 和受撤销的意识系统来源；同事务保存最终消息、usage/timings、run.succeeded、计划与意图终态和持久事件。事务成功才广播完成。
 

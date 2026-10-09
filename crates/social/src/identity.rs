@@ -20,6 +20,8 @@ pub struct Actor {
     pub kind: ActorKind,
     pub display_name: String,
     pub avatar_ref: Option<String>,
+    #[serde(default)]
+    pub bio: String,
     pub status: EntityStatus,
     pub revision: Revision,
     pub created_at: DateTime<Utc>,
@@ -47,4 +49,21 @@ pub struct Relationship {
     pub participant_a: ActorId,
     pub participant_b: ActorId,
     pub revision: Revision,
+}
+
+/// A personal address-book entry does not control the target account's lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactEntry {
+    pub owner_id: ActorId,
+    pub account_id: ActorId,
+    pub listed: bool,
+    pub revision: Revision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Administrator {
+    pub account_id: ActorId,
+    pub initial: bool,
 }

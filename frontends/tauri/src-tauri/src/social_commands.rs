@@ -6,14 +6,14 @@ use social_feature::{SocialError, wire};
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
 
 #[tauri::command]
-pub async fn social_control_contact(
+pub async fn social_control_account(
     state: tauri::State<'_, BackendState>,
     id: ActorId,
-    input: wire::ContactControlInput,
-) -> Result<wire::Contact> {
+    input: wire::AccountControlInput,
+) -> Result<wire::Account> {
     feature(state)
         .await?
-        .control_contact(id, input)
+        .control_account(id, input)
         .await
         .map_err(|e| e.wire())
 }
@@ -105,25 +105,25 @@ pub async fn social_init(state: tauri::State<'_, BackendState>) -> Result<wire::
     feature(state).await?.init().await.map_err(|e| e.wire())
 }
 #[tauri::command]
-pub async fn social_create_contact(
+pub async fn social_create_ai(
     state: tauri::State<'_, BackendState>,
-    input: wire::ContactInput,
-) -> Result<wire::Contact> {
+    input: wire::AiInput,
+) -> Result<wire::ManagedAi> {
     feature(state)
         .await?
-        .create_contact(input)
+        .create_ai(input)
         .await
         .map_err(|e| e.wire())
 }
 #[tauri::command]
-pub async fn social_update_contact(
+pub async fn social_update_ai(
     state: tauri::State<'_, BackendState>,
     id: ActorId,
-    input: wire::UpdateContactInput,
-) -> Result<wire::Contact> {
+    input: wire::UpdateAiInput,
+) -> Result<wire::ManagedAi> {
     feature(state)
         .await?
-        .update_contact(id, input)
+        .update_ai(id, input)
         .await
         .map_err(|e| e.wire())
 }
@@ -265,6 +265,106 @@ pub async fn social_message(
     feature(state)
         .await?
         .message(id)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_account(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+) -> Result<wire::Account> {
+    feature(state)
+        .await?
+        .account(id)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_managed_accounts(
+    state: tauri::State<'_, BackendState>,
+) -> Result<Vec<wire::ManagedAi>> {
+    feature(state)
+        .await?
+        .managed_accounts()
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_managed_account(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+) -> Result<wire::ManagedAi> {
+    feature(state)
+        .await?
+        .managed_account(id)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_set_administrator(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+    input: social_feature::AdministratorInput,
+) -> Result<wire::ManagedAi> {
+    feature(state)
+        .await?
+        .set_administrator(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_set_contact(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+    input: social_feature::SetContactInput,
+) -> Result<social::ContactEntry> {
+    feature(state)
+        .await?
+        .set_contact(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_update_account(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+    input: social_feature::AccountInput,
+) -> Result<wire::Account> {
+    feature(state)
+        .await?
+        .update_account(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_account_view(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+) -> Result<wire::AccountView> {
+    feature(state)
+        .await?
+        .account_view(id)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
+pub async fn social_account_view_messages(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+    conversation: ConversationId,
+    before: Option<Sequence>,
+) -> Result<wire::MessagePage> {
+    feature(state)
+        .await?
+        .account_view_messages(id, conversation, before)
         .await
         .map_err(|e| e.wire())
 }

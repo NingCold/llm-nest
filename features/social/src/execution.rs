@@ -265,7 +265,7 @@ impl SocialFeature {
                 }
                 details.error = Some(failure(
                     "context_changed",
-                    "本次使用的角色设定或消息来源已变化，回复保留为中断记录",
+                    "本次使用的消息来源或参与状态已变化，回复保留为中断记录",
                 ));
                 s.resources
                     .store

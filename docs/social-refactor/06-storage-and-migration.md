@@ -16,11 +16,11 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 ## 2. 当前 Schema 与目标关系
 
-当前 schema 版本为 5；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+当前 schema 版本为 6；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
-| 身份 | actors、ai_profiles、execution_bindings、relationships | 关系设置、独立生成参数与工具策略 |
+| 身份 | actors、ai_profiles、execution_bindings、relationships、address_book、account_admins | 关系设置、独立生成参数与工具策略 |
 | 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 跨窗口引用、正式已读用例 |
 | 参与/执行 | participation_plans、ai_runs、run_details | 联系意图、消费进度、工具/协议审计、预算预留 |
 | 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
@@ -41,7 +41,11 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 
 | 操作 | 同一次提交的内容 |
 | --- | --- |
-| 创建 AI | Actor、档案、执行绑定、事件、命令回执 |
+| 创建 AI | Actor、内部档案、执行绑定、初始管理员、创建者与 AI 各自的通讯录条目、事件、命令回执 |
+| 修改公开资料 | Actor.bio/display_name/revision、事件、回执；不修改内部档案或绑定 |
+| 修改 AI 设定/绑定 | 管理权限检查、Actor/档案/绑定版本、事件、回执；已开始运行仍使用原快照 |
+| 添加/移除联系人 | address_book 的 owner/account/listed/revision、contact_changed 事件、回执；不改变账号、空间、运行或队列 |
+| 授予/撤销管理员 | 初始管理员权限检查、account_admins、Actor.revision、事件、回执 |
 | 发送真人消息 | 消息、空间顺序/版本、接话计划、事件、回执；M2 加入可选上下文引用 |
 | 处理触发事件 | consumer offset、去重后的参与计划 |
 | 开始 AI 运行 | 计划转 running、取得/创建 Bout、AiRun、generating 消息、开始事件；后续加入预算预留 |
@@ -50,7 +54,7 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 暂停成员 | 该成员 paused/revision、它的运行/队列终态、事件、回执；不提高全群 epoch |
 | 加入/移除成员 | 成员版本、空间 context/participation epoch、运行/计划撤销、事件、回执 |
 | 归档空间 | 空间 archived 状态、活动运行取消标记、未执行计划/意图终态、事件 |
-| 归档联系人 | Actor.status/revision、该 AI 跨空间的运行/片段终态与排队计划、事件、回执；保留关系/成员/窗口设置，恢复不重放取消计划 |
+| 管理员停用账号 | Actor.status/revision、该 AI 跨空间的运行/片段终态与排队计划、事件、回执；保留关系/成员/窗口设置，恢复不重放取消计划 |
 | 结束 Bout | Bout 终态、本 Bout 的活动运行取消标记与未执行计划状态、事件 |
 | 编辑/遗忘 | 修订或遗忘记录、派生内容失效、上下文版本、撤销标记、事件 |
 | 保存/失效摘要 | 来源与权限版本复核、分段摘要版本/状态、派生依赖、变更事件 |
@@ -72,6 +76,8 @@ M0 使用 rusqlite 0.40.2 bundled，WAL、foreign_keys=ON、synchronous=FULL，�
 草稿检查点约 500ms 保存有变化的内容；工具调用与结果及时提交。持久事件日志不保存逐 token delta，减少放大写入。
 
 ## 5. Schema 升级
+
+v6 为既有 AI 补入本地真人的初始管理权与各自的通讯录条目。旧 archived Actor 仍保持停用，真人通讯录条目设为未列出，不自动恢复；公开简介初始化为空，内部 persona 不复制为公开内容。账号、关系、私聊 ID、群成员与历史保留，升级前的 v5 备份可核对原文。实现与验证见 [账号管理记录](m1-account-management.md)。
 
 每次 schema 变更有顺序版本与校验记录。打开数据库先取得目录锁，再检查版本和执行事务迁移。未知较新版本拒绝写入并提示需要匹配应用，不尝试降级解释。
 

@@ -1,11 +1,13 @@
+mod account_control;
+mod accounts;
 mod consciousness;
-mod contacts;
 mod controls;
 mod execution;
 mod feature;
 mod subscription;
 pub mod wire;
 
+pub use accounts::{AccountInput, AdministratorInput, ContactInput as SetContactInput};
 pub use feature::SocialFeature;
 pub use subscription::SocialSubscription;
 

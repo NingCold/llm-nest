@@ -1,5 +1,5 @@
 export interface SocialRoute {
-  page: "messages" | "contacts" | "settings"
+  page: "messages" | "contacts" | "settings" | "account" | "ai-management" | "account-view"
   id: string | null
   details: boolean
   memories: boolean
@@ -7,7 +7,7 @@ export interface SocialRoute {
 
 export function parseSocialRoute(hash: string): SocialRoute {
   const parts = hash.replace(/^#\/?/, "").split("/")
-  const page = parts[0] === "contacts" ? "contacts" : parts[0] === "settings" ? "settings" : "messages"
+  const page: SocialRoute["page"] = ["contacts", "settings", "account", "ai-management", "account-view"].includes(parts[0]) ? parts[0] as SocialRoute["page"] : "messages"
   return {
     page, id: page === "settings" || !parts[1] ? null : parts[1],
     details: page === "messages" && parts[2] === "details",
@@ -15,6 +15,6 @@ export function parseSocialRoute(hash: string): SocialRoute {
   }
 }
 
-export function navigate(page: "messages" | "contacts", id?: string, details = false, memories = false) {
+export function navigate(page: Exclude<SocialRoute["page"], "settings">, id?: string, details = false, memories = false) {
   location.hash = `/${page}${id ? `/${id}` : ""}${details ? "/details" : ""}${memories ? "/memories" : ""}`
 }

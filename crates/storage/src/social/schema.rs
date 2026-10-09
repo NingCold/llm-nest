@@ -11,6 +11,7 @@ const SCHEMA_V2: &str = include_str!("schema-v2.sql");
 const SCHEMA_V3: &str = include_str!("schema-v3.sql");
 const SCHEMA_V4: &str = include_str!("schema-v4.sql");
 const SCHEMA_V5: &str = include_str!("schema-v5.sql");
+const SCHEMA_V6: &str = include_str!("schema-v6.sql");
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -76,10 +77,10 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| sql_error(path, e))?;
-    if !(0..=5).contains(&version) {
+    if !(0..=6).contains(&version) {
         return Err(Error::Schema {
             path: path.to_owned(),
-            detail: format!("unsupported version {version}; expected 0..=5"),
+            detail: format!("unsupported version {version}; expected 0..=6"),
         });
     }
     let tables: i64 = connection
@@ -110,6 +111,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
             (3, migration_digest(SCHEMA_V3)),
             (4, migration_digest(SCHEMA_V4)),
             (5, migration_digest(SCHEMA_V5)),
+            (6, migration_digest(SCHEMA_V6)),
         ];
         if ledger != expected[..version as usize] {
             return Err(Error::Schema {
@@ -131,6 +133,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         (3, SCHEMA_V3),
         (4, SCHEMA_V4),
         (5, SCHEMA_V5),
+        (6, SCHEMA_V6),
     ] {
         if version >= next {
             continue;
@@ -218,20 +221,24 @@ mod tests {
             current
                 .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            5
+            6
         );
-        assert_eq!(
-            current
-                .query_row::<String, _, _>("SELECT payload FROM actors WHERE id=?1", [&id], |r| r
-                    .get(0))
+        let migrated: serde_json::Value = serde_json::from_str(
+            &current
+                .query_row::<String, _, _>("SELECT payload FROM actors WHERE id=?1", [&id], |r| {
+                    r.get(0)
+                })
                 .unwrap(),
-            payload
-        );
+        )
+        .unwrap();
+        let mut expected: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        expected["bio"] = serde_json::json!("");
+        assert_eq!(migrated, expected);
         assert_eq!(
             current
                 .query_row::<i64, _, _>("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap(),
-            5
+            6
         );
         let backup_path = std::fs::read_dir(dir.path())
             .unwrap()

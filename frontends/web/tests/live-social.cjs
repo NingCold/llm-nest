@@ -8,7 +8,7 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '../src/social');
 const compile = name => ts.transpileModule(fs.readFileSync(path.join(root, name + '.ts'), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const defer = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise,resolve,reject }; };
-const snapshot = cursor => ({ selfId:'human',selfName:'Human',contacts:[],conversations:[],models:[],cursor });
+const snapshot = cursor => ({ selfId:'human',selfName:'Human',selfAccount:{ id:'human',name:'Human',kind:'human',bio:'',avatarRef:null,status:'active',revision:'1' },accounts:[],addressBook:[],conversations:[],models:[],cursor });
 const message = (text, revision='1', status='committed') => ({ id:'message',conversationId:'chat',senderId:'human',senderName:'Human',sequence:'1',text,status,revision,replyTo:null,runId:null,createdAt:'2026-10-09T00:00:00Z' });
 
 function harness() {

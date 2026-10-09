@@ -242,9 +242,10 @@ mod tests {
         let (_directory, runtime, feature) = fixture().await;
         let cursor = feature.init().await.unwrap().cursor;
         feature
-            .create_contact(wire::ContactInput {
+            .create_ai(wire::AiInput {
                 request_id: CommandId::new(),
                 name: "timeout".into(),
+                bio: String::new(),
                 persona: "fixture".into(),
                 binding: None,
             })
@@ -331,9 +332,10 @@ mod tests {
         // Commits remain independent of a stalled WebView.
         for name in ["one", "two"] {
             feature
-                .create_contact(wire::ContactInput {
+                .create_ai(wire::AiInput {
                     request_id: CommandId::new(),
                     name: name.into(),
+                    bio: String::new(),
                     persona: "fixture".into(),
                     binding: None,
                 })
@@ -372,7 +374,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(receiver.recv().await.unwrap()["kind"], "closed");
-        assert!(!feature.init().await.unwrap().contacts.is_empty());
+        assert!(!feature.init().await.unwrap().address_book.is_empty());
         runtime.shutdown_features().await.unwrap();
     }
 }

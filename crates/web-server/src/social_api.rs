@@ -17,13 +17,33 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
-        .route("/api/social/contacts", post(create_contact))
         .route(
-            "/api/social/contacts/{id}",
-            axum::routing::patch(update_contact),
+            "/api/social/ai-accounts",
+            get(managed_accounts).post(create_ai),
         )
-        .route("/api/social/contacts/{id}/direct", post(open_direct))
-        .route("/api/social/contacts/{id}/control", post(control_contact))
+        .route(
+            "/api/social/ai-accounts/{id}",
+            get(managed_account).patch(update_ai),
+        )
+        .route("/api/social/accounts/{id}/direct", post(open_direct))
+        .route(
+            "/api/social/ai-accounts/{id}/control",
+            post(control_account),
+        )
+        .route(
+            "/api/social/accounts/{id}",
+            get(account).patch(update_account),
+        )
+        .route("/api/social/contacts/{id}", post(set_contact))
+        .route(
+            "/api/social/ai-accounts/{id}/administrators",
+            post(set_administrator),
+        )
+        .route("/api/social/ai-accounts/{id}/view", get(account_view))
+        .route(
+            "/api/social/ai-accounts/{id}/view/conversations/{conversation}/messages",
+            get(account_view_messages),
+        )
         .route("/api/social/groups", post(create_group))
         .route(
             "/api/social/conversations/{id}/members",
@@ -129,18 +149,18 @@ async fn plans(
 async fn init(State(s): State<Arc<AppState>>) -> Result<wire::Init> {
     Ok(Json(s.social.init().await?))
 }
-async fn create_contact(
+async fn create_ai(
     State(s): State<Arc<AppState>>,
-    Json(input): Json<wire::ContactInput>,
-) -> Result<wire::Contact> {
-    Ok(Json(s.social.create_contact(input).await?))
+    Json(input): Json<wire::AiInput>,
+) -> Result<wire::ManagedAi> {
+    Ok(Json(s.social.create_ai(input).await?))
 }
-async fn update_contact(
+async fn update_ai(
     State(s): State<Arc<AppState>>,
     Path(id): Path<ActorId>,
-    Json(input): Json<wire::UpdateContactInput>,
-) -> Result<wire::Contact> {
-    Ok(Json(s.social.update_contact(id, input).await?))
+    Json(input): Json<wire::UpdateAiInput>,
+) -> Result<wire::ManagedAi> {
+    Ok(Json(s.social.update_ai(id, input).await?))
 }
 async fn open_direct(
     State(s): State<Arc<AppState>>,
@@ -149,12 +169,12 @@ async fn open_direct(
 ) -> Result<ConversationId> {
     Ok(Json(s.social.open_direct(id, input).await?))
 }
-async fn control_contact(
+async fn control_account(
     State(s): State<Arc<AppState>>,
     Path(id): Path<ActorId>,
-    Json(input): Json<wire::ContactControlInput>,
-) -> Result<wire::Contact> {
-    Ok(Json(s.social.control_contact(id, input).await?))
+    Json(input): Json<wire::AccountControlInput>,
+) -> Result<wire::Account> {
+    Ok(Json(s.social.control_account(id, input).await?))
 }
 async fn conversation(
     State(s): State<Arc<AppState>>,
@@ -250,4 +270,55 @@ async fn subscribe(
         },
     );
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10))))
+}
+
+async fn account(State(s): State<Arc<AppState>>, Path(id): Path<ActorId>) -> Result<wire::Account> {
+    Ok(Json(s.social.account(id).await?))
+}
+async fn managed_accounts(State(s): State<Arc<AppState>>) -> Result<Vec<wire::ManagedAi>> {
+    Ok(Json(s.social.managed_accounts().await?))
+}
+async fn managed_account(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ActorId>,
+) -> Result<wire::ManagedAi> {
+    Ok(Json(s.social.managed_account(id).await?))
+}
+async fn set_administrator(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ActorId>,
+    Json(input): Json<social_feature::AdministratorInput>,
+) -> Result<wire::ManagedAi> {
+    Ok(Json(s.social.set_administrator(id, input).await?))
+}
+async fn set_contact(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ActorId>,
+    Json(input): Json<social_feature::SetContactInput>,
+) -> Result<social::ContactEntry> {
+    Ok(Json(s.social.set_contact(id, input).await?))
+}
+async fn update_account(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ActorId>,
+    Json(input): Json<social_feature::AccountInput>,
+) -> Result<wire::Account> {
+    Ok(Json(s.social.update_account(id, input).await?))
+}
+async fn account_view(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ActorId>,
+) -> Result<wire::AccountView> {
+    Ok(Json(s.social.account_view(id).await?))
+}
+async fn account_view_messages(
+    State(s): State<Arc<AppState>>,
+    Path((id, conversation)): Path<(ActorId, ConversationId)>,
+    Query(q): Query<MessageQuery>,
+) -> Result<wire::MessagePage> {
+    Ok(Json(
+        s.social
+            .account_view_messages(id, conversation, q.before)
+            .await?,
+    ))
 }

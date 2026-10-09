@@ -4,20 +4,21 @@ use events::SocialChange;
 use rusqlite::params;
 
 impl Db<'_> {
-    pub(super) fn control_contact(
+    pub(super) fn control_account(
         &self,
         ctx: &CommandContext,
-        input: &ContactControl,
+        input: &AccountControl,
     ) -> Result<ContactRecord> {
-        if self.receipt(ctx, "control_contact", input)?.is_some() {
+        self.administrator(ctx.operator, input.actor_id)?;
+        if self.receipt(ctx, "control_account", input)?.is_some() {
             return self.contact_record(input.actor_id);
         }
-        // A contact record requires an AI profile, so the local human cannot be archived.
+        // Only AI accounts have administrator grants and an internal AI profile.
         let mut contact = self.contact_record(input.actor_id)?;
         self.expected(contact.actor.revision, input.expected_revision)?;
         let status = match input.action {
-            ContactAction::Archive => EntityStatus::Archived,
-            ContactAction::Restore => EntityStatus::Active,
+            AccountAction::Archive => EntityStatus::Archived,
+            AccountAction::Restore => EntityStatus::Active,
         };
         if contact.actor.status != status {
             contact.actor.status = status;
@@ -53,7 +54,7 @@ impl Db<'_> {
                 revision: contact.actor.revision,
             })?;
         }
-        self.save_receipt(ctx, "control_contact", input, contact.actor.id)?;
+        self.save_receipt(ctx, "control_account", input, contact.actor.id)?;
         Ok(contact)
     }
 }

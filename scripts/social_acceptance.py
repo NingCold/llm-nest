@@ -128,11 +128,14 @@ def main():
             time.sleep(.05)
         raise AssertionError('condition timed out')
 
+    def managed(value):
+        return dict(value['account'], persona=value['persona'], binding=value['binding'])
+
     def contact(name, model='chat'):
-        return api('/contacts', 'POST', {'requestId': str(uuid.uuid4()), 'name': name, 'persona': 'persona-' + name, 'binding': None if model is None else {'providerId': 'test', 'modelId': model, 'reasoningEffort': None}})
+        return managed(api('/ai-accounts', 'POST', {'requestId': str(uuid.uuid4()), 'name': name, 'bio':'public-' + name, 'persona': 'persona-' + name, 'binding': None if model is None else {'providerId': 'test', 'modelId': model, 'reasoningEffort': None}}))
 
     def direct(actor):
-        return api(f'/contacts/{actor["id"]}/direct', 'POST', {'requestId': str(uuid.uuid4())})
+        return api(f'/accounts/{actor["id"]}/direct', 'POST', {'requestId': str(uuid.uuid4())})
 
     def history(cid):
         return api(f'/conversations/{cid}/messages')['messages']
@@ -167,7 +170,7 @@ def main():
         start()
         initial = api('/init')
         self_id = initial['selfId']
-        assert initial['contacts'] == [] and initial['conversations'] == []
+        assert initial['addressBook'] == [] and len(initial['accounts']) == 1 and initial['conversations'] == []
         alice, bob, draft = contact('Alice'), contact('Bob'), contact('Draft', None)
         private = direct(alice)
         assert private == direct(alice)
@@ -181,7 +184,7 @@ def main():
             raise AssertionError('invalid model accepted')
         except urllib.error.HTTPError as error:
             assert error.code == 422 and json.load(error)['code'] == 'model_unavailable'
-        assert len(api('/init')['contacts']) == len(before['contacts'])
+        assert len(api('/init')['accounts']) == len(before['accounts'])
 
         request_id = str(uuid.uuid4())
         with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -203,6 +206,52 @@ def main():
         assert 'persona-Bob' in REQUESTS[-1]['messages'][0]['content']
         assert all('second-turn' not in str(m) for m in REQUESTS[-1]['messages'])
 
+        # Public identities, personal contacts, and administrator privileges are separate.
+        public = api('/init')
+        assert public['selfAccount']['kind'] == 'human'
+        assert set(api(f'/accounts/{alice["id"]}')) == set(public['selfAccount'])
+        assert all('persona' not in a and 'binding' not in a and 'administrators' not in a for a in public['accounts'])
+        assert api(f'/accounts/{alice["id"]}')['bio'] == 'public-Alice'
+        root = public['selfAccount']
+        root = api(f'/accounts/{self_id}', 'PATCH', {'requestId':str(uuid.uuid4()), 'name':root['name'], 'bio':'public human biography', 'expectedRevision':root['revision']})
+        assert api('/init')['selfAccount'] == root
+        relation = next(e for e in public['addressBook'] if e['accountId'] == alice['id'])
+        send(private, 'slow-contact-removal')
+        old_run = wait_for(lambda: api(f'/conversations/{private}')['activeRun'])
+        removed = api(f'/contacts/{alice["id"]}', 'POST', {'requestId':str(uuid.uuid4()), 'listed':False, 'expectedRevision':relation['revision']})
+        assert not removed['listed'] and api(f'/accounts/{alice["id"]}')['status'] == 'active'
+        assert api(f'/conversations/{private}')['activeRun']['id'] == old_run['id']
+        wait_for(lambda: any(m['runId'] == old_run['id'] and m['status'] == 'committed' for m in history(private)))
+        assert complete(private, 'private-after-removal')['senderId'] == alice['id']
+        relation_group = group('Relationship remains', [alice,bob])
+        send(relation_group, 'group-after-removal', mentions=[alice['id']])
+        assert settled(relation_group)[0]['status'] == 'succeeded'
+        added = api(f'/contacts/{alice["id"]}', 'POST', {'requestId':str(uuid.uuid4()), 'listed':True, 'expectedRevision':removed['revision']})
+        assert added['listed'] and direct(alice) == private
+        managed_ai = api(f'/ai-accounts/{alice["id"]}')
+        assert managed_ai['persona'] == 'persona-Alice' and managed_ai['isInitialAdministrator']
+        granted = api(f'/ai-accounts/{alice["id"]}/administrators', 'POST', {'requestId':str(uuid.uuid4()), 'accountId':bob['id'], 'granted':True, 'expectedRevision':managed_ai['account']['revision']})
+        assert len(granted['administrators']) == 2
+        revoked = api(f'/ai-accounts/{alice["id"]}/administrators', 'POST', {'requestId':str(uuid.uuid4()), 'accountId':bob['id'], 'granted':False, 'expectedRevision':granted['account']['revision']})
+        alice = managed(revoked)
+        view = api(f'/ai-accounts/{alice["id"]}/view')
+        assert view['operatorId'] == self_id and view['snapshot']['selfId'] == alice['id']
+        assert {c['id'] for c in view['snapshot']['conversations']} == {private,relation_group}
+        assert api(f'/ai-accounts/{alice["id"]}/view/conversations/{private}/messages')['messages'] == history(private)
+        try:
+            api(f'/ai-accounts/{alice["id"]}/view/conversations/{bob_id}/messages')
+            raise AssertionError('AI viewpoint read another account\'s private chat')
+        except urllib.error.HTTPError as error:
+            assert error.code == 403
+        member(relation_group,alice,'remove')
+        try:
+            api(f'/ai-accounts/{alice["id"]}/view/conversations/{relation_group}/messages')
+            raise AssertionError('AI viewpoint read a group after leaving')
+        except urllib.error.HTTPError as error:
+            assert error.code == 403
+        assert all(c['id'] != relation_group for c in api(f'/ai-accounts/{alice["id"]}/view')['snapshot']['conversations'])
+        print('PASS: identical public account fields without internal settings, own profile, independent contact removal during generation, continued private/group replies, re-add identity, grants/revocation, scoped read-only AI viewpoint and membership checks', flush=True)
+
         send(private, 'slow-cancel')
         running = wait_for(lambda: api(f'/conversations/{private}')['activeRun'])
         started = time.monotonic()
@@ -222,9 +271,10 @@ def main():
 
         send(private, 'slow-profile')
         wait_for(lambda: api(f'/conversations/{private}')['activeRun'])
-        alice = api(f'/contacts/{alice["id"]}', 'PATCH', {'requestId': str(uuid.uuid4()), 'name': 'Alice', 'persona': 'persona-Alice-v2', 'binding': {'providerId': 'test', 'modelId': 'alt', 'reasoningEffort': None}, 'expectedRevision': alice['revision']})
-        revised = wait_for(lambda: next((m for m in history(private) if m['text'].startswith('回应：slow-profile') and m['status'] == 'interrupted'), None))
-        assert api(f'/runs/{revised["runId"]}')['error']['code'] == 'context_changed'
+        alice = managed(api(f'/ai-accounts/{alice["id"]}', 'PATCH', {'requestId': str(uuid.uuid4()), 'name': 'Alice', 'bio':'public-Alice-v2', 'persona': 'persona-Alice-v2', 'binding': {'providerId': 'test', 'modelId': 'alt', 'reasoningEffort': None}, 'expectedRevision': alice['revision']}))
+        revised = wait_for(lambda: next((m for m in history(private) if m['text'].startswith('回应：slow-profile') and m['status'] == 'committed'), None))
+        assert api(f'/runs/{revised["runId"]}')['model'] == 'chat'
+        assert api(f'/runs/{revised["runId"]}')['error'] is None
         assert direct(alice) == private
         complete(private, 'new-model')
         assert REQUESTS[-1]['model'] == 'alt-wire' and 'persona-Alice-v2' in REQUESTS[-1]['messages'][0]['content']
@@ -385,7 +435,7 @@ def main():
         assert any('following-message' in str(m) for m in calls_for('new-bout')[0]['messages'])
         print('PASS: revisions/withdrawal retain history, revoke old replies, preserve receipts; per-member pause, space pause/archive/restore and independent Bout ending', flush=True)
 
-        # Contact lifecycle is global, while chat controls and group memberships remain independent.
+        # Administrator-controlled account lifecycle is global, while chat controls and group memberships remain independent.
         lifecycle_a, lifecycle_b = contact('Lifecycle A'), contact('Lifecycle B')
         lifecycle_private = direct(lifecycle_a)
         lifecycle_group = group('Contact lifecycle', [lifecycle_a, lifecycle_b])
@@ -398,9 +448,9 @@ def main():
         wait_for(lambda: api(f'/conversations/{unrelated_group}')['activeRun'])
         send(lifecycle_private, 'life-queued-private')
         archive_input = {'requestId': str(uuid.uuid4()), 'expectedRevision': lifecycle_a['revision'], 'action': 'archive'}
-        contact_path = f"/contacts/{lifecycle_a['id']}/control"
+        contact_path = f"/ai-accounts/{lifecycle_a['id']}/control"
         archived_contact = api(contact_path, 'POST', archive_input)
-        assert archived_contact['status'] == 'archived' and archived_contact['binding'] == lifecycle_a['binding']
+        assert archived_contact['status'] == 'archived' and api(f"/ai-accounts/{lifecycle_a['id']}")['binding'] == lifecycle_a['binding']
         assert api(contact_path, 'POST', archive_input) == archived_contact
         for cid, fragment in [(lifecycle_private, private_fragment), (lifecycle_group, group_fragment)]:
             saved_fragment = next(m for m in history(cid) if m['id'] == fragment['id'])
@@ -422,9 +472,9 @@ def main():
                 assert error.code == 409
         assert direct(lifecycle_a) == lifecycle_private
         archived_send = send(lifecycle_private, 'life-archived-private')
-        assert archived_send['executionNotice']['code'] == 'contact_archived'
+        assert archived_send['executionNotice']['code'] == 'account_disabled'
         mixed_send = send(lifecycle_group, 'life-archived-group', mentions=[lifecycle_a['id'], lifecycle_b['id']])
-        assert mixed_send['executionNotice']['code'] == 'contact_archived'
+        assert mixed_send['executionNotice']['code'] == 'account_disabled'
         settled(lifecycle_group)
         assert provider_count('life-archived-private') == 0 and provider_count('life-archived-group') == 1
         current = api(f'/conversations/{lifecycle_private}')
@@ -432,7 +482,7 @@ def main():
         member = next(m for m in api(f'/conversations/{lifecycle_group}')['members'] if m['actorId'] == lifecycle_b['id'])
         api(f'/conversations/{lifecycle_group}/members/participation', 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':member['revision'], 'actorId':lifecycle_b['id'], 'paused':True})
         stop(); start()
-        persisted_contact = next(c for c in api('/init')['contacts'] if c['id'] == lifecycle_a['id'])
+        persisted_contact = next(c for c in api('/init')['accounts'] if c['id'] == lifecycle_a['id'])
         assert persisted_contact == archived_contact
         assert direct(lifecycle_a) == lifecycle_private
         assert provider_count('life-queued-private') == 0
@@ -445,13 +495,13 @@ def main():
         assert complete(lifecycle_private, 'life-after-restore')['senderId'] == lifecycle_a['id']
         assert direct(lifecycle_a) == lifecycle_private and provider_count('life-queued-private') == 0
         unused_contact = contact('Archived without chat', None)
-        api(f"/contacts/{unused_contact['id']}/control", 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':unused_contact['revision'], 'action':'archive'})
+        api(f"/ai-accounts/{unused_contact['id']}/control", 'POST', {'requestId':str(uuid.uuid4()), 'expectedRevision':unused_contact['revision'], 'action':'archive'})
         try:
             direct(unused_contact)
             raise AssertionError('archived contact created a private chat')
         except urllib.error.HTTPError as error:
             assert error.code == 400
-        print('PASS: contact archive/restore, cross-space cancellation and FIFO continuation, saved fragments/history, archived sends, current-state receipts/conflicts, independent pause settings, restart/no replay and unique private identity', flush=True)
+        print('PASS: administrator account stop/restore, cross-space cancellation and FIFO continuation, saved fragments/history, archived sends, current-state receipts/conflicts, independent pause settings, restart/no replay and unique private identity', flush=True)
 
         # Crash recovery never resends the started response; untouched queue entries resume.
         recovery_group = group('Recovery group', [alice, bob])

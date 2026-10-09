@@ -10,6 +10,8 @@ LLM-Nest 正从本地 Harness 转向人与 AI 的社交空间，共用 Rust 运�
 
 首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
 
+ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。通讯录 ContactEntry 是按 owner 的有向列出状态，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio。
+
 当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；浏览器模拟预览必须显式启用。本文维护修改约束，不重复维护各批测试数量。
 
 ## 工作前先确认
@@ -92,7 +94,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 
 - 采用写穿透：先成功落盘，再替换内存；失败上抛，不能让 UI 展示“已保存”。
 - FileSessionStore 持有 `.llmn.lock` 的 OS 排他锁。同目录只允许一个独立 Runtime；不要删除运行中的锁文件或退回 PID 文件锁。
-- JSON/SQLite 并用时先取得一次 `Arc<DataDirectoryGuard>`，两种 store 共享该 guard，不能重复加锁。SocialStore 在单写线程操作 SQLite，原子提交实体、事件引用和命令回执；不跨模型请求持有事务。GUI 宿主显式调用 `Runtime::from_config_social_persistent` 打开社交库；CLI/TUI 仍用原构造路径，不自动导入 JSON。Runtime 关闭等待 Feature 中断收尾和 SocialStore writer 排空。联系人绑定由 SocialFeature 经共享 AiClient 严格校验。
+- JSON/SQLite 并用时先取得一次 `Arc<DataDirectoryGuard>`，两种 store 共享该 guard，不能重复加锁。SocialStore 在单写线程操作 SQLite，原子提交实体、事件引用和命令回执；不跨模型请求持有事务。GUI 宿主显式调用 `Runtime::from_config_social_persistent` 打开社交库；CLI/TUI 仍用原构造路径，不自动导入 JSON。Runtime 关闭等待 Feature 中断收尾和 SocialStore writer 排空。AI 绑定由获授权管理员经 SocialFeature 和共享 AiClient 严格校验；启动前复核档案/绑定版本，普通配置修改不使已开始运行失效，最终提交仍复核消息来源与参与状态。
 - JSON 写入使用同目录临时文件和原子替换。坏文件错误须带路径，不可静默丢弃。
 - 新消息创建真实 UUID；旧记录加载时补齐并持久化，重复 ID 报错。编辑按 userId、反馈按 messageId + revision 定位，不能恢复旧索引 API。
 - 旧 ChatFeature 的 run 开始和用户消息同事务。社交用例先提交真人消息，生成另行开始；成功回答、运行终态、用量/思考详情与持久事件同事务。流式每 500ms 保存有变化的 draft；旧工具调用/结果仍写穿透。

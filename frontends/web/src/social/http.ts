@@ -1,6 +1,6 @@
-import type { Binding, Change, Contact, ControlAction, Conversation, LiveEvent, Message, VersionedCommand, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
+import type { Change, LiveEvent } from "./live-types"
 
-import { SocialApiError } from "./transport"
+import { SocialApiError, type SocialClient } from "./transport"
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const headers = new Headers({ "X-LLMN-Client": "1" })
@@ -13,24 +13,32 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   return response.status === 204 ? undefined as T : await response.json() as T
 }
 
-export const socialClient = {
-  message: (id: string) => request<Message>(`/messages/${id}`),
-  revise: (id: string, input: VersionedCommand & { text: string }) => request<Message>(`/messages/${id}/revise`, "POST", input),
-  withdraw: (id: string, input: VersionedCommand) => request<Message>(`/messages/${id}/withdraw`, "POST", input),
-  control: (id: string, input: VersionedCommand & { action: ControlAction }) => request<Conversation>(`/conversations/${id}/control`, "POST", input),
-  pauseMember: (id: string, input: VersionedCommand & { actorId: string; paused: boolean }) => request<Conversation>(`/conversations/${id}/members/participation`, "POST", input),
-  createGroup: (input: { requestId: string; title: string; memberIds: string[] }) => request<string>("/groups", "POST", input),
-  changeMembership: (id: string, input: { requestId: string; actorId: string; expectedRevision: string; action: "add" | "remove" }) => request<Conversation>(`/conversations/${id}/members`, "POST", input),
-  plans: (id: string) => request<ParticipationPlan[]>(`/conversations/${id}/plans`),
-  init: () => request<Snapshot>("/init"),
-  createContact: (input: { requestId: string; name: string; persona: string; binding: Binding | null }) => request<Contact>("/contacts", "POST", input),
-  updateContact: (id: string, input: { requestId: string; name: string; persona: string; binding: Binding | null; expectedRevision: string }) => request<Contact>(`/contacts/${id}`, "PATCH", input),
-  openDirect: (id: string, requestId: string) => request<string>(`/contacts/${id}/direct`, "POST", { requestId }),
-  controlContact: (id: string, input: VersionedCommand & { action: "archive" | "restore" }) => request<Contact>(`/contacts/${id}/control`, "POST", input),
-  messages: (id: string, before?: string) => request<MessagePage>(`/conversations/${id}/messages${before ? `?before=${before}` : ""}`),
-  send: (id: string, input: SendInput) => request<SendReceipt>(`/conversations/${id}/messages`, "POST", input),
-  cancel: (id: string) => request<void>(`/runs/${id}/cancel`, "POST"),
-  runDetails: (id: string) => request<RunDetails | null>(`/runs/${id}`),
+export const socialClient: SocialClient = {
+  message: id => request(`/messages/${id}`),
+  revise: (id, input) => request(`/messages/${id}/revise`, "POST", input),
+  withdraw: (id, input) => request(`/messages/${id}/withdraw`, "POST", input),
+  control: (id, input) => request(`/conversations/${id}/control`, "POST", input),
+  pauseMember: (id, input) => request(`/conversations/${id}/members/participation`, "POST", input),
+  createGroup: input => request("/groups", "POST", input),
+  changeMembership: (id, input) => request(`/conversations/${id}/members`, "POST", input),
+  plans: id => request(`/conversations/${id}/plans`),
+  init: () => request("/init"),
+  account: id => request(`/accounts/${id}`),
+  updateAccount: (id, input) => request(`/accounts/${id}`, "PATCH", input),
+  setContact: (id, input) => request(`/contacts/${id}`, "POST", input),
+  managedAccounts: () => request("/ai-accounts"),
+  managedAccount: id => request(`/ai-accounts/${id}`),
+  createAi: input => request("/ai-accounts", "POST", input),
+  updateAi: (id, input) => request(`/ai-accounts/${id}`, "PATCH", input),
+  controlAccount: (id, input) => request(`/ai-accounts/${id}/control`, "POST", input),
+  setAdministrator: (id, input) => request(`/ai-accounts/${id}/administrators`, "POST", input),
+  accountView: id => request(`/ai-accounts/${id}/view`),
+  accountViewMessages: (id, conversation, before) => request(`/ai-accounts/${id}/view/conversations/${conversation}/messages${before ? `?before=${before}` : ""}`),
+  openDirect: (id, requestId) => request(`/accounts/${id}/direct`, "POST", { requestId }),
+  messages: (id, before) => request(`/conversations/${id}/messages${before ? `?before=${before}` : ""}`),
+  send: (id, input) => request(`/conversations/${id}/messages`, "POST", input),
+  cancel: id => request(`/runs/${id}/cancel`, "POST"),
+  runDetails: id => request(`/runs/${id}`),
 }
 
 // Fetch is used instead of EventSource so every request carries the local-client header.

@@ -409,3 +409,21 @@
 .live-message-editor div, .live-withdraw-confirm { display: flex; flex-wrap: wrap; gap: 12px; }
 .live-withdraw-confirm p { width: 100%; margin: 0; }
 .live-message-editor button, .live-withdraw-confirm button { color: var(--s-accent); font-size: 12px; }
+/* Account profiles, private administration, and the read-only AI viewpoint. */
+.account-entry { border-radius: 12px; padding: 5px; }
+.account-entry.selected { background: var(--s-soft); }
+.account-id { overflow-wrap: anywhere; font-family: monospace; font-size: 12px; }
+.account-management, .account-viewer { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; }
+.management-scroll { flex: 1; overflow-y: auto; padding: 24px; }
+.managed-account-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.managed-account-details { max-width: 760px; margin: 24px auto; }
+.managed-account-details h1 { font-size: 24px; margin-bottom: 16px; }
+.account-administrators { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
+.account-administrators > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.account-administrators small { display: block; font-size: 12px; opacity: .65; }
+.account-view-notice { padding: 12px 20px; font-size: 12px; border-bottom: 1px solid var(--s-line); }
+.account-view-columns { display: flex; flex: 1; min-height: 0; }
+.account-view-columns > aside { width: 220px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--s-line); padding: 12px; }
+.account-view-columns h2 { margin: 12px 8px; font-size: 14px; font-weight: 600; }
+.account-view-columns > .chat-timeline { flex: 1; min-width: 0; }
+@media (max-width: 700px) { .account-view-columns > aside { width: 140px; padding: 4px; } .management-scroll { padding: 12px; } .account-management .contact-header { flex-wrap: wrap; height: auto; padding: 12px; } }

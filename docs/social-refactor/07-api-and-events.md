@@ -12,16 +12,20 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 ## 2. 当前接口
 
-HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌面实时订阅通过 Channel 接入同一 SocialFeature。联系人和空间列表由 init 返回，暂没有独立列表接口。
-
-下表保持当前可调用契约：contacts control 仍执行全局 Actor 归档，没有独立账号管理员权限或关系级移除。新账号约定见 [身份与关系](01-identity-and-relationships.md#0-已确认的账号与管理边界)，在实现时同步更新共享业务、HTTP/IPC 与表中契约，不预先登记空接口。
+HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 24 个 HTTP 路径与 30 个 IPC 命令。
 
 | 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
 | 启动快照 | GET /init | social_init |
-| 创建/修改联系人及绑定 | POST /contacts；PATCH /contacts/{id} | social_create_contact / social_update_contact |
-| 归档/恢复联系人（移除默认归档） | POST /contacts/{id}/control | social_control_contact |
-| 打开唯一私聊 | POST /contacts/{id}/direct | social_open_direct |
+| 公开账号/修改资料 | GET/PATCH /accounts/{id} | social_account / social_update_account |
+| 个人通讯录添加/移除 | POST /contacts/{id} | social_set_contact |
+| 获授权 AI 列表/创建 AI | GET/POST /ai-accounts | social_managed_accounts / social_create_ai |
+| 管理详情/修改设定与绑定 | GET/PATCH /ai-accounts/{id} | social_managed_account / social_update_ai |
+| 初始管理员授予/撤销 | POST /ai-accounts/{id}/administrators | social_set_administrator |
+| 管理员停用/恢复账号 | POST /ai-accounts/{id}/control | social_control_account |
+| AI 只读账号快照 | GET /ai-accounts/{id}/view | social_account_view |
+| AI 视角分页历史 | GET /ai-accounts/{id}/view/conversations/{conversation}/messages | social_account_view_messages |
+| 打开唯一私聊 | POST /accounts/{id}/direct | social_open_direct |
 | 创建独立群 | POST /groups | social_create_group |
 | 空间详情 | GET /conversations/{id} | social_conversation |
 | 成员加入/移出 | POST /conversations/{id}/members | social_change_membership |
@@ -42,9 +46,12 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌�
 
 | 命令 | 字段与版本 |
 | --- | --- |
-| 联系人创建/修改 | requestId、name、persona、binding；修改追加联系人 expectedRevision。binding 为 providerId/modelId/reasoningEffort，可为空 |
-| 联系人归档/恢复 | requestId、联系人 expectedRevision、action(archive/restore)；移除入口发送 archive，不删除记录 |
-| 打开私聊 | requestId；归档私聊或已归档联系人已有的私聊返回原 ID，不自动恢复；已归档联系人不能创建新私聊 |
+| AI 创建/修改 | requestId、name、bio、persona、binding；修改追加账号 expectedRevision。binding 为 providerId/modelId/reasoningEffort，可为空。创建自动赋予实际创建者初始管理权 |
+| 公开资料修改 | requestId、name、bio、账号 expectedRevision；自己可修改，修改 AI 需管理权 |
+| 个人通讯录 | requestId、listed、条目 expectedRevision；尚无条目时 expectedRevision 为 null，之后使用自己的条目版本，不使用 Actor.revision |
+| 管理员授予/撤销 | requestId、accountId、granted、被管理 AI 的 expectedRevision；仅初始管理员可以操作，不能撤销初始管理员 |
+| 账号停用/恢复 | requestId、账号 expectedRevision、action(archive/restore)；需管理权，与联系人移除、窗口归档分别处理 |
+| 打开私聊 | requestId；即使联系人未列出仍沿用原窗口；停用 AI 的已有私聊返回原 ID，不自动恢复，也不能为停用 AI 创建新私聊 |
 | 创建群 | requestId、title、memberIds |
 | 成员加入/移出 | requestId、actorId、action(add/remove)、空间 expectedRevision；没有历史范围选项 |
 | 发送文本 | requestId、text、replyTo；mentions 可省略，按顺序选择接话 AI |
@@ -52,9 +59,13 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌�
 | 窗口控制 | requestId、空间 expectedRevision、action(pause/resume/end/archive/restore) |
 | 成员暂停/恢复 | requestId、actorId、成员 expectedRevision、paused |
 
-消息分页使用 before=sequence，当前每页最多 200 条，返回 messages/hasMore。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun 和 currentBout；运行详情返回独立 RunDetails，旧运行可为 null。
+共同 Account 字段为 id/kind/name/avatarRef/bio/status/revision，真人与 AI 相同。ManagedAi 包含 account、persona、binding、administrators(accountId/initial)、isInitialAdministrator，仅供有权限的管理接口。联系人操作返回 ContactEntry(ownerId/accountId/listed/revision)。
 
-原模型、配置与目录同步接口保留；旧 `/api/sessions` 和 chat-event 服务迁移期 Harness，不与社交契约混用。
+AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被查看 AI，操作者仍为真实管理员。每次读取快照与分页历史复核管理授权，窗口按该 AI 的当前成员身份筛选；查看停用 AI 仍可行，退出群后不能读取该群。它是可手动刷新的只读快照，不使用实际操作者的全局事件订阅，不提供代发消息或远程登录令牌。
+
+消息分页使用 before=sequence，每页最多 200 条，返回 messages/hasMore。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun 和 currentBout；运行详情返回独立 RunDetails，旧运行可为 null。
+
+原模型、配置与目录同步接口保留；旧 `/api/sessions` 和 chat-event 服务迁移期 Harness，不与社交契约混用。原 contacts 创建/修改/全局归档路由已由上述账号接口替换，不维持含糊的双语义兼容入口；数据迁移保留历史。
 
 ## 3. 发送与幂等
 
@@ -69,13 +80,13 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌�
 
 空间由路由或命令参数指定，senderId 从后端当前操作者取得。replyTo 只引用同空间消息；正文中的 @名字不替代 mentions。返回 SendReceipt 的 message 和可选 executionNotice，只表示真人消息已提交，不保证 AI 会回答，也不返回虚构的 committedCursor。
 
-命令回执作用域为操作者 + 命令种类 + requestId。同内容重试返回原实体的当前可见状态，改内容重用 ID 返回冲突；幂等检查先于已成功命令的 revision 检查。回执只保存引用和摘要，撤回后不回放旧正文。取消单个 run 没有 requestId，终态重复取消仍成功；HTTP 返回 204，IPC 返回空成功结果。
+命令回执作用域为操作者 + 命令种类 + requestId。同内容重试返回原实体的当前可见状态，改内容重用 ID 返回冲突；管理权限先于管理命令的回执读取；撤销权限后不能通过旧 requestId 再读内部数据。幂等检查先于已成功命令的 revision 检查。回执只保存引用和摘要，撤回后不回放旧正文。取消单个 run 没有 requestId，终态重复取消仍成功；HTTP 返回 204，IPC 返回空成功结果。
 
 前端保存失败保留输入；未知发送结果继续使用原 requestId/expectedRevision 重试。后续刷新失败不撤销已收到的成功回执。编辑按消息自身版本检查，其他成员追加消息不会使无关编辑冲突。
 
 ## 4. 持久事件
 
-SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、conversation_changed、message_changed、run_changed、bout_changed、plan_changed；各自带实体 ID、revision 和适用的 conversationId。
+SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、run_changed、bout_changed、plan_changed；各自带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；通讯录变更与 Actor 的管理/资料/停用变更分别表达。
 
 ```json
 {
@@ -101,7 +112,7 @@ SocialGenerationEvent 当前有 generation.delta、generation.reasoning_delta �
 
 ## 6. 启动、订阅与补齐
 
-init 在一致读取中返回本地真人、全部 AI 联系人（含 archived）、窗口列表元数据、模型选项和 cursor，不返回全部历史，也不等待摘要。Contact.status 为 active/archived，通讯录按状态分组；归档身份保留在快照中供恢复、私聊和群历史署名。列表中的 latestMessage 与意识系统的历史摘要分别处理。
+init 在一致读取中返回 selfId/selfName/selfAccount、公开 accounts（含停用账号）、当前操作者的 addressBook、窗口列表元数据、模型选项和 cursor。通讯录按自己的 listed 条目展示，未列出和停用分别处理；accounts 保留用于群成员/历史身份与重新添加。公开快照不包含内部 persona/绑定/管理员，管理页面使用独立的获授权接口。列表 latestMessage 与意识系统的历史摘要分别处理。
 
 HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cursor 读取持久引用，每 250ms 补读已提交变更，单批最多 500 条，临时广播最多保留 256 个事件。SSE 的 change/id 标识持久 cursor，generation 没有 SSE id。订阅断开只释放订阅，生成继续。
 
@@ -123,9 +134,9 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 共享业务错误为 code/message/retryable。目前 invalid_input → 400，not_found → 404，not_authorized → 403，revision_conflict → 409，model_unavailable/budget_exhausted → 422，storage_failure/unavailable → 503。IPC 使用相同业务错误体；Axum 的 JSON/Path/Query 拒绝响应仍由框架产生，统一这部分错误是 M1 剩余工作。当前不返回 currentRevision。
 
-消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
+消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：账号管理员授予、账号视角查看、关系级联系人操作、独立生成参数/工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：独立生成参数/工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

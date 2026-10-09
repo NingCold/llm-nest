@@ -95,9 +95,11 @@ impl SocialFeature {
             })
             .collect();
         Ok(wire::Init {
-            self_id: overview.human.id,
-            self_name: overview.human.display_name,
-            contacts: overview.contacts.into_iter().map(Into::into).collect(),
+            self_id: overview.account.id,
+            self_name: overview.account.display_name.clone(),
+            self_account: overview.account.clone().into(),
+            accounts: overview.accounts.into_iter().map(Into::into).collect(),
+            address_book: overview.address_book,
             conversations: overview.conversations.into_iter().map(Into::into).collect(),
             models,
             cursor: overview.cursor,
@@ -112,7 +114,7 @@ impl SocialFeature {
         }
         Ok(())
     }
-    pub async fn create_contact(&self, input: wire::ContactInput) -> Result<wire::Contact> {
+    pub async fn create_ai(&self, input: wire::AiInput) -> Result<wire::ManagedAi> {
         self.validate_binding(&input.binding).await?;
         let s = self.services()?;
         let actor = s
@@ -122,33 +124,52 @@ impl SocialFeature {
                 self.context(input.request_id)?,
                 CreateAi {
                     display_name: input.name,
+                    bio: input.bio,
+                    avatar_ref: None,
                     persona: input.persona,
                     binding: input.binding.map(Into::into),
                 },
             )
             .await?;
-        Ok(s.resources.store.contact(s.human, actor.id).await?.into())
+        Ok(s.resources
+            .store
+            .managed_account(s.human, actor.id)
+            .await?
+            .into())
     }
-    pub async fn update_contact(
+    pub async fn update_ai(
         &self,
         id: ActorId,
-        input: wire::UpdateContactInput,
-    ) -> Result<wire::Contact> {
-        self.validate_binding(&input.binding).await?;
-        Ok(self
+        input: wire::UpdateAiInput,
+    ) -> Result<wire::ManagedAi> {
+        let current = self
             .services()?
+            .resources
+            .store
+            .managed_account(self.services()?.human, id)
+            .await?;
+        self.validate_binding(&input.binding).await?;
+        self.services()?
             .resources
             .store
             .update_ai(
                 self.context(input.request_id)?,
                 UpdateAi {
                     display_name: input.name,
+                    bio: input.bio,
+                    avatar_ref: current.contact.actor.avatar_ref,
                     persona: input.persona,
                     binding: input.binding.map(Into::into),
                     expected_revision: input.expected_revision,
                 },
                 id,
             )
+            .await?;
+        Ok(self
+            .services()?
+            .resources
+            .store
+            .managed_account(self.services()?.human, id)
             .await?
             .into())
     }
@@ -227,9 +248,9 @@ impl SocialFeature {
             let contact = s.resources.store.contact(s.human, *target).await?;
             if contact.actor.status == EntityStatus::Archived {
                 execution_notice = Some(RunFailure {
-                    code: "contact_archived".into(),
+                    code: "account_disabled".into(),
                     message: format!(
-                        "消息已保存；{} 已归档，恢复联系人后新消息才会触发回复",
+                        "消息已保存；{} 的账号已停用，管理员恢复账号后只有新消息才会触发回复",
                         contact.actor.display_name
                     ),
                 });

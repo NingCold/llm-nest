@@ -1,6 +1,11 @@
 // Business DTOs from features/social/src/wire.rs; counters stay decimal strings.
 export interface Binding { providerId: string; modelId: string; reasoningEffort: string | null }
-export interface Contact { id: string; name: string; persona: string; revision: string; status: "active" | "archived"; binding: Binding | null }
+export interface Account { id: string; kind: "human" | "ai"; name: string; avatarRef: string | null; bio: string; revision: string; status: "active" | "archived" }
+export interface ContactEntry { ownerId: string; accountId: string; listed: boolean; revision: string }
+export interface ManagedAi { account: Account; persona: string; binding: Binding | null; administrators: { accountId: string; initial: boolean }[]; isInitialAdministrator: boolean }
+export interface AiInput { requestId: string; name: string; bio: string; persona: string; binding: Binding | null }
+export interface ContactInput { requestId: string; listed: boolean; expectedRevision: string | null }
+export interface AccountView { operatorId: string; snapshot: Snapshot }
 export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[] }
 export interface Message {
   id: string; conversationId: string; senderId: string; senderName: string
@@ -15,7 +20,7 @@ export interface Conversation {
 }
 export interface Membership { actorId: string; paused: boolean; revision: string }
 export interface ParticipationPlan { id: string; actorId: string; triggerId: string; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
-export interface Snapshot { selfId: string; selfName: string; contacts: Contact[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
+export interface Snapshot { selfId: string; selfName: string; selfAccount: Account; accounts: Account[]; addressBook: ContactEntry[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
 export interface Failure { code: string; message: string }
 export interface RunDetails {
   provider: string; model: string; wireModel: string; protocol: string; reasoning: string

@@ -130,6 +130,8 @@ impl Fixture {
                 self.ctx(),
                 CreateAi {
                     display_name: name.into(),
+                    bio: String::new(),
+                    avatar_ref: None,
                     persona: "角色设定".into(),
                     binding: Some(BindingCandidate {
                         provider_id: "mock".into(),
@@ -253,6 +255,8 @@ impl Fixture {
             "legacy_imports",
             "legacy_entries",
             "legacy_id_map",
+            "account_admins",
+            "address_book",
         ]
         .iter()
         .map(|t| {
@@ -273,6 +277,619 @@ impl Fixture {
         self.store.close().await.unwrap();
         drop(self.dir);
     }
+}
+
+#[tokio::test]
+async fn v5_account_migration_preserves_history_private_settings_and_old_disabled_accounts() {
+    let f = Fixture::new().await;
+    let a = f.ai("active account").await;
+    let b = f.ai("previously archived contact").await;
+    let c = f.direct(a.id).await;
+    let m = f.append(c.id, "preserved history").await;
+    let old_stop = f.ctx();
+    let old_stop_input = AccountControl {
+        actor_id: b.id,
+        expected_revision: b.revision,
+        action: AccountAction::Archive,
+    };
+    f.store
+        .control_account(old_stop.clone(), old_stop_input.clone())
+        .await
+        .unwrap();
+    let path = f.store.path().to_owned();
+    let operator = f.human.id;
+    f.store.close().await.unwrap();
+    let old = Connection::open(&path).unwrap();
+    old.execute_batch("DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
+    drop(old);
+    let store = SqliteSocialStore::open(
+        DataDirectoryGuard::acquire(f.dir.path()).unwrap(),
+        f.clock.clone(),
+    )
+    .await
+    .unwrap();
+    let overview = store.overview(operator).await.unwrap();
+    assert_eq!(
+        store
+            .control_account(old_stop, old_stop_input)
+            .await
+            .unwrap()
+            .actor
+            .status,
+        EntityStatus::Archived
+    );
+    assert_eq!(
+        store.overview(operator).await.unwrap().cursor,
+        overview.cursor,
+        "upgraded command receipts do not repeat the stop"
+    );
+    assert!(
+        overview
+            .address_book
+            .iter()
+            .any(|e| e.account_id == a.id && e.listed)
+    );
+    assert!(
+        overview
+            .address_book
+            .iter()
+            .any(|e| e.account_id == b.id && !e.listed)
+    );
+    assert_eq!(store.managed_accounts(operator).await.unwrap().len(), 2);
+    let managed = store.managed_account(operator, a.id).await.unwrap();
+    assert_eq!(
+        managed.administrators,
+        vec![Administrator {
+            account_id: operator,
+            initial: true
+        }]
+    );
+    assert_eq!(managed.contact.actor.id, a.id);
+    assert_eq!(managed.contact.actor.bio, "");
+    assert_eq!(managed.contact.profile.persona, "角色设定");
+    assert_eq!(managed.contact.binding.unwrap().model_id, "same-model");
+    assert_eq!(
+        store.actor(operator, b.id).await.unwrap().status,
+        EntityStatus::Archived
+    );
+    assert_eq!(
+        store.message_page(operator, c.id, None).await.unwrap().0,
+        vec![m]
+    );
+    let mut preserved_backup = false;
+    for entry in fs::read_dir(f.dir.path()).unwrap() {
+        let path = entry.unwrap().path();
+        if !path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("social.before-v6-")
+        {
+            continue;
+        }
+        let backup = Connection::open(&path).unwrap();
+        if backup
+            .query_row::<i64, _, _>("SELECT count(*) FROM messages", [], |r| r.get(0))
+            .unwrap()
+            == 1
+        {
+            assert_eq!(
+                backup
+                    .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+                    .unwrap(),
+                5
+            );
+            let payload: String = backup
+                .query_row(
+                    "SELECT payload FROM actors WHERE id=?1",
+                    [a.id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&payload)
+                    .unwrap()
+                    .get("bio")
+                    .is_none()
+            );
+            preserved_backup = true;
+        }
+    }
+    assert!(preserved_backup);
+    store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn removing_a_contact_preserves_running_replies_groups_and_the_unique_private_chat() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let direct = f.direct(a.id).await;
+    let group = f.group(vec![a.id, b.id]).await;
+    let saved = f.send_group(group.id, vec![a.id, b.id]).await;
+    let run = f.begin_plan(&saved.plans[0]).await.unwrap();
+    let group_before = f.store.conversation(f.human.id, group.id).await.unwrap();
+    let before = f.store.overview(f.human.id).await.unwrap();
+    let entry = before
+        .address_book
+        .iter()
+        .find(|e| e.account_id == a.id)
+        .unwrap();
+    let input = SetContact {
+        account_id: a.id,
+        listed: false,
+        expected_revision: Some(entry.revision),
+    };
+    let ctx = f.ctx();
+    f.inject();
+    assert!(
+        f.store
+            .set_contact(ctx.clone(), input.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        f.store.overview(f.human.id).await.unwrap().address_book,
+        before.address_book
+    );
+    assert_eq!(
+        f.store.overview(f.human.id).await.unwrap().cursor,
+        before.cursor
+    );
+    f.clear();
+    let removed = f
+        .store
+        .set_contact(ctx.clone(), input.clone())
+        .await
+        .unwrap();
+    assert!(!removed.listed);
+    assert_eq!(f.store.actor(f.human.id, a.id).await.unwrap(), a);
+    assert_eq!(
+        f.store.conversation(f.human.id, group.id).await.unwrap(),
+        group_before
+    );
+    assert_eq!(
+        f.store.run(f.human.id, run.id).await.unwrap().status,
+        RunStatus::Running
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, group.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == saved.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Queued
+    );
+    f.store
+        .finish_run(
+            f.ctx(),
+            FinishRun {
+                run_id: run.id,
+                expected_revision: run.revision,
+                status: RunStatus::Succeeded,
+                body: MessageBody::text("completed after removal"),
+                details: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.direct(a.id).await.id, direct.id);
+    assert!(!f.send_group(direct.id, vec![]).await.plans.is_empty());
+    let added = f
+        .store
+        .set_contact(
+            f.ctx(),
+            SetContact {
+                account_id: a.id,
+                listed: true,
+                expected_revision: Some(removed.revision),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(added.listed);
+    assert_eq!(
+        f.store.set_contact(ctx, input.clone()).await.unwrap(),
+        added,
+        "receipt returns current relationship state"
+    );
+    assert!(matches!(
+        f.store.set_contact(f.ctx(), input).await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    assert_eq!(f.direct(a.id).await.id, direct.id);
+    // The AI's address book is a separate owner relationship.
+    let ai_view = f.store.account_view(f.human.id, a.id).await.unwrap();
+    assert!(
+        ai_view
+            .address_book
+            .iter()
+            .any(|e| e.account_id == f.human.id && e.listed)
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn administrator_grants_enforce_permissions_revocation_versions_and_transaction_rollback() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let as_b = || CommandContext {
+        operator: b.id,
+        request_id: CommandId::new(),
+    };
+    assert!(matches!(
+        f.store.managed_account(b.id, a.id).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    assert!(matches!(
+        f.store.account_view(b.id, a.id).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    assert!(matches!(
+        f.store
+            .control_account(
+                as_b(),
+                AccountControl {
+                    actor_id: a.id,
+                    expected_revision: a.revision,
+                    action: AccountAction::Archive
+                }
+            )
+            .await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    let grant = SetAdministrator {
+        account_id: b.id,
+        granted: true,
+        expected_revision: a.revision,
+    };
+    let ctx = f.ctx();
+    let counts = f.counts();
+    f.inject();
+    assert!(
+        f.store
+            .set_administrator(ctx.clone(), a.id, grant.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(f.counts(), counts);
+    assert_eq!(f.store.actor(f.human.id, a.id).await.unwrap(), a);
+    f.clear();
+    let managed = f
+        .store
+        .set_administrator(ctx.clone(), a.id, grant.clone())
+        .await
+        .unwrap();
+    assert!(managed.is_initial_administrator);
+    assert_eq!(managed.administrators.len(), 2);
+    assert!(
+        !f.store
+            .managed_account(b.id, a.id)
+            .await
+            .unwrap()
+            .is_initial_administrator
+    );
+    assert!(matches!(
+        f.store
+            .set_administrator(
+                as_b(),
+                a.id,
+                SetAdministrator {
+                    account_id: f.human.id,
+                    granted: false,
+                    expected_revision: managed.contact.actor.revision
+                }
+            )
+            .await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    let update_ctx = as_b();
+    let update = UpdateAi {
+        display_name: "A edited".into(),
+        bio: "public".into(),
+        avatar_ref: None,
+        persona: "private".into(),
+        binding: None,
+        expected_revision: managed.contact.actor.revision,
+    };
+    let edited = f
+        .store
+        .update_ai(update_ctx.clone(), update.clone(), a.id)
+        .await
+        .unwrap();
+    assert_eq!(edited.profile.persona, "private");
+    let stopped = f
+        .store
+        .control_account(
+            as_b(),
+            AccountControl {
+                actor_id: a.id,
+                expected_revision: edited.actor.revision,
+                action: AccountAction::Archive,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        f.store.account_view(b.id, a.id).await.is_ok(),
+        "a stopped AI may still be inspected by an active administrator"
+    );
+    let restored = f
+        .store
+        .control_account(
+            as_b(),
+            AccountControl {
+                actor_id: a.id,
+                expected_revision: stopped.actor.revision,
+                action: AccountAction::Restore,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store
+            .set_administrator(f.ctx(), a.id, grant.clone())
+            .await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    let revoked = f
+        .store
+        .set_administrator(
+            f.ctx(),
+            a.id,
+            SetAdministrator {
+                account_id: b.id,
+                granted: false,
+                expected_revision: restored.actor.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.administrators.len(), 1);
+    assert!(
+        matches!(
+            f.store.update_ai(update_ctx, update, a.id).await,
+            Err(SocialStorageError::Forbidden(_))
+        ),
+        "permission is checked before an old receipt is replayed"
+    );
+    assert!(matches!(
+        f.store.account_view(b.id, a.id).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    assert_eq!(
+        f.store
+            .set_administrator(ctx, a.id, grant)
+            .await
+            .unwrap()
+            .administrators,
+        revoked.administrators
+    );
+    assert!(
+        f.store
+            .set_administrator(
+                f.ctx(),
+                a.id,
+                SetAdministrator {
+                    account_id: f.human.id,
+                    granted: false,
+                    expected_revision: revoked.contact.actor.revision
+                }
+            )
+            .await
+            .is_err()
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn account_view_reads_the_ais_memberships_and_checks_permission_on_every_history_read() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let own = f.direct(a.id).await;
+    let unrelated = f.direct(b.id).await;
+    let group = f.group(vec![a.id, b.id]).await;
+    f.append(group.id, "shared history").await;
+    // Trusted store callers may represent other active accounts; the GUI does not accept an operator ID.
+    let ctx = CommandContext {
+        operator: b.id,
+        request_id: CommandId::new(),
+    };
+    let ai_private = f.store.open_direct(ctx.clone(), a.id).await.unwrap();
+    f.store
+        .append_message(
+            CommandContext {
+                request_id: CommandId::new(),
+                ..ctx
+            },
+            AppendMessage {
+                conversation_id: ai_private.id,
+                body: MessageBody::text("AI-owned conversation"),
+                reply_to: None,
+                expected_revision: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store.message_page(f.human.id, ai_private.id, None).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    let view = f.store.account_view(f.human.id, a.id).await.unwrap();
+    assert_eq!(view.account.id, a.id);
+    assert!(
+        view.conversations
+            .iter()
+            .any(|c| c.conversation.id == own.id)
+    );
+    assert!(
+        view.conversations
+            .iter()
+            .any(|c| c.conversation.id == ai_private.id)
+    );
+    assert!(
+        !view
+            .conversations
+            .iter()
+            .any(|c| c.conversation.id == unrelated.id)
+    );
+    assert_eq!(
+        f.store
+            .account_view_messages(f.human.id, a.id, ai_private.id, None)
+            .await
+            .unwrap()
+            .0[0]
+            .body,
+        MessageBody::text("AI-owned conversation")
+    );
+    assert!(matches!(
+        f.store
+            .account_view_messages(f.human.id, a.id, unrelated.id, None)
+            .await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    let current = f.store.conversation(f.human.id, group.id).await.unwrap();
+    f.store
+        .change_membership(
+            f.ctx(),
+            ChangeMembership {
+                conversation_id: group.id,
+                actor_id: a.id,
+                action: MembershipAction::Remove,
+                expected_revision: current.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store
+            .account_view_messages(f.human.id, a.id, group.id, None)
+            .await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    assert!(
+        !f.store
+            .account_view(f.human.id, a.id)
+            .await
+            .unwrap()
+            .conversations
+            .iter()
+            .any(|c| c.conversation.id == group.id)
+    );
+    let stopped = f
+        .store
+        .control_account(
+            f.ctx(),
+            AccountControl {
+                actor_id: a.id,
+                expected_revision: a.revision,
+                action: AccountAction::Archive,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(f.store.account_view(f.human.id, a.id).await.is_ok());
+    assert_eq!(
+        f.store.open_direct(f.ctx(), a.id).await.unwrap().id,
+        own.id,
+        "stopped-account lookup is scoped to the exact account pair"
+    );
+    assert_eq!(stopped.actor.id, a.id);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn configuration_changes_keep_existing_runs_frozen_and_new_runs_use_new_versions() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let c = f.direct(a.id).await;
+    let m = f.append(c.id, "before update").await;
+    let run = f.begin(a.id, c.id, vec![source(&m)]).await;
+    let update = UpdateAi {
+        display_name: "new name".into(),
+        bio: "public bio".into(),
+        avatar_ref: None,
+        persona: "new internal persona".into(),
+        binding: Some(BindingCandidate {
+            provider_id: "mock".into(),
+            model_id: "new-model".into(),
+            reasoning_effort: None,
+        }),
+        expected_revision: a.revision,
+    };
+    let counts = f.counts();
+    f.inject();
+    assert!(
+        f.store
+            .update_ai(f.ctx(), update.clone(), a.id)
+            .await
+            .is_err()
+    );
+    assert_eq!(f.counts(), counts);
+    f.clear();
+    let updated = f.store.update_ai(f.ctx(), update, a.id).await.unwrap();
+    f.store
+        .finish_run(
+            f.ctx(),
+            FinishRun {
+                run_id: run.id,
+                expected_revision: run.revision,
+                status: RunStatus::Succeeded,
+                body: MessageBody::text("old configuration succeeded"),
+                details: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .run(f.human.id, run.id)
+            .await
+            .unwrap()
+            .snapshot
+            .profile_revision,
+        Revision::ONE
+    );
+    let mut snapshot = f.snapshot(a.id, c.id, vec![source(&m)]).await;
+    let current = f.store.conversation(f.human.id, c.id).await.unwrap();
+    assert!(
+        matches!(
+            f.store
+                .begin_run(
+                    f.ctx(),
+                    BeginRun {
+                        snapshot: snapshot.clone(),
+                        expected_revision: current.revision,
+                        details: None
+                    }
+                )
+                .await,
+            Err(SocialStorageError::Conflict(_))
+        ),
+        "stale preparation is rejected before starting"
+    );
+    snapshot.profile_revision = updated.profile.revision;
+    snapshot.binding_revision = updated.binding.unwrap().revision;
+    let next = f
+        .store
+        .begin_run(
+            f.ctx(),
+            BeginRun {
+                snapshot: snapshot.clone(),
+                expected_revision: current.revision,
+                details: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.snapshot, snapshot);
+    assert_eq!(f.direct(a.id).await.id, c.id);
+    f.close().await;
 }
 
 #[tokio::test]
@@ -303,15 +920,15 @@ async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_hist
     let old_contact = f.store.contact(f.human.id, a.id).await.unwrap();
     let before = f.store.overview(f.human.id).await.unwrap();
     let ctx = f.ctx();
-    let input = ContactControl {
+    let input = AccountControl {
         actor_id: a.id,
         expected_revision: a.revision,
-        action: ContactAction::Archive,
+        action: AccountAction::Archive,
     };
     f.inject();
     assert!(
         f.store
-            .control_contact(ctx.clone(), input.clone())
+            .control_account(ctx.clone(), input.clone())
             .await
             .is_err()
     );
@@ -338,7 +955,7 @@ async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_hist
     f.clear();
     let archived = f
         .store
-        .control_contact(ctx.clone(), input.clone())
+        .control_account(ctx.clone(), input.clone())
         .await
         .unwrap();
     assert_eq!(archived.actor.status, EntityStatus::Archived);
@@ -347,7 +964,7 @@ async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_hist
     assert_eq!(archived.binding, old_contact.binding);
     assert_eq!(
         f.store
-            .control_contact(ctx.clone(), input.clone())
+            .control_account(ctx.clone(), input.clone())
             .await
             .unwrap()
             .actor,
@@ -403,8 +1020,8 @@ async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_hist
     );
     let overview = f.store.overview(f.human.id).await.unwrap();
     assert_eq!(
-        overview.contacts.len(),
-        2,
+        overview.accounts.len(),
+        3,
         "archived identities remain discoverable for history and restore"
     );
     for c in [direct.id, group.id, other.id] {
@@ -420,19 +1037,19 @@ async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_hist
     assert_eq!(saved.plans[0].actor_id, b.id);
     let restored = f
         .store
-        .control_contact(
+        .control_account(
             f.ctx(),
-            ContactControl {
+            AccountControl {
                 actor_id: a.id,
                 expected_revision: archived.actor.revision,
-                action: ContactAction::Restore,
+                action: AccountAction::Restore,
             },
         )
         .await
         .unwrap();
     assert_eq!(restored.actor.status, EntityStatus::Active);
     assert_eq!(
-        f.store.control_contact(ctx, input).await.unwrap().actor,
+        f.store.control_account(ctx, input).await.unwrap().actor,
         restored.actor,
         "replaying an old archive must not rearchive"
     );
@@ -500,26 +1117,26 @@ async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_
         .await
         .unwrap();
     let ctx = f.ctx();
-    let input = ContactControl {
+    let input = AccountControl {
         actor_id: a.id,
         expected_revision: a.revision,
-        action: ContactAction::Archive,
+        action: AccountAction::Archive,
     };
     let archived = f
         .store
-        .control_contact(ctx.clone(), input.clone())
+        .control_account(ctx.clone(), input.clone())
         .await
         .unwrap();
     assert!(matches!(
-        f.store.control_contact(f.ctx(), input.clone()).await,
+        f.store.control_account(f.ctx(), input.clone()).await,
         Err(SocialStorageError::Conflict(_))
     ));
     assert!(matches!(
         f.store
-            .control_contact(
+            .control_account(
                 ctx,
-                ContactControl {
-                    action: ContactAction::Restore,
+                AccountControl {
+                    action: AccountAction::Restore,
                     ..input.clone()
                 }
             )
@@ -528,7 +1145,7 @@ async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_
     ));
     assert!(
         f.store
-            .control_contact(
+            .control_account(
                 CommandContext {
                     operator: a.id,
                     request_id: CommandId::new()
@@ -540,12 +1157,12 @@ async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_
     );
     assert!(
         f.store
-            .control_contact(
+            .control_account(
                 f.ctx(),
-                ContactControl {
+                AccountControl {
                     actor_id: f.human.id,
                     expected_revision: f.human.revision,
-                    action: ContactAction::Archive
+                    action: AccountAction::Archive
                 }
             )
             .await
@@ -587,12 +1204,12 @@ async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_
         .unwrap();
     let restored = f
         .store
-        .control_contact(
+        .control_account(
             f.ctx(),
-            ContactControl {
+            AccountControl {
                 actor_id: a.id,
                 expected_revision: archived.actor.revision,
-                action: ContactAction::Restore,
+                action: AccountAction::Restore,
             },
         )
         .await
@@ -629,12 +1246,12 @@ async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_
     );
     let no_op = f
         .store
-        .control_contact(
+        .control_account(
             f.ctx(),
-            ContactControl {
+            AccountControl {
                 actor_id: a.id,
                 expected_revision: restored.actor.revision,
-                action: ContactAction::Restore,
+                action: AccountAction::Restore,
             },
         )
         .await
@@ -642,12 +1259,12 @@ async fn contact_restore_preserves_window_controls_and_group_removal_and_checks_
     assert_eq!(no_op.actor.revision, restored.actor.revision);
     let archived_unused = f
         .store
-        .control_contact(
+        .control_account(
             f.ctx(),
-            ContactControl {
+            AccountControl {
                 actor_id: unused.id,
                 expected_revision: unused.revision,
-                action: ContactAction::Archive,
+                action: AccountAction::Archive,
             },
         )
         .await
@@ -683,12 +1300,12 @@ async fn contact_archive_and_finish_keep_the_first_committed_outcome() {
                 details: None,
             },
         );
-        let archive = f.store.control_contact(
+        let archive = f.store.control_account(
             f.ctx(),
-            ContactControl {
+            AccountControl {
                 actor_id: ai.id,
                 expected_revision: ai.revision,
-                action: ContactAction::Archive,
+                action: AccountAction::Archive,
             },
         );
         let (finished, archived) = if archive_first {
@@ -1486,11 +2103,13 @@ async fn identities_direct_uniqueness_archive_restore_and_clock() {
             .unwrap(),
         vec![n]
     );
-    assert!(
+    assert_eq!(
         f.store
             .messages(ai.id, c.id, Sequence::ZERO, 20)
             .await
-            .is_err()
+            .unwrap()
+            .len(),
+        2
     );
     f.close().await;
 }
@@ -1581,6 +2200,8 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
                 f.ctx(),
                 CreateAi {
                     display_name: "failed".into(),
+                    bio: String::new(),
+                    avatar_ref: None,
                     persona: String::new(),
                     binding: None
                 }
@@ -1959,7 +2580,7 @@ async fn wal_backup_busy_and_foreign_key_constraints() {
     sql.execute_batch("BEGIN IMMEDIATE").unwrap();
     let before = f.counts();
     assert!(
-        matches!(f.store.create_ai(f.ctx(),CreateAi{display_name:"busy".into(),persona:String::new(),binding:None}).await,Err(SocialStorageError::Sqlite{source:rusqlite::Error::SqliteFailure(error,_),..}) if error.code==rusqlite::ErrorCode::DatabaseBusy)
+        matches!(f.store.create_ai(f.ctx(),CreateAi{display_name:"busy".into(),bio:String::new(),avatar_ref:None,persona:String::new(),binding:None}).await,Err(SocialStorageError::Sqlite{source:rusqlite::Error::SqliteFailure(error,_),..}) if error.code==rusqlite::ErrorCode::DatabaseBusy)
     );
     sql.execute_batch("ROLLBACK").unwrap();
     assert_eq!(f.counts(), before);
@@ -2289,6 +2910,8 @@ fn social_worker_child() {
                 ctx(),
                 CreateAi {
                     display_name: "AI".into(),
+                    bio: String::new(),
+                    avatar_ref: None,
                     persona: String::new(),
                     binding: Some(BindingCandidate {
                         provider_id: "mock".into(),

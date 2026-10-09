@@ -283,7 +283,7 @@ pub(super) fn import(
             model_id: m.model.clone(),
             reasoning_effort: m.reasoning_effort.as_ref().map(|r| r.as_wire().to_owned()),
         });
-        db.insert_ai(&ai, String::new(), binding.as_ref())?;
+        db.insert_ai(&ai, String::new(), binding.as_ref(), human.id)?;
         let mut c = db.new_conversation(
             ConversationKind::Group,
             None,

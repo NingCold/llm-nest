@@ -1,7 +1,7 @@
 //! Shared business DTOs. HTTP and IPC only select their transport.
 use serde::{Deserialize, Serialize};
 use social::*;
-use storage::social::{BindingCandidate, ContactRecord, ConversationRecord, RunFailure};
+use storage::social::{BindingCandidate, ConversationRecord, RunFailure};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,27 +22,49 @@ impl From<Binding> for BindingCandidate {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Contact {
+pub struct Account {
     pub id: ActorId,
+    pub kind: ActorKind,
     pub name: String,
-    pub persona: String,
+    pub avatar_ref: Option<String>,
+    pub bio: String,
     pub revision: Revision,
     pub status: EntityStatus,
-    pub binding: Option<Binding>,
 }
-impl From<ContactRecord> for Contact {
-    fn from(c: ContactRecord) -> Self {
+impl From<Actor> for Account {
+    fn from(c: Actor) -> Self {
         Self {
-            id: c.actor.id,
-            name: c.actor.display_name,
-            persona: c.profile.persona,
-            revision: c.actor.revision,
-            status: c.actor.status,
-            binding: c.binding.map(|b| Binding {
+            id: c.id,
+            kind: c.kind,
+            name: c.display_name,
+            avatar_ref: c.avatar_ref,
+            bio: c.bio,
+            revision: c.revision,
+            status: c.status,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedAi {
+    pub account: Account,
+    pub persona: String,
+    pub binding: Option<Binding>,
+    pub administrators: Vec<social::Administrator>,
+    pub is_initial_administrator: bool,
+}
+impl From<storage::social::ManagedAccount> for ManagedAi {
+    fn from(c: storage::social::ManagedAccount) -> Self {
+        Self {
+            account: c.contact.actor.into(),
+            persona: c.contact.profile.persona,
+            binding: c.contact.binding.map(|b| Binding {
                 provider_id: b.provider_id,
                 model_id: b.model_id,
                 reasoning_effort: b.reasoning_effort,
             }),
+            administrators: c.administrators,
+            is_initial_administrator: c.is_initial_administrator,
         }
     }
 }
@@ -266,26 +288,37 @@ pub struct ModelOption {
 pub struct Init {
     pub self_id: ActorId,
     pub self_name: String,
-    pub contacts: Vec<Contact>,
+    pub self_account: Account,
+    pub accounts: Vec<Account>,
+    pub address_book: Vec<social::ContactEntry>,
     pub conversations: Vec<Conversation>,
     pub models: Vec<ModelOption>,
     pub cursor: EventCursor,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountView {
+    pub operator_id: ActorId,
+    pub snapshot: Init,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ContactInput {
+pub struct AiInput {
     pub request_id: CommandId,
     pub name: String,
+    #[serde(default)]
+    pub bio: String,
     pub persona: String,
     pub binding: Option<Binding>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateContactInput {
+pub struct UpdateAiInput {
     pub request_id: CommandId,
     pub name: String,
+    pub bio: String,
     pub persona: String,
     pub binding: Option<Binding>,
     pub expected_revision: Revision,
@@ -299,10 +332,10 @@ pub struct Command {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ContactControlInput {
+pub struct AccountControlInput {
     pub request_id: CommandId,
     pub expected_revision: Revision,
-    pub action: storage::social::ContactAction,
+    pub action: storage::social::AccountAction,
 }
 
 #[derive(Debug, Clone, Deserialize)]

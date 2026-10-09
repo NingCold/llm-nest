@@ -10,6 +10,11 @@ use social::{ActorId, BoutId, ConversationId, EventCursor, MessageId, PlanId, Re
     rename_all_fields = "camelCase"
 )]
 pub enum SocialChange {
+    ContactChanged {
+        owner_id: ActorId,
+        account_id: ActorId,
+        revision: Revision,
+    },
     PlanChanged {
         conversation_id: ConversationId,
         plan_id: PlanId,

@@ -3,6 +3,20 @@ use ::social::*;
 use rusqlite::params;
 
 impl Db<'_> {
+    pub(super) fn message_page_for(
+        &self,
+        viewer: ActorId,
+        conversation: ConversationId,
+        before: Option<Sequence>,
+    ) -> Result<(Vec<SocialMessage>, bool)> {
+        self.member(viewer, conversation)?;
+        let mut messages: Vec<SocialMessage> = self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND (?2 IS NULL OR sequence<?2) ORDER BY sequence DESC LIMIT 201", params![conversation.to_string(), before.map(|s|s.get() as i64)])?;
+        let more = messages.len() > 200;
+        messages.truncate(200);
+        messages.reverse();
+        Ok((messages, more))
+    }
+
     pub(super) fn contact_record(&self, id: ActorId) -> Result<ContactRecord> {
         let actor: Actor = self.get("actors", id)?;
         let profile = self
@@ -61,15 +75,11 @@ impl Db<'_> {
     }
 
     pub(super) fn overview(&self, operator: ActorId) -> Result<SocialOverview> {
-        let human = self.operator(operator)?;
-        let actors: Vec<Actor> = self.query_json(
-            "SELECT payload FROM actors WHERE kind='ai' ORDER BY rowid",
-            [],
-        )?;
-        let contacts = actors
-            .into_iter()
-            .map(|actor| self.contact_record(actor.id))
-            .collect::<Result<_>>()?;
+        self.operator(operator)?;
+        self.overview_for(operator)
+    }
+    pub(super) fn overview_for(&self, operator: ActorId) -> Result<SocialOverview> {
+        let account = self.get("actors", operator)?;
         let conversations = self.query_json("SELECT c.payload FROM conversations c JOIN memberships m ON m.conversation_id=c.id WHERE m.actor_id=?1 AND m.status='active' ORDER BY c.rowid DESC", [operator.to_string()])?
             .into_iter().map(|c| self.conversation_record(operator, c)).collect::<Result<_>>()?;
         let cursor: i64 = self
@@ -81,8 +91,9 @@ impl Db<'_> {
             )
             .map_err(|e| super::schema::sql_error(self.path, e))?;
         Ok(SocialOverview {
-            human,
-            contacts,
+            account,
+            accounts: self.query_json("SELECT payload FROM actors ORDER BY rowid", [])?,
+            address_book: self.address_book(operator)?,
             conversations,
             cursor: EventCursor::new(cursor as u64)?,
         })

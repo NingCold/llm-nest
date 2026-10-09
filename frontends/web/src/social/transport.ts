@@ -1,7 +1,6 @@
-import type { Binding, Change, Contact, ControlAction, Conversation, LiveEvent, Message, VersionedCommand, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
+import type { Account, AccountView, AiInput, ContactEntry, ContactInput, ManagedAi, Change, ControlAction, Conversation, LiveEvent, Message, VersionedCommand, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
-type ContactInput = { requestId: string; name: string; persona: string; binding: Binding | null }
 export interface SocialClient {
   message(id: string): Promise<Message>
   revise(id: string, input: VersionedCommand & { text: string }): Promise<Message>
@@ -12,9 +11,17 @@ export interface SocialClient {
   changeMembership(id: string, input: VersionedCommand & { actorId: string; action: "add" | "remove" }): Promise<Conversation>
   plans(id: string): Promise<ParticipationPlan[]>
   init(): Promise<Snapshot>
-  createContact(input: ContactInput): Promise<Contact>
-  updateContact(id: string, input: ContactInput & { expectedRevision: string }): Promise<Contact>
-  controlContact(id: string, input: VersionedCommand & { action: "archive" | "restore" }): Promise<Contact>
+  account(id: string): Promise<Account>
+  updateAccount(id: string, input: VersionedCommand & { name: string; bio: string }): Promise<Account>
+  setContact(id: string, input: ContactInput): Promise<ContactEntry>
+  managedAccounts(): Promise<ManagedAi[]>
+  managedAccount(id: string): Promise<ManagedAi>
+  createAi(input: AiInput): Promise<ManagedAi>
+  updateAi(id: string, input: AiInput & { expectedRevision: string }): Promise<ManagedAi>
+  controlAccount(id: string, input: VersionedCommand & { action: "archive" | "restore" }): Promise<Account>
+  setAdministrator(id: string, input: VersionedCommand & { accountId: string; granted: boolean }): Promise<ManagedAi>
+  accountView(id: string): Promise<AccountView>
+  accountViewMessages(id: string, conversation: string, before?: string): Promise<MessagePage>
   openDirect(id: string, requestId: string): Promise<string>
   messages(id: string, before?: string): Promise<MessagePage>
   send(id: string, input: SendInput): Promise<SendReceipt>

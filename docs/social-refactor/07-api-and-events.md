@@ -14,6 +14,8 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 HTTP 前缀为 `/api/social`。Web 与 Tauri 使用下列共享业务 DTO，桌面实时订阅通过 Channel 接入同一 SocialFeature。联系人和空间列表由 init 返回，暂没有独立列表接口。
 
+下表保持当前可调用契约：contacts control 仍执行全局 Actor 归档，没有独立账号管理员权限或关系级移除。新账号约定见 [身份与关系](01-identity-and-relationships.md#0-已确认的账号与管理边界)，在实现时同步更新共享业务、HTTP/IPC 与表中契约，不预先登记空接口。
+
 | 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
 | 启动快照 | GET /init | social_init |

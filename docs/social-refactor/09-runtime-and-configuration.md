@@ -34,7 +34,7 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 | AI 档案、关系、群参与、联系约定 | SocialStore | 社交用例事务 |
 | 意识系统记忆、摘要、来源与快照 | SocialStore；原消息/档案仍是各自权威来源 | 意识系统用例与来源版本校验 |
 | 摘要及未来后台提取/巩固的模型与预算 | 显式保存的系统配置；格式在对应阶段细化 | Runtime 校验，意识系统任务按配置快照执行 |
-| ExecutionBinding | SocialStore，引用 provider/model | Runtime 解析校验后保存 |
+| ExecutionBinding | SocialStore，引用 provider/model | 目标由获授权管理员经 AI 角色管理用例保存，复用 Runtime/AiClient 校验；管理员边界尚未接入 |
 | 后续默认新 AI 执行配置 | GUI 设置，沿用可迁移的全局默认语义 | 不覆盖已存在 AI 的绑定；不据此宣称当前已有独立默认设置 |
 | 主题与本地布局 | 现有前端外观设置 | 不影响后端权限 |
 

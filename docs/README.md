@@ -16,6 +16,7 @@
 
 | 文档 | 负责内容 |
 | --- | --- |
+| [已完成](social-refactor/completed.md) / [正在推进](social-refactor/in-progress.md) / [尚未完成](social-refactor/pending.md) | 当前实现、活跃批次与剩余能力；区分预览、业务接入和平台验收 |
 | [重构总纲](social-refactor/README.md) | 产品范围、统一术语、目标目录、依赖方向与里程碑 |
 | [身份与关系](social-refactor/01-identity-and-relationships.md) | Actor、AI 档案、模型绑定与关系连续性 |
 | [聊天与消息](social-refactor/02-conversations-and-messages.md) | 私聊/群聊、成员、发送者、修订与交谈生命周期 |

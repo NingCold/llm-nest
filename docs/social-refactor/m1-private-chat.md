@@ -4,7 +4,7 @@
 
 日期：2026-10-09。完成 M1 的第一条业务链路：创建 AI 联系人与模型绑定 → 打开唯一私聊 → 保存真人消息 → 意识系统准备近期上下文 → 模型流式执行 → 原子收尾 → Web 展示与重连读取。本批没有调用付费 provider；执行验收通过本机模拟服务完成。
 
-本文件保留第一批完成时的实现与验证记录。后续 [第二批群聊](m1-group-chat.md) 已加入群用例，并将私聊执行改为同一持久队列。消息修订与显式控制已在 [第三批](m1-message-controls.md) 接通；M1 整体仍需实时 IPC/Tauri 界面与双适配验收；摘要、显式记忆和群话题接续属于 M2。
+本文件是第一批完成时的历史记录。后续 [群聊](m1-group-chat.md) 改用共享持久队列，[消息/控制](m1-message-controls.md) 改为持久停止与修订事务；下文的进程内队列和取消行为仅描述首批。当前能力见 [已完成](completed.md)，可调用接口见 [API 契约](07-api-and-events.md)，下一步见 [正在推进](in-progress.md)。
 
 ## 实际结构
 
@@ -42,9 +42,9 @@ Runtime 不依赖具体 SocialFeature。迁移期旧 ChatFeature 仍服务桌面
 
 没有模型、绑定失效或暂停时，真人消息仍保存，并通过 executionNotice 告知没有启动生成。模型错误、预算不足等后续失败不撤销真人消息。页面不预建 AI 回答，实际 begin_run 提交后才读取 AI 消息。生成不持有存储事务或发送锁，所以用户可以继续输入。
 
-同一私聊最多一个生成。重复发送使用原 requestId，返回同一消息；执行检查持久 begin_run 回执，不再次派发已经开始的运行。首批采用真人触发消息 UUID 作为 begin_run 请求 ID，只适用于一个私聊 AI。下一批必须改成按触发消息与目标 AI 区分的持久参与计划，并验证群队列顺序；不能沿此键直接扩展群聊。
+同一私聊最多一个生成。重复发送使用原 requestId，返回同一消息；执行检查持久 begin_run 回执，不再次派发已经开始的运行。首批采用真人触发消息 UUID 作为 begin_run 请求 ID，只适用于一个私聊 AI；第二批已用独立持久 ParticipationPlan 替换，按触发消息与目标 AI 区分并固定顺序。
 
-当前等待执行的任务在进程内，尚无持久 ParticipationPlan、合并等待窗口或严格多目标 FIFO。重启恢复已开始运行为 Interrupted，不自动重放模型调用，也不自动重派尚未开始的回复。离线验收中的重复请求仅证明本地幂等，不保证外部调用 exactly-once。
+首批等待执行的任务在进程内，当时尚无持久 ParticipationPlan、合并等待窗口或严格多目标 FIFO。重启恢复已开始运行为 Interrupted，不自动重放模型调用，也不自动重派尚未开始的回复。离线验收中的重复请求仅证明本地幂等，不保证外部调用 exactly-once。
 
 ## 本批意识系统
 
@@ -66,33 +66,17 @@ SQLite v1 的 schema 内容与校验值不改写。v1 → v2 迁移先一致备�
 
 begin/checkpoint/finish 保存对应运行详情；500ms 周期仅在片段有变化时保存正文与思考。成功回答、Run 终态、详情、持久事件引用同事务。EOF 有明确的 UnexpectedEof 协议错误类型，保存为 Interrupted；provider 错误、空回答或未授权工具调用保存为失败，正文片段显示为中断记录。首批不声明工具，不执行模型意外返回的 ToolCall。
 
-用户取消由运行任务完成中断保存；Web 退出时停止 SSE，Feature 取消并等待任务收尾，随后排空 writer。基础取消已经验证，完整暂停/结束及取消与完成事务竞争仍属于第三批。崩溃后只恢复已落盘检查点，不续传 provider token 游标。
+首批用户取消由运行任务完成中断保存；Web 退出时停止 SSE，Feature 取消并等待任务收尾，随后排空 writer。基础取消已经验证，完整暂停/结束及取消与完成事务竞争仍属于第三批。崩溃后只恢复已落盘检查点，不续传 provider token 游标。
 
 持久 SocialEvent 只携带引用，不携带正文；HTTP 每 250ms 读取提交后的变更，单批最多 500 条。订阅先监听临时广播，再读取历史引用，回放通过 SSE change/id 传输；generation 传递正文/思考 delta，广播溢出要求 resync。订阅断开不取消模型任务。
 
 客户端状态应用成功后才推进 cursor，失败重连补齐；同一消息按 ID/revision 合并，终态覆盖旧草稿。临时流只从 deltaSeq=1 连续拼接，缺片段就放弃不完整缓冲，并读取已持久化草稿/终态；活跃窗口重连后的运行草稿每 500ms 刷新。持久日志当前不压缩，不宣称已实现游标过期机制。
 
-## 当前可调用接口
+## 本批接口与适配边界
 
-| HTTP | 结果 |
-| --- | --- |
-| GET `/api/social/init` | 本地真人、联系人、窗口元数据/最后消息/活动 run、模型选项与 cursor |
-| POST `/api/social/contacts` | 创建联系人 |
-| PATCH `/api/social/contacts/{id}` | 按 expectedRevision 修改档案与绑定 |
-| POST `/api/social/contacts/{id}/direct` | 返回唯一 ConversationId |
-| GET `/api/social/conversations/{id}` | 当前窗口元数据 |
-| GET `/api/social/conversations/{id}/messages?before=…` | 最近/更早 200 条消息与 hasMore |
-| POST `/api/social/conversations/{id}/messages` | 保存文本，返回 message 和可选 executionNotice |
-| GET `/api/social/runs/{id}` | 运行详情，旧运行可返回 null |
-| POST `/api/social/runs/{id}/cancel` | 基础取消信号，204；终态从后续读取/事件确认 |
-| GET `/api/social/events?after=…` | 持久引用回放 |
-| GET `/api/social/subscribe?after=…` | 持久引用与临时生成 SSE |
+首批已接入联系人、唯一私聊、分页消息、运行详情/取消与 HTTP 回放/SSE。完整当前路由、命令、字段和错误体只在 [API 与事件](07-api-and-events.md) 维护；不按历史报告调用已改动的接口。
 
-命令使用 requestId，绑定为 providerId/modelId/reasoningEffort，计数器使用十进制字符串。修改联系人还需 expectedRevision，发送还可带本窗口 replyTo。不要将后续目标文档中的 clientRequestId 或未实现路由直接用于本批 API。
-
-HTTP 继续使用原 Host/Origin/本地客户端 Header 保护；业务错误映射为共享 code/message/retryable，存储错误不向浏览器暴露私人路径。Axum 对格式错误的 JSON/Path/Query 仍使用框架拒绝响应，统一这些边界错误及扩展错误字段留待适配补齐。
-
-Tauri 注册了对应基础 social_* 命令，调用同一 Feature 与 DTO。当前尚无社交 IPC 实时订阅，前端仍选择 LegacyApp；通过编译不等于已完成桌面社交、退出或安装验收。
+本批 HTTP 使用原 Host/Origin/本地客户端 Header 保护；业务错误为 code/message/retryable，存储错误不向浏览器暴露私人路径。Axum 的格式错误仍使用框架拒绝响应。基础 Tauri 命令通过编译，但本批没有实时订阅、社交桌面 GUI、退出或安装验收。
 
 ## Web 与本地复现
 
@@ -102,21 +86,7 @@ Tauri 注册了对应基础 social_* 命令，调用同一 Feature 与 DTO。当
 
 浏览器只用 llm-nest-social-live-drafts-v1 保存草稿与重试 ID，数据库是记录的权威来源。丢失回执时保留 requestId 重试；迟到回执不清空新输入；已保存回执不因后续刷新失败而撤销。
 
-```bash
-pnpm --dir frontends/web build:social-runtime
-cargo build -p web-server --locked
-python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist
-# 使用 --serve 保留脚本创建的隔离测试页面
-```
-
-build:social-runtime 输出到忽略目录，不改写已跟踪 Web dist。Windows MSVC 单独 target 的例子：
-
-```powershell
-cargo +stable-x86_64-pc-windows-msvc build -p web-server --target x86_64-pc-windows-msvc --locked
-python scripts/social_acceptance.py --binary target/x86_64-pc-windows-msvc/debug/web-server.exe --dist frontends/web/.social-runtime-dist --serve
-```
-
-脚本打印自己的临时页面地址；结束时创建打印的 Fixture 目录下的 STOP 文件或中断脚本，不复制个人数据。普通真实服务使用自己的模型配置，未授权真实 API 不作为默认验收。
+隔离验收的构建、--binary/--dist/--serve 和 STOP 用法统一见 [开发指南](../development.md#运行入口)。脚本使用合成角色、临时库和本机模拟 provider，不复制个人数据，也不调用付费模型。
 
 ## 本轮验证
 
@@ -134,4 +104,4 @@ python scripts/social_acceptance.py --binary target/x86_64-pc-windows-msvc/debug
 
 另有文本预算单测与 v1 → v2 数据/备份迁移单测。所有新 fixture 使用合成角色与临时数据。原有个人模型目录改动保留在工作区，不纳入本批提交；未读取个人配置或会话用于验收。
 
-下一批从三个 AI 的独立群聊、成员可见范围和 mentioned_only 持久参与队列开始，按 TODO 继续。
+本批后续已经完成群聊与消息控制；历史记录不继续维护未来计划，按 [TODO](TODO.md) 与状态文件接续。

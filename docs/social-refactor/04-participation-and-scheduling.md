@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
-状态：完整目标设计；M1 已实现结构化 @ / 回复触发、私聊/群聊共享持久 FIFO 计划、失败/撤销、重启恢复与成员/窗口暂停、结束 Bout。自动参与、连续输入合并、过期/预算和约定联系仍待 M3，实际范围见 [群聊](m1-group-chat.md) 与 [控制](m1-message-controls.md)。
+本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
 ## 1. 职责
 
@@ -36,18 +36,18 @@ reason_code 是可理解的有限枚举，例如 mentioned、direct_reply、sche
 
 暂停和停止优先于 @。手动邀请可以创建一次性发言授权，但界面应明确这是恢复或单次许可，后端不能仅凭提示词绕过暂停。
 
-## 4. 首版参与模式
+## 4. 首版参与规则
 
-| 模式 | 初版行为 |
+| 参与规则 | 阶段与行为 |
 | --- | --- |
-| direct_reply | 私聊真人消息触发该 AI 回复，允许合并连续输入 |
+| direct_reply | M1 私聊输入触发该 AI 回复；M3 才合并连续输入 |
 | mentioned_only | 群里仅 @、明确回复或邀请触发；新群默认模式 |
 | limited_auto | 允许有限自动接话；M3 加入 |
-| paused | 不新建运行，取消队列中的参与计划 |
+| 独立暂停设置 | M1 窗口/成员 paused；不新建对应计划，取消其活动运行和等待计划；不是 Membership.status |
 
 主动联系是另外的 opt-in 设置，不随 limited_auto 自动开启。群里 @ 多个 AI 时按明确队列逐个回应，每个 AI 都有独立运行记录。
 
-首版一个空间最多一个 AI 在生成，全局并发另有上限。等待 AI 不阻止真人发送，也不阻止其他空间显示消息。
+当前一个空间最多一个 AI 在生成；全局资源上限随后续调度用例细化。等待 AI 不阻止真人发送，也不阻止其他空间显示消息。
 
 ## 5. 连续输入与有限接话
 
@@ -63,8 +63,8 @@ M1 可以逐条排队回应，先保证连续消息不丢失；M3 加入私聊�
 
 - Wait：暂不发言，保留当前 Bout 与未完成话题，不显示假消息。
 - EndBout：将当前交谈标 ended，取消该 Bout 的未执行发言计划和活动运行；最终提交复核 Bout 状态，空间与历史仍存在。
-- PauseConversation：提高 participation_epoch，暂停全部自动参与并取消活动运行；真人可以继续记录消息。
-- PauseMember：只暂停指定 AI。
+- PauseConversation：提高 participation_epoch，暂停全部 AI 接话并取消活动运行与队列；真人可以继续记录消息。
+- PauseMember：更新该成员的 paused 与 revision，只停止指定 AI，不改变全群 epoch 或历史可见范围。
 - CancelRun：仅取消本次生成，不永久暂停联系人。
 
 用户说“今天先到这里”可以作为结束候选；始终提供确定性的界面结束按钮。模型判断结束不能删除约定、改变权限或自主创建新联系计划。
@@ -73,11 +73,11 @@ M1 可以逐条排队回应，先保证连续消息不丢失；M3 加入私聊�
 
 ## 7. 持久参与计划
 
-ParticipationPlan 保存 id、conversation_id、bout_id、actor_id、trigger_ref、based_on_seq、not_before、expires_at、dedupe_key、policy_revision、status。
+当前 ParticipationPlan 保存 id、conversation_id、actor_id、trigger_id、trigger_sequence、ordinal、membership_revision、status、run_id、failure、revision、created_at。同一触发的目标顺序由 ordinal 保存，计划 ID 为独立 UUID。
 
-状态为 queued / claimed / running / completed / cancelled / expired。计划入库与处理进度更新原子完成。基于持久事件消费时，同事务更新 consumer offset 和计划，避免崩溃后漏掉或重复安排。
+状态为 queued / running / succeeded / failed / cancelled / interrupted。M1 保存真人消息时原子创建计划，开始运行时一并转 running；无需事件消费者复制另一套队列。启动与提交复核成员、暂停、epoch 和来源版本，重启只继续未开始计划，已开始请求标 interrupted。
 
-领取时复核所有权限、限额和 epoch；生成提交前再次复核可撤销条件。过期排队计划终结并发事件，不悄悄积累到下次启动集中发送。
+M3 加入 not_before、expires_at、决策原因、政策版本与必要的消费进度。若改为消费业务事件创建计划，同事务更新 offset 与去重计划。过期、预算和领取状态按真实调度用例确定，不将目标字段或状态当作当前 DTO。
 
 ## 8. 主动联系意图
 
@@ -91,7 +91,7 @@ ContactIntent 保存 owner_actor_id、ai_actor_id、conversation_id、trigger、
 
 ## 9. 时间、重启与失败
 
-实时等待使用可注入单调时钟；持久 due_at 使用 UTC，测试使用 fake clock。调度采用可取消的异步等待，关闭时停止领取新计划。
+M3 实时等待需使用可注入单调时钟；当前 Clock 提供 UTC 时间，持久 due_at 与可控等待能力随调度一起完善，测试使用 fake clock。调度采用可取消的异步等待，关闭时停止领取新计划。
 
 应用重启后：
 

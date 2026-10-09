@@ -55,7 +55,7 @@ pnpm --dir frontends/web dev
 
 打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；`?legacy=1` 保留旧入口。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。桌面仍使用旧界面，社交实时 IPC 待后续接入。
 
-真实社交私聊的隔离离线验收：
+真实社交私聊、群聊与消息控制的隔离离线验收：
 
 ```bash
 pnpm --dir frontends/web build:social-runtime
@@ -63,7 +63,7 @@ cargo build -p web-server --locked
 python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist
 ```
 
-添加 `--serve` 可检查临时数据页面，Windows MSVC 指定 target 后通过 `--binary target/x86_64-pc-windows-msvc/debug/web-server.exe` 选择产物。脚本使用本机模拟 provider，不读取个人配置；当前范围见 [M1 私聊说明](social-refactor/m1-private-chat.md)。
+添加 `--serve` 可检查脚本打印的临时数据页面；结束时在打印的 Fixture 目录创建 `STOP` 文件或中断脚本。Windows MSVC 指定 target 后通过 `--binary target/x86_64-pc-windows-msvc/debug/web-server.exe` 选择产物。脚本使用本机模拟 provider，不读取个人配置；各批验证范围见 [已完成](social-refactor/completed.md)。
 
 社交界面可以先独立开发和验证，无需启动 Runtime：
 
@@ -92,7 +92,7 @@ cargo build -p web-server --locked
 python scripts/acceptance.py
 ```
 
-离线验收使用本地模拟 provider，但实际经过 HTTP、ChatFeature、工具子进程和会话存储，涵盖正常回复、思考、取消、错误、断流、编辑、工具循环与恢复。
+`acceptance.py` 验证保留的 Harness：HTTP、ChatFeature、工具子进程与 JSON 存储。`social_acceptance.py` 验证新社交用例：HTTP、SocialFeature、SQLite、私聊/群聊队列与消息控制。两者都使用临时数据和本地模拟 provider；社交验收的构建命令见上面的运行入口。
 
 真实模型验收另用 `scripts/live_acceptance.py`，会发送请求并消耗 API 额度，不属于默认 CI。详见 [真实接口报告](live-acceptance-2026-09-13.md)。
 

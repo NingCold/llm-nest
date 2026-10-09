@@ -2,24 +2,17 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
-状态：完整目标设计；M1 已实现近期原文、角色设定、文本预算和版本化来源快照，按目标 AI 与私聊/群空间读取可见 committed 消息。后续接话者可读同一条消息前面的完成回答；摘要、显式记忆与跨窗口接续留到 M2，来源修改/撤回会立即中断依赖运行，见 [消息/控制](m1-message-controls.md)；实际范围另见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
+本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
 ## 0. 名称与定义
 
 本项目将软件管理的近期上下文、窗口摘要、长期记忆、跨窗口召回、来源追踪与遗忘机制统称为“意识系统”，英文为 **Consciousness**。其任务是让一个稳定 AI 身份在不同场合取得相关、允许使用且可修正的共同经历，并为每次运行准备上下文。这里的“意识”是工程系统名称；产品说明使用上述定义，不以命名声称 AI 具有主观体验。
 
-| 英文 | 常见含义与用法 | 本项目约定 |
-| --- | --- | --- |
-| Consciousness | 名词，意识 | 系统名称；中文“意识”或“意识系统” |
-| Conscious | 形容词，有意识的、清醒的 | 不作为本系统的英文名称 |
-| Cognition | 名词，认知 | 更适合涵盖推理、感知等更广的认知机制 |
-| Mind | 名词，心智 | 范围更宽，可包含人格与决策，不作为当前系统名 |
-
-文档统一写“意识系统（Consciousness）”，代码目录使用 `consciousness`，应用服务暂定 `ConsciousnessService`。MemoryRecord、ConversationSummary、ContextBuilder、ContextReference 和 ContextSnapshot 保留各自含义。Consciousness 是这些组件的统一系统名，不要求所有内部对象都改成同一个术语，也不新增 ConsciousnessId。
+文档统一写“意识系统（Consciousness）”，代码使用 `consciousness`，服务为 `ConsciousnessService`。消息、档案、MemoryRecord、ConversationSummary、ContextReference 和 ContextSnapshot 保留各自含义，不新增 ConsciousnessId。
 
 ## 1. 职责与边界
 
-意识系统统一负责为确定的 AI、空间和运行选择背景，维护可追溯的摘要与记忆，并处理修订和遗忘。ConsciousnessService 位于 `features/social/src/consciousness/`，由 SocialFeature 持有；中立领域类型放在 `crates/social/src/consciousness.rs`。不新增独立 Feature、Runtime 或数据库。
+意识系统统一负责为确定的 AI、空间和运行选择背景，维护可追溯的摘要与记忆，并处理修订和遗忘。当前 ConsciousnessService 位于 `features/social/src/consciousness.rs`，由 SocialFeature 持有；下面的目录拆分是后续职责规划；中立领域类型放在 `crates/social/src/consciousness.rs`。不新增独立 Feature、Runtime 或数据库。
 
 聊天历史不是全部长期记忆。角色背景由用户配置，消息保存发生过的交流，记忆保存经过确认或有明确依据的结论。三者保留来源与不同的更新规则。
 
@@ -136,7 +129,7 @@ ContextScope 标识目标 ActorId + ConversationId。ContextSnapshot 包含实�
 
 ## 5. 记忆写入流程
 
-首个长期记忆版本采用简单条目：内容、关系/群范围、来源、状态和版本。用户在聊天详情或联系人详情手动添加、编辑、遗忘，也可选择一条消息后明确“记住”。保存时复核范围与来源，成功后提交 memory.changed 事件。
+首个长期记忆版本采用简单条目：内容、关系/群范围、来源、状态和版本。用户在聊天详情或联系人详情手动添加、编辑、遗忘，也可选择一条消息后明确“记住”。保存时复核范围与来源，成功后提交持久记忆变更引用；具体事件种类在 M2 接入共享契约。
 
 首版不以复杂自动推断、向量索引、知识图谱或后台人格反思作为前置。长期记忆读取当前范围内有效条目；跨窗口背景按 ContextReference 单独筛选，模型输出不能自行确认一条长期记忆。
 

@@ -2,91 +2,78 @@
 
 [总纲](README.md) · [身份与关系](01-identity-and-relationships.md) · [API 与事件](07-api-and-events.md)
 
-状态：完整目标设计；M1 已实现唯一长期私聊、独立群、成员管理与共享群历史、结构化 @ 与回复、真人文本发送、多 AI 队列和分页历史。修订/撤回、成员/窗口暂停、结束交谈与归档/恢复已接通，当前范围见 [私聊](m1-private-chat.md) 、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)。
+本文维护空间、消息和交谈的领域约定；当前传输字段见 [API 契约](07-api-and-events.md)，实施进度见状态文件。
 
-## 1. 职责
+## 1. 职责与数据对象
 
-空间、成员和消息是持久化的社交记录。`crates/social` 定义类型与约束，`features/social/src/conversations.rs` 组织用例。工具调用、模型思考和运行检查点不作为普通群成员消息插入聊天记录。意识系统读取允许的原记录，负责背景选取与派生材料；消息的保存、修订和撤回仍由聊天用例负责。
+`crates/social` 定义中立类型，SocialFeature 组织用例，SocialStore 原子保存实体、事件引用和回执。当前聊天方法位于 feature.rs，修订与控制位于 controls.rs；按实际规模拆分，不以目标目录名推断模块已存在。
 
-## 2. 数据对象
-
-| 对象 | 关键字段 |
+| 对象 | 当前关键字段 |
 | --- | --- |
-| Conversation | id、kind(direct/group)、relationship_id、title、status、participation_settings、revision、context_epoch、participation_epoch、created_at |
-| Membership | conversation_id、actor_id、role、status、participation_mode、revision |
-| SocialMessage | id、conversation_id、sender_id、sender_snapshot、message_seq、kind、body、reply_to、mentions、bout_id、run_id、status、revision、created_at |
-| MessageRevision | message_id、revision、operation、author_id、content、changed_at |
-| ReadPosition | conversation_id、reader_id、last_read_seq、updated_at |
-| Bout | id、conversation_id、status、started_at、ended_at、end_reason、last_human_seq |
+| Conversation | id、kind(direct/group)、relationship_id、title、status、paused、revision、context_epoch、participation_epoch、last_sequence、created_at、legacy |
+| Membership | conversation_id、actor_id、status(active/left)、paused、revision |
+| SocialMessage | id、conversation_id、sender_id、sender_name、sequence、body、reply_to、mentions、run_id、status、revision、created_at |
+| Bout | id、conversation_id、status(open/ended)、revision |
 
-所有 ID 对外为字符串 UUID。message_seq 由数据库在每个空间内单调分配；revision 和序列以十进制字符串传给 GUI，避免 JavaScript 大整数精度问题。排序依据 sequence，不依赖时间戳相同或本机时钟回退。
+消息修订按 message_id + revision 保存原内容版本；撤回清空其正文。read_positions 已有存储结构，尚无正式已读/未读用例。成员角色/参与模式、Bout 等待状态和详细时间/结束原因随对应用例扩展；不预先要求空字段。
 
-## 3. 空间与成员
+所有 ID 为 UUID；sequence 由数据库在空间内单调分配，排序不依赖时间戳。revision、sequence、epoch 和 cursor 经 wire 转换为十进制字符串。
 
-direct 包含本地真人和一个 AI，关联唯一 Relationship；同一参与者对只能有一个 direct Conversation，包括归档状态。重复打开和恢复归档沿用同一窗口。group 包含本地真人和一个以上 AI，每个群拥有独立窗口。空间不存唯一 ModelSelection，每个 AI 使用自己的绑定。
+## 2. 空间与成员
 
-意识系统的逻辑上下文范围为 (ActorId, ConversationId)。同一 AI 的私聊、群 A 和群 B 分别构造上下文；同一群内所有当前成员共享完整群历史，各自带入自己的身份与设置。provider 会话 ID 或续接链如被使用，也必须按这个范围隔离。
+direct 关联本地真人与一个 AI 的唯一 Relationship；包括归档在内，同一参与者对只有一个长期私聊。重复打开、切换话题、结束交谈、更换模型和恢复归档均沿用原 ConversationId。group 各有独立窗口，相同成员可以创建不同群；群创建至少包含一个 AI，后续可以移出全部 AI 而保留窗口。本地真人不能移出。
 
-群话题可以通过 ContextReference 接续到目标 AI 的唯一私聊。引用保留来源窗口及消息版本，只读取用户与目标 AI 共同可见的相关历史；无源访问权时需要显式共享选中内容。新私聊消息归属私聊，不自动发回群。详见 [意识系统的跨窗口接续](03-consciousness.md#23-从群聊接续到私聊)。
+所有当前群成员共享完整本群历史，包括入群前的记录。是否被 @、是否发言、是否暂停均不改变本群可见范围；私聊和其他群历史不随成员加入共享。移出 AI 后 status=left，撤销源访问权、运行与待执行计划，保留历史发送者。重新加入更新成员版本，不复活旧计划。
 
-成员状态为 active / left / removed。首版本地真人担任 owner，AI 是 member；领域保留 human 成员的表示，但多人登录与远程权限尚未实现。
+逻辑上下文范围为 (ActorId, ConversationId)，每次请求带自己的档案与设置。意识系统按回复对象和容量选材；参与服务决定是否发言。provider 续接 ID 或缓存如被使用，也必须按此范围隔离。
 
-所有当前群成员共享本群完整公开历史，包括加入前的记录。是否被 @、是否发过言或是否暂停接话不改变历史可见范围；意识系统按本次回复对象和容量选择材料，参与服务独立决定是否发言。私聊历史不因入群自动共享。
+M2 的 [跨窗口接续](03-consciousness.md#23-从群聊接续到私聊) 只引用双方共同可见的相关群来源，复核版本与权限。新私聊消息不发回源群；无源访问权时需要明确转发选中内容。
 
-离开或移除成员原子增加 participation_epoch，撤销其运行和待参与计划；context_epoch 同步更新，并撤销当前成员访问权。历史消息保留 sender_id 和展示快照；保存旧记录不会向已离开的成员继续开放源历史，意识系统的跨窗口读取也复核此权限。
+窗口 status 为 active/archived。paused 只控制接话，真人仍可保存消息；归档只读并取消活动运行和队列，恢复保留原 ID 与暂停设置。legacy 历史空间保持只读，不能恢复为活跃聊天。删除空间与遗忘是独立用例，后续须说明所有来源、记忆和联系意图的影响。
 
-Conversation.status 为 active / archived。pause 属于参与设置，不禁止真人发送；归档只读，取消该空间活动运行及未执行参与/联系计划。恢复归档沿用原 ID，需要显式更新状态，不重放旧队列。删除空间是单独清除操作，须列清对历史、摘要、记忆来源和联系意图的影响。
+## 3. 消息与运行状态
 
-## 4. 消息与运行
+SocialMessage.status 为 committed / generating / interrupted / withdrawn。真人消息保存成功和 AI 成功回答均为 committed；AI 开始事务才创建 generating 消息。取消、错误和断流留下的可见片段统一为 interrupted，具体 cancelled/failed 原因由 AiRun 和运行详情表达。撤回为 withdrawn 占位。
 
-SocialMessage.kind 表达 text / attachment / notice。M1 新消息发送先支持 text，notice 由后端生成，不能通过客户端伪造；历史导入保留附件。完整附件输入在上传、导出和权限链路实现并验收后启用，复用可持久化的二进制内容语义。
+MessageId 与 RunId 分开。首版一次 AiRun 对应一个可见 AI 消息；思考、工具内部轨迹和协议日志不作为普通群消息，也不进入下一次模型上下文。工具循环属于执行用例，当前社交不开放工具。
 
-每个窗口完整保存已提交记录，包括正文、历史附件、notice 和已经落盘的中断片段。近期上下文选取与摘要压缩只影响模型请求，不自动删减历史；用户明确撤回、删除或清除时执行对应规则。逐 token 暂态和工具内部轨迹不等于窗口聊天记录。
+窗口完整保存已提交记录及已落盘中断片段，近期选材或摘要不删历史。M1 新发送与 Web DTO 只支持文本；中立 body 和旧记录导入可以保留图片/文件，不代表附件上传与展示链路已完成。
 
-消息状态为 generating / complete / cancelled / failed / interrupted / redacted。真人消息成功提交即为 complete。后端选中 AI 并启动 AiRun 时才创建 generating 消息；用户发送消息不预建 AI 回答。
+## 4. 发送与连续输入
 
-AiRun 与 MessageId 分开，首版一个运行对应一个可见 AI 消息；工具循环内部可以有多个 provider 消息。停止和重启恢复保留已保存草稿及中断标记，中断片段默认不进入下一次模型上下文。
+发送输入使用 requestId、text、replyTo 和有序 mentions。后端确定操作者，校验空间/成员与同空间回复关系，在同一事务保存真人消息、接话计划、事件引用和回执。正文中的 @名字不替代结构化提及。幂等规则集中在 [API 与事件](07-api-and-events.md#3-发送与幂等)。
 
-reply_to 引用同空间消息，mentions 由结构化 ActorId 表达。消息文字中出现某个名字不会自动授予历史访问权，也不会绕过暂停规则。
+私聊输入默认触发对方；普通群消息只保存，@ 或回复 AI 才选择接话目标。窗口或目标成员暂停时不安排对应计划；多个目标按持久 FIFO 顺序生成，一个空间最多一个活动运行。其他窗口仍可执行，真人可以持续输入。
 
-## 5. 发送与连续输入
+已开始运行固定触发对象与上下文，新真人消息形成后续计划；同一触发下的后续 AI 可以读前面已完成的回复。M3 才合并未开始计划，不合并或改写原始消息。无模型或后续执行失败不撤销已保存真人消息。
 
-发送命令包含 clientRequestId、内容、附件引用、replyTo 和 mentions；M2 加入可选 contextReferences。后端确定 sender_id，校验空间与目标成员，原子分配 message_seq、保存消息、合法来源引用和变更事件，然后返回真实 MessageId。replyTo 仍只引用同空间消息，跨窗口来源使用 ContextReference。
+## 5. 编辑、撤回与再次回应
 
-clientRequestId 用于幂等重试；同一作用域相同请求返回同一结果，内容不同返回冲突。前端临时 ID 只标识尚未确认的发送记录，不能冒充持久消息 UUID。
+仅当前操作者自己的 committed 消息可编辑/撤回，按消息 expectedRevision 检查。编辑保存新版本，保留 ID、顺序、回复关系和后续历史；修改不自动重新生成，用户可发新消息要求再次回应。
 
-空间有 AI 正在生成时，真人仍可发送。新消息进入参与队列；首版运行继续使用已经固定的上下文，并明确回复对象。针对停止、撤销权限或特定 run 的取消立即生效。未开始的回复计划可合并新输入。
+编辑/撤回增加来源空间 context_epoch，原子中断依赖该空间的活动运行并保留片段；取消以该消息为触发的未开始计划。撤回还取消明确回复该来源的待执行计划，正文与附件及旧修订内容清空，占位和引用关系保留。其他成员已提交回答继续保存。
 
-## 6. 编辑、撤回与再次回应
+M2 启用摘要/记忆后，来源变化还须同步失效其派生材料及跨窗口依赖，读取层在后台清理前就排除旧内容。事件与回执只保留引用，不恢复旧正文。
 
-编辑操作按 MessageId + expectedRevision 定位。保存 MessageRevision，更新当前内容，保留空间后续消息，并增加 context_epoch。意识系统立即排除引用旧版本的派生材料，失效检查覆盖摘要、记忆与跨窗口依赖；后台清理完成前也不能继续使用旧内容。
+撤回不清理既有备份，也不能撤销供应商已接收的请求；残留与备份语义见 [存储设计](06-storage-and-migration.md#7-备份遗忘与回退)。
 
-只有当前操作者控制的消息可以编辑；AI 已提交消息的纠正可通过追加回应表达。首版“请重新回答”发送新的请求或明确的回应意图，不删除其他成员的历史。
+## 6. 空间、交谈与生成的生命周期
 
-撤回产生 redacted 占位，保留 MessageId、顺序和引用关系；正文、附件和派生内容从正常读取和检索中排除。旧修订内容不能继续经常规接口读出。事件保存变更引用，不保存撤回后仍能回放的原正文。
+Conversation 长期存在，Bout 表达一次交谈，AiRun 表达一次执行。当前 Bout 为 open/ended：第一个 AI 开始运行时创建，没有 AI 接话的真人输入可以没有 Bout。窗口 DTO 返回 currentBout；一次生成完成不会自动结束交谈。
 
-删除与撤回不承诺撤销已经发送到外部模型的内容。备份清理与磁盘残留的产品语义见存储设计。
+- 停止运行只终结指定 AiRun，其他计划可以继续，不永久暂停 AI。
+- 暂停成员只停止该 AI；暂停窗口停止全部 AI，新真人消息仍保存。恢复只允许新输入触发，不补发已取消计划。
+- 显式结束关闭当前 Bout 并取消窗口队列/活动运行；没有 Bout 时也清理待执行计划，不删除窗口或历史。
+- 新输入的下一次 AI 运行创建新 Bout，可以继续使用允许的历史。
+- M3 加入等待、空闲/预算结束与约定联系；未来独立授权的联系意图不因一次交谈结束被误删。
 
-## 7. 空间、交谈与生成的生命周期
+暂停/结束与成功提交由存储事务顺序决定。停止事务已生效后，迟到结果不能改回成功。完整控制范围和竞争验证见 [实现记录](m1-message-controls.md)。
 
-Conversation 长期存在；Bout 表达某次交谈；AiRun 表达一次执行。Bout.status 初版为 active / waiting / ended。
+## 7. 验收
 
-- 第一条真人消息可以创建新 Bout。
-- 没有待发言计划时，Bout 转 waiting。
-- 显式结束、空闲达到规则或预算耗尽可以转 ended；空闲等待本身不等于结束。
-- EndBout 取消本 Bout 的待参与计划与活动运行；最终提交复核 Bout 状态，结束后不能再发布该交谈的成功回复。独立设置的未来联系意图仍按原授权重新评估。
-- 当前 Bout 已 ended 后，active 空间中的新真人消息创建新 Bout，先前上下文按权限与相关性继续可用。
-- 定时联系只有通过参与规则后才能开始新 Bout；暂停或拒绝主动联系时不能重开。
-
-“本次生成完成”“这个 AI 暂停参与”“当前交谈结束”使用不同命令和界面状态。
-
-## 8. 验收
-
-1. 群里三个 AI 的消息可以按发送者、引用和提及正确区分。
-2. AI 生成期间连续发送两条真人消息，两条均落盘且有稳定顺序。
-3. 编辑早期消息不会删除其他成员后续记录，旧版本派生记忆失效。
-4. 同一发送命令重复提交只产生一条消息；改内容重用请求 ID 被拒绝。
-5. 新入群 AI 可以读取加入前的本群记录；其他私聊或群历史不自动进入请求。
-6. 结束 Bout 不删除空间；下一次聊天可以新建 Bout 并接续允许的历史。
-7. 同一参与者对并发创建私聊仍只产生一个空间；其他群历史不会无依据地混入请求，合法接续只带入允许的相关引用。
-8. 生成历史摘要或缩减模型上下文后，完整聊天记录仍可分页查阅。
+1. 三个 AI 以自己的身份/模型发言，私聊唯一，群空间独立。
+2. 连续输入均落盘，计划顺序稳定；订阅断开不取消生成。
+3. 当前成员共享入群前后历史，暂停与 @ 不改变可见性；移出后不能读取来源。
+4. 编辑/撤回保留后续记录；旧回执、引用和迟到回复不能恢复撤回正文。
+5. 单次停止、成员暂停、窗口暂停、结束、归档分别作用，恢复不复活取消计划。
+6. M2 摘要/跨窗口引用不删原记录、不扩大来源权限；M3 等待/自动结束不删除长期窗口。

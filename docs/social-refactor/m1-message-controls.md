@@ -35,9 +35,7 @@
 - `LiveControls.tsx` 提供编辑/撤回、交谈与成员控制；未知发送结果保留同一 requestId 和 expectedRevision，明确业务错误显示失败。
 - 持久消息事件按 MessageId 读取当前版本，已加载的早期消息也能更新。订阅 resync 清除旧页并重新分页；重置前的读取响应不能重新填入旧正文，草稿保留。
 
-新增 HTTP：`GET /api/social/messages/{id}`、`POST /api/social/messages/{id}/revise|withdraw`、`POST /api/social/conversations/{id}/control`、`POST /api/social/conversations/{id}/members/participation`。修订输入为 requestId/expectedRevision/text，撤回为 requestId/expectedRevision；窗口 action 为 pause/resume/end/archive/restore，成员参与输入包含 actorId/paused 和成员 expectedRevision。业务字段使用 camelCase，版本/序号为十进制字符串。
-
-基础 IPC 新增 `social_message`、`social_revise_message`、`social_withdraw_message`、`social_control_conversation` 与 `social_pause_member`。桌面社交界面及实时 IPC 仍未接入。
+本批新增单条消息查询、修订/撤回、窗口控制与成员暂停的 HTTP 和基础 IPC 命令。当前完整路由、字段与命令清单只在 [API 与事件](07-api-and-events.md) 维护；实时 IPC 与桌面社交界面未接入。
 
 ## 验证
 
@@ -47,4 +45,4 @@ Windows 模拟 HTTP 验收通过真实新接口，并继续覆盖私聊、群聊
 
 Chrome 临时数据实际操作验证编辑、撤回占位、后续消息保留、暂停后继续保存消息、恢复、结束交谈、单成员暂停，以及刷新恢复；浏览器错误日志为空。没有执行付费 API、桌面安装或 Linux GUI 验收。
 
-M1 整体仍待实时 IPC/Tauri 界面及双适配验收；M2 摘要/记忆与跨窗口接续、M3 自动参与尚未开始。
+该记录证明本批列出的环境与场景；当前完整能力、剩余范围和下一步分别见状态文件。

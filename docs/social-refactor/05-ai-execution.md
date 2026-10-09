@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [意识系统](03-consciousness.md) · [参与与调度](04-participation-and-scheduling.md)
 
-状态：完整目标设计；M1 已接通私聊/群聊持久计划和独立 AiRun、同一配置快照调用、正文/思考检查点、原子终态与恢复。当前不声明工具，收到工具调用返回 tool_not_allowed；显式控制与完成竞争已验证，工具循环待后续，当前范围见 [私聊](m1-private-chat.md)、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)。
+本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
 ## 1. 保留的运行能力
 
@@ -12,11 +12,11 @@
 
 ## 2. AiRun 对象与状态
 
-AiRun 字段建议：id、actor_id、conversation_id、bout_id、message_id、plan_id、intent_id、trigger_ref、status、model_snapshot_ref、profile_version、context_snapshot、participation_epoch、started_at、finished_at、usage、timings、error_code。
+当前 AiRun 为 id、message_id、bout_id、status、revision、snapshot。snapshot 记录目标 AI/空间、档案/绑定/关系版本、参与 epoch、预算与来源依赖；ParticipationPlan 关联 run_id。实际模型、思考、用量、计时和错误保存于独立 RunDetails。意图、工具审计和预算预留随后续用例扩展，不复制为聊天正文。
 
 RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循环属于同一 AiRun，默认只产生一个可见社交消息，内部协议消息和工具日志保存在执行记录中。
 
-状态为 running / succeeded / cancelled / failed / interrupted。排队状态属于 ParticipationPlan，开始事务才创建 running AiRun；dispatch 边界另外记录，不把已开始但尚未请求 provider 的运行当成已经付费调用。只有 running 可以转终态，终态不可被迟到 delta 或重复完成覆盖。
+状态为 running / succeeded / cancelled / failed / interrupted。排队状态属于 ParticipationPlan，开始事务才创建 running AiRun；当前没有单独持久化的 dispatch 标记，重启不重放任何已开始运行。running 不等于已经付费或供应商已接收，后续审计需单独表达。只有 running 可以转终态，终态不可被迟到 delta 或重复完成覆盖。
 
 ## 3. 启动流程
 
@@ -24,7 +24,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding。
 3. 调用 ConsciousnessService.prepare_context，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
 4. 再检查暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件。
-5. 记录 dispatch 边界，调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内。
+5. 调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内；后续扩展外部 dispatch 审计时明确记录边界。
 
 无法解析模型时返回候选与可恢复错误，终结计划，不更换身份或静默替换模型。授权和版本在启动过程中变化时，放弃旧计划并重新评估。
 
@@ -44,7 +44,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 ## 5. 流式生成与检查点
 
-模型 delta 更新生成缓冲并发布临时 GenerationEvent。约每 500ms 有变化时保存草稿检查点，工具调用/结果继续写穿透；普通 delta 不逐 token 写入持久事件日志。
+模型 delta 更新生成缓冲并发布临时 GenerationEvent。约每 500ms 有变化时保存草稿检查点；工具循环接入后，调用/结果仍需写穿透；普通 delta 不逐 token 写入持久事件日志。
 
 首版可以保持流式正文显示，联系人名称和回复对象在 run.started 时固定。思考内容及工具日志默认进入运行详情，不能自动成为群里所有 AI 的记忆来源。
 
@@ -54,7 +54,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 成功：再次校验 Actor/成员状态、Bout 状态、参与 epoch 和受撤销的意识系统来源；同事务保存最终消息、usage/timings、run.succeeded、计划与意图终态和持久事件。事务成功才广播完成。
 
-取消：停止 provider 消费与工具执行，补齐未回答工具调用，保存部分正文和原因，原子转 cancelled。暂停、结束 Bout、移除成员、遗忘所用记忆等撤销操作优先于成功提交；使用事务版本检查保证竞争结果确定。
+显式取消：先原子保存最近已落盘片段与 cancelled 终态，再通知执行任务停止；迟到收尾不能覆盖终态。Feature 关闭和异常收尾保存已接收的片段。工具循环接入后还须补齐未回答工具调用并停止 worker。暂停、结束 Bout、移除成员、遗忘所用记忆等撤销操作优先于成功提交；使用事务版本检查保证竞争结果确定。
 
 失败：网络错误、EOF、协议错误、保存失败分别记录原因。先完成可持久化的中断收尾再通知终止；磁盘不可写时不伪报已保存，启动恢复处理仍为 running 的检查点。
 
@@ -62,11 +62,11 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 ## 7. 工具与预算
 
-社交 AI 默认没有工具权限。ExecutionBinding 引用固定 ToolPolicy；授权的工具集合在启动时固定，每次执行前检查可撤销权限。角色文本、群消息和模型返回不能自行注册工具。
+社交 AI 默认没有工具权限。后续工具授权用例通过 ExecutionBinding 引用固定 ToolPolicy；授权的工具集合在启动时固定，每次执行前检查可撤销权限。角色文本、群消息和模型返回不能自行注册工具。
 
 默认 echo/add 继续使用宿主 worker 入口、64 KiB 输入/输出、Registry 超时与 panic 捕获；Windows Job Object 和 Linux 现有边界继续保持。工具循环次数与社交自动发言轮数分开计数。
 
-自动运行启动前预留 token/次数预算，结束后根据实际 usage 结算；usage 缺失采用保守上限记录，不估造精确费用。prompt_tokens 已含缓存输入，缓存命中率仍为 cached / prompt。货币预算需要有效价格来源，首版主要使用次数与 token 限额。
+M3 自动运行启动前预留 token/次数预算，结束后根据实际 usage 结算；usage 缺失采用保守上限记录，不估造精确费用。prompt_tokens 已含缓存输入，缓存命中率仍为 cached / prompt。货币预算需要有效价格来源，首版主要使用次数与 token 限额。
 
 ## 8. 验收
 

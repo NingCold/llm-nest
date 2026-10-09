@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [API 与事件](07-api-and-events.md)
 
-状态：完整目标设计；M0 已实现 SQLite 基础、共享目录锁、原子操作、备份和旧记录导入；M1 已接入 GUI 宿主、v2 run_details、v3 participation_plans 与 v4 共享群历史、v5 成员参与迁移、上下文/分页读取、成员管理与修订/撤回/交谈控制。完整首版表继续按里程碑扩展，实际范围见 [M0](m0-implementation.md)、[私聊](m1-private-chat.md) 、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)。
+本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
 ## 1. 存储布局与锁
 
@@ -14,17 +14,18 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 现有旧系统目录到新 home 目录的复制先按既有规则完成；JSON 到 SQLite 是随后独立的一次格式导入，两种迁移不可混为自动合并。
 
-## 2. 目标表与关系
+## 2. 当前 Schema 与目标关系
 
-| 表组 | 主要表 | 主要约束 |
+当前 schema 版本为 5；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+
+| 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
-| 身份 | actors、ai_profiles、execution_bindings、relationships | 身份 UUID、档案版本、无向关系对唯一 |
-| 聊天 | conversations、memberships、messages、message_revisions、message_context_refs、read_positions、bouts | 私聊 relationship_id 唯一，含归档；每空间 message_seq 唯一，成员对唯一；跨窗口引用追踪源消息版本 |
-| 意识系统 | memories、memory_sources、summaries、summary_sources、forget_suppressions | 来源引用版本，范围显式保存；摘要按窗口分段与来源版本缓存 |
-| 参与 | participation_plans、contact_intents、consumer_offsets | dedupe_key 和处理进度保证幂等 |
-| 执行 | ai_runs、run_checkpoints、run_protocol_messages、tool_executions、budget_reservations | RunId 独立，轨迹归属一个 AI 与 run |
-| 契约 | committed_events、command_receipts | 全局事件序列、幂等请求作用域唯一 |
-| 迁移 | schema_migrations、legacy_imports、legacy_id_map | 版本迁移与来源映射可核对 |
+| 身份 | actors、ai_profiles、execution_bindings、relationships | 关系设置、独立生成参数与工具策略 |
+| 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 跨窗口引用、正式已读用例 |
+| 参与/执行 | participation_plans、ai_runs、run_details | 联系意图、消费进度、工具/协议审计、预算预留 |
+| 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
+| 迁移 | schema_migrations、legacy_imports、legacy_id_map、legacy_entries、legacy_session_data | 按后续 schema 变更迁移 |
+| 意识派生数据 | 尚无摘要/记忆业务表 | M2 memories、sources、summaries、遗忘抑制与跨窗口依赖；表名在实现时确定 |
 
 这是一份职责模型，实施时可以合并一对一表，但不能省略事务或来源约束。外键、唯一索引和 CHECK 约束要实际启用并验证；不能只在 Rust 层假设有效。
 
@@ -34,25 +35,26 @@ message_context_refs 关联目标私聊消息、目标 AI、发起者、来源�
 
 上述来源引用、摘要、记忆与 AiRun 中保存的 ContextSnapshot 共同支撑意识系统，存储仍统一使用 SocialStore。原消息由聊天用例写入，意识系统只持久化自身派生材料和必要依赖，不另建独立 consciousness 数据库或完整请求副本。M1 使用消息来源快照；M2 启用摘要、显式记忆与跨窗口引用。
 
-SocialStore 接口放在 `crates/storage`，提供领域查询和类型化原子操作，例如 append_message、revise_message、begin_run、finish_run、interrupt_run、forget_memory、claim_intent。前端和 Feature 不直接拼 SQL。
+SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。记忆/意图操作随 M2/M3 加入，不预先承诺不存在的方法。前端和 Feature 不直接拼 SQL。
 
 ## 3. 关键事务
 
 | 操作 | 同一次提交的内容 |
 | --- | --- |
 | 创建 AI | Actor、档案、执行绑定、事件、命令回执 |
-| 发送真人消息 | 消息、可选上下文引用、空间顺序/版本、Bout 更新、事件、回执 |
+| 发送真人消息 | 消息、空间顺序/版本、接话计划、事件、回执；M2 加入可选上下文引用 |
 | 处理触发事件 | consumer offset、去重后的参与计划 |
-| 开始 AI 运行 | 领取计划、预算预留、AiRun、generating 消息、开始事件 |
+| 开始 AI 运行 | 计划转 running、取得/创建 Bout、AiRun、generating 消息、开始事件；后续加入预算预留 |
 | 完成 AI 运行 | 最终消息、run 终态、计划/意图终态、预算结算、事件 |
 | 中断 AI 运行 | 草稿、未回答工具失败结果、run/计划/意图终态、事件 |
-| 暂停或移除成员 | 参与 epoch、取消标记、排队计划状态、事件 |
+| 暂停成员 | 该成员 paused/revision、它的运行/队列终态、事件、回执；不提高全群 epoch |
+| 加入/移除成员 | 成员版本、空间 context/participation epoch、运行/计划撤销、事件、回执 |
 | 归档空间 | 空间 archived 状态、活动运行取消标记、未执行计划/意图终态、事件 |
 | 结束 Bout | Bout 终态、本 Bout 的活动运行取消标记与未执行计划状态、事件 |
 | 编辑/遗忘 | 修订或遗忘记录、派生内容失效、上下文版本、撤销标记、事件 |
 | 保存/失效摘要 | 来源与权限版本复核、分段摘要版本/状态、派生依赖、变更事件 |
 
-上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
+上表为完整目标事务；预算、联系意图、记忆/摘要与工具轨迹当前尚未接入。当前发送事务创建计划，Bout 在开始运行事务创建；不通过事件消费重复安排。上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
 
 command_receipts 保存稳定实体引用、请求摘要和结果分类，不保存撤回后仍可取出的原响应正文。重复请求返回同一实体的当前可见状态；幂等检查先于已经成功请求的 revision 冲突判断。
 
@@ -72,7 +74,7 @@ M0 使用 rusqlite 0.40.2 bundled，WAL、foreign_keys=ON、synchronous=FULL，�
 
 每次 schema 变更有顺序版本与校验记录。打开数据库先取得目录锁，再检查版本和执行事务迁移。未知较新版本拒绝写入并提示需要匹配应用，不尝试降级解释。
 
-迁移前验证可写空间并生成一致备份。在线数据库使用 SQLite 备份能力或明确暂停写入后的安全流程，不能仅复制主文件而遗漏 WAL。schema 失败保留原库与可定位错误，不发布半升级状态。
+迁移前生成一致备份，失败返回实际错误，不继续升级；可用磁盘容量不通过估算假装得到保证。在线数据库使用 SQLite 备份能力或明确暂停写入后的安全流程，不能仅复制主文件而遗漏 WAL。schema 失败保留原库与可定位错误，不发布半升级状态。
 
 ## 6. 旧 JSON 导入
 

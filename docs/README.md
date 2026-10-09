@@ -12,7 +12,7 @@
 
 ## 社交转型设计与实现
 
-首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。软件管理的上下文、摘要、记忆、召回与遗忘统一称为“意识系统（Consciousness）”。U0/M0 与 M1 [真实私聊](social-refactor/m1-private-chat.md)、[群聊及持久队列](social-refactor/m1-group-chat.md)与[消息修订/交谈控制](social-refactor/m1-message-controls.md)已实现，普通 Web 已接入 SQLite、模型执行与近期上下文；桌面实时 IPC、双适配验收和意识系统完善仍待后续。[独立模拟预览](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)继续保留。以下专项文档主要描述完整目标，按 [TODO](social-refactor/TODO.md) 实施。
+首版为一个本地真人与多个 AI 私聊、群聊。先读 [总纲](social-refactor/README.md) 确认范围，再按状态文件与 [TODO](social-refactor/TODO.md) 查进度。专项文档维护所属模块的设计与当前契约，批次记录保存当时的实现和验证证据。
 
 | 文档 | 负责内容 |
 | --- | --- |
@@ -29,14 +29,15 @@
 | [运行时与配置](social-refactor/09-runtime-and-configuration.md) | 初始化、资源注入、快照、关闭与旧入口兼容 |
 | [交付与验证](social-refactor/10-delivery-and-validation.md) | M0–M3、端到端验收、兼容收尾与待细化决策 |
 
-## 当前验收证据
+## 实现与验收记录
 
 每份报告只证明其中列出的环境与场景。历史报告中的产物哈希可能对应旧版本，不应与最新安装包混用。
 
 | 文档 | 范围 |
 | --- | --- |
-| [M1 首批私聊实现与验证](social-refactor/m1-private-chat.md) | 真实 Web/HTTP、模型模拟、SQLite 迁移与恢复、Windows/Linux 验证及后续范围 |
-| [M1 群聊实现与验证](social-refactor/m1-group-chat.md) | 成员历史授权、结构化 @ / 回复、持久 FIFO、多 AI 上下文与重启恢复 |
+| [M1 私聊实现与验证](social-refactor/m1-private-chat.md) | 首条真实 Web/HTTP 链路、模型模拟、SQLite v2 与恢复 |
+| [M1 群聊实现与验证](social-refactor/m1-group-chat.md) | 共享群历史、结构化 @ / 回复、持久 FIFO、多 AI 上下文与 v3/v4 迁移 |
+| [M1 消息与控制实现验证](social-refactor/m1-message-controls.md) | 修订/撤回、来源失效、成员/窗口暂停、结束交谈、归档/恢复及 v5 迁移 |
 | [M0 领域与存储基础](social-refactor/m0-implementation.md) | 中立类型、事务/锁、旧 JSON 导入和跨平台验证 |
 | [用户目录迁移与设置入口](home-directory-2026-09-16.md) | Windows/Linux 路径与迁移测试、目录入口、尚待点击确认的项目 |
 | [Linux 桌面接续验收](linux-acceptance-2026-09-16.md) | 已有包、XWayland/Wayland 自动 GUI、修复重建与待人工项 |

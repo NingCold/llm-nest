@@ -2,138 +2,121 @@
 
 [总纲](README.md) · [存储与迁移](06-storage-and-migration.md) · [界面与桌面](08-frontend-and-desktop.md)
 
-状态：完整目标契约；M1 已实现联系人/私聊/群聊 HTTP、共享 DTO 的基础 IPC 命令、持久引用回放与临时生成 SSE。消息修订/撤回与显式控制命令已接通；记忆契约及实时 IPC 待后续。可调用路由、字段与限制见 [私聊](m1-private-chat.md)、[群聊](m1-group-chat.md) 与 [消息/控制](m1-message-controls.md)，不可按目标表推断完整接口已可用。
+本文集中维护当前传输契约，后续能力单独列出，不预先固定尚未实现的路由。源码入口为 [HTTP](../../crates/web-server/src/social_api.rs)、[IPC](../../frontends/tauri/src-tauri/src/social_commands.rs)、[共享 DTO](../../features/social/src/wire.rs) 与 [持久事件](../../crates/events/src/social_event.rs)。
 
 ## 1. 共享业务入口
 
-SocialFeature 暴露具体方法，Feature trait 继续只管理 id、initialize、shutdown 和 downcast。HTTP 与 Tauri 从同一业务方法取得结果，不能分别实现记忆、权限或调度逻辑。
+HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。记忆/摘要用例后续由内部意识服务承担，原消息仍由聊天用例维护。
 
-记忆管理与摘要查询统一委托内部意识系统（ConsciousnessService），发送和原消息读取仍走聊天用例。Consciousness 是系统名，具体 API 保留 memories、summaries、contextReferences 等明确用途，不新增通用意识控制端点或第三个导航入口。
+外部业务字段为 camelCase，枚举值按各自 serde 契约；ID 为 UUID 字符串，revision、sequence、cursor 为十进制字符串。请求使用 requestId；expectedRevision 针对被修改对象，不能拿空间 revision 替代消息或成员 revision。
 
-增加共享 DTO 模块承载业务响应与事件 wire 类型，外部字段统一 camelCase。内部模型可用 snake_case。ActorId、MessageId、RunId、revision、sequence 和 cursor 对外均为字符串。
+## 2. 当前接口
 
-## 2. 目标接口清单
+HTTP 前缀为 `/api/social`。下面的 IPC 命令已注册，但桌面界面与实时订阅尚未接入。联系人和空间列表由 init 返回，暂没有独立列表接口。
 
-HTTP 前缀为 `/api/social/v1`，表中 route 省略前缀。写操作使用后端当前操作者，clientRequestId 与 expectedRevision 按用途提供。
-
-| 用例 | HTTP | Tauri command |
+| 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
 | 启动快照 | GET /init | social_init |
-| 修改本地用户资料 | PATCH /self | social_update_self |
-| 联系人列表/创建 | GET/POST /ai | social_list_ai / social_create_ai |
-| AI 档案详情 | GET /ai/{id} | social_get_ai |
-| 修改/归档 AI | PATCH /ai/{id} | social_update_ai |
-| 修改 AI 执行配置 | PUT /ai/{id}/execution | social_update_ai_execution |
-| 空间列表/创建 | GET/POST /conversations | social_list_conversations / social_create_conversation |
-| 空间详情 | GET /conversations/{id} | social_get_conversation |
-| 修改标题/归档/恢复空间 | PATCH /conversations/{id} | social_update_conversation |
-| 查看窗口摘要及来源 | GET /conversations/{id}/summaries | social_list_conversation_summaries |
-| 成员增加/修改/退出 | PUT /conversations/{id}/members/{actorId} | social_update_membership |
-| 消息分页/发送 | GET/POST /conversations/{id}/messages | social_list_messages / social_send_message |
-| 单条消息查询 | GET /messages/{id} | social_get_message |
-| 消息编辑/撤回 | PATCH/DELETE /messages/{id} | social_edit_message / social_redact_message |
-| 更新已读位置 | PUT /conversations/{id}/read-position | social_mark_read |
-| 暂停/恢复参与 | POST /conversations/{id}/pause 或 /resume | social_pause_conversation / social_resume_conversation |
-| 结束当前交谈 | POST /conversations/{id}/end-bout | social_end_bout |
-| 运行详情 | GET /runs/{id} | social_get_run |
-| 取消一次运行 | POST /runs/{id}/cancel | social_cancel_run |
-| 查询/手动创建记忆 | GET/POST /memories | social_list_memories / social_create_memory |
-| 记忆详情 | GET /memories/{id} | social_get_memory |
-| 修改/确认/遗忘记忆 | PATCH /memories/{id}，POST /memories/{id}/confirm，DELETE /memories/{id} | social_update_memory / social_confirm_memory / social_forget_memory |
-| 查询/创建/取消联系意图 | GET/POST /intents，POST /intents/{id}/cancel | social_list_intents / social_create_intent / social_cancel_intent |
-| 联系意图详情 | GET /intents/{id} | social_get_intent |
-| 补齐持久变更 | GET /changes?after={cursor} | social_get_changes |
-| 长期订阅 | GET /events?after={cursor} | social_subscribe + social-event |
+| 创建/修改联系人及绑定 | POST /contacts；PATCH /contacts/{id} | social_create_contact / social_update_contact |
+| 打开唯一私聊 | POST /contacts/{id}/direct | social_open_direct |
+| 创建独立群 | POST /groups | social_create_group |
+| 空间详情 | GET /conversations/{id} | social_conversation |
+| 成员加入/移出 | POST /conversations/{id}/members | social_change_membership |
+| 接话计划 | GET /conversations/{id}/plans | social_plans |
+| 分页历史/发送文本 | GET/POST /conversations/{id}/messages | social_messages / social_send |
+| 单条消息 | GET /messages/{id} | social_message |
+| 编辑/撤回真人消息 | POST /messages/{id}/revise；POST /messages/{id}/withdraw | social_revise_message / social_withdraw_message |
+| 窗口控制 | POST /conversations/{id}/control | social_control_conversation |
+| 成员暂停/恢复 | POST /conversations/{id}/members/participation | social_pause_member |
+| 运行详情 | GET /runs/{id} | social_run_details |
+| 停止一次运行 | POST /runs/{id}/cancel | social_cancel_run |
+| 持久变更回放 | GET /events?after={cursor} | social_events |
+| 长期订阅 | GET /subscribe?after={cursor} | 尚未实现 |
 
-provider、目录同步和配置等已有接口继续保留；旧 `/api/sessions` 与 chat-event 在过渡期明确标 legacy，不与新契约混用。初期可以按里程碑逐项实现，不提供返回假成功的占位路由。
+主要命令输入：
 
-创建 direct Conversation 按 Relationship 查找唯一现有空间；重复请求返回已有空间，归档后的恢复沿用同一 ID。创建 group 才建立独立群窗口。记忆查询/编辑接口由聊天详情或联系人详情使用，不对应独立记忆主入口；候选确认接口在后续提取功能加入时实现。
+| 命令 | 字段与版本 |
+| --- | --- |
+| 联系人创建/修改 | requestId、name、persona、binding；修改追加联系人 expectedRevision。binding 为 providerId/modelId/reasoningEffort，可为空 |
+| 打开私聊 | requestId；归档私聊返回原 ID，不自动恢复 |
+| 创建群 | requestId、title、memberIds |
+| 成员加入/移出 | requestId、actorId、action(add/remove)、空间 expectedRevision；没有历史范围选项 |
+| 发送文本 | requestId、text、replyTo；mentions 可省略，按顺序选择接话 AI |
+| 编辑/撤回 | requestId、消息 expectedRevision；编辑另带 text |
+| 窗口控制 | requestId、空间 expectedRevision、action(pause/resume/end/archive/restore) |
+| 成员暂停/恢复 | requestId、actorId、成员 expectedRevision、paused |
 
-取得归档私聊只返回原空间，不自动改为 active；用户明确恢复时通过更新空间命令保存状态，恢复不重放已取消计划。
+消息分页使用 before=sequence，当前每页最多 200 条，返回 messages/hasMore。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun 和 currentBout；运行详情返回独立 RunDetails，旧运行可为 null。
 
-“与某 AI 私聊继续”先获取该关系的唯一私聊，再通过发送消息的可选 contextReferences 指定来源窗口、选中消息/版本或话题范围；打开窗口本身不发送消息、不启动生成。引用字段只传标识，不由前端提供一段声称来自群的正文。后端与意识系统复核来源、目标和访问权，校验后与私聊消息同事务保存。用户显式分享选中的正文时，通过普通消息发送形成新的目标空间消息；它与 ContextReference 分别处理，不授予源空间读取权。
+原模型、配置与目录同步接口保留；旧 `/api/sessions` 和 chat-event 服务迁移期 Harness，不与社交契约混用。
 
 ## 3. 发送与幂等
 
 ```json
 {
-  "clientRequestId": "request-uuid",
-  "body": [{ "type": "text", "text": "一起讨论一下这个想法" }],
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "text": "一起讨论一下这个想法",
   "replyTo": null,
-  "mentions": ["ai-actor-uuid"]
+  "mentions": ["00000000-0000-4000-8000-000000000002"]
 }
 ```
 
-以上是占位 ID 的结构示意，实际 ID 必须校验为合法 UUID。空间由 route 或命令参数指定，senderId 从后端上下文确定。
+空间由路由或命令参数指定，senderId 从后端当前操作者取得。replyTo 只引用同空间消息；正文中的 @名字不替代 mentions。返回 SendReceipt 的 message 和可选 executionNotice，只表示真人消息已提交，不保证 AI 会回答，也不返回虚构的 committedCursor。
 
-contextReferences 默认为空，M2 与跨窗口接续一起实现；引用失效或无权限返回明确错误，不静默扩大可见范围或丢弃用户选中的引用。窗口摘要查询只返回当前操作者可见的分段、有效状态与来源；生成使用的 AI 视图仍由 ContextBuilder 按目标 AI 单独校验。
+命令回执作用域为操作者 + 命令种类 + requestId。同内容重试返回原实体的当前可见状态，改内容重用 ID 返回冲突；幂等检查先于已成功命令的 revision 检查。回执只保存引用和摘要，撤回后不回放旧正文。取消单个 run 没有 requestId，终态重复取消仍成功；HTTP 返回 204，IPC 返回空成功结果。
 
-成功返回已保存 MessageDto、conversationRevision 和 committedCursor。此响应只表示消息已保存，不保证 AI 会回答。请求失败保留前端未发送草稿；相同请求 ID 与内容重试返回同一实体，内容不同返回 conflict。
-
-幂等作用域为当前操作者 + 命令种类 + clientRequestId；回执保存实体引用与请求摘要，重复响应读取当前可见状态，不能回放已经撤回的正文。读取型接口复核当前权限，失去访问权返回明确错误或不可见占位。
-
-编辑使用 expectedRevision，针对消息自身版本。新增其他成员消息不应让无关的编辑因整段历史计数变化而失败；修改同一消息则拒绝过期 revision。
+前端保存失败保留输入；未知发送结果继续使用原 requestId/expectedRevision 重试。后续刷新失败不撤销已收到的成功回执。编辑按消息自身版本检查，其他成员追加消息不会使无关编辑冲突。
 
 ## 4. 持久事件
 
-SocialEvent 记录已经提交的业务变更引用。建议事件包括 actor.created/changed、conversation.created/changed、membership.changed、message.created/revised/finalized/redacted、run.started/ended、memory.changed/forgotten、summary.changed/invalidated、intent.changed、participation.changed。memory 与 summary 事件在 M2 加入，仍只携带实体标识、版本和范围，客户端查询当前可见状态。
+SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、conversation_changed、message_changed、run_changed、bout_changed、plan_changed；各自带实体 ID、revision 和适用的 conversationId。
 
 ```json
 {
-  "schemaVersion": 1,
-  "eventId": "event-uuid",
-  "eventSeq": "1042",
-  "type": "message.finalized",
-  "conversationId": "conversation-uuid",
-  "actorId": "ai-actor-uuid",
-  "messageId": "message-uuid",
-  "runId": "run-uuid",
-  "entityRevision": "3",
-  "occurredAt": "2026-10-08T08:00:00Z"
+  "cursor": "1042",
+  "change": {
+    "kind": "message_changed",
+    "conversationId": "00000000-0000-4000-8000-000000000003",
+    "messageId": "00000000-0000-4000-8000-000000000004",
+    "revision": "3"
+  }
 }
 ```
 
-事件不重复保存消息、记忆或修订原文；客户端依引用读取当前可见版本。这样撤回或遗忘后，补齐旧事件不会恢复旧正文。事件不是完整事件溯源系统，当前数据库状态是权威数据。
+cursor 在本地库全局单调递增，与业务事务同提交。事件只保存引用，不保存消息、记忆或修订原文；客户端读取当前可见版本，旧事件不能恢复撤回正文。数据库状态是权威数据，不按事件重建历史正文。
 
-eventSeq 在本地存储全局单调递增，eventId 稳定唯一。持久事件与业务事务同提交，发布采用至少一次语义；客户端按 eventId/sequence 去重。
-
-RuntimeEvent 保持运行时通知职责，新增 SocialEvent 与 GenerationEvent 独立；不通过虚构 RuntimeEvent::Feature 转发业务。
+回放至少一次，客户端按 cursor 去重，并在状态应用成功后推进游标。消息变更按 MessageId 读取，已加载的早期消息也能更新。RuntimeEvent 仍只负责运行时通知，社交持久事件与生成事件独立。
 
 ## 5. 临时生成事件
 
-GenerationEvent.type 初版为 generation.delta、generation.reasoning_delta、generation.activity。包含 conversationId、actorId、messageId、runId、deltaSeq 和必要 payload，不拥有持久 eventSeq。
+SocialGenerationEvent 当前有 generation.delta、generation.reasoning_delta 和 execution.notice。正文/思考片段包含 runId、messageId、actorId、conversationId、deltaSeq、text；执行提示包含 conversationId/error，没有 run 的持久游标。
 
-普通 token 不进入持久变更日志。客户端断线后读已保存草稿/终态，不能拼接无法证明完整的旧 token 流。最终消息由持久状态覆盖临时缓冲，run 终态之后的迟到 delta 被忽略。
-
-有限队列负责临时广播，慢消费者丢失片段后接收 resync 提示或重读，不阻塞运行收尾。思考和工具详情的订阅可独立于普通消息列表，并校验访问权。
+普通 token 不写入持久日志。重连读取已保存草稿/终态，最终记录覆盖临时缓冲，终态后忽略迟到 delta。临时广播溢出发 resync，客户端清除旧历史页与临时缓冲后重新分页，草稿保留；重置前的读取响应不能填回旧正文。
 
 ## 6. 启动、订阅与补齐
 
-启动快照在一致读事务中返回当前用户、联系人、会话列表元数据、活动运行与 snapshotCursor。“会话列表元数据”指标题、成员、末条消息、未读等，不是意识系统生成的 ConversationSummary。较长消息列表和历史摘要分别查询，不把所有历史塞进 init，也不等待后台摘要生成才允许启动。
+init 在一致读取中返回本地真人、联系人、窗口列表元数据、模型选项和 cursor，不返回全部历史，也不等待摘要。列表中的 latestMessage 与意识系统的历史摘要分别处理。
 
-客户端随后订阅 after=snapshotCursor：后端先准备 live 通道，再捕获持久高水位并回放到该水位，最后切到 live；重复事件去重。通道 overflow 时使用持久日志再次补齐，不能静默跳过。
+HTTP 随后以 after=cursor 订阅：先监听临时广播，再读取持久引用；SSE 的 change/id 推进持久 cursor，generation 没有 SSE id。当前每 250ms 补读已提交变更，单批最多 500 条。订阅断开只释放订阅，生成继续。
 
-订阅与回放至少一次，不承诺 exactly-once。客户端只有在事件对应状态应用成功后才推进 cursor。按 conversationId 过滤时，仍需返回扫描 watermark，不能把权限过滤掉的事件当作未处理卡住游标。
+持久日志当前不压缩，尚未实现游标过期、空间过滤 watermark 和统一的所有边界错误。后续实时 IPC 应先注册监听，再建立订阅，显式取消释放资源；HTTP/IPC 在重放、溢出和退出时使用同一业务语义。具体订阅命令与字段在接入时确定。
 
-游标有效期超出保留窗口返回 cursor_expired/resync_required，客户端重新获取快照。事件日志压缩与备份策略在实际使用量验证后确定；M0 不提前删除尚需消费者处理的事件。
+## 7. 错误与后续能力
 
-Tauri 先注册监听，再调用 social_subscribe 建立订阅；ack 返回 subscriptionId 和起始 cursor。取消订阅释放监听与后端资源，但不取消 AiRun。HTTP 使用 SSE，`id` 字段对应持久 cursor；临时事件不推进 Last-Event-ID。
+共享业务错误为 code/message/retryable。目前 invalid_input → 400，not_found → 404，not_authorized → 403，revision_conflict → 409，model_unavailable/budget_exhausted → 422，storage_failure/unavailable → 503。IPC 使用相同业务错误体；Axum 的 JSON/Path/Query 拒绝响应仍由框架产生，统一这部分错误是 M1 剩余工作。当前不返回 currentRevision。
 
-## 7. 错误与访问边界
+消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-共享错误至少区分 invalid_input、not_found、revision_conflict、not_authorized、model_unavailable、paused、budget_exhausted、storage_failure、cursor_expired。HTTP 使用对应状态码和统一错误体；IPC 返回同样的 code、message、retryable 和可选 currentRevision。
+后续能力按所属阶段扩展：联系人生命周期与独立生成参数/工具授权、实时 IPC 和双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。已读位置、列表搜索等按独立链路细化，不提供假成功占位接口。
 
-消息已提交后参与失败通过运行/参与状态表达，不把发送请求事后改为保存失败。无法持久化的生成错误不能通过事件伪造已提交终态。
+群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 
-首版本地 HTTP 保留 loopback、Host/Origin 和 DNS rebinding 防护；浏览器 demo 明确与真实后端隔离。未来公网访问需要另外的认证与成员授权设计，不能直接开放当前本地服务。
-
-序列化 DTO 不返回 Key、环境变量值、完整配置或任意路径。路径设置仍通过既有 config/data 枚举的目录打开 IPC；Web 不提供服务器文件夹打开接口。HTTP header 继续使用 Headers.set。
+本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；未来公网认证另行设计。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。
 
 ## 8. 验收
 
-1. 同一业务通过 HTTP 和 IPC 产生一致字段、状态、错误与顺序。
-2. 初始化与订阅之间发生消息，不漏事件；重复回放不重复消息。
-3. 订阅断开后运行完成，重连读到最终消息；迟到 delta 不覆盖终态。
-4. 慢订阅者溢出、游标过期和权限过滤均能明确补齐或重置。
-5. 撤回/遗忘后补齐旧事件，不能恢复原文。
-6. 幂等发送、消息 revision 冲突、无效成员和越权读取均被后端拒绝。
+1. HTTP/IPC 字段、业务状态、错误与顺序一致；框架拒绝和实时 IPC 的剩余部分单独验收。
+2. 初始化到订阅的间隙不漏事件，重复回放不重复消息，状态应用失败不推进游标。
+3. 断开订阅仍完成保存；重连和 resync 后终态覆盖 delta，旧读取不能恢复撤回内容。
+4. 幂等命令、revision 冲突、无效成员、越权读取和写入失败均有明确结果。
+5. M2 加入遗忘后，旧引用回放仍不能恢复失效内容；日志保留策略变化时补验游标过期与过滤补齐。

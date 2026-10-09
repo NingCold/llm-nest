@@ -2,26 +2,28 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [运行时与配置](09-runtime-and-configuration.md)
 
-状态：完整目标设计；M1 已实现联系人创建/修改、独立执行绑定、严格模型校验、群成员管理与共享群历史，并支持窗口成员暂停/恢复。联系人归档/删除和全局参与偏好仍待后续，当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
+本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
 ## 1. 职责与落点
 
-`crates/social/src/identity.rs` 定义身份、档案与关系；`features/social/src/identity.rs` 负责创建、修改、归档和查询用例。模型解析由 Runtime/AiClient 负责，档案不拼接供应商协议 JSON。意识系统读取档案与关系偏好，为目标 AI 准备上下文；档案编辑仍由身份用例负责。
+`crates/social/src/identity.rs` 定义身份、档案与关系；当前用例位于 `features/social/src/feature.rs`，后续可按职责拆为 identity 模块。模型解析由 Runtime/AiClient 负责，档案不拼接供应商协议 JSON。意识系统读取档案与关系偏好，为目标 AI 准备上下文；档案编辑仍由身份用例负责。
 
 首版有一个持久化本地 human Actor；所有 AI 都拥有独立 Actor。接口从后端当前用户上下文获取操作者，不接受前端通过任意 senderId 冒充另一个参与者。
 
 ## 2. 核心对象
 
-| 对象 | 关键字段 | 约束 |
+| 对象 | 当前关键字段 | 约束 |
 | --- | --- | --- |
-| Actor | id、kind、display_name、avatar_ref、status、revision、created_at | id 为 UUID；kind 首版创建后不可修改 |
-| AiProfile | actor_id、persona、background、interests、speaking_style、disclosure、profile_version | 一份档案属于一个 ai Actor；修改有版本 |
-| ExecutionBinding | id、actor_id、provider_id、model_id、reasoning_effort、temperature、max_tokens、tool_policy_id、revision | 只存配置引用，不存 API Key 或 provider endpoint |
-| Relationship | id、participant_a、participant_b、preferences、status、revision | 无向参与者对唯一；偏好显式记录归属与方向 |
+| Actor | id、kind、display_name、avatar_ref、status、revision、created_at | 独立 UUID；kind 创建后不修改；avatar_ref 已有类型，当前联系人输入只有名字/人设 |
+| AiProfile | actor_id、persona、revision | 一份档案属于一个 AI；修改有版本 |
+| ExecutionBinding | id、actor_id、provider_id、model_id、reasoning_effort、revision | 配置引用，不含 Key 或 endpoint |
+| Relationship | id、participant_a、participant_b、revision | 无向参与者对唯一 |
 
-Actor.status 初版为 active / archived。归档保留历史发送者，禁止新增运行，取消待执行意图；重新启用须经过显式操作。
+背景、兴趣、表达风格等可先写入 persona；结构化档案、独立 temperature/max_tokens、ToolPolicy 和关系偏好后续按用例扩展，当前 DTO 不提供这些字段。
 
-AiProfile.persona 是对外角色设定，不能授予工具、绕过暂停或扩大记忆权限。disclosure 提供 AI 标记及运营说明；首版可说明角色在本地配置、调用用户选择的模型。“意识系统（Consciousness）”指软件管理的背景与记忆机制，按 [系统定义](03-consciousness.md#0-名称与定义) 说明，不声称角色具有主观体验或真人身份。
+Actor.status 为 active / archived。后续联系人归档用例应保留历史发送者、禁止新增运行并取消待办；重新启用须显式操作。当前联系人创建/修改不会自动执行归档或删除。
+
+AiProfile.persona 是对外角色设定，不能授予工具、绕过暂停或扩大记忆权限。界面提供 AI 标记，说明角色在本地配置并调用用户选择的模型；结构化 disclosure 尚未接入。“意识系统（Consciousness）”指软件管理的背景与记忆机制，按 [系统定义](03-consciousness.md#0-名称与定义) 说明，不声称角色具有主观体验或真人身份。
 
 ## 3. 身份连续性
 
@@ -35,13 +37,13 @@ AiProfile.persona 是对外角色设定，不能授予工具、绕过暂停或�
 
 ## 4. 创建与修改流程
 
-创建 AI：校验档案大小和文本字段 → 校验执行配置 → 原子保存 Actor、AiProfile、ExecutionBinding → 提交 actor.created 事件 → 返回保存后的档案。
+创建 AI：校验文本字段与可选执行配置 → 原子保存 Actor、AiProfile 和可选 ExecutionBinding、事件引用及命令回执 → 返回保存后的联系人。持久事件种类见 [API 与事件](07-api-and-events.md#4-持久事件)。
 
-空 providers 是有效启动状态。允许创建未配置模型的 AI 草稿，executionReady=false，界面提供配置入口；该 AI 不能启动生成。用户选择了错误模型时仍严格报错，不把错误降级成草稿或替换模型。
+空 providers 是有效启动状态。允许创建 binding 为空的 AI，界面提供配置入口；该 AI 不能启动生成。当前不存储或返回 executionReady 字段，可用性在执行边界重新解析。用户选择了错误模型时仍严格报错，不把错误降级成草稿或替换模型。
 
-修改档案使用 expectedRevision。冲突返回最新版本与可重试错误；失败不更新前端的“已保存”状态。身份档案字段与模型配置可以分别保存，禁止为了修改名字重写整份 TOML。
+修改档案使用 expectedRevision。冲突返回 revision_conflict，界面需重新读取最新版本；当前错误体不附带最新实体。失败不显示“已保存”。当前命令一起保存名字、人设和可选绑定；后续可以拆为独立用例，禁止为了修改名字重写整份 TOML。
 
-变更执行配置先用完整配置快照校验 provider、model、reasoning effort 与参数；校验和保存失败保留原绑定。删除 provider 后，把受影响 AI 标为需要重新配置，并取消不能执行的待办意图，不静默切换模型。
+变更执行配置先用完整配置快照校验 provider、model、reasoning effort 与参数；校验和保存失败保留原绑定。provider 删除后，当前运行前校验会返回需要重新配置的错误，不静默切换模型；主动标记和联系意图撤销随后续配置/调度用例加入。
 
 ## 5. 关系行为
 
@@ -49,9 +51,9 @@ AiProfile.persona 是对外角色设定，不能授予工具、绕过暂停或�
 
 历史导入记录保留独立来源，不强行合并发送者身份；用户指定归属新联系人后，在其已有唯一私聊中接续，通过授权历史引用使用旧内容。历史来源不形成该联系人额外的长期私聊窗口。
 
-关系保存用户明确表达的相处偏好，例如回复长度、称呼、是否允许主动联系。偏好有来源与修改时间，记忆记录通过 relationship_id 关联。首版不设定自动增长的“好感度”或“亲密值”。
+后续关系设置保存用户明确表达的相处偏好，例如回复长度、称呼、是否允许主动联系。偏好有来源与修改时间，记忆记录通过 relationship_id 关联。首版不设定自动增长的“好感度”或“亲密值”。
 
-Relationship.preferences 承载显式相处设置，MemoryRecord 承载带来源的开放偏好与共同事实。意识系统按当前设置解释材料；冲突时显式设置优先，记忆文本不能改写主动联系、参与或工具开关，也不复制一份关系设置作为权威数据。
+目标关系偏好承载显式相处设置，MemoryRecord 承载带来源的开放偏好与共同事实；当前 Relationship 只有稳定参与者对与版本。意识系统按当前设置解释材料；冲突时显式设置优先，记忆文本不能改写主动联系、参与或工具开关，也不复制一份关系设置作为权威数据。
 
 真人与 AI 的私聊偏好可以影响该私聊中的表达；进入群聊后的行为由群成员设置和群约定共同决定。私聊中的偏好原文不会直接公开给群成员。
 

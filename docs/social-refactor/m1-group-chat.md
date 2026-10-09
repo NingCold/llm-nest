@@ -6,7 +6,7 @@
 
 2026-10-09 后续简化：移除成员历史起点与加入历史选项。v3 → v4 先备份，再移除 SQLite 列和成员 payload 中的旧字段；保留消息、成员状态/版本、运行、计划和回执。当前规则是所有当前成员共享完整本群历史，按回复对象选材与是否发言分别由意识系统和参与服务负责。
 
-## 当前行为
+## 实现行为（含共享历史简化）
 
 - 每个群有独立 ConversationId 和完整历史；相同成员可创建不同群，私聊仍保持唯一。
 - 普通群消息只保存。结构化 `mentions: ActorId[]` 按选择顺序指定接话者，去重保留顺序；正文里的 `@名字` 不解析为权限或执行目标。
@@ -38,9 +38,9 @@
 | `features/social` | 群用例、共享队列、按身份/空间准备上下文、独立执行和初始化恢复 |
 | `frontends/web/src/social/GroupControls.tsx` / `LiveChat.tsx` | 创建群、管理成员、@ 选择、回复引用、队列/接话历史及独立草稿 |
 
-新增 HTTP：`POST /api/social/groups`、`POST /api/social/conversations/{id}/members`、`GET /api/social/conversations/{id}/plans`。成员输入的 `action` 为 `add` 或 `remove`，没有历史范围选项；成员 DTO 不返回历史起点。发送输入新增可省略的 `mentions`，保留 `replyTo`；消息返回 mentions，窗口返回 members/pendingPlans。业务 DTO 使用 camelCase，计数器保持十进制字符串。
+本批新增群创建、成员加入/移出、计划查询与 mentions/replyTo，持久事件加入 plan_changed；共享历史简化移除了历史范围输入和成员历史起点。当前完整字段和 HTTP/IPC 清单集中于 [API 与事件](07-api-and-events.md)，不在批次报告重复维护。
 
-新增 `plan_changed` 持久引用事件，沿用 HTTP SSE 回放与游标规则。基础 Tauri 命令 `social_create_group`、`social_change_membership`、`social_plans` 调用相同 Feature 和 DTO；桌面社交界面及实时 IPC 尚未接入。
+真实 Web 接通群用例；基础 Tauri 命令共用业务 DTO，通过 MSVC 编译。实时 IPC 与桌面社交界面不属于本批验收。
 
 ## 验证与范围
 
@@ -50,6 +50,6 @@ Windows/Linux 的 `scripts/social_acceptance.py` 使用独立临时 SQLite 和�
 
 Chrome 实际操作创建三个 AI 的群、普通消息保存、指定顺序回复、单独回复引用、成员移出/重新加入及刷新恢复；浏览器未记录错误。没有执行付费 API、桌面安装或本批 Linux GUI 验收。
 
-M1 整体仍未完成：消息修订/撤回与显式交谈控制已在 [第三批](m1-message-controls.md) 完成，实时 IPC 和 Tauri 界面待后续；自动 AI 互聊、连续输入合并、计划过期/调度预算属于 M3，摘要/记忆/群话题接续属于 M2。
+后续消息修订/撤回与显式控制见 [第三批记录](m1-message-controls.md)，当前能力和剩余范围由状态文件维护。
 
 共享群历史简化的新增验证：Windows MSVC/Linux 各 41 项相关 Rust 测试通过；迁移保留成员状态/版本，备份保留旧历史起点，重复打开不重复迁移。Windows 模拟 HTTP 验收覆盖新加入和重新加入成员读取早期群消息；strict clippy、前端类型检查/回归/构建通过。

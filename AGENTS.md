@@ -4,11 +4,13 @@
 
 ## 项目定位与当前范围
 
-LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用显示名称为 `LLM Nest`，桌面二进制名仍为 `LLM-Nest`，CLI 为 `llmn`，TUI 为 `llmnt`；内部 Tauri Cargo 包名为 `tauri-frontend`。
+LLM-Nest 正从本地 Harness 转向人与 AI 的社交空间，共用 Rust 运行时。应用显示名称为 `LLM Nest`，桌面二进制名仍为 `LLM-Nest`，CLI 为 `llmn`，TUI 为 `llmnt`；内部 Tauri Cargo 包名为 `tauri-frontend`。
 
 已实现聊天、协议路由、会话持久化、运行中断/恢复、内置工具循环，以及桌面/Web 设置。MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留 trait 或界面按钮声称功能已经可用。
 
-项目正转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。目标结构与顺序见 [总纲](docs/social-refactor/README.md) 和 [TODO](docs/social-refactor/TODO.md)。M1 [私聊](docs/social-refactor/m1-private-chat.md)与[群聊](docs/social-refactor/m1-group-chat.md)已接通 SocialFeature、SQLite、近期上下文、模型执行、HTTP 订阅和真实 Web；结构化 @ / 回复、成员管理与共享群历史、持久 FIFO 计划与恢复已实现，[消息修订/撤回与交谈控制](docs/social-refactor/m1-message-controls.md)已接通真实 Web，摘要/记忆/跨窗口接续仍待后续。Tauri 已注册共享业务命令，但界面仍为 Harness，实时社交 IPC 尚未接入；独立 Web 模拟预览继续显式启用。
+首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
+
+当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。真实社交 Web 已接通，Tauri 仍显示 Harness，实时社交 IPC 未接入；浏览器模拟预览必须显式启用。本文维护修改约束，不重复维护各批测试数量。
 
 ## 工作前先确认
 
@@ -94,7 +96,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - JSON 写入使用同目录临时文件和原子替换。坏文件错误须带路径，不可静默丢弃。
 - 新消息创建真实 UUID；旧记录加载时补齐并持久化，重复 ID 报错。编辑按 userId、反馈按 messageId + revision 定位，不能恢复旧索引 API。
 - 旧 ChatFeature 的 run 开始和用户消息同事务。社交用例先提交真人消息，生成另行开始；成功回答、运行终态、用量/思考详情与持久事件同事务。流式每 500ms 保存有变化的 draft；旧工具调用/结果仍写穿透。
-- 旧 ChatFeature 的取消、EOF、provider 错误、消费端断开先完成中断持久化，再发送终止事件并补齐未回答工具的失败 ToolResult。社交订阅断开不取消生成；EOF/取消/失败保留片段和终态，下一次请求只读 committed 原文。首批私聊不开放工具。
+- 旧 ChatFeature 的取消、EOF、provider 错误、消费端断开先完成中断持久化，再发送终止事件并补齐未回答工具的失败 ToolResult。社交订阅断开不取消生成；EOF/取消/失败保留片段和终态，下一次请求只读 committed 原文。当前社交执行不开放工具。
 - 启动遇到 Running 检查点时，幂等恢复片段并标为 Interrupted。不自动重放工具，不声称能恢复 provider 的 token 游标或回滚副作用。
 - 旧会话只保存最近一次 RunCheckpoint；社交库保留独立 AiRun 和运行详情，尚不是完整协议/工具审计日志。
 - 下一次模型请求过滤中断消息；展示元数据（ID、反馈、思考、计时、用量、中断状态）通过 wire 转换剥离。工具调用与结果按各协议规则成对转换。

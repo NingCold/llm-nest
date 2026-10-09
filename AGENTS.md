@@ -88,6 +88,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - GUI“同步模型目录”由 `ai-client/catalog_sync` 适配 Pi 公共数据，Runtime 校验后原子保存到实际数据目录的 `cache/catalog.json`（不能放会话根目录）。优先级为用户显式字段 > 同步缓存 > 内置目录；不重写配置/源码、不导入远端凭据或端点、不改变默认模型。失败保留旧数据；所有配置重建路径必须合并缓存，在飞请求仍使用原快照。
 - `.env` 层级为进程环境 > 配置目录 > 默认数据目录，只填缺失变量。密钥解析只发生在需要凭据的边界。
 - GUI 生成设置通过 Runtime 校验并原子持久化。会话模型恢复不得覆盖用户保存的全局默认值。
+- 社交 AI 的 temperature/max_tokens 保存于管理员维护的 ExecutionBinding，不继承全局 Harness 参数。留空分别使用模型服务默认温度与意识系统自动输出预算；显式输出上限按原值预留，按协议/思考模式、模型容量和必要输入校验，不静默丢弃或裁减。运行使用同一配置快照。旧绑定缺失字段按 None 读取，存储候选序列化省略 None，保留旧命令摘要兼容。
 - OpenAI 兼容返回同时允许 `reasoning_content` 和 `reasoning`：优先非空前者，否则后者，不重复拼接。
 
 ### 会话与恢复

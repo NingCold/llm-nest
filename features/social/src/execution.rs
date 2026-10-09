@@ -5,7 +5,7 @@ use crate::{
     wire,
 };
 use ai_client::{ChatChunk, ChatRequest};
-use common::{GenerationOptions, MessageTimings};
+use common::MessageTimings;
 use futures_util::StreamExt;
 use social::*;
 use std::{sync::Arc, time::Instant};
@@ -96,11 +96,8 @@ impl SocialFeature {
                 .binding
                 .as_ref()
                 .ok_or_else(|| SocialError::ModelUnavailable("该 AI 尚未配置模型".into()))?;
-            let selection = selection(&wire::Binding {
-                provider_id: binding.provider_id.clone(),
-                model_id: binding.model_id.clone(),
-                reasoning_effort: binding.reasoning_effort.clone(),
-            })?;
+            let binding: wire::Binding = binding.clone().into();
+            let selection = selection(&binding)?;
             let client = s.llm.snapshot().await;
             let resolved = client
                 .resolve(&selection)
@@ -117,7 +114,12 @@ impl SocialFeature {
                     .to_owned(),
                 ..Default::default()
             };
-            let prepared = ConsciousnessService::prepare(material, &resolved.spec)?;
+            let options = crate::generation::options(&binding, &resolved)?;
+            let prepared = ConsciousnessService::prepare(
+                material,
+                &resolved.spec,
+                options.max_tokens.expect("allocated output budget"),
+            )?;
             // Contact controls span spaces. Keep run creation and token registration together
             // so a concurrent archive cannot miss the new execution. No model call holds this lock.
             let mut cancellations = self.cancellations.lock().await;
@@ -139,11 +141,7 @@ impl SocialFeature {
             let request = ChatRequest {
                 selection,
                 messages: prepared.messages,
-                options: GenerationOptions {
-                    max_tokens: Some(prepared.output_tokens),
-                    stream: true,
-                    ..Default::default()
-                },
+                options,
                 tools: vec![],
                 resolved: None,
             };

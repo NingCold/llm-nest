@@ -18,6 +18,7 @@ function load(name) {
   vm.runInNewContext(source, {exports,require:spec=> {
     if (spec==='./live-store') return {useLiveSocialStore:selector=>selector?selector(state):state};
     if (spec==='./LiveControls') return load('LiveControls');
+    if (spec==='./GenerationFields') return load('GenerationFields');
     if (spec==='./client') return {socialClient:{},SocialApiError:class extends Error{}};
     if (spec==='./LiveChat') return {ConsciousnessInfo:()=>null};
     if (spec==='./live-ui') return {contactAvatar:()=>undefined};
@@ -45,3 +46,22 @@ assert.match(render(ai),/添加到通讯录/);
 assert.doesNotMatch(render(ai),/恢复联系人|恢复 AI 账号/);
 assert.match(render(human),/AI 角色管理/);
 console.log('PASS: shared human/AI public profile fields, private-setting exclusion, own-account management entry, independent remove/re-add controls');
+
+const {GenerationFields,generationError}=load('GenerationFields');
+const limits={temperatureMax:2,minOutputTokens:1,maxOutputTokens:8192};
+assert.equal(generationError('','',limits),null);
+assert.equal(generationError('0','4096',limits),null);
+assert.match(generationError('2.1','',limits),/温度/);
+assert.match(generationError('','0',limits),/输出上限/);
+assert.match(generationError('','1.5',limits),/整数/);
+assert.match(generationError('','8193',limits),/输出上限/);
+const thinking={temperatureMax:null,minOutputTokens:4097,maxOutputTokens:8192};
+assert.match(generationError('0.5','',thinking),/不支持/);
+assert.match(generationError('','4096',thinking),/4097/);
+assert.equal(generationError('','5120',thinking),null);
+const fields=renderToStaticMarkup(React.createElement(GenerationFields,{limits:thinking,temperature:'0.5',output:'5120',setTemperature(){},setOutput(){}}));
+assert.match(fields,/清空温度/);
+assert.match(fields,/disabled/);
+assert.match(fields,/min="4097"/);
+assert.match(fields,/不继承全局生成设置/);
+console.log('PASS: generation inputs, optional defaults, explicit zero temperature, mode constraints and thinking/output budget conflict');

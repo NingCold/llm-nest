@@ -8,16 +8,18 @@ pub(crate) struct PreparedContext {
     pub messages: Vec<Message>,
     pub snapshot: ContextSnapshot,
     pub expected_revision: Revision,
-    pub output_tokens: u32,
 }
 
 pub(crate) struct ConsciousnessService;
 impl ConsciousnessService {
-    pub fn prepare(material: ContextMaterial, model: &ModelSpec) -> Result<PreparedContext> {
+    pub fn prepare(
+        material: ContextMaterial,
+        model: &ModelSpec,
+        output_tokens: u32,
+    ) -> Result<PreparedContext> {
         // Until model-specific tokenizers are introduced, UTF-8 bytes plus message
         // overhead provide a conservative text estimate. Complete history stays in SQLite.
         let window = model.context_window.unwrap_or(8192);
-        let output_tokens = model.max_tokens.unwrap_or(1024).min(1024).min(window / 4);
         let input_limit = window.saturating_sub(output_tokens);
         let space = if material.conversation.kind == ConversationKind::Group {
             format!(
@@ -126,7 +128,6 @@ impl ConsciousnessService {
             messages,
             snapshot,
             expected_revision: material.conversation.revision,
-            output_tokens,
         })
     }
 }

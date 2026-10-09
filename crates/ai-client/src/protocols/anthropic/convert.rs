@@ -4,7 +4,8 @@ use common::{ContentPart, Message, Role, ToolCall, Usage};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AiError, Result};
-use crate::reasoning::{DEFAULT_THINKING_BUDGET_TOKENS, ReasoningEffort, ReasoningFormat};
+use crate::generation::anthropic_thinking_budget;
+use crate::reasoning::{ReasoningEffort, ReasoningFormat};
 use crate::request::ChatRequest;
 use crate::response::ProviderResponse;
 
@@ -199,15 +200,6 @@ fn wire_turn(message: &Message) -> serde_json::Value {
     serde_json::json!({ "role": "assistant", "content": blocks })
 }
 
-/// Anthropic `thinking.budget_tokens` per neutral level when the model's
-/// capability declares no explicit `budget_tokens` — mirrors the Gemini
-/// per-level table so every supported level has real wire meaning.
-const LEVEL_THINKING_BUDGET: [(ReasoningEffort, u32); 3] = [
-    (ReasoningEffort::Low, 1024),
-    (ReasoningEffort::Medium, 4096),
-    (ReasoningEffort::High, 16384),
-];
-
 /// Map the routed neutral effort to the Anthropic `thinking` block. Only
 /// `AnthropicThinking`-formatted models carry it; the budget comes from the
 /// model's declared `budget_tokens` when present, otherwise a per-level
@@ -224,15 +216,9 @@ fn thinking(req: &ChatRequest) -> Option<Thinking> {
             typ: "disabled".into(),
             budget_tokens: None,
         }),
-        level => Some(Thinking {
+        _ => Some(Thinking {
             typ: "enabled".into(),
-            budget_tokens: Some(capability.budget_tokens.unwrap_or_else(|| {
-                LEVEL_THINKING_BUDGET
-                    .iter()
-                    .find(|(l, _)| *l == level)
-                    .map(|(_, b)| *b)
-                    .unwrap_or(DEFAULT_THINKING_BUDGET_TOKENS)
-            })),
+            budget_tokens: anthropic_thinking_budget(resolved),
         }),
     }
 }

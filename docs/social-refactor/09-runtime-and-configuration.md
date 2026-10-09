@@ -34,13 +34,13 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 | 公开账号资料、AI 内部档案、通讯录、管理员授权、关系、群参与、联系约定 | SocialStore | 社交用例事务 |
 | 意识系统记忆、摘要、来源与快照 | SocialStore；原消息/档案仍是各自权威来源 | 意识系统用例与来源版本校验 |
 | 摘要及未来后台提取/巩固的模型与预算 | 显式保存的系统配置；格式在对应阶段细化 | Runtime 校验，意识系统任务按配置快照执行 |
-| ExecutionBinding | SocialStore，引用 provider/model | 获授权管理员经 AI 角色管理用例保存，复用 Runtime/AiClient 校验 |
+| ExecutionBinding | SocialStore，引用 provider/model，保存思考强度、temperature/max_tokens | 获授权管理员经 AI 角色管理用例保存，复用 AiClient 协议约束与模型容量校验 |
 | 后续默认新 AI 执行配置 | GUI 设置，沿用可迁移的全局默认语义 | 不覆盖已存在 AI 的绑定；不据此宣称当前已有独立默认设置 |
 | 主题与本地布局 | 现有前端外观设置 | 不影响后端权限 |
 
 GUI 的实际操作者固定为后端的本地真人。账号查看只传被查看的 AI ID；SocialFeature 每次检查管理员授权，存储按该 AI 自身成员关系读取，不替换全局操作者、不连接全局事件流到账号视角。账号查看当前是可手动刷新的只读快照，远程认证与多人联网未实现。
 
-不把人设、记忆或群成员放进 TOML，不把 Key 放进身份数据库。全局默认只影响新建或明确继承默认的配置；切换联系人、加载历史不能覆盖用户保存的默认值。
+不把人设、记忆或群成员放进 TOML，不把 Key 放进身份数据库。现有全局生成设置服务旧 Harness，社交绑定不读取它，参数留空也不隐式继承；后续若增加新 AI 默认值，由明确创建用例复制。切换联系人、加载历史不能覆盖用户保存的全局默认值。
 
 思考强度、模型名和 provider 继续严格校验。ExecutionBinding 是中立描述，运行时转换为 ai-client::ModelSelection 与 GenerationOptions；协议差异不进入社交业务层。
 

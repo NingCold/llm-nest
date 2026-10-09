@@ -20,7 +20,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
-| 身份 | actors、ai_profiles、execution_bindings、relationships、address_book、account_admins | 关系设置、独立生成参数与工具策略 |
+| 身份 | actors、ai_profiles、execution_bindings、relationships、address_book、account_admins | 关系设置与工具策略 |
 | 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 跨窗口引用、正式已读用例 |
 | 参与/执行 | participation_plans、ai_runs、run_details | 联系意图、消费进度、工具/协议审计、预算预留 |
 | 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
@@ -78,6 +78,8 @@ M0 使用 rusqlite 0.40.2 bundled，WAL、foreign_keys=ON、synchronous=FULL，�
 ## 5. Schema 升级
 
 v6 为既有 AI 补入本地真人的初始管理权与各自的通讯录条目。旧 archived Actor 仍保持停用，真人通讯录条目设为未列出，不自动恢复；公开简介初始化为空，内部 persona 不复制为公开内容。账号、关系、私聊 ID、群成员与历史保留，升级前的 v5 备份可核对原文。实现与验证见 [账号管理记录](m1-account-management.md)。
+
+独立生成参数沿用 execution_bindings 的 JSON payload，schema 仍为 v6，无新增迁移。temperature/max_tokens 缺失时按 None 读取；领域与命令候选序列化省略 None，保持旧 payload 与已保存命令摘要的语义一致。参数与账号/档案修改同事务提交，权限、失败回滚和关闭重开验证见 [参数记录](m1-generation-parameters.md)。旧 JSON 导入的绑定不复制 Harness 全局温度或输出上限。
 
 每次 schema 变更有顺序版本与校验记录。打开数据库先取得目录锁，再检查版本和执行事务迁移。未知较新版本拒绝写入并提示需要匹配应用，不尝试降级解释。
 

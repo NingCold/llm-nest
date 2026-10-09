@@ -18,6 +18,127 @@ struct Fixture {
     human: Actor,
     clock: Arc<ManualClock>,
 }
+
+#[tokio::test]
+async fn generation_parameters_are_independent_atomic_authorized_and_persistent() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let private = f.direct(a.id).await;
+    let original = f.store.contact(f.human.id, a.id).await.unwrap();
+    // Old JSON bindings and command digests retain their omitted optional fields.
+    let old =
+        serde_json::json!({"provider_id":"mock","model_id":"same-model","reasoning_effort":null});
+    let candidate: BindingCandidate = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&candidate).unwrap(), old);
+    let mut input = UpdateAi {
+        display_name: a.display_name.clone(),
+        bio: a.bio.clone(),
+        avatar_ref: None,
+        persona: original.profile.persona.clone(),
+        binding: Some(candidate.clone()),
+        expected_revision: a.revision,
+    };
+    let counts = f.counts();
+    for bad in [Some(f32::NAN), Some(f32::INFINITY), Some(-0.1), Some(2.1)] {
+        input.binding.as_mut().unwrap().temperature = bad;
+        assert!(
+            f.store
+                .update_ai(f.ctx(), input.clone(), a.id)
+                .await
+                .is_err()
+        );
+        assert_eq!(f.counts(), counts);
+    }
+    input.binding = Some(candidate);
+    input.binding.as_mut().unwrap().max_tokens = Some(0);
+    assert!(
+        f.store
+            .update_ai(f.ctx(), input.clone(), a.id)
+            .await
+            .is_err()
+    );
+    assert_eq!(f.counts(), counts);
+    input.binding.as_mut().unwrap().temperature = Some(0.25);
+    input.binding.as_mut().unwrap().max_tokens = Some(4096);
+    let unauthorized = CommandContext {
+        operator: b.id,
+        request_id: CommandId::new(),
+    };
+    assert!(matches!(
+        f.store.update_ai(unauthorized, input.clone(), a.id).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    f.inject();
+    assert!(
+        f.store
+            .update_ai(f.ctx(), input.clone(), a.id)
+            .await
+            .is_err()
+    );
+    assert_eq!(f.counts(), counts);
+    assert_eq!(
+        f.store.contact(f.human.id, a.id).await.unwrap().binding,
+        original.binding
+    );
+    f.clear();
+    let ctx = f.ctx();
+    let saved = f
+        .store
+        .update_ai(ctx.clone(), input.clone(), a.id)
+        .await
+        .unwrap();
+    let binding = saved.binding.unwrap();
+    assert_eq!(binding.temperature, Some(0.25));
+    assert_eq!(binding.max_tokens, Some(4096));
+    assert_eq!(binding.id, original.binding.as_ref().unwrap().id);
+    assert!(binding.revision > original.binding.as_ref().unwrap().revision);
+    assert_eq!(
+        f.store
+            .contact(f.human.id, b.id)
+            .await
+            .unwrap()
+            .binding
+            .unwrap()
+            .temperature,
+        None
+    );
+    assert_eq!(
+        f.store.open_direct(f.ctx(), a.id).await.unwrap().id,
+        private.id
+    );
+    let counts = f.counts();
+    assert_eq!(
+        f.store
+            .update_ai(ctx.clone(), input.clone(), a.id)
+            .await
+            .unwrap()
+            .binding,
+        Some(binding.clone())
+    );
+    assert_eq!(f.counts(), counts);
+    input.binding.as_mut().unwrap().max_tokens = Some(2048);
+    assert!(matches!(
+        f.store.update_ai(ctx, input, a.id).await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    let path = f.dir.path().to_owned();
+    let reopen_context = f.ctx();
+    f.store.close().await.unwrap();
+    let reopened =
+        SqliteSocialStore::open(DataDirectoryGuard::acquire(&path).unwrap(), f.clock.clone())
+            .await
+            .unwrap();
+    assert_eq!(
+        reopened.contact(f.human.id, a.id).await.unwrap().binding,
+        Some(binding)
+    );
+    assert_eq!(
+        reopened.open_direct(reopen_context, a.id).await.unwrap().id,
+        private.id
+    );
+    reopened.close().await.unwrap();
+}
 impl Fixture {
     async fn group(&self, members: Vec<ActorId>) -> Conversation {
         self.store
@@ -137,6 +258,8 @@ impl Fixture {
                         provider_id: "mock".into(),
                         model_id: "same-model".into(),
                         reasoning_effort: None,
+                        temperature: None,
+                        max_tokens: None,
                     }),
                 },
             )
@@ -819,6 +942,8 @@ async fn configuration_changes_keep_existing_runs_frozen_and_new_runs_use_new_ve
             provider_id: "mock".into(),
             model_id: "new-model".into(),
             reasoning_effort: None,
+            temperature: None,
+            max_tokens: None,
         }),
         expected_revision: a.revision,
     };
@@ -2917,6 +3042,8 @@ fn social_worker_child() {
                         provider_id: "mock".into(),
                         model_id: "mock".into(),
                         reasoning_effort: None,
+                        temperature: None,
+                        max_tokens: None,
                     }),
                 },
             )

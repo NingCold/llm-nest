@@ -34,13 +34,17 @@ pub struct AiProfile {
 }
 /// Configuration references only. Runtime must validate against its frozen
 /// catalog before execution; presence of a stored candidate does not mean ready.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionBinding {
     pub id: BindingId,
     pub actor_id: ActorId,
     pub provider_id: String,
     pub model_id: String,
     pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     pub revision: Revision,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

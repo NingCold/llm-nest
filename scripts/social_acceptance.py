@@ -83,7 +83,7 @@ def main():
         port = sock.getsockname()[1]
     base = f'http://127.0.0.1:{port}/api/social'
     config = work / 'llmn.toml'
-    config.write_text(f'[providers.test]\nprotocol="openai"\nbase_url="http://127.0.0.1:{provider.server_port}/v1"\napi_key="fixture-only"\n[providers.test.models.chat]\nmodel="chat-wire"\ncontext_window=8192\nmax_tokens=1024\n[providers.test.models.alt]\nmodel="alt-wire"\ncontext_window=8192\n', encoding='utf-8')
+    config.write_text(f'[gui]\ntemperature=1.75\nmaxTokens=7\n[providers.test]\nprotocol="openai"\nbase_url="http://127.0.0.1:{provider.server_port}/v1"\napi_key="fixture-only"\n[providers.test.models.chat]\nmodel="chat-wire"\ncontext_window=8192\nmax_tokens=1024\n[providers.test.models.alt]\nmodel="alt-wire"\ncontext_window=8192\n', encoding='utf-8')
     env = os.environ.copy()
     env.update(LLMN_CONFIG=str(config), LLMN_DATA_DIR=str(work / 'data'), LLMN_PORT=str(port))
     if args.dist:
@@ -131,8 +131,8 @@ def main():
     def managed(value):
         return dict(value['account'], persona=value['persona'], binding=value['binding'])
 
-    def contact(name, model='chat'):
-        return managed(api('/ai-accounts', 'POST', {'requestId': str(uuid.uuid4()), 'name': name, 'bio':'public-' + name, 'persona': 'persona-' + name, 'binding': None if model is None else {'providerId': 'test', 'modelId': model, 'reasoningEffort': None}}))
+    def contact(name, model='chat', temperature=None, max_tokens=None):
+        return managed(api('/ai-accounts', 'POST', {'requestId': str(uuid.uuid4()), 'name': name, 'bio':'public-' + name, 'persona': 'persona-' + name, 'binding': None if model is None else {'providerId': 'test', 'modelId': model, 'reasoningEffort': None, 'temperature':temperature,'maxTokens':max_tokens}}))
 
     def direct(actor):
         return api(f'/accounts/{actor["id"]}/direct', 'POST', {'requestId': str(uuid.uuid4())})
@@ -205,6 +205,33 @@ def main():
         complete(bob_id, 'separate-window')
         assert 'persona-Bob' in REQUESTS[-1]['messages'][0]['content']
         assert all('second-turn' not in str(m) for m in REQUESTS[-1]['messages'])
+        assert REQUESTS[-1]['max_tokens'] == 1024 and 'temperature' not in REQUESTS[-1]
+        capability = next(m for m in api('/init')['models'] if m['modelId'] == 'chat')['generationLimits']['default']
+        assert capability == {'temperatureMax':2.0,'minOutputTokens':1,'maxOutputTokens':1024}
+        before_accounts = api('/init')['accounts']
+        for temperature, max_tokens in [(2.1,128),(-.1,128),(.5,0),(.5,1025),(.5,8192),(.5,1.5)]:
+            try:
+                contact('Invalid parameters', 'chat', temperature, max_tokens)
+                raise AssertionError('invalid parameters were saved')
+            except urllib.error.HTTPError as error:
+                assert 400 <= error.code < 500
+        assert api('/init')['accounts'] == before_accounts
+        parameter_a = contact('Parameters A','alt',0.25,4096)
+        parameter_b = contact('Parameters B','alt',1.25,2048)
+        parameter_private = direct(parameter_a)
+        complete(parameter_private,'independent-parameters-private')
+        assert calls_for('independent-parameters-private')[0]['temperature'] == .25
+        assert calls_for('independent-parameters-private')[0]['max_tokens'] == 4096
+        parameter_group = api('/groups','POST',{'requestId':str(uuid.uuid4()),'title':'Parameters group','memberIds':[parameter_a['id'],parameter_b['id']]})
+        send(parameter_group,'independent-parameters-group',mentions=[parameter_a['id'],parameter_b['id']])
+        wait_for(lambda: len([m for m in history(parameter_group) if m['runId'] and m['status']=='committed'])==2)
+        parameter_requests = calls_for('independent-parameters-group')
+        assert [(r['temperature'],r['max_tokens']) for r in parameter_requests]==[(.25,4096),(1.25,2048)]
+        with sqlite3.connect(work/'data/social.sqlite3') as connection:
+            snapshots = [json.loads(r[0])['snapshot']['budget'] for r in connection.execute('SELECT payload FROM ai_runs WHERE conversation_id=? ORDER BY rowid',(parameter_group,))]
+        assert [int(s['reserved_output_tokens']) for s in snapshots]==[4096,2048]
+        assert [int(s['input_token_limit']) for s in snapshots]==[4096,6144]
+        print('PASS: independent temperature/output caps in private/group, no 1024 clamping, matching context reservation and rejected invalid saves',flush=True)
 
         # Public identities, personal contacts, and administrator privileges are separate.
         public = api('/init')
@@ -271,13 +298,16 @@ def main():
 
         send(private, 'slow-profile')
         wait_for(lambda: api(f'/conversations/{private}')['activeRun'])
-        alice = managed(api(f'/ai-accounts/{alice["id"]}', 'PATCH', {'requestId': str(uuid.uuid4()), 'name': 'Alice', 'bio':'public-Alice-v2', 'persona': 'persona-Alice-v2', 'binding': {'providerId': 'test', 'modelId': 'alt', 'reasoningEffort': None}, 'expectedRevision': alice['revision']}))
+        alice = managed(api(f'/ai-accounts/{alice["id"]}', 'PATCH', {'requestId': str(uuid.uuid4()), 'name': 'Alice', 'bio':'public-Alice-v2', 'persona': 'persona-Alice-v2', 'binding': {'providerId': 'test', 'modelId': 'alt', 'reasoningEffort': None,'temperature':.5,'maxTokens':4096}, 'expectedRevision': alice['revision']}))
         revised = wait_for(lambda: next((m for m in history(private) if m['text'].startswith('回应：slow-profile') and m['status'] == 'committed'), None))
         assert api(f'/runs/{revised["runId"]}')['model'] == 'chat'
         assert api(f'/runs/{revised["runId"]}')['error'] is None
+        old_request=calls_for('slow-profile')[0]
+        assert 'temperature' not in old_request and old_request['max_tokens']==1024
         assert direct(alice) == private
         complete(private, 'new-model')
         assert REQUESTS[-1]['model'] == 'alt-wire' and 'persona-Alice-v2' in REQUESTS[-1]['messages'][0]['content']
+        assert REQUESTS[-1]['temperature']==.5 and REQUESTS[-1]['max_tokens']==4096
 
         db = work / 'data/social.sqlite3'
         with sqlite3.connect(db) as connection:
@@ -530,6 +560,10 @@ def main():
         stop()
         start()
         assert history(private) == saved and direct(alice) == private
+        persisted=api(f'/ai-accounts/{alice["id"]}')['binding']
+        assert persisted['temperature']==.5 and persisted['maxTokens']==4096
+        complete(private,'parameters-after-restart')
+        assert REQUESTS[-1]['temperature']==.5 and REQUESTS[-1]['max_tokens']==4096
         print('PASS: contacts/bindings, unique direct chat, independent persistence, strict models, duplicate request/run, context isolation/reasoning exclusion, continuous input/cancel, provider/EOF/tool failure, source change, save rollback/retry, subscription disconnect, crash recovery/no replay', flush=True)
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:

@@ -21,8 +21,8 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 ## 3. 启动流程
 
 1. 领取 ParticipationPlan，确定目标 AI、空间和触发消息范围。
-2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding。
-3. 调用 ConsciousnessService.prepare_context，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
+2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding，校验温度、输出上限与思考模式，固定 GenerationOptions 并分配输出预算；不读取全局 Harness 生成设置。
+3. 按实际输出预留调用 ConsciousnessService.prepare_context，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
 4. 再检查档案/绑定版本、暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件。
 5. 调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内；后续扩展外部 dispatch 审计时明确记录边界。
 
@@ -53,6 +53,8 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 ## 6. 成功、取消与错误
 
 角色设定与绑定修改只影响新运行，已经开始的请求保留原配置；旧准备若在启动前发生配置变化则拒绝启动。
+
+温度与输出上限在保存及新运行启动时按同一解析规则校验；明确不支持的组合报错，不丢弃参数或替换模型。运行快照持久化绑定版本与实际输入/输出预算，尚未保存完整历史参数或完整 provider 请求审计。默认值与协议约束见 [生成参数记录](m1-generation-parameters.md)。
 
 成功：再次校验 Actor/成员状态、Bout 状态、参与 epoch 和受撤销的意识系统来源；同事务保存最终消息、usage/timings、run.succeeded、计划与意图终态和持久事件。事务成功才广播完成。
 

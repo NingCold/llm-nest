@@ -282,6 +282,8 @@ pub(super) fn import(
             provider_id: m.provider.clone(),
             model_id: m.model.clone(),
             reasoning_effort: m.reasoning_effort.as_ref().map(|r| r.as_wire().to_owned()),
+            temperature: None,
+            max_tokens: None,
         });
         db.insert_ai(&ai, String::new(), binding.as_ref(), human.id)?;
         let mut c = db.new_conversation(

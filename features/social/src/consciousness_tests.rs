@@ -30,6 +30,8 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
             provider_id: "test".into(),
             model_id: "model".into(),
             reasoning_effort: None,
+            temperature: None,
+            max_tokens: None,
             revision: Counter::new(4).unwrap(),
         }),
     };
@@ -101,7 +103,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
 fn context_selects_recent_sources_with_versions_without_rewriting_history() {
     let (material, model) = fixture();
     let original = material.messages.clone();
-    let prepared = ConsciousnessService::prepare(material.clone(), &model).unwrap();
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
     assert_eq!(material.messages, original);
     assert_eq!(prepared.messages.len(), 2);
     assert!(prepared.messages[0].text().contains("short persona"));
@@ -138,7 +140,7 @@ fn oversized_latest_message_is_rejected_instead_of_silently_truncated() {
     let (mut material, model) = fixture();
     material.messages.last_mut().unwrap().body = MessageBody::text("large".repeat(1000));
     assert!(matches!(
-        ConsciousnessService::prepare(material, &model),
+        ConsciousnessService::prepare(material, &model, 128),
         Err(SocialError::BudgetExceeded)
     ));
 }
@@ -158,7 +160,7 @@ fn group_context_keeps_trigger_and_distinguishes_other_ai_from_self() {
     answer.body = MessageBody::text("a previous group answer");
     material.messages.push(answer.clone());
     model.context_window = Some(2048);
-    let prepared = ConsciousnessService::prepare(material.clone(), &model).unwrap();
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
     assert!(prepared.messages[0].text().contains("群聊"));
     assert!(
         prepared.messages[0]
@@ -172,7 +174,7 @@ fn group_context_keeps_trigger_and_distinguishes_other_ai_from_self() {
         |s| matches!(s,SourceRef::Message {message_id,..} if *message_id==material.trigger_id)
     ));
     material.messages.last_mut().unwrap().body = MessageBody::text("huge".repeat(1000));
-    let prepared = ConsciousnessService::prepare(material, &model).unwrap();
+    let prepared = ConsciousnessService::prepare(material, &model, 128).unwrap();
     assert_eq!(
         prepared.snapshot.sources.len(),
         1,
@@ -186,7 +188,7 @@ fn explicit_reply_reserves_its_visible_source_and_identifies_the_reference() {
     let quoted = material.messages[0].id;
     material.messages[0].body = MessageBody::text("an earlier point");
     material.messages[1].reply_to = Some(quoted);
-    let prepared = ConsciousnessService::prepare(material.clone(), &model).unwrap();
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
     assert!(
         prepared
             .messages
@@ -204,7 +206,24 @@ fn explicit_reply_reserves_its_visible_source_and_identifies_the_reference() {
     );
     material.messages[0].body = MessageBody::text("huge quote".repeat(1000));
     assert!(matches!(
-        ConsciousnessService::prepare(material, &model),
+        ConsciousnessService::prepare(material, &model, 128),
+        Err(SocialError::BudgetExceeded)
+    ));
+}
+
+#[test]
+fn explicit_output_budget_is_reserved_and_large_output_limits_are_not_clamped() {
+    let (material, mut model) = fixture();
+    model.context_window = Some(8192);
+    model.max_tokens = Some(6000);
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 4096).unwrap();
+    assert_eq!(prepared.snapshot.budget.reserved_output_tokens.get(), 4096);
+    assert_eq!(prepared.snapshot.budget.input_token_limit.get(), 4096);
+    // The original history remains complete even when output reservation excludes older input.
+    assert_eq!(material.messages.len(), 2);
+    assert_eq!(prepared.snapshot.sources.len(), 1);
+    assert!(matches!(
+        ConsciousnessService::prepare(material, &model, 8000),
         Err(SocialError::BudgetExceeded)
     ));
 }

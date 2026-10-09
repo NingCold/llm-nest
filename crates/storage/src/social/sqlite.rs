@@ -313,6 +313,9 @@ impl Db<'_> {
         binding: Option<&BindingCandidate>,
         creator: ActorId,
     ) -> Result<()> {
+        if let Some(candidate) = binding {
+            candidate.validate_generation()?;
+        }
         self.insert_actor(actor)?;
         let profile = AiProfile {
             actor_id: actor.id,
@@ -330,6 +333,8 @@ impl Db<'_> {
                 provider_id: candidate.provider_id.clone(),
                 model_id: candidate.model_id.clone(),
                 reasoning_effort: candidate.reasoning_effort.clone(),
+                temperature: candidate.temperature,
+                max_tokens: candidate.max_tokens,
                 revision: Revision::ONE,
             };
             self.execute(
@@ -1032,9 +1037,10 @@ impl SocialStore for SqliteSocialStore {
             db.execute("UPDATE actors SET revision=?2,payload=?3 WHERE id=?1",params![id.to_string(),record.actor.revision.get() as i64,serde_json::to_string(&record.actor)?])?;
             db.execute("UPDATE ai_profiles SET revision=?2,payload=?3 WHERE actor_id=?1",params![id.to_string(),record.profile.revision.get() as i64,serde_json::to_string(&record.profile)?])?;
             if let Some(candidate) = &input.binding {
+                candidate.validate_generation()?;
                 validate_text(&candidate.provider_id,120,"provider")?;
                 validate_text(&candidate.model_id,240,"model")?;
-                let binding = ExecutionBinding { id: record.binding.as_ref().map(|b|b.id).unwrap_or_default(), actor_id:id, provider_id:candidate.provider_id.clone(), model_id:candidate.model_id.clone(), reasoning_effort:candidate.reasoning_effort.clone(), revision: record.binding.as_ref().map(|b|b.revision.next()).transpose()?.unwrap_or(Revision::ONE) };
+                let binding = ExecutionBinding { id: record.binding.as_ref().map(|b|b.id).unwrap_or_default(), actor_id:id, provider_id:candidate.provider_id.clone(), model_id:candidate.model_id.clone(), reasoning_effort:candidate.reasoning_effort.clone(), temperature:candidate.temperature, max_tokens:candidate.max_tokens, revision: record.binding.as_ref().map(|b|b.revision.next()).transpose()?.unwrap_or(Revision::ONE) };
                 db.execute("INSERT INTO execution_bindings VALUES(?1,?2,?3) ON CONFLICT(actor_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload",params![id.to_string(),binding.revision.get() as i64,serde_json::to_string(&binding)?])?;
             } else { db.execute("DELETE FROM execution_bindings WHERE actor_id=?1",[id.to_string()])?; }
             db.event(SocialChange::ActorChanged { actor_id:id, revision:record.actor.revision })?;

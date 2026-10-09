@@ -78,20 +78,47 @@ impl SocialFeature {
             .list_models()
             .await
             .into_iter()
-            .map(|m| wire::ModelOption {
-                provider_id: m.provider,
-                model_id: m.spec.id,
-                display_name: m.spec.display_name,
-                reasoning_levels: m
-                    .spec
-                    .reasoning
-                    .map(|r| {
-                        r.levels
-                            .into_iter()
-                            .map(|e| e.as_wire().to_owned())
-                            .collect()
+            .map(|m| {
+                let mut levels = vec![None];
+                levels.extend(
+                    m.spec
+                        .reasoning
+                        .iter()
+                        .flat_map(|r| r.levels.iter().copied().map(Some)),
+                );
+                let generation_limits = levels
+                    .into_iter()
+                    .map(|effort| {
+                        let resolved = ai_client::ResolvedSelection {
+                            selection: ModelSelection {
+                                provider: m.provider.clone(),
+                                model: m.spec.id.clone(),
+                                reasoning_effort: effort,
+                            },
+                            spec: m.spec.clone(),
+                        };
+                        (
+                            effort.map_or("default", |e| e.as_wire()).to_owned(),
+                            crate::generation::limits(&resolved),
+                        )
                     })
-                    .unwrap_or_default(),
+                    .collect();
+                wire::ModelOption {
+                    provider_id: m.provider,
+                    model_id: m.spec.id,
+                    display_name: m.spec.display_name,
+                    reasoning_levels: m
+                        .spec
+                        .reasoning
+                        .map(|r| {
+                            r.levels
+                                .into_iter()
+                                .map(|e| e.as_wire().to_owned())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    generation_limits,
+                }
             })
             .collect();
         Ok(wire::Init {
@@ -108,9 +135,12 @@ impl SocialFeature {
     async fn validate_binding(&self, binding: &Option<wire::Binding>) -> Result<()> {
         if let Some(binding) = binding {
             let selection = selection(binding)?;
-            if self.services()?.llm.resolve(&selection).await?.is_none() {
-                return Err(SocialError::ModelUnavailable("尚未配置模型目录".into()));
-            }
+            let client = self.services()?.llm.snapshot().await;
+            let resolved = client
+                .resolve(&selection)
+                .await?
+                .ok_or_else(|| SocialError::ModelUnavailable("尚未配置模型目录".into()))?;
+            crate::generation::options(binding, &resolved)?;
         }
         Ok(())
     }
@@ -259,11 +289,7 @@ impl SocialFeature {
         }
         for plan in &saved.plans {
             let contact = s.resources.store.contact(s.human, plan.actor_id).await?;
-            let binding = contact.binding.map(|b| wire::Binding {
-                provider_id: b.provider_id,
-                model_id: b.model_id,
-                reasoning_effort: b.reasoning_effort,
-            });
+            let binding = contact.binding.map(Into::into);
             if binding.is_none() {
                 execution_notice = Some(RunFailure {
                     code: "model_unavailable".into(),

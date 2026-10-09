@@ -9,7 +9,7 @@
 2026-10-09 确认的账号与关系约定已经接通：
 
 1. AI 拥有独立账号，ActorId 同时作为稳定账号 ID。真人与 AI 的公开账号资料使用同一 DTO 和 AccountDetails 组件，联系人详情不包含 AI 内部角色指令、模型和管理入口。
-2. 公开资料与内部设定分开。名字、头像引用、公开简介用于社交展示；内部 persona、模型、思考强度在管理员自己账号下的“AI 角色管理”页面维护。温度等独立生成参数仍待下一批；关系记忆随 M2 接入，不作为公开资料。
+2. 公开资料与内部设定分开。名字、头像引用、公开简介用于社交展示；内部 persona、模型、思考强度、温度与输出上限在管理员自己账号下的“AI 角色管理”页面维护。关系记忆随 M2 接入，不作为公开资料。
 3. 创建者成为初始管理员，可以授予和撤销其他账号的管理权。普通管理员可以编辑 AI、停用/恢复和查看账号，不能转授权限或撤销初始管理员。成为联系人或共同群成员不授予管理权。
 4. 管理页提供“登录 AI 账号查看”入口，当前为可手动刷新的只读账号视角：实际操作者仍是管理员，只读取该 AI 自己参与的聊天与个人通讯录，不代发消息、不取消自动运行。每次新读取检查管理授权与目标 AI 的成员关系；真实记忆查看随 M2 接入。
 5. 移除联系人只修改自己的通讯录条目，仍可继续私聊与共同群互动；历史、账号状态和群成员关系保留。重新添加沿用原唯一私聊，屏蔽后续单独添加。
@@ -31,14 +31,14 @@ HTTP/IPC 只做传输，实际操作者取自后端本地用户，不接受任�
 | --- | --- | --- |
 | Actor | id、kind、display_name、avatar_ref、bio、status、revision、created_at | 稳定独立账号；kind 创建后不变；bio 是公开简介，头像上传尚未接入 |
 | AiProfile | actor_id、persona、revision | 一个 AI 的内部设定，管理接口返回；公开快照不返回 |
-| ExecutionBinding | id、actor_id、provider_id、model_id、reasoning_effort、revision | 模型引用，不含 Key/endpoint；其他生成参数后续加入 |
+| ExecutionBinding | id、actor_id、provider_id、model_id、reasoning_effort、temperature、max_tokens、revision | 模型与独立生成参数，不含 Key/endpoint；可选参数不继承全局设置 |
 | Administrator | account_id、initial；存储关联 ai_id | 每个 AI 有一个初始管理员，可以有多个普通管理员 |
 | ContactEntry | owner_id、account_id、listed、revision | 有向个人通讯录条目，不能把自己加入通讯录；版本独立于 Actor |
 | Relationship | id、participant_a、participant_b、revision | 无向参与者对唯一，承载长期私聊归属，与 listed 状态独立 |
 
 Actor.status 为 active/archived，对 AI 的产品展示为“账号正常/已停用”。ContactEntry.listed 控制是否在自己的通讯录显示，二者不互相代替。普通快照只包含共同 Account 字段，内部 persona/绑定/管理员通过 ManagedAi 管理接口读取。
 
-背景、兴趣、表达风格可先写入内部 persona；它不能授予工具、扩大记忆权限或绕过暂停。结构化档案、temperature/max_tokens、ToolPolicy 和关系偏好按所属用例扩展。“意识系统（Consciousness）”指软件管理的背景与记忆机制，见 [系统定义](03-consciousness.md#0-名称与定义)。
+背景、兴趣、表达风格可先写入内部 persona；它不能授予工具、扩大记忆权限或绕过暂停。结构化档案、ToolPolicy 和关系偏好按所属用例扩展。温度与输出上限的默认值、边界和验证见 [生成参数记录](m1-generation-parameters.md)。“意识系统（Consciousness）”指软件管理的背景与记忆机制，见 [系统定义](03-consciousness.md#0-名称与定义)。
 
 ## 3. 身份连续性
 
@@ -88,4 +88,4 @@ Actor.status 为 active/archived，对 AI 的产品展示为“账号正常/已�
 6. 新配置只影响新运行，旧准备在启动前被拒绝；消息修订和参与控制仍能撤销旧回复。
 7. 创建、资料/设定修改、通讯录和授权事务失败无部分成功；旧 v5 数据升级保留内部设定、历史和停用状态。
 
-已完成场景与测试环境见 [本批记录](m1-account-management.md)；生成参数、工具授权、阶段完整平台验收及 M2/M3 能力仍按 [TODO](TODO.md) 推进。
+账号管理与生成参数的场景和环境分别见 [账号记录](m1-account-management.md) / [参数记录](m1-generation-parameters.md)；工具授权、阶段完整平台验收及 M2/M3 能力仍按 [TODO](TODO.md) 推进。

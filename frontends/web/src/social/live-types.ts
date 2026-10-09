@@ -1,12 +1,13 @@
 // Business DTOs from features/social/src/wire.rs; counters stay decimal strings.
-export interface Binding { providerId: string; modelId: string; reasoningEffort: string | null }
+export interface Binding { providerId: string; modelId: string; reasoningEffort: string | null; temperature: number | null; maxTokens: number | null }
 export interface Account { id: string; kind: "human" | "ai"; name: string; avatarRef: string | null; bio: string; revision: string; status: "active" | "archived" }
 export interface ContactEntry { ownerId: string; accountId: string; listed: boolean; revision: string }
 export interface ManagedAi { account: Account; persona: string; binding: Binding | null; administrators: { accountId: string; initial: boolean }[]; isInitialAdministrator: boolean }
 export interface AiInput { requestId: string; name: string; bio: string; persona: string; binding: Binding | null }
 export interface ContactInput { requestId: string; listed: boolean; expectedRevision: string | null }
 export interface AccountView { operatorId: string; snapshot: Snapshot }
-export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[] }
+export interface GenerationLimits { temperatureMax: number | null; minOutputTokens: number; maxOutputTokens: number | null }
+export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[]; generationLimits: Record<string, GenerationLimits> }
 export interface Message {
   id: string; conversationId: string; senderId: string; senderName: string
   sequence: string; text: string; status: "committed" | "generating" | "interrupted" | "withdrawn"

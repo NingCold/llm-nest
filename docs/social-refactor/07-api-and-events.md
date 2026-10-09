@@ -46,7 +46,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 
 | 命令 | 字段与版本 |
 | --- | --- |
-| AI 创建/修改 | requestId、name、bio、persona、binding；修改追加账号 expectedRevision。binding 为 providerId/modelId/reasoningEffort，可为空。创建自动赋予实际创建者初始管理权 |
+| AI 创建/修改 | requestId、name、bio、persona、binding；修改追加账号 expectedRevision。binding 为 providerId/modelId/reasoningEffort/temperature/maxTokens，可为空。创建自动赋予实际创建者初始管理权 |
 | 公开资料修改 | requestId、name、bio、账号 expectedRevision；自己可修改，修改 AI 需管理权 |
 | 个人通讯录 | requestId、listed、条目 expectedRevision；尚无条目时 expectedRevision 为 null，之后使用自己的条目版本，不使用 Actor.revision |
 | 管理员授予/撤销 | requestId、accountId、granted、被管理 AI 的 expectedRevision；仅初始管理员可以操作，不能撤销初始管理员 |
@@ -60,6 +60,8 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 成员暂停/恢复 | requestId、actorId、成员 expectedRevision、paused |
 
 共同 Account 字段为 id/kind/name/avatarRef/bio/status/revision，真人与 AI 相同。ManagedAi 包含 account、persona、binding、administrators(accountId/initial)、isInitialAdministrator，仅供有权限的管理接口。联系人操作返回 ContactEntry(ownerId/accountId/listed/revision)。
+
+binding.temperature 与 maxTokens 可省略或为 null；前者使用模型服务默认值，后者使用意识系统自动输出预算，均不继承全局 GUI 参数。显式值按协议/思考模式与模型容量校验，不静默裁减。init 的 ModelOption 增加 generationLimits，以 default/off/low/medium/high/max 为键，各值为 temperatureMax（null 表示该模式不可调）、minOutputTokens、maxOutputTokens（null 表示未声明）；当前社交返回的上限还受上下文容量约束。该数据描述模型选项，不包含任何 AI 的内部参数。字段的共享 HTTP/IPC 验证见 [参数记录](m1-generation-parameters.md)。
 
 AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被查看 AI，操作者仍为真实管理员。每次读取快照与分页历史复核管理授权，窗口按该 AI 的当前成员身份筛选；查看停用 AI 仍可行，退出群后不能读取该群。它是可手动刷新的只读快照，不使用实际操作者的全局事件订阅，不提供代发消息或远程登录令牌。
 
@@ -136,7 +138,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：独立生成参数/工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：工具授权、阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

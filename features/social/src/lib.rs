@@ -4,6 +4,7 @@ mod consciousness;
 mod controls;
 mod execution;
 mod feature;
+mod generation;
 mod subscription;
 pub mod wire;
 

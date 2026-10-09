@@ -9,6 +9,21 @@ pub struct Binding {
     pub provider_id: String,
     pub model_id: String,
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+impl From<ExecutionBinding> for Binding {
+    fn from(b: ExecutionBinding) -> Self {
+        Self {
+            provider_id: b.provider_id,
+            model_id: b.model_id,
+            reasoning_effort: b.reasoning_effort,
+            temperature: b.temperature,
+            max_tokens: b.max_tokens,
+        }
+    }
 }
 impl From<Binding> for BindingCandidate {
     fn from(b: Binding) -> Self {
@@ -16,6 +31,8 @@ impl From<Binding> for BindingCandidate {
             provider_id: b.provider_id,
             model_id: b.model_id,
             reasoning_effort: b.reasoning_effort,
+            temperature: b.temperature,
+            max_tokens: b.max_tokens,
         }
     }
 }
@@ -62,6 +79,8 @@ impl From<storage::social::ManagedAccount> for ManagedAi {
                 provider_id: b.provider_id,
                 model_id: b.model_id,
                 reasoning_effort: b.reasoning_effort,
+                temperature: b.temperature,
+                max_tokens: b.max_tokens,
             }),
             administrators: c.administrators,
             is_initial_administrator: c.is_initial_administrator,
@@ -281,6 +300,8 @@ pub struct ModelOption {
     pub model_id: String,
     pub display_name: String,
     pub reasoning_levels: Vec<String>,
+    pub generation_limits:
+        std::collections::BTreeMap<String, ai_client::generation::GenerationLimits>,
 }
 
 #[derive(Debug, Clone, Serialize)]

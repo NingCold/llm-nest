@@ -55,7 +55,7 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
     ['accountView', ['id'], 'social_account_view', { id:'id' }],
     ['accountViewMessages', ['id','chat'], 'social_account_view_messages', { id:'id', conversation:'chat', before:null }],
     ['createAi', [inputs], 'social_create_ai', { input: inputs }],
-    ['updateAi', ['id', inputs], 'social_update_ai', { id: 'id', input: inputs }],
+    ['updateAi', ['id', {...inputs,binding:{providerId:'test',modelId:'model',reasoningEffort:null,temperature:0,maxTokens:4096}}], 'social_update_ai', { id: 'id', input: {...inputs,binding:{providerId:'test',modelId:'model',reasoningEffort:null,temperature:0,maxTokens:4096}} }],
     ['controlAccount', ['id', { ...inputs, action: 'archive' }], 'social_control_account', { id: 'id', input: { ...inputs, action: 'archive' } }],
     ['openDirect', ['id', 'command'], 'social_open_direct', { id: 'id', input: { requestId: 'command' } }],
     ['messages', ['id'], 'social_messages', { id: 'id', before: null }],

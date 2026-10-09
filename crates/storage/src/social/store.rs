@@ -26,6 +26,29 @@ pub struct BindingCandidate {
     pub provider_id: String,
     pub model_id: String,
     pub reasoning_effort: Option<String>,
+    // Omitted defaults preserve digests of pre-parameter command receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+impl BindingCandidate {
+    pub(super) fn validate_generation(&self) -> SocialStorageResult<()> {
+        if self
+            .temperature
+            .is_some_and(|t| !t.is_finite() || !(0.0..=2.0).contains(&t))
+        {
+            return Err(super::SocialStorageError::Invalid(
+                "temperature must be finite and in 0..=2".into(),
+            ));
+        }
+        if self.max_tokens == Some(0) {
+            return Err(super::SocialStorageError::Invalid(
+                "max_tokens must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppendMessage {

@@ -8,7 +8,7 @@
 
 保留 `crates/ai-client` 的 ModelSelection 校验、按 provider + effective protocol 路由、共享 SSE 分帧、工具配对规则和配置快照；保留工具注册表及固定白名单子进程。新执行模块放在 `features/social/src/execution.rs`。执行通过意识系统取得背景，不另写一套摘要、召回或记忆逻辑。
 
-现有 `features/chat` 继续服务旧入口直到兼容适配完成。新执行调用不得复用“先写入一个 user 消息”的旧 chat 方法，否则 AI 主动联系或群聊接话会伪造真人输入。
+现有 `features/chat` 在迁移期间服务尚未切换的旧入口，随后由相同社交用例替代或随入口明确退役，遵守 [新架构优先与兼容边界](README.md#新架构优先与兼容边界)。新执行调用不得复用“先写入一个 user 消息”的旧 chat 方法，否则 AI 主动联系或群聊接话会伪造真人输入。
 
 ## 2. AiRun 对象与状态
 

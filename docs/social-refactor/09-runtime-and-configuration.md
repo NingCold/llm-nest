@@ -10,6 +10,8 @@ Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命�
 
 扩展 FeatureContext 注入 SocialStore、业务变更广播、临时生成广播、Clock 与运行资源限额；保留 AiClient、ToolRegistry 和迁移期 SessionManager。具体类型以实施时最小可用接口为准，不为预留功能增加空框架。
 
+共享 Runtime 遵守 [新架构优先与兼容边界](README.md#新架构优先与兼容边界)。可以重写 FeatureContext、Runtime 构造与运行管理，不要求沿用以 SessionManager 为中心的聊天生命周期。SessionManager 只服务尚未切换的旧入口，不成为社交空间、身份、上下文或运行状态的权威来源。
+
 Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai、send_message、forget_memory 等作为具体方法暴露。Runtime 注册 Feature 时只依赖 trait，不能反向依赖 `social-feature` Cargo 包。
 
 ## 2. 启动顺序
@@ -66,9 +68,9 @@ shutdown 顺序：停止接受新执行 → 停止参与调度和意识后台任
 
 M0-M1 旧 CLI/TUI 仍可使用旧接口，但它们与新 Runtime 不能同时打开同一目录。兼容读取器与新存储在同一 Runtime 中共享目录锁，不建立第二个 writer。
 
-新 GUI 切换后，旧 chat 输入通过明确的默认 AI/私聊映射调用社交用例；不长期保留两套记忆与发送逻辑。无法表达的群聊或主动联系功能不伪装为旧终端能力。
+新 GUI 切换后，需要保留的旧 chat 输入通过明确的默认 AI/私聊映射调用社交用例；不长期保留两套记忆与发送逻辑。无法表达的群聊或主动联系功能不伪装为旧终端能力；无法合理适配的接口提供替代入口与退役说明。
 
-兼容层只在边界转换 DTO；旧 SessionManager 后续主要服务历史导入和旧记录查询。清除它之前先核对终端、脚本、HTTP 和 IPC 调用链，并决定旧接口退出窗口。
+兼容层只在边界转换 DTO。历史查询和导入使用独立旧格式读取器；M0 导入器已不依赖 SessionManager。清理旧 SessionManager 前核对终端、脚本、HTTP 和 IPC 调用链，完成相应用例迁移、有限适配或明确退役，并保留可验证的数据访问路径。
 
 ## 7. 可观测性
 

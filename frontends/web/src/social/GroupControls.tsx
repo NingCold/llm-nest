@@ -33,15 +33,14 @@ export function GroupMembers({ conversation }: { conversation: Conversation }) {
   const snapshot = state.snapshot!
   const [adding, setAdding] = useState(false)
   const [actor, setActor] = useState("")
-  const [history, setHistory] = useState<"from_now" | "all">("from_now")
   const [saving, setSaving] = useState(false)
   const requestId = useRef(crypto.randomUUID())
   const expectedRevision = useRef<string | null>(null)
   const available = snapshot.contacts.filter(c => !conversation.memberIds.includes(c.id))
-  const change = async (actorId: string, visibility: "from_now" | "all" | null) => {
+  const change = async (actorId: string, action: "add" | "remove") => {
     setSaving(true)
     expectedRevision.current ??= conversation.revision
-    const result = await state.action(() => socialClient.changeMembership(conversation.id, { requestId: requestId.current, actorId, history: visibility, expectedRevision: expectedRevision.current! }))
+    const result = await state.action(() => socialClient.changeMembership(conversation.id, { requestId: requestId.current, actorId, action, expectedRevision: expectedRevision.current! }))
     if (result) { await state.action(state.refresh); setAdding(false); setActor(""); requestId.current = crypto.randomUUID(); expectedRevision.current = null }
     setSaving(false)
   }
@@ -49,12 +48,11 @@ export function GroupMembers({ conversation }: { conversation: Conversation }) {
     <div className="live-member-row"><Avatar self size="small" /><span>{snapshot.selfName}<small>你 · 群管理者</small></span></div>
     {conversation.members.filter(m => m.actorId !== snapshot.selfId).map(member => {
       const contact = snapshot.contacts.find(c => c.id === member.actorId)
-      return <div className="live-member-row" key={member.actorId}><button onClick={() => navigate("contacts", member.actorId)}><Avatar contact={contactAvatar(contact)} size="small" /><span>{contact?.name}<small>{member.historyFromSeq === "1" ? "可见全部群记录" : `可见第 ${member.historyFromSeq} 条起的记录`}</small></span></button><button className="live-remove-member" aria-label={`移出 ${contact?.name}`} disabled={saving} onClick={() => { requestId.current = crypto.randomUUID(); expectedRevision.current = null; void change(member.actorId, null) }}><X /></button></div>
+      return <div className="live-member-row" key={member.actorId}><button onClick={() => navigate("contacts", member.actorId)}><Avatar contact={contactAvatar(contact)} size="small" /><span>{contact?.name}<small>可见全部群记录</small></span></button><button className="live-remove-member" aria-label={`移出 ${contact?.name}`} disabled={saving} onClick={() => { requestId.current = crypto.randomUUID(); expectedRevision.current = null; void change(member.actorId, "remove") }}><X /></button></div>
     })}
-    {!adding ? <button className="social-button secondary" disabled={!available.length || saving} onClick={() => setAdding(true)}><Plus />添加成员</button> : <form className="social-form" onSubmit={event => { event.preventDefault(); void change(actor, history) }}><fieldset className="social-form-fields" disabled={saving}>
+    {!adding ? <button className="social-button secondary" disabled={!available.length || saving} onClick={() => setAdding(true)}><Plus />添加成员</button> : <form className="social-form" onSubmit={event => { event.preventDefault(); void change(actor, "add") }}><fieldset className="social-form-fields" disabled={saving}>
       <label>新成员<select required value={actor} onChange={event => { setActor(event.target.value); requestId.current = crypto.randomUUID(); expectedRevision.current = null }}><option value="">选择 AI 联系人</option>{available.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}{actor && !available.some(c => c.id === actor) && <option value={actor}>{snapshot.contacts.find(c => c.id === actor)?.name}</option>}</select></label>
-      <label>历史可见范围<select value={history} onChange={event => { setHistory(event.target.value as typeof history); requestId.current = crypto.randomUUID(); expectedRevision.current = null }}><option value="from_now">仅加入后的消息</option><option value="all">允许读取全部群记录</option></select></label>
-      <p className="form-note">成员变更会停止当前回复，并保留已生成片段。移出的 AI 不再接话；重新加入时重新授权历史范围。</p>
+      <p className="form-note">成员变更会停止当前回复，并保留已生成片段。所有当前成员共享完整群历史，包括加入前的记录。移出的 AI 不再接话或读取群记录。</p>
       <div className="dialog-actions"><button type="button" className="social-button secondary" onClick={() => setAdding(false)}>取消</button><button className="social-button primary" disabled={!actor}>加入群聊</button></div>
     </fieldset></form>}
   </section>

@@ -9,6 +9,7 @@ use std::{
 const SCHEMA: &str = include_str!("schema.sql");
 const SCHEMA_V2: &str = include_str!("schema-v2.sql");
 const SCHEMA_V3: &str = include_str!("schema-v3.sql");
+const SCHEMA_V4: &str = include_str!("schema-v4.sql");
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -74,10 +75,10 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| sql_error(path, e))?;
-    if !(0..=3).contains(&version) {
+    if !(0..=4).contains(&version) {
         return Err(Error::Schema {
             path: path.to_owned(),
-            detail: format!("unsupported version {version}; expected 0..=3"),
+            detail: format!("unsupported version {version}; expected 0..=4"),
         });
     }
     let tables: i64 = connection
@@ -106,6 +107,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
             (1, migration_digest(SCHEMA)),
             (2, migration_digest(SCHEMA_V2)),
             (3, migration_digest(SCHEMA_V3)),
+            (4, migration_digest(SCHEMA_V4)),
         ];
         if ledger != expected[..version as usize] {
             return Err(Error::Schema {
@@ -122,7 +124,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         backup(&connection, &backup_path)?;
         apply_initial_migration(&mut connection, path, now, SCHEMA)?;
     }
-    for (next, script) in [(2, SCHEMA_V2), (3, SCHEMA_V3)] {
+    for (next, script) in [(2, SCHEMA_V2), (3, SCHEMA_V3), (4, SCHEMA_V4)] {
         if version >= next {
             continue;
         }
@@ -204,12 +206,12 @@ mod tests {
         )
         .unwrap();
         drop(old);
-        let current = open(&path, "test-v3").unwrap();
+        let current = open(&path, "test-v4").unwrap();
         assert_eq!(
             current
                 .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            3
+            4
         );
         assert_eq!(
             current
@@ -222,7 +224,7 @@ mod tests {
             current
                 .query_row::<i64, _, _>("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap(),
-            3
+            4
         );
         let backup_path = std::fs::read_dir(dir.path())
             .unwrap()
@@ -269,6 +271,103 @@ mod tests {
             v2_backup
                 .query_row::<String, _, _>("SELECT payload FROM actors WHERE id=?1", [&id], |r| r
                     .get(0))
+                .unwrap(),
+            payload
+        );
+    }
+    #[test]
+    fn v3_migration_removes_history_limits_and_preserves_member_versions_and_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("social.sqlite3");
+        let mut old = Connection::open(&path).unwrap();
+        apply_initial_migration(&mut old, &path, "v1", SCHEMA).unwrap();
+        for (version, script) in [(2, SCHEMA_V2), (3, SCHEMA_V3)] {
+            old.execute_batch(script).unwrap();
+            old.execute(
+                "INSERT INTO schema_migrations VALUES(?1,?2,'fixture')",
+                rusqlite::params![version, migration_digest(script)],
+            )
+            .unwrap();
+            old.pragma_update(None, "user_version", version).unwrap();
+        }
+        let actor = ::social::ActorId::new();
+        let conversation = ::social::ConversationId::new();
+        old.execute(
+            "INSERT INTO actors VALUES(?1,'human','active',1,?2)",
+            rusqlite::params![
+                actor.to_string(),
+                serde_json::json!({"id":actor}).to_string()
+            ],
+        )
+        .unwrap();
+        old.execute(
+            "INSERT INTO conversations VALUES(?1,'group',NULL,'active',0,1,1,1,0,?2)",
+            rusqlite::params![
+                conversation.to_string(),
+                serde_json::json!({"id":conversation}).to_string()
+            ],
+        )
+        .unwrap();
+        let member=serde_json::json!({"conversation_id":conversation,"actor_id":actor,"status":"active","history_from_seq":"75","revision":"3"}).to_string();
+        old.execute(
+            "INSERT INTO memberships VALUES(?1,?2,'active',75,3,?3)",
+            rusqlite::params![conversation.to_string(), actor.to_string(), member],
+        )
+        .unwrap();
+        drop(old);
+        let current = open(&path, "v4").unwrap();
+        let payload: String = current
+            .query_row("SELECT payload FROM memberships", [], |r| r.get(0))
+            .unwrap();
+        let migrated: ::social::Membership = serde_json::from_str(&payload).unwrap();
+        assert_eq!(migrated.revision.get(), 3);
+        assert_eq!(migrated.status, ::social::MembershipStatus::Active);
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&payload)
+                .unwrap()
+                .get("history_from_seq")
+                .is_none()
+        );
+        assert!(
+            current
+                .prepare("SELECT history_from_seq FROM memberships")
+                .is_err()
+        );
+        assert_eq!(
+            current
+                .query_row::<i64, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+                    .get(0))
+                .unwrap(),
+            0
+        );
+        let backup_path = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("social.before-v4-")
+            })
+            .unwrap();
+        let backup = Connection::open(backup_path).unwrap();
+        assert_eq!(
+            backup
+                .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            backup
+                .query_row::<String, _, _>("SELECT payload FROM memberships", [], |r| r.get(0))
+                .unwrap(),
+            member
+        );
+        drop(current);
+        let reopened = open(&path, "again").unwrap();
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>("SELECT payload FROM memberships", [], |r| r.get(0))
                 .unwrap(),
             payload
         );

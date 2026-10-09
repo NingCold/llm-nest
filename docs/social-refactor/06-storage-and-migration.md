@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [API 与事件](07-api-and-events.md)
 
-状态：完整目标设计；M0 已实现 SQLite 基础、共享目录锁、原子操作、备份和旧记录导入；M1 已接入 GUI 宿主、v2 run_details 与 v3 participation_plans 迁移、上下文/分页读取及成员历史授权。完整首版表继续按里程碑扩展，实际范围见 [M0](m0-implementation.md)、[私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
+状态：完整目标设计；M0 已实现 SQLite 基础、共享目录锁、原子操作、备份和旧记录导入；M1 已接入 GUI 宿主、v2 run_details、v3 participation_plans 与 v4 共享群历史迁移、上下文/分页读取及成员管理。完整首版表继续按里程碑扩展，实际范围见 [M0](m0-implementation.md)、[私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 1. 存储布局与锁
 
@@ -20,7 +20,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 | --- | --- | --- |
 | 身份 | actors、ai_profiles、execution_bindings、relationships | 身份 UUID、档案版本、无向关系对唯一 |
 | 聊天 | conversations、memberships、messages、message_revisions、message_context_refs、read_positions、bouts | 私聊 relationship_id 唯一，含归档；每空间 message_seq 唯一，成员对唯一；跨窗口引用追踪源消息版本 |
-| 意识系统 | memories、memory_sources、summaries、summary_sources、forget_suppressions | 来源引用版本，范围显式保存；摘要按窗口分段与可见来源视图缓存 |
+| 意识系统 | memories、memory_sources、summaries、summary_sources、forget_suppressions | 来源引用版本，范围显式保存；摘要按窗口分段与来源版本缓存 |
 | 参与 | participation_plans、contact_intents、consumer_offsets | dedupe_key 和处理进度保证幂等 |
 | 执行 | ai_runs、run_checkpoints、run_protocol_messages、tool_executions、budget_reservations | RunId 独立，轨迹归属一个 AI 与 run |
 | 契约 | committed_events、command_receipts | 全局事件序列、幂等请求作用域唯一 |
@@ -30,7 +30,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 direct 的 relationship_id 非空且唯一，group 不使用该字段；归档不会释放私聊唯一性。窗口完整消息是权威记录，摘要、近期消息选择和 ContextSnapshot 是派生材料，不因压缩删除原记录。上下文状态或缓存按 ActorId + ConversationId 隔离。
 
-message_context_refs 关联目标私聊消息、目标 AI、发起者、来源窗口与消息/话题范围，不重复保存源正文或授予源权限。源修订、撤回和权限变化要覆盖所有依赖该来源的窗口。summaries 不能仅按 conversation_id 唯一保存；分段范围、来源版本和可见视图共同决定是否可复用。
+message_context_refs 关联目标私聊消息、目标 AI、发起者、来源窗口与消息/话题范围，不重复保存源正文或授予源权限。源修订、撤回和权限变化要覆盖所有依赖该来源的窗口。summaries 不能仅按 conversation_id 唯一保存；分段范围、来源版本和有效状态共同决定是否可复用。
 
 上述来源引用、摘要、记忆与 AiRun 中保存的 ContextSnapshot 共同支撑意识系统，存储仍统一使用 SocialStore。原消息由聊天用例写入，意识系统只持久化自身派生材料和必要依赖，不另建独立 consciousness 数据库或完整请求副本。M1 使用消息来源快照；M2 启用摘要、显式记忆与跨窗口引用。
 

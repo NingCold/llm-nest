@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [身份与关系](01-identity-and-relationships.md) · [API 与事件](07-api-and-events.md)
 
-状态：完整目标设计；M1 已实现唯一长期私聊、独立群、成员/历史范围、结构化 @ 与回复、真人文本发送、多 AI 队列和分页历史。修订与完整交谈控制仍待后续，当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
+状态：完整目标设计；M1 已实现唯一长期私聊、独立群、成员管理与共享群历史、结构化 @ 与回复、真人文本发送、多 AI 队列和分页历史。修订与完整交谈控制仍待后续，当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 1. 职责
 
@@ -13,7 +13,7 @@
 | 对象 | 关键字段 |
 | --- | --- |
 | Conversation | id、kind(direct/group)、relationship_id、title、status、participation_settings、revision、context_epoch、participation_epoch、created_at |
-| Membership | conversation_id、actor_id、role、status、history_from_seq、participation_mode、revision |
+| Membership | conversation_id、actor_id、role、status、participation_mode、revision |
 | SocialMessage | id、conversation_id、sender_id、sender_snapshot、message_seq、kind、body、reply_to、mentions、bout_id、run_id、status、revision、created_at |
 | MessageRevision | message_id、revision、operation、author_id、content、changed_at |
 | ReadPosition | conversation_id、reader_id、last_read_seq、updated_at |
@@ -25,13 +25,13 @@
 
 direct 包含本地真人和一个 AI，关联唯一 Relationship；同一参与者对只能有一个 direct Conversation，包括归档状态。重复打开和恢复归档沿用同一窗口。group 包含本地真人和一个以上 AI，每个群拥有独立窗口。空间不存唯一 ModelSelection，每个 AI 使用自己的绑定。
 
-意识系统的逻辑上下文范围为 (ActorId, ConversationId)。同一 AI 的私聊、群 A 和群 B 分别构造上下文；同一群内不同 AI 读取允许的群历史，各自带入自己的身份与设置。provider 会话 ID 或续接链如被使用，也必须按这个范围隔离。
+意识系统的逻辑上下文范围为 (ActorId, ConversationId)。同一 AI 的私聊、群 A 和群 B 分别构造上下文；同一群内所有当前成员共享完整群历史，各自带入自己的身份与设置。provider 会话 ID 或续接链如被使用，也必须按这个范围隔离。
 
 群话题可以通过 ContextReference 接续到目标 AI 的唯一私聊。引用保留来源窗口及消息版本，只读取用户与目标 AI 共同可见的相关历史；无源访问权时需要显式共享选中内容。新私聊消息归属私聊，不自动发回群。详见 [意识系统的跨窗口接续](03-consciousness.md#23-从群聊接续到私聊)。
 
 成员状态为 active / left / removed。首版本地真人担任 owner，AI 是 member；领域保留 human 成员的表示，但多人登录与远程权限尚未实现。
 
-AI 加入群时，用户明确选择历史范围：默认从加入后的消息开始；可以授权当前话题或此前群历史。history_from_seq 定义连续历史窗口，其他共享片段使用显式上下文授权记录。私聊历史不因入群自动共享。
+所有当前群成员共享本群完整公开历史，包括加入前的记录。是否被 @、是否发过言或是否暂停接话不改变历史可见范围；意识系统按本次回复对象和容量选择材料，参与服务独立决定是否发言。私聊历史不因入群自动共享。
 
 离开或移除成员原子增加 participation_epoch，撤销其运行和待参与计划；context_epoch 同步更新，并撤销当前成员访问权。历史消息保留 sender_id 和展示快照；保存旧记录不会向已离开的成员继续开放源历史，意识系统的跨窗口读取也复核此权限。
 
@@ -86,7 +86,7 @@ Conversation 长期存在；Bout 表达某次交谈；AiRun 表达一次执行�
 2. AI 生成期间连续发送两条真人消息，两条均落盘且有稳定顺序。
 3. 编辑早期消息不会删除其他成员后续记录，旧版本派生记忆失效。
 4. 同一发送命令重复提交只产生一条消息；改内容重用请求 ID 被拒绝。
-5. 新入群 AI 默认读不到加入前历史和私聊内容。
+5. 新入群 AI 可以读取加入前的本群记录；其他私聊或群历史不自动进入请求。
 6. 结束 Bout 不删除空间；下一次聊天可以新建 Bout 并接续允许的历史。
 7. 同一参与者对并发创建私聊仍只产生一个空间；其他群历史不会无依据地混入请求，合法接续只带入允许的相关引用。
 8. 生成历史摘要或缩减模型上下文后，完整聊天记录仍可分页查阅。

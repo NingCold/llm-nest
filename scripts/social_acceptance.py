@@ -159,9 +159,9 @@ def main():
     def settled(cid):
         return wait_for(lambda: plans(cid) if plans(cid) and all(p['status'] not in ('queued', 'running') for p in plans(cid)) else None)
 
-    def member(cid, actor, visibility):
+    def member(cid, actor, action):
         current = api(f'/conversations/{cid}')
-        return api(f'/conversations/{cid}/members', 'POST', {'requestId': str(uuid.uuid4()), 'actorId': actor['id'], 'history': visibility, 'expectedRevision': current['revision']})
+        return api(f'/conversations/{cid}/members', 'POST', {'requestId': str(uuid.uuid4()), 'actorId': actor['id'], 'action': action, 'expectedRevision': current['revision']})
 
     try:
         start()
@@ -295,38 +295,38 @@ def main():
         assert [p['actorId'] for p in ordered] == [bob['id'], alice['id'], alice['id']]
         assert [p['status'] for p in ordered] == ['succeeded'] * 3
         assert all('queue-second' not in str(m) for r in calls_for('queue-first') for m in r['messages'])
-        member(group_id, draft, 'from_now')
+        member(group_id, draft, 'add')
         mixed = send(group_id, 'mixed-binding', mentions=[draft['id'], bob['id']])
         settled(group_id)
         mixed_plans = sorted([p for p in plans(group_id) if p['triggerId'] == mixed['message']['id']], key=lambda p: p['ordinal'])
         assert [p['status'] for p in mixed_plans] == ['failed', 'succeeded'] and mixed_plans[0]['failure']
         assert provider_count('mixed-binding') == 1
         carol = contact('Carol')
-        member(group_id, carol, 'from_now')
+        member(group_id, carol, 'add')
         three = send(group_id, 'three-AI', mentions=[bob['id'], alice['id'], carol['id']])
         settled(group_id)
         assert len(calls_for('three-AI')) == 3
         assert [p['actorId'] for p in sorted([p for p in plans(group_id) if p['triggerId'] == three['message']['id']], key=lambda p:p['ordinal'])] == [bob['id'], alice['id'], carol['id']]
 
         scoped = group('History scope', [alice])
-        send(scoped, 'hidden-before-join')
-        joined = member(scoped, bob, 'from_now')
-        assert next(m for m in joined['members'] if m['actorId'] == bob['id'])['historyFromSeq'] == '2'
+        send(scoped, 'shared-before-join')
+        joined = member(scoped, bob, 'add')
+        assert bob['id'] in joined['memberIds'] and all('historyFromSeq' not in m for m in joined['members'])
         send(scoped, 'visible-after-join', mentions=[bob['id']])
         settled(scoped)
-        assert all('hidden-before-join' not in str(m) for m in calls_for('visible-after-join')[0]['messages'])
+        assert any('shared-before-join' in str(m) for m in calls_for('visible-after-join')[0]['messages'])
         send(scoped, 'slow-member-remove', mentions=[bob['id']])
         active = wait_for(lambda: api(f'/conversations/{scoped}')['activeRun'])
         queued = send(scoped, 'after-removal', mentions=[bob['id'], alice['id']])
-        removed = member(scoped, bob, None)
+        removed = member(scoped, bob, 'remove')
         assert bob['id'] not in removed['memberIds']
         settled(scoped)
         assert next(p for p in plans(scoped) if p['runId'] == active['id'])['status'] == 'cancelled'
         assert sorted((p['actorId'], p['status']) for p in plans(scoped) if p['triggerId'] == queued['message']['id']) == sorted([(bob['id'], 'cancelled'), (alice['id'], 'succeeded')])
-        member(scoped, bob, 'all')
-        send(scoped, 'visible-with-full-grant', mentions=[bob['id']])
+        member(scoped, bob, 'add')
+        send(scoped, 'visible-after-rejoin', mentions=[bob['id']])
         settled(scoped)
-        assert any('hidden-before-join' in str(m) for m in calls_for('visible-with-full-grant')[0]['messages'])
+        assert any('shared-before-join' in str(m) for m in calls_for('visible-after-rejoin')[0]['messages'])
 
         # Crash recovery never resends the started response; untouched queue entries resume.
         recovery_group = group('Recovery group', [alice, bob])
@@ -339,7 +339,7 @@ def main():
         relevant = sorted([p for p in recovered if p['triggerId'] == trigger['message']['id']], key=lambda p: p['ordinal'])
         assert [p['status'] for p in relevant] == ['interrupted', 'succeeded']
         assert provider_count('crash') == before_calls + 1
-        print('PASS: real groups, structured mentions/replies, FIFO/idempotency, per-AI bindings, same-trigger collaboration, window isolation, continuous input, mixed failure, history grants, member revocation and queued crash recovery', flush=True)
+        print('PASS: real groups, structured mentions/replies, FIFO/idempotency, per-AI bindings, same-trigger collaboration, window isolation, continuous input, mixed failure, shared group history, member revocation and queued crash recovery', flush=True)
 
         send(private, 'crash')
         interrupted = wait_for(lambda: next((m for m in history(private) if m['status'] == 'generating' and m['text'].startswith('回应：crash')), None))

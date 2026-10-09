@@ -34,6 +34,5 @@ pub struct Membership {
     pub conversation_id: ConversationId,
     pub actor_id: ActorId,
     pub status: MembershipStatus,
-    pub history_from_seq: Sequence,
     pub revision: Revision,
 }

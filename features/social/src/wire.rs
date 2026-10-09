@@ -153,14 +153,12 @@ impl From<ConversationRecord> for Conversation {
 #[serde(rename_all = "camelCase")]
 pub struct Member {
     pub actor_id: ActorId,
-    pub history_from_seq: Sequence,
     pub revision: Revision,
 }
 impl From<Membership> for Member {
     fn from(m: Membership) -> Self {
         Self {
             actor_id: m.actor_id,
-            history_from_seq: m.history_from_seq,
             revision: m.revision,
         }
     }
@@ -315,5 +313,5 @@ pub struct MembershipInput {
     pub request_id: CommandId,
     pub actor_id: ActorId,
     pub expected_revision: Revision,
-    pub history: Option<storage::social::HistoryVisibility>,
+    pub action: storage::social::MembershipAction,
 }

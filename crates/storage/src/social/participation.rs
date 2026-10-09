@@ -207,17 +207,16 @@ impl Db<'_> {
             )?
             .into_iter()
             .next();
-        let status = if input.history.is_some() {
-            MembershipStatus::Active
-        } else {
-            MembershipStatus::Left
+        let status = match input.action {
+            MembershipAction::Add => MembershipStatus::Active,
+            MembershipAction::Remove => MembershipStatus::Left,
         };
         if old.as_ref().is_some_and(|m| m.status == status)
             || (old.is_none() && status == MembershipStatus::Left)
         {
             return Err(Error::Invalid("member already has this status".into()));
         }
-        if input.history.is_some() {
+        if status == MembershipStatus::Active {
             let count: i64 = self
                 .connection
                 .query_row(
@@ -230,33 +229,23 @@ impl Db<'_> {
                 return Err(Error::Invalid("group supports at most 64 members".into()));
             }
         }
-        let history_from_seq = match input.history {
-            Some(HistoryVisibility::All) => Sequence::ONE,
-            Some(HistoryVisibility::FromNow) => c.last_sequence.next()?,
-            None => {
-                old.as_ref()
-                    .expect("removing existing member")
-                    .history_from_seq
-            }
-        };
         let m = Membership {
             conversation_id: c.id,
             actor_id: actor.id,
             status,
-            history_from_seq,
             revision: old
                 .as_ref()
                 .map(|m| m.revision.next())
                 .transpose()?
                 .unwrap_or(Revision::ONE),
         };
-        self.execute("INSERT INTO memberships VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(conversation_id,actor_id) DO UPDATE SET status=excluded.status,history_from_seq=excluded.history_from_seq,revision=excluded.revision,payload=excluded.payload",params![c.id.to_string(),actor.id.to_string(),label(&m.status)?,m.history_from_seq.get() as i64,m.revision.get() as i64,serde_json::to_string(&m)?])?;
+        self.execute("INSERT INTO memberships VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,actor_id) DO UPDATE SET status=excluded.status,revision=excluded.revision,payload=excluded.payload",params![c.id.to_string(),actor.id.to_string(),label(&m.status)?,m.revision.get() as i64,serde_json::to_string(&m)?])?;
         c.revision = c.revision.next()?;
         c.context_epoch = c.context_epoch.next()?;
         c.participation_epoch = c.participation_epoch.next()?;
         // The roster used by an in-flight request has changed. Keep its persisted draft.
         self.cancel_runs(c.id, RunStatus::Cancelled)?;
-        if input.history.is_none() {
+        if status == MembershipStatus::Left {
             self.cancel_queued(c.id, Some(actor.id))?;
         }
         self.save_conversation(&c)?;

@@ -13,7 +13,7 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 
 export const socialClient = {
   createGroup: (input: { requestId: string; title: string; memberIds: string[] }) => request<string>("/groups", "POST", input),
-  changeMembership: (id: string, input: { requestId: string; actorId: string; expectedRevision: string; history: "from_now" | "all" | null }) => request<Conversation>(`/conversations/${id}/members`, "POST", input),
+  changeMembership: (id: string, input: { requestId: string; actorId: string; expectedRevision: string; action: "add" | "remove" }) => request<Conversation>(`/conversations/${id}/members`, "POST", input),
   plans: (id: string) => request<ParticipationPlan[]>(`/conversations/${id}/plans`),
   init: () => request<Snapshot>("/init"),
   createContact: (input: { requestId: string; name: string; persona: string; binding: Binding | null }) => request<Contact>("/contacts", "POST", input),

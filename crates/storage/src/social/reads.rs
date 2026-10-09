@@ -32,9 +32,9 @@ impl Db<'_> {
         operator: ActorId,
         conversation: Conversation,
     ) -> Result<ConversationRecord> {
-        let member = self.member(operator, conversation.id)?;
+        self.member(operator, conversation.id)?;
         let members = self.query_json("SELECT payload FROM memberships WHERE conversation_id=?1 AND status='active' ORDER BY actor_id", [conversation.id.to_string()])?;
-        let latest_message = self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND sequence>=?2 ORDER BY sequence DESC LIMIT 1", params![conversation.id.to_string(), member.history_from_seq.get() as i64])?.into_iter().next();
+        let latest_message = self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 ORDER BY sequence DESC LIMIT 1", [conversation.id.to_string()])?.into_iter().next();
         let active_run = self
             .query_json(
                 "SELECT payload FROM ai_runs WHERE conversation_id=?1 AND status='running'",
@@ -99,8 +99,7 @@ impl Db<'_> {
                 "trigger must be a committed local message in this conversation".into(),
             ));
         }
-        let visible_from = human.history_from_seq.max(ai.history_from_seq);
-        let mut messages: Vec<SocialMessage> = self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND status='committed' AND sequence>=?2 AND sequence<=?3 ORDER BY sequence DESC LIMIT 200", params![conversation.id.to_string(), visible_from.get() as i64, trigger.sequence.get() as i64])?;
+        let mut messages: Vec<SocialMessage> = self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND status='committed' AND sequence<=?2 ORDER BY sequence DESC LIMIT 200", params![conversation.id.to_string(), trigger.sequence.get() as i64])?;
         if messages.first().map(|m| m.id) != Some(trigger.id) {
             return Err(Error::Forbidden(
                 "trigger is outside the visible history".into(),
@@ -109,10 +108,7 @@ impl Db<'_> {
         messages.reverse();
         if let Some(id) = trigger.reply_to {
             let quoted: SocialMessage = self.get("messages", id)?;
-            if quoted.status == MessageStatus::Committed
-                && quoted.sequence >= visible_from
-                && !messages.iter().any(|m| m.id == id)
-            {
+            if quoted.status == MessageStatus::Committed && !messages.iter().any(|m| m.id == id) {
                 messages.push(quoted);
                 messages.sort_by_key(|m| m.sequence);
             }

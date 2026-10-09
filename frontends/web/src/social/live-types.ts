@@ -13,7 +13,7 @@ export interface Conversation {
   paused: boolean; revision: string; lastSequence: string; legacy: boolean; latestMessage: Message | null; activeRun: Run | null
   members: Membership[]; pendingPlans: ParticipationPlan[]
 }
-export interface Membership { actorId: string; historyFromSeq: string; revision: string }
+export interface Membership { actorId: string; revision: string }
 export interface ParticipationPlan { id: string; actorId: string; triggerId: string; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
 export interface Snapshot { selfId: string; selfName: string; contacts: Contact[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
 export interface Failure { code: string; message: string }

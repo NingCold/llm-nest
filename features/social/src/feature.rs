@@ -310,7 +310,7 @@ impl SocialFeature {
                     conversation_id: id,
                     actor_id: input.actor_id,
                     expected_revision: input.expected_revision,
-                    history: input.history,
+                    action: input.action,
                 },
             )
             .await?;

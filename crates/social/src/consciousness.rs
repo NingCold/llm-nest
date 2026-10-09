@@ -91,7 +91,6 @@ pub struct ConversationSummary {
     pub conversation_id: ConversationId,
     pub from_sequence: Sequence,
     pub through_sequence: Sequence,
-    pub visible_to: Vec<VisibilityDependency>,
     pub text: String,
     pub status: MaterialStatus,
     pub revision: Revision,

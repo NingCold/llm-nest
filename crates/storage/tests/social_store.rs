@@ -416,7 +416,7 @@ async fn group_queue_is_atomic_idempotent_fifo_and_shares_only_its_committed_ans
 }
 
 #[tokio::test]
-async fn group_history_grants_removal_and_plan_failure_rollback_preserve_original_messages() {
+async fn group_shared_history_removal_and_plan_failure_rollback_preserve_original_messages() {
     let f = Fixture::new().await;
     let a = f.ai("A").await;
     let b = f.ai("B").await;
@@ -431,7 +431,7 @@ async fn group_history_grants_removal_and_plan_failure_rollback_preserve_origina
                 conversation_id: c.id,
                 actor_id: b.id,
                 expected_revision: c.revision,
-                history: Some(HistoryVisibility::FromNow),
+                action: MembershipAction::Add,
             },
         )
         .await
@@ -471,11 +471,13 @@ async fn group_history_grants_removal_and_plan_failure_rollback_preserve_origina
         .context_material(f.human.id, scope, saved.message.id)
         .await
         .unwrap();
-    assert!(!material.messages.iter().any(|m| m.id == old.id));
-    assert!(matches!(
-        f.store.context_material(f.human.id, scope, old.id).await,
-        Err(SocialStorageError::Forbidden(_))
-    ));
+    assert!(material.messages.iter().any(|m| m.id == old.id));
+    assert!(
+        f.store
+            .context_material(f.human.id, scope, old.id)
+            .await
+            .is_ok()
+    );
     let run = f.begin_plan(&saved.plans[0]).await.unwrap();
     let waiting = f.send_group(c.id, vec![b.id, a.id]).await;
     let c = f.store.conversation(f.human.id, c.id).await.unwrap();
@@ -486,7 +488,7 @@ async fn group_history_grants_removal_and_plan_failure_rollback_preserve_origina
                 conversation_id: c.id,
                 actor_id: b.id,
                 expected_revision: c.revision,
-                history: None,
+                action: MembershipAction::Remove,
             },
         )
         .await
@@ -513,6 +515,10 @@ async fn group_history_grants_removal_and_plan_failure_rollback_preserve_origina
             .id,
         waiting.plans[1].id
     );
+    assert!(matches!(
+        f.store.context_material(f.human.id, scope, old.id).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
     let c = f.store.conversation(f.human.id, c.id).await.unwrap();
     f.store
         .change_membership(
@@ -521,7 +527,7 @@ async fn group_history_grants_removal_and_plan_failure_rollback_preserve_origina
                 conversation_id: c.id,
                 actor_id: b.id,
                 expected_revision: c.revision,
-                history: Some(HistoryVisibility::All),
+                action: MembershipAction::Add,
             },
         )
         .await

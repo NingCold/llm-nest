@@ -46,17 +46,16 @@ pub struct SavedMessage {
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HistoryVisibility {
-    FromNow,
-    All,
+pub enum MembershipAction {
+    Add,
+    Remove,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeMembership {
     pub conversation_id: ConversationId,
     pub actor_id: ActorId,
     pub expected_revision: Revision,
-    /// None removes the member; rejoining grants a new visibility interval.
-    pub history: Option<HistoryVisibility>,
+    pub action: MembershipAction,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMessage {

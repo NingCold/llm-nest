@@ -384,11 +384,10 @@ impl Db<'_> {
                 conversation_id: c.id,
                 actor_id: *actor,
                 status: MembershipStatus::Active,
-                history_from_seq: Sequence::ONE,
                 revision: Revision::ONE,
             };
             self.execute(
-                "INSERT INTO memberships VALUES(?1,?2,'active',1,1,?3)",
+                "INSERT INTO memberships VALUES(?1,?2,'active',1,?3)",
                 params![
                     c.id.to_string(),
                     actor.to_string(),
@@ -706,9 +705,7 @@ impl Db<'_> {
             }
             for actor in [operator, ai.id] {
                 self.require_dependency(snapshot, actor, *conversation_id)?;
-                if self.member(actor, *conversation_id)?.history_from_seq > m.sequence {
-                    return Err(Error::Forbidden("source precedes visible history".into()));
-                }
+                self.member(actor, *conversation_id)?;
             }
         }
         Ok(())
@@ -824,8 +821,8 @@ impl SocialStore for SqliteSocialStore {
     ) -> Result<(Vec<SocialMessage>, bool)> {
         self.call(move |w| w.read(|db| {
             db.operator(operator)?;
-            let member=db.member(operator,id)?;
-            let mut messages:Vec<SocialMessage>=db.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND sequence>=?2 AND (?3 IS NULL OR sequence<?3) ORDER BY sequence DESC LIMIT 201",params![id.to_string(),member.history_from_seq.get() as i64,before.map(|s|s.get() as i64)])?;
+            db.member(operator,id)?;
+            let mut messages:Vec<SocialMessage>=db.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND (?2 IS NULL OR sequence<?2) ORDER BY sequence DESC LIMIT 201",params![id.to_string(),before.map(|s|s.get() as i64)])?;
             let more=messages.len()>200;
             messages.truncate(200); messages.reverse();
             Ok((messages,more))
@@ -1164,8 +1161,8 @@ impl SocialStore for SqliteSocialStore {
         after: Sequence,
         limit: u32,
     ) -> Result<Vec<SocialMessage>> {
-        self.call(move |w|{let db=w.view();db.operator(operator)?;let member=db.member(operator,id)?;
-            db.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND sequence>?2 AND sequence>=?3 ORDER BY sequence LIMIT ?4",params![id.to_string(),after.get() as i64,member.history_from_seq.get() as i64,limit.clamp(1,200)])
+        self.call(move |w|{let db=w.view();db.operator(operator)?;db.member(operator,id)?;
+            db.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3",params![id.to_string(),after.get() as i64,limit.clamp(1,200)])
         }).await
     }
     async fn begin_run(&self, ctx: CommandContext, input: BeginRun) -> Result<AiRun> {

@@ -8,7 +8,7 @@ LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用�
 
 已实现聊天、协议路由、会话持久化、运行中断/恢复、内置工具循环，以及桌面/Web 设置。MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留 trait 或界面按钮声称功能已经可用。
 
-项目正转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。目标结构与顺序见 [总纲](docs/social-refactor/README.md) 和 [TODO](docs/social-refactor/TODO.md)。M1 [私聊](docs/social-refactor/m1-private-chat.md)与[群聊](docs/social-refactor/m1-group-chat.md)已接通 SocialFeature、SQLite、近期上下文、模型执行、HTTP 订阅和真实 Web；结构化 @ / 回复、成员历史范围、持久 FIFO 计划与恢复已实现，修订/完整交谈控制及摘要/记忆/跨窗口接续仍待后续。Tauri 已注册共享业务命令，但界面仍为 Harness，实时社交 IPC 尚未接入；独立 Web 模拟预览继续显式启用。
+项目正转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。目标结构与顺序见 [总纲](docs/social-refactor/README.md) 和 [TODO](docs/social-refactor/TODO.md)。M1 [私聊](docs/social-refactor/m1-private-chat.md)与[群聊](docs/social-refactor/m1-group-chat.md)已接通 SocialFeature、SQLite、近期上下文、模型执行、HTTP 订阅和真实 Web；结构化 @ / 回复、成员管理与共享群历史、持久 FIFO 计划与恢复已实现，修订/完整交谈控制及摘要/记忆/跨窗口接续仍待后续。Tauri 已注册共享业务命令，但界面仍为 Harness，实时社交 IPC 尚未接入；独立 Web 模拟预览继续显式启用。
 
 ## 工作前先确认
 

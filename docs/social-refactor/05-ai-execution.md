@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [意识系统](03-consciousness.md) · [参与与调度](04-participation-and-scheduling.md)
 
-状态：目标设计，尚未实现。
+状态：完整目标设计；M0 已实现运行/Bout 类型、原子开始/收尾与草稿恢复存储，社交模型执行与工具循环尚未实现，见 [M0 说明](m0-implementation.md)。
 
 ## 1. 保留的运行能力
 

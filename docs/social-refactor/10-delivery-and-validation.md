@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [当前开发指南](../development.md) · [当前约束](../../AGENTS.md)
 
-状态：U0 Web 交互预览已实现；M0–M3 业务里程碑尚未开始。
+状态：U0 Web 预览与 M0 领域/存储基础已实现；M1–M3 尚未开始。实际范围见 [M0 实现说明](m0-implementation.md)，持续顺序见 [TODO](TODO.md)。
 
 ## 1. 实施原则
 
@@ -76,7 +76,7 @@ M1 同步修订 README、AGENTS 的当前定位、代码地图和无模型发送
 | 包与平台 | Tauri 构建、实际安装、worker、窗口 | 目标环境与产物 |
 | 真实 API | 已授权的付费协议与体验检查 | 指定模型和当时服务行为 |
 
-首版新增包后，按受影响范围运行以下命令；包名为目标名称，当前仓库尚无 social/social-feature：
+M0 已新增 social，social-feature 在 M1 创建。M0 先验证 social/storage/events 与旧 runtime/chat；首版用例包落地后，按受影响范围运行以下完整命令：
 
 ```bash
 cargo fmt --all -- --check

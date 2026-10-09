@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [运行时与配置](09-runtime-and-configuration.md)
 
-状态：目标设计，尚未实现。统一术语与首版范围见总纲。
+状态：完整目标设计；M0 已实现基础身份/关系类型和原子创建存储，联系人用例与模型校验接入留到 M1。实际范围见 [M0 说明](m0-implementation.md)。
 
 ## 1. 职责与落点
 

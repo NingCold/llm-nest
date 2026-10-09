@@ -1,5 +1,7 @@
+use crate::DataDirectoryGuard;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use common::SessionId;
 
@@ -14,27 +16,20 @@ use crate::store::SessionStore;
 /// ignored by `load_sessions` (its extension is `.tmp`).
 pub struct FileSessionStore {
     dir: PathBuf,
-    _lock: fs::File,
+    _guard: Arc<DataDirectoryGuard>,
 }
 
 impl FileSessionStore {
     /// Create the store, creating `dir` (and parents) if needed.
     pub fn new(dir: impl Into<PathBuf>) -> Result<Self> {
-        let dir = dir.into();
-        fs::create_dir_all(&dir)?;
-        let lock = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(dir.join(".llmn.lock"))?;
-        lock.try_lock().map_err(|error| {
-            std::io::Error::other(format!(
-                "data directory is already in use ({}): {error}",
-                dir.display()
-            ))
-        })?;
-        Ok(Self { dir, _lock: lock })
+        Ok(Self::from_guard(DataDirectoryGuard::acquire(dir)?))
+    }
+
+    pub fn from_guard(guard: Arc<DataDirectoryGuard>) -> Self {
+        Self {
+            dir: guard.dir().to_path_buf(),
+            _guard: guard,
+        }
     }
 
     pub fn dir(&self) -> &Path {

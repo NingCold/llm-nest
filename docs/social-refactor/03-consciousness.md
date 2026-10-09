@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
-状态：目标设计，尚未实现。
+状态：完整目标设计；M0 已实现范围、来源、记忆/摘要与快照基础类型，以及运行事务的消息来源/权限版本校验。ContextBuilder 和意识系统服务留到 M1/M2，见 [M0 说明](m0-implementation.md)。
 
 ## 0. 名称与定义
 

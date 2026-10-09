@@ -6,3 +6,7 @@ edition.workspace = true
 [dependencies]
 serde.workspace = true
 common = { path = "../common" }
+social.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

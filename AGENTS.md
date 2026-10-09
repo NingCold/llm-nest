@@ -8,7 +8,7 @@ LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用�
 
 已实现聊天、协议路由、会话持久化、运行中断/恢复、内置工具循环，以及桌面/Web 设置。MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留 trait 或界面按钮声称功能已经可用。
 
-下一阶段已确定转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续再扩展多人社交。目标主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，目标由 SocialFeature 内部统一服务管理，按角色与空间构造请求并支持允许的群聊接续私聊；长期记忆先简单实现。目标结构与分阶段实施见 [重构总纲](docs/social-refactor/README.md)。Web 交互预览已落在 `frontends/web/src/social`，使用明确启用的模拟适配器；Rust 社交模块、SQLite、真实意识系统和参与调度尚未落地。本文件其余架构与行为约束描述现有 Harness 代码。
+下一阶段已确定转向人与 AI 的社交空间，首版为一个本地真人与多个 AI 私聊、群聊，后续再扩展多人社交。目标主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，完整保存窗口历史。软件上下文、摘要、记忆、召回与遗忘统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，目标由 SocialFeature 内部统一服务管理，按角色与空间构造请求并支持允许的群聊接续私聊；长期记忆先简单实现。目标结构与顺序见 [重构总纲](docs/social-refactor/README.md) 和 [TODO](docs/social-refactor/TODO.md)。Web 交互预览使用明确启用的模拟适配器；[M0](docs/social-refactor/m0-implementation.md) 已有中立 social 类型、共享事件引用和独立 SQLite SocialStore，尚未接入 Runtime/GUI。SocialFeature、真实意识系统、模型社交执行和参与调度尚未实现。本文件其余架构与行为约束描述现有 Harness 代码。
 
 ## 工作前先确认
 
@@ -32,9 +32,10 @@ LLM-Nest 是共用 Rust 运行时的本地 AI 工作空间与 Harness。应用�
 | 路径 | 责任 |
 | --- | --- |
 | `crates/common` | Message、ContentPart、ID、Usage、计时、中断与运行检查点等公共类型 |
+| `crates/social` | 中立身份/空间/消息/运行类型、意识系统范围与来源快照、可控时钟 |
 | `crates/ai-client` | AiProvider/AiClient、ModelRouter、内置目录、配置类型、协议工厂、协议适配、SSE 分帧 |
-| `crates/events` | ChatEvent 等业务事件的序列化契约 |
-| `crates/storage` | SessionStore、JSON DTO、原子文件写入、目录锁和默认数据目录 |
+| `crates/events` | ChatEvent 与不含原文的 SocialEvent 序列化契约 |
+| `crates/storage` | SessionStore/JSON、SocialStore/SQLite、目录共享锁、事务/备份与旧记录导入 |
 | `crates/tools` | Tool、ToolRegistry、固定白名单子进程和内置 echo/add |
 | `crates/runtime` | 配置/热更新、SessionManager、Feature 生命周期、事件总线、工具注册 |
 | `features/chat` | 聊天与工具循环、取消、检查点、结束收尾、消息计时 |
@@ -83,6 +84,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 
 - 采用写穿透：先成功落盘，再替换内存；失败上抛，不能让 UI 展示“已保存”。
 - FileSessionStore 持有 `.llmn.lock` 的 OS 排他锁。同目录只允许一个独立 Runtime；不要删除运行中的锁文件或退回 PID 文件锁。
+- JSON/SQLite 并用时先取得一次 `Arc<DataDirectoryGuard>`，两种 store 共享该 guard，不能重复加锁。SocialStore 在单写线程操作 SQLite，原子提交实体、事件引用和命令回执；不跨模型请求持有事务。M0 不自动导入/激活个人社交库，显式导入保留源 JSON，关闭需等待 `SqliteSocialStore::close`。绑定候选仍须由后续用例经 Runtime 严格校验。
 - JSON 写入使用同目录临时文件和原子替换。坏文件错误须带路径，不可静默丢弃。
 - 新消息创建真实 UUID；旧记录加载时补齐并持久化，重复 ID 报错。编辑按 userId、反馈按 messageId + revision 定位，不能恢复旧索引 API。
 - 一次 run 的开始和用户消息同事务，成功回答和 Succeeded 同事务。流式每 500ms 保存有变化的 draft，工具调用/结果写穿透。
@@ -105,7 +107,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 ### GUI 与平台
 
 - React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`；不要用桌面打包改写已跟踪的 Web dist。
-- 社交预览仅通过 Web 的 `dev:social`/`build:social` 或 `?social-preview=1` 显式启用，Tauri 保持真实 IPC。模拟数据/草稿使用独立 key，不读写真实会话，不将后端连接失败回退为模拟回答；预览成功不代表社交 HTTP/IPC、SQLite 或模型记忆已经实现。`build:social` 输出到忽略的 `.social-preview-dist`。
+- 社交预览仅通过 Web 的 `dev:social`/`build:social` 或 `?social-preview=1` 显式启用，Tauri 保持真实 IPC。模拟数据/草稿使用独立 key，不读写真实会话，不将后端连接失败回退为模拟回答；预览不验证社交 HTTP/IPC 或真实意识系统，SQLite 基础通过独立 M0 测试验证。`build:social` 输出到忽略的 `.social-preview-dist`。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 只控制 Windows 自绘窗口区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试；历史未成功加载或无模型时禁止发送。

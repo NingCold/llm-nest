@@ -12,7 +12,7 @@
 
 ## 社交转型设计与 Web 预览
 
-首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。软件管理的上下文、摘要、记忆、召回与遗忘统一称为“意识系统（Consciousness）”。[Web 交互预览](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)已经实现，Rust 社交后端尚未接入。以下文档主要描述目标结构与契约，已实现的预览范围单独标注；先读总纲，再按专项职责与交付计划阅读。
+首版范围为一个本地真人与多个 AI 私聊、群聊，后续扩展多人社交。软件管理的上下文、摘要、记忆、召回与遗忘统一称为“意识系统（Consciousness）”。[Web 交互预览](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)与 [M0 领域/SQLite 基础](social-refactor/m0-implementation.md)已经实现，真实社交用例尚未接入。以下专项文档主要描述完整目标，按 [TODO](social-refactor/TODO.md) 顺序实施。
 
 | 文档 | 负责内容 |
 | --- | --- |

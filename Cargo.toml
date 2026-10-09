@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/common",
+    "crates/social",
     "crates/ai-client",
     "crates/events",
     "crates/runtime",
@@ -44,3 +45,6 @@ path = "crates/ai-client"
 
 [workspace.dependencies.storage]
 path = "crates/storage"
+
+[workspace.dependencies.social]
+path = "crates/social"

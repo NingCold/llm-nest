@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [存储与迁移](06-storage-and-migration.md) · [界面与桌面](08-frontend-and-desktop.md)
 
-状态：目标契约，尚未实现。下面的 HTTP 路由与 IPC 名称均为新增规划。
+状态：完整目标契约；M0 已实现 SocialStore 命令、共享持久事件引用与回执。下面的 HTTP 路由、IPC 名称和订阅仍待 M1，见 [M0 说明](m0-implementation.md)。
 
 ## 1. 共享业务入口
 

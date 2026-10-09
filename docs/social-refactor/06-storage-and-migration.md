@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [API 与事件](07-api-and-events.md)
 
-状态：目标设计，尚未实现。SQLite Rust 驱动在 M0 验证后选定。
+状态：完整目标设计；M0 已实现 v1 SQLite 基础、共享目录锁、原子操作、备份与只读旧记录导入。下述完整首版表和事务按后续里程碑扩展；当前清单见 [M0 说明](m0-implementation.md)。
 
 ## 1. 存储布局与锁
 
@@ -60,7 +60,7 @@ command_receipts 保存稳定实体引用、请求摘要和结果分类，不保
 
 ## 4. 并发、性能与检查点
 
-M0 候选使用 WAL、foreign_keys=ON 和满足崩溃恢复要求的同步策略；最终配置通过 Windows/Linux 测试决定。SQLite 提供原子事务，具体持久性仍取决于配置和文件系统。[SQLite 事务说明](https://www.sqlite.org/transactional.html)
+M0 使用 rusqlite 0.40.2 bundled，WAL、foreign_keys=ON、synchronous=FULL，已通过 Windows MSVC/Linux 基础测试。SQLite 提供原子事务，具体持久性仍取决于配置和文件系统。[SQLite 事务说明](https://www.sqlite.org/transactional.html)
 
 同步数据库驱动放入受限阻塞执行器或单写线程，不在 async 主执行路径做长时间磁盘工作。不得跨模型网络调用持有事务。busy、磁盘满和 schema 错误按原因返回，限次重试不能破坏幂等。
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{FileSessionStore, Result};
+use crate::{DataDirectoryGuard, Result};
 
 /// Default directory for persisted sessions.
 ///
@@ -53,7 +53,7 @@ pub fn prepare_data_dir(path: &Path, legacy: Option<&Path>) -> Result<()> {
         return create_private_dir(path);
     }
     // The old application's writer lock prevents copying a moving snapshot.
-    let _source_lock = FileSessionStore::new(legacy)?;
+    let _source_lock = DataDirectoryGuard::acquire(legacy)?;
     if path.try_exists()? {
         return prepare_data_dir(path, None);
     }
@@ -118,6 +118,7 @@ fn create_private_dir(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FileSessionStore;
 
     #[test]
     fn env_var_wins() {

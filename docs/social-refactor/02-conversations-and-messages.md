@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [身份与关系](01-identity-and-relationships.md) · [API 与事件](07-api-and-events.md)
 
-状态：目标设计，尚未实现。
+状态：完整目标设计；M0 已实现空间/成员/消息/运行基础类型和相应存储事务，完整成员用例、队列和传输留到 M1。实际范围见 [M0 说明](m0-implementation.md)。
 
 ## 1. 职责
 

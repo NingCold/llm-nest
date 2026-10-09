@@ -19,6 +19,7 @@ export function AccountDetails({ account, memories = false }: { account: Account
   const direct = snapshot.conversations.find(c => c.kind === "direct" && c.memberIds.includes(account.id))
   const entry = snapshot.addressBook.find(e => e.accountId === account.id)
   const [editing, setEditing] = useState(false)
+  const editButton = useRef<HTMLButtonElement | null>(null)
   const [name, setName] = useState(account.name), [bio, setBio] = useState(account.bio)
   const { busy, execute } = useVersionedAction()
   const save = async (event: FormEvent) => {
@@ -30,11 +31,11 @@ export function AccountDetails({ account, memories = false }: { account: Account
     const id = await socialClient.openDirect(account.id, crypto.randomUUID())
     await state.refresh(); navigate("messages", id)
   })
-  return <section className="contact-view"><header className="contact-header"><IconButton label="返回" className="mobile-back" onClick={() => navigate("contacts")}><ArrowLeft /></IconButton><span>账号资料</span>{own && <button className="text-button" onClick={() => { setName(account.name); setBio(account.bio); setEditing(true) }}><Pencil />编辑资料</button>}</header>
+  return <section className="contact-view account-profile"><header className="contact-header"><IconButton label="返回" className="mobile-back" onClick={() => navigate("contacts")}><ArrowLeft /></IconButton><span>账号资料</span>{own && <button className="text-button" onClick={event => { editButton.current = event.currentTarget; setName(account.name); setBio(account.bio); setEditing(true) }}><Pencil />编辑资料</button>}</header>
     <div className="contact-scroll"><div className="profile-cover" /><div className="profile-content"><div className="profile-intro"><Avatar contact={contactAvatar(account)} size="large" /><div><h1>{account.name}</h1><p>{account.kind === "ai" ? "AI" : "真人"} · {account.status === "active" ? "账号正常" : "账号已停用"}</p></div>{!own && <button className="social-button primary" disabled={account.status === "archived" && !direct} onClick={openDirect}><MessageCircle />发消息</button>}</div>
       {!own && <div className="profile-tabs"><button className={!memories ? "selected" : ""} onClick={() => navigate("contacts", account.id)}>资料</button><button className={memories ? "selected" : ""} onClick={() => navigate("contacts", account.id, false, true)}><Brain />意识与记忆</button></div>}
       {memories ? <ConsciousnessInfo conversation={direct} /> : <div className="profile-sections"><section><h2>公开简介</h2><p className="persona-text">{account.bio || "还没有填写简介"}</p></section><section><h2>账号 ID</h2><p className="account-id">{account.id}</p></section>{own ? <section><h2>我的 AI 角色</h2><p>管理你有权限管理的 AI 账号。</p><button className="social-button secondary" onClick={() => navigate("ai-management")}>AI 角色管理</button></section> : <ContactControls key={account.id} contact={account} entry={entry} />}</div>}
-    </div></div><Dialog open={editing} onOpenChange={setEditing}><DialogContent className="social-dialog"><DialogTitle>编辑公开资料</DialogTitle><DialogDescription>这些内容会显示在你的账号资料中。</DialogDescription>{state.error && <p role="alert" className="form-error">{state.error}</p>}<form className="social-form" onSubmit={event => void save(event)}><fieldset className="social-form-fields" disabled={busy}><label>名字<input required maxLength={40} value={name} onChange={e => setName(e.target.value)} /></label><label>公开简介<textarea rows={4} maxLength={1000} value={bio} onChange={e => setBio(e.target.value)} /></label><div className="dialog-actions"><button type="button" className="social-button secondary" onClick={() => setEditing(false)}>取消</button><button className="social-button primary">{busy ? "保存中…" : "保存资料"}</button></div></fieldset></form></DialogContent></Dialog>
+    </div></div><Dialog open={editing} onOpenChange={setEditing}><DialogContent className="social-dialog" onCloseAutoFocus={event => { event.preventDefault(); editButton.current?.focus() }}><DialogTitle>编辑公开资料</DialogTitle><DialogDescription>这些内容会显示在你的账号资料中。</DialogDescription>{state.error && <p role="alert" className="form-error">{state.error}</p>}<form className="social-form" onSubmit={event => void save(event)}><fieldset className="social-form-fields" disabled={busy}><label>名字<input required maxLength={40} value={name} onChange={e => setName(e.target.value)} /></label><label>公开简介<textarea rows={4} maxLength={1000} value={bio} onChange={e => setBio(e.target.value)} /></label><div className="dialog-actions"><button type="button" className="social-button secondary" onClick={() => setEditing(false)}>取消</button><button className="social-button primary">{busy ? "保存中…" : "保存资料"}</button></div></fieldset></form></DialogContent></Dialog>
   </section>
 }
 
@@ -105,6 +106,7 @@ export function AiManagement({ id }: { id: string | null }) {
   const state = useLiveSocialStore()
   const [managed, setManaged] = useState<ManagedAi[]>([])
   const [editing, setEditing] = useState<ManagedAi | "new" | null>(null)
+  const editButton = useRef<HTMLButtonElement | null>(null)
   const [loading, setLoading] = useState(true)
   const accountVersions = state.snapshot!.accounts.map(a => `${a.id}:${a.revision}`).join(",")
   const reload = async () => { setManaged(await socialClient.managedAccounts()) }
@@ -113,8 +115,56 @@ export function AiManagement({ id }: { id: string | null }) {
     void state.action(async () => { try { const result = await socialClient.managedAccounts(); if (current) setManaged(result) } catch (error) { if (current) setManaged([]); throw error } finally { if (current) setLoading(false) } })
     return () => { current = false }
   }, [accountVersions, state.action])
+  const accountList = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    accountList.current?.querySelector('button[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [id, loading])
   const selected = managed.find(m => m.account.id === id)
-  return <section className="account-management"><header className="contact-header"><button className="text-button" onClick={() => navigate("account")}><ArrowLeft />我的账号</button><strong>AI 角色管理</strong><button className="social-button primary" onClick={() => { state.dismissError(); setEditing("new") }}><Plus />创建 AI 账号</button></header><div className="management-scroll"><div className="managed-account-list">{managed.map(m => <button key={m.account.id} className={`contact-list-item ${id === m.account.id ? "selected" : ""}`} onClick={() => navigate("ai-management", m.account.id)}><Avatar contact={contactAvatar(m.account)} /><span><strong>{m.account.name}</strong><small>{m.account.status === "active" ? "账号正常" : "账号已停用"} · {m.isInitialAdministrator ? "初始管理员" : "管理员"}</small></span></button>)}</div>{selected ? <div className="profile-sections managed-account-details"><section><h1>{selected.account.name}</h1><div className="live-control-buttons"><button className="social-button secondary" onClick={() => navigate("contacts", selected.account.id)}>查看公开资料</button><button className="social-button secondary" onClick={() => { state.dismissError(); setEditing(selected) }}><Pencil />编辑设定与模型</button><button className="social-button primary" onClick={() => navigate("account-view", selected.account.id)}>登录 AI 账号查看</button></div><p className="form-note">以只读视角查看它的聊天与通讯录，实际操作者仍是你的账号。</p></section><section><h2>内部角色设定</h2><p className="persona-text">{selected.persona}</p></section><section><h2>回复模型</h2><p>{selected.binding ? `${selected.binding.providerId} / ${selected.binding.modelId}` : "尚未配置"}</p>{selected.binding?.reasoningEffort && <p>思考强度：{selected.binding.reasoningEffort}</p>}{selected.binding && <><p>温度：{selected.binding.temperature ?? "模型服务默认值"}</p><p>最大输出 token 数：{selected.binding.maxTokens ?? "意识系统自动分配"}</p></>}</section><AdministratorControls key={selected.account.id} managed={selected} reload={reload} /><AccountLifecycle key={selected.account.id} managed={selected} reload={reload} /></div> : <EmptyState title={loading ? "正在读取管理权限…" : id ? "没有这个账号的管理权限" : "你管理的 AI 账号"} description={loading ? "" : id ? "请重新选择，或联系它的初始管理员。" : "创建账号后，你会成为它的初始管理员。"}><button className="social-button secondary" onClick={() => void state.action(reload)}><RefreshCw />刷新列表</button></EmptyState>}</div><Dialog open={!!editing} onOpenChange={open => { if (!open) setEditing(null) }}><DialogContent className="social-dialog"><DialogTitle>{editing === "new" ? "创建 AI 账号" : "管理 AI 账号"}</DialogTitle><DialogDescription>公开资料和内部设定分别保存，管理权独立于联系人关系。</DialogDescription>{state.error && <p role="alert" className="form-error">{state.error}</p>}{editing && <AiEditor key={editing === "new" ? "new" : editing.account.id} managed={editing === "new" ? undefined : editing} models={state.snapshot!.models} done={accountId => navigate("ai-management", accountId)} close={() => setEditing(null)} />}</DialogContent></Dialog></section>
+  return <section className="account-management">
+    <header className="contact-header">
+      <button className="text-button" onClick={() => navigate("account")}><ArrowLeft />我的账号</button>
+      <strong>AI 角色管理</strong>
+      <button className="social-button primary" onClick={event => { editButton.current = event.currentTarget; state.dismissError(); setEditing("new") }}><Plus />创建 AI 账号</button>
+    </header>
+    <div className="management-scroll">
+      <nav ref={accountList} className="managed-account-list" aria-label="你管理的 AI 账号">
+        {managed.map(m => <button key={m.account.id} className={`contact-list-item ${id === m.account.id ? "selected" : ""}`} aria-current={id === m.account.id ? "page" : undefined} onClick={() => navigate("ai-management", m.account.id)}>
+          <Avatar contact={contactAvatar(m.account)} />
+          <span><strong>{m.account.name}</strong><small>{m.account.status === "active" ? "账号正常" : "账号已停用"} · {m.isInitialAdministrator ? "初始管理员" : "管理员"}</small></span>
+        </button>)}
+      </nav>
+      {selected ? <div className="profile-sections managed-account-details">
+        <section className="managed-account-heading">
+          <div className="managed-account-identity"><Avatar contact={contactAvatar(selected.account)} /><div><h1>{selected.account.name}</h1><p>{selected.account.status === "active" ? "账号正常" : "账号已停用"} · {selected.isInitialAdministrator ? "初始管理员" : "管理员"}</p></div></div>
+          <div className="live-control-buttons">
+            <button className="social-button secondary" onClick={() => navigate("contacts", selected.account.id)}>查看公开资料</button>
+            <button className="social-button secondary" onClick={event => { editButton.current = event.currentTarget; state.dismissError(); setEditing(selected) }}><Pencil />编辑设定与模型</button>
+            <button className="social-button primary" onClick={() => navigate("account-view", selected.account.id)}>登录 AI 账号查看</button>
+          </div>
+          <p className="form-note">以只读视角查看它的聊天与通讯录，实际操作者仍是你的账号。</p>
+        </section>
+        <section><h2>内部角色设定</h2><p className="persona-text">{selected.persona}</p></section>
+        <section><h2>回复模型</h2><dl className="execution-properties">
+          <div><dt>模型</dt><dd>{selected.binding ? `${selected.binding.providerId} / ${selected.binding.modelId}` : "尚未配置"}</dd></div>
+          {selected.binding && <>
+            <div><dt>思考强度</dt><dd>{selected.binding.reasoningEffort ?? "模型默认值"}</dd></div>
+            <div><dt>温度</dt><dd>{selected.binding.temperature ?? "模型服务默认值"}</dd></div>
+            <div><dt>最大输出 token 数</dt><dd>{selected.binding.maxTokens ?? "意识系统自动分配"}</dd></div>
+          </>}
+        </dl></section>
+        <AdministratorControls key={`administrators:${selected.account.id}`} managed={selected} reload={reload} />
+        <AccountLifecycle key={`lifecycle:${selected.account.id}`} managed={selected} reload={reload} />
+      </div> : <EmptyState title={loading ? "正在读取管理权限…" : id ? "没有这个账号的管理权限" : "你管理的 AI 账号"} description={loading ? "" : id ? "请重新选择，或联系它的初始管理员。" : "创建账号后，你会成为它的初始管理员。"}>
+        <button className="social-button secondary" onClick={() => void state.action(reload)}><RefreshCw />刷新列表</button>
+      </EmptyState>}
+    </div>
+    <Dialog open={!!editing} onOpenChange={open => { if (!open) setEditing(null) }}><DialogContent className="social-dialog" onCloseAutoFocus={event => { event.preventDefault(); editButton.current?.focus() }}>
+      <DialogTitle>{editing === "new" ? "创建 AI 账号" : "管理 AI 账号"}</DialogTitle>
+      <DialogDescription>公开资料和内部设定分别保存，管理权独立于联系人关系。</DialogDescription>
+      {state.error && <p role="alert" className="form-error">{state.error}</p>}
+      {editing && <AiEditor key={editing === "new" ? "new" : editing.account.id} managed={editing === "new" ? undefined : editing} models={state.snapshot!.models} done={accountId => navigate("ai-management", accountId)} close={() => setEditing(null)} />}
+    </DialogContent></Dialog>
+  </section>
 }
 
 export function AccountViewer({ id }: { id: string }) {

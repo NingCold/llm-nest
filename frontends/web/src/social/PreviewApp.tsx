@@ -85,7 +85,7 @@ export function PreviewApp() {
   const edit = (next: Editor) => { dismissError(); setEditor(next); setAddMenu(false) }
 
   return <div className="social-shell">
-    <div className={`social-main ${route.page === "settings" ? "is-hidden" : ""} ${route.id ? "has-selection" : ""}`}>
+    <div className={`social-main ${route.page === "settings" ? "is-hidden" : ""} ${route.id ? "has-selection" : ""} ${conversation ? "has-chat" : ""}`}>
       <nav className="social-rail" aria-label="主导航">
         <div className="rail-brand" title="LLM Nest"><BrandMark className="h-8 w-8" /></div>
         <div className="rail-nav"><button className={route.page === "messages" ? "selected" : ""} aria-current={route.page === "messages" ? "page" : undefined} onClick={() => navigate("messages", lastMessage.current)}><span><MessageCircle />{!!totalUnread && <i />}</span><small>消息</small></button><button className={route.page === "contacts" ? "selected" : ""} aria-current={route.page === "contacts" ? "page" : undefined} onClick={() => navigate("contacts", lastContact.current)}><Users /><small>通讯录</small></button></div>

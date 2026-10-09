@@ -41,6 +41,7 @@
 | [M1 实时 IPC 与桌面](social-refactor/m1-desktop-ipc.md) | 共用订阅、Channel 确认与恢复、共用社交 GUI、退出保存及双平台编译/测试 |
 | [M1 账号管理与联系人关系](social-refactor/m1-account-management.md) | 共同资料、管理授权与只读视角、关系移除、管理员停用及 v6 迁移 |
 | [M1 独立生成参数](social-refactor/m1-generation-parameters.md) | 管理员按 AI 保存温度与输出上限、协议约束、意识预算与双适配验证 |
+| [M1 共用界面现代化](social-refactor/m1-ui-modernization.md) | 中性双主题与蓝色、聊天/账号/设置布局、响应式与键盘检查 |
 | [M1 联系人生命周期](social-refactor/m1-contact-lifecycle.md) | 归档/恢复、移除默认归档、跨空间取消、历史与群身份保留及双适配验证 |
 | [M0 领域与存储基础](social-refactor/m0-implementation.md) | 中立类型、事务/锁、旧 JSON 导入和跨平台验证 |
 | [用户目录迁移与设置入口](home-directory-2026-09-16.md) | Windows/Linux 路径与迁移测试、目录入口、尚待点击确认的项目 |

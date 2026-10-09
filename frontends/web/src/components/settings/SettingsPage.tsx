@@ -45,25 +45,25 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
     </section>
   )
   return (
-    <div className="flex h-full min-h-0 w-full">
-      <aside className="flex w-48 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:w-56">
-        <div data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className="flex h-14 shrink-0 select-none items-center gap-2.5 px-5">
+    <div className="settings-layout flex h-full min-h-0 w-full">
+      <aside className="settings-sidebar flex w-48 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:w-56">
+        <div data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className="settings-brand flex h-14 shrink-0 select-none items-center gap-2.5 px-5">
           <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM Nest</span>
         </div>
-        <div className="px-3 py-4">
+        <div className="settings-back px-3 py-4">
           <button type="button" onClick={onBack ?? showChat} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowLeft className="h-4 w-4" />返回聊天
           </button>
         </div>
-        <p className="px-6 pb-2 text-xs font-medium text-sidebar-muted">设置</p>
-        <nav aria-label="设置分类" className="space-y-1 px-3">
+        <p className="settings-label px-6 pb-2 text-xs font-medium text-sidebar-muted">设置</p>
+        <nav aria-label="设置分类" className="settings-nav space-y-1 px-3">
           {visibleSections.map(({ id, label, icon: Icon }) => (
             <button key={id} type="button" aria-current={current.id === id ? "page" : undefined} onClick={() => showSettings(id)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", current.id === id ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
               <Icon className="h-4 w-4 shrink-0" />{label}
             </button>
           ))}
         </nav>
-        <div className="mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM Nest · {version || APP_VERSION}</div>
+        <div className="settings-footer mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM Nest · {version || APP_VERSION}</div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <header data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", CUSTOM_WINDOW_CHROME && "pr-[140px]")}>
@@ -71,10 +71,10 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
         </header>
         {notices}
         <div ref={scroll} className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-4xl px-6 py-8 lg:px-10">
+          <div className="settings-content mx-auto max-w-4xl px-6 py-8 lg:px-10">
             <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">{current.label}</h1>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{current.description}</p>
-            <div className="mt-7 rounded-xl border border-border bg-card p-5 sm:p-6">
+            <div className="settings-panel mt-7 rounded-xl border border-border bg-card p-5 sm:p-6">
               {panel("models", <ProviderManager />)}
               {panel("generation", <GenerationSettings />)}
               {panel("appearance", <div className="space-y-4">

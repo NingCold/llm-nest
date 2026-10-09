@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod id;
 pub mod identity;
 pub mod message;
+pub mod participation;
 pub mod run;
 
 pub use clock::*;
@@ -13,4 +14,5 @@ pub use conversation::*;
 pub use id::*;
 pub use identity::*;
 pub use message::*;
+pub use participation::*;
 pub use run::*;

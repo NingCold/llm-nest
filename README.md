@@ -14,11 +14,11 @@
   <a href="https://github.com/NingCold/llm-nest/issues">反馈问题</a>
 </p>
 
-LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已采用“消息”和“通讯录”，支持稳定 AI 联系人、独立模型配置和持续私聊；桌面、CLI/TUI 暂时保留原有 Harness 入口，共用 Rust 运行时和模型协议能力。
+LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已采用“消息”和“通讯录”，支持稳定 AI 联系人、独立模型配置和持续私聊、独立群聊；桌面、CLI/TUI 暂时保留原有 Harness 入口，共用 Rust 运行时和模型协议能力。
 
 **当前处于开发预览阶段。** 聊天、设置、持久化和内置工具循环已经落地；通用编码代理、MCP、知识库和工作流编排尚未实现。
 
-**M1 首批真实私聊已接通。** 创建 AI 后始终使用同一个长期私聊，完整历史保存在 SQLite；基础意识系统（Consciousness）为每次回复准备角色设定和本窗口近期记录。未配置模型仍可保存真人消息，AI 生成期间可以继续输入。群聊参与、完整修订/交谈控制、摘要、长期记忆和群话题接续按后续批次实现。[实现与验证](docs/social-refactor/m1-private-chat.md)区分当前能力与待办；[独立模拟预览](#社交-web-交互预览)继续用于完整交互探索。目标结构见 [总纲](docs/social-refactor/README.md)，进度见 [TODO](docs/social-refactor/TODO.md)，下表描述保留的 Harness 功能。
+**M1 真实私聊与群聊批次已接通。** 每个 AI 与你保持唯一长期私聊，每个群有独立窗口和完整 SQLite 历史。群内通过 @ 选择或回复 AI 安排接话，多个 AI 按持久队列回复，各自使用原有身份和模型。意识系统（Consciousness）准备当前空间中目标 AI 有权看到的近期上下文；未配置模型仍可保存真人消息，生成期间可继续输入。成员加入时可选择历史范围，重启保留中断片段并继续尚未开始的计划。完整修订/交谈控制、摘要、长期记忆和群话题接续待后续。[私聊](docs/social-refactor/m1-private-chat.md)与[群聊实现记录](docs/social-refactor/m1-group-chat.md)说明实际范围；[独立模拟预览](#社交-web-交互预览)继续保留。目标见 [总纲](docs/social-refactor/README.md)，进度见 [TODO](docs/social-refactor/TODO.md)，下表描述保留的 Harness 功能。
 
 ## 为什么做 LLM Nest
 

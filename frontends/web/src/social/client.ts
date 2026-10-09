@@ -1,4 +1,4 @@
-import type { Binding, Change, Contact, LiveEvent, MessagePage, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
+import type { Binding, Change, Contact, Conversation, LiveEvent, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const headers = new Headers({ "X-LLMN-Client": "1" })
@@ -12,6 +12,9 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient = {
+  createGroup: (input: { requestId: string; title: string; memberIds: string[] }) => request<string>("/groups", "POST", input),
+  changeMembership: (id: string, input: { requestId: string; actorId: string; expectedRevision: string; history: "from_now" | "all" | null }) => request<Conversation>(`/conversations/${id}/members`, "POST", input),
+  plans: (id: string) => request<ParticipationPlan[]>(`/conversations/${id}/plans`),
   init: () => request<Snapshot>("/init"),
   createContact: (input: { requestId: string; name: string; persona: string; binding: Binding | null }) => request<Contact>("/contacts", "POST", input),
   updateContact: (id: string, input: { requestId: string; name: string; persona: string; binding: Binding | null; expectedRevision: string }) => request<Contact>(`/contacts/${id}`, "PATCH", input),

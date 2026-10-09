@@ -23,6 +23,12 @@ pub fn routes() -> Router<Arc<AppState>> {
             axum::routing::patch(update_contact),
         )
         .route("/api/social/contacts/{id}/direct", post(open_direct))
+        .route("/api/social/groups", post(create_group))
+        .route(
+            "/api/social/conversations/{id}/members",
+            post(change_membership),
+        )
+        .route("/api/social/conversations/{id}/plans", get(plans))
         .route("/api/social/conversations/{id}", get(conversation))
         .route(
             "/api/social/conversations/{id}/messages",
@@ -55,6 +61,25 @@ impl IntoResponse for ApiError {
     }
 }
 type Result<T> = std::result::Result<Json<T>, ApiError>;
+async fn create_group(
+    State(s): State<Arc<AppState>>,
+    Json(input): Json<wire::CreateGroupInput>,
+) -> Result<ConversationId> {
+    Ok(Json(s.social.create_group(input).await?))
+}
+async fn change_membership(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ConversationId>,
+    Json(input): Json<wire::MembershipInput>,
+) -> Result<wire::Conversation> {
+    Ok(Json(s.social.change_membership(id, input).await?))
+}
+async fn plans(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<ConversationId>,
+) -> Result<Vec<wire::Plan>> {
+    Ok(Json(s.social.plans(id).await?))
+}
 async fn init(State(s): State<Arc<AppState>>) -> Result<wire::Init> {
     Ok(Json(s.social.init().await?))
 }

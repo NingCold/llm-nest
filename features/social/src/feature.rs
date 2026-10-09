@@ -201,89 +201,136 @@ impl SocialFeature {
         if self.stop.is_cancelled() {
             return Err(SocialError::Unavailable);
         }
-        let record = s.resources.store.conversation_record(s.human, id).await?;
-        let c = record.conversation;
-        if c.kind != ConversationKind::Direct {
-            return Err(SocialError::Invalid(
-                "本批次先开放长期私聊，群聊将在下一批接入".into(),
-            ));
-        }
-        let ai = record
-            .members
-            .iter()
-            .find(|m| m.actor_id != s.human)
-            .expect("direct has its AI member")
-            .actor_id;
-        let contact = s.resources.store.contact(s.human, ai).await?;
-        let binding = contact.binding.map(|b| wire::Binding {
-            provider_id: b.provider_id,
-            model_id: b.model_id,
-            reasoning_effort: b.reasoning_effort,
-        });
-        let availability = self.validate_binding(&binding).await;
-        let message = s
+        let saved = s
             .resources
             .store
-            .append_message(
+            .send_message(
                 self.context(input.request_id)?,
-                AppendMessage {
+                SendMessage {
                     conversation_id: id,
                     body: MessageBody::text(input.text),
                     reply_to: input.reply_to,
-                    expected_revision: None,
+                    mentions: input.mentions,
                 },
             )
             .await?;
-        let execution_notice = if c.paused {
+        let record = s.resources.store.conversation_record(s.human, id).await?;
+        let mut execution_notice = if record.conversation.paused {
             Some(RunFailure {
                 code: "paused".into(),
                 message: "消息已保存，AI 当前暂停接话".into(),
             })
-        } else if binding.is_none() {
-            Some(RunFailure {
-                code: "model_unavailable".into(),
-                message: "消息已保存，请在联系人资料中配置模型".into(),
-            })
-        } else if let Err(error) = availability {
-            let error = error.wire();
-            Some(RunFailure {
-                code: error.code.into(),
-                message: format!("消息已保存；{}", error.message),
-            })
         } else {
             None
         };
-        if execution_notice.is_none() {
-            let feature = self.clone();
-            let trigger = message.id;
-            let execution_locks = locks.clone();
-            self.tasks.spawn(async move {
-                if let Err(error) = feature
-                    .execute_message(id, ai, trigger, execution_locks)
-                    .await
-                {
-                    let wire_error = error.wire();
-                    let _ = feature.live.send(wire::LiveEvent::Notice {
-                        conversation_id: id,
-                        error: RunFailure {
-                            code: wire_error.code.into(),
-                            message: wire_error.message,
-                        },
-                    });
-                    if matches!(error, SocialError::Storage(_)) {
-                        feature
-                            .background_failures
-                            .lock()
-                            .expect("background failures")
-                            .push(error);
-                    }
-                }
+        for plan in &saved.plans {
+            let contact = s.resources.store.contact(s.human, plan.actor_id).await?;
+            let binding = contact.binding.map(|b| wire::Binding {
+                provider_id: b.provider_id,
+                model_id: b.model_id,
+                reasoning_effort: b.reasoning_effort,
             });
+            if binding.is_none() {
+                execution_notice = Some(RunFailure {
+                    code: "model_unavailable".into(),
+                    message: format!("消息已保存；请为 {} 配置模型", contact.actor.display_name),
+                });
+                break;
+            }
+            if let Err(error) = self.validate_binding(&binding).await {
+                let error = error.wire();
+                execution_notice = Some(RunFailure {
+                    code: error.code.into(),
+                    message: format!("消息已保存；{}", error.message),
+                });
+                break;
+            }
         }
+        self.schedule_queue(id);
         Ok(wire::SendReceipt {
-            message: message.into(),
+            message: saved.message.into(),
             execution_notice,
         })
+    }
+    pub(crate) fn schedule_queue(self: &Arc<Self>, id: ConversationId) {
+        let feature = self.clone();
+        let locks = self.conversation_locks(id);
+        self.tasks.spawn(async move {
+            if let Err(error) = feature.drain_queue(id, locks).await {
+                let wire_error = error.wire();
+                let _ = feature.live.send(wire::LiveEvent::Notice {
+                    conversation_id: id,
+                    error: RunFailure {
+                        code: wire_error.code.into(),
+                        message: wire_error.message,
+                    },
+                });
+                if matches!(error, SocialError::Storage(_)) {
+                    feature
+                        .background_failures
+                        .lock()
+                        .expect("background failures")
+                        .push(error);
+                }
+            }
+        });
+    }
+    pub async fn create_group(&self, input: wire::CreateGroupInput) -> Result<ConversationId> {
+        Ok(self
+            .services()?
+            .resources
+            .store
+            .create_group(
+                self.context(input.request_id)?,
+                input.title,
+                input.member_ids,
+            )
+            .await?
+            .id)
+    }
+    pub async fn change_membership(
+        self: &Arc<Self>,
+        id: ConversationId,
+        input: wire::MembershipInput,
+    ) -> Result<wire::Conversation> {
+        let s = self.services()?;
+        let locks = self.conversation_locks(id);
+        let _mutation = locks.mutation.lock().await;
+        let active = s
+            .resources
+            .store
+            .conversation_record(s.human, id)
+            .await?
+            .active_run;
+        s.resources
+            .store
+            .change_membership(
+                self.context(input.request_id)?,
+                ChangeMembership {
+                    conversation_id: id,
+                    actor_id: input.actor_id,
+                    expected_revision: input.expected_revision,
+                    history: input.history,
+                },
+            )
+            .await?;
+        if let Some(run) = active
+            && let Some(cancel) = self.cancellations.lock().await.get(&run.id)
+        {
+            cancel.cancel();
+        }
+        self.schedule_queue(id);
+        self.conversation(id).await
+    }
+    pub async fn plans(&self, id: ConversationId) -> Result<Vec<wire::Plan>> {
+        let s = self.services()?;
+        Ok(s.resources
+            .store
+            .plans(s.human, id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
     pub async fn cancel_run(&self, id: RunId) -> Result<()> {
         let s = self.services()?;
@@ -342,6 +389,16 @@ impl Feature for SocialFeature {
                         "SocialFeature already initialized".into(),
                     )
                 })?;
+            for id in self
+                .services()
+                .expect("initialized")
+                .resources
+                .store
+                .queued_conversations(human.id)
+                .await?
+            {
+                self.schedule_queue(id);
+            }
             Ok(())
         })
     }

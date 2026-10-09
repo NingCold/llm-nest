@@ -42,11 +42,13 @@ impl Db<'_> {
             )?
             .into_iter()
             .next();
+        let pending_plans = self.query_json("SELECT payload FROM participation_plans WHERE conversation_id=?1 AND status IN ('queued','running') ORDER BY trigger_sequence,ordinal", [conversation.id.to_string()])?;
         Ok(ConversationRecord {
             conversation,
             members,
             latest_message,
             active_run,
+            pending_plans,
         })
     }
 
@@ -105,6 +107,20 @@ impl Db<'_> {
             ));
         }
         messages.reverse();
+        if let Some(id) = trigger.reply_to {
+            let quoted: SocialMessage = self.get("messages", id)?;
+            if quoted.status == MessageStatus::Committed
+                && quoted.sequence >= visible_from
+                && !messages.iter().any(|m| m.id == id)
+            {
+                messages.push(quoted);
+                messages.sort_by_key(|m| m.sequence);
+            }
+        }
+        // Later responders also see committed answers to this same trigger, never future human input.
+        let answers = self.query_json("SELECT m.payload FROM messages m JOIN ai_runs r ON r.id=m.run_id JOIN participation_plans p ON p.run_id=r.id WHERE p.trigger_id=?1 AND m.status='committed' ORDER BY m.sequence", [trigger.id.to_string()])?;
+        messages.extend(answers);
+
         let relationship_revision = conversation
             .relationship_id
             .map(|id| {
@@ -113,11 +129,13 @@ impl Db<'_> {
             })
             .transpose()?;
         Ok(ContextMaterial {
+            participant_names: self.query_json::<Actor>("SELECT a.payload FROM actors a JOIN memberships m ON m.actor_id=a.id WHERE m.conversation_id=?1 AND m.status='active' ORDER BY a.id", [conversation.id.to_string()])?.into_iter().map(|a|a.display_name).collect(),
             contact: self.contact_record(scope.actor_id)?,
             conversation,
             members: vec![human, ai],
             relationship_revision,
             messages,
+            trigger_id: trigger.id,
         })
     }
 

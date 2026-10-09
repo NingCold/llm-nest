@@ -383,6 +383,7 @@ pub(super) fn import(
                         id,
                         run_id: None,
                         reply_to: None,
+                        mentions: vec![],
                     },
                 )?;
                 if let Some(time) = message

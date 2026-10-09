@@ -4,6 +4,36 @@ use social::{ActorId, ConversationId, EventCursor, RunId, Sequence};
 use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
+#[tauri::command]
+pub async fn social_create_group(
+    state: tauri::State<'_, BackendState>,
+    input: wire::CreateGroupInput,
+) -> Result<ConversationId> {
+    feature(state)
+        .await?
+        .create_group(input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_change_membership(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::MembershipInput,
+) -> Result<wire::Conversation> {
+    feature(state)
+        .await?
+        .change_membership(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_plans(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+) -> Result<Vec<wire::Plan>> {
+    feature(state).await?.plans(id).await.map_err(|e| e.wire())
+}
 async fn feature(
     state: tauri::State<'_, BackendState>,
 ) -> Result<std::sync::Arc<social_feature::SocialFeature>> {

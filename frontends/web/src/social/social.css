@@ -363,3 +363,31 @@
 @media (prefers-reduced-motion: reduce) {
   .social-shell *, .social-dialog * { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
 }
+
+/* Real group controls share the social theme and keep the composer compact. */
+.live-list-actions { display:flex; gap:2px; }
+.live-contact-choices { display:grid; gap:8px; max-height:220px; overflow:auto; }
+.live-contact-choices label { display:flex; align-items:center; gap:10px; padding:6px; cursor:pointer; }
+.live-contact-choices input[type=checkbox] { width:16px; height:16px; flex-shrink:0; accent-color:var(--s-accent); }
+.live-contact-choices small { display:block; opacity:.65; font-size:11px; }
+.live-mention-choices { margin-bottom:8px; font-size:12px; }
+.live-mention-choices summary { cursor:pointer; padding:3px 0; }
+.live-mention-choices[open] { max-height:220px; overflow:auto; }
+.live-mention-choices p { margin:8px 0; opacity:.65; font-size:11px; }
+.live-queue { font-size:12px; margin-bottom:8px; overflow-wrap:anywhere; }
+.live-quote, .live-reply-target { padding:6px 9px; font-size:12px; background:var(--s-hover); border-radius:6px; opacity:.8; }
+.live-reply-target { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.live-quote { margin-bottom:5px; }
+.live-message-mentions { font-size:12px; margin:4px 0; color:var(--s-accent); }
+.live-reply { display:inline-flex; gap:4px; align-items:center; font-size:11px; opacity:.65; margin-top:5px; }
+.live-reply svg { width:13px; height:13px; }
+.live-group-members { margin:20px 0; }
+.live-group-members h3 { font-size:13px; margin-bottom:12px; }
+.live-member-row { display:flex; gap:10px; align-items:center; margin:12px 0; }
+.live-member-row > button:first-child { display:flex; flex:1; align-items:center; gap:10px; text-align:left; }
+.live-member-row small { display:block; font-size:11px; opacity:.6; margin-top:3px; }
+.live-remove-member svg { width:15px; height:15px; }
+.live-plan-history { font-size:12px; margin-top:22px; }
+.live-plan-history summary { cursor:pointer; }
+.live-plan-history p { margin-top:10px; }
+.live-plan-history small { display:block; opacity:.7; }

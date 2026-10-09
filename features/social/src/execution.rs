@@ -13,26 +13,69 @@ use storage::social::{BeginRun, FinishRun, RunDetails, RunFailure, SocialStorage
 use tokio_util::sync::CancellationToken;
 
 impl SocialFeature {
-    pub(crate) async fn execute_message(
+    pub(crate) async fn drain_queue(
         self: &Arc<Self>,
         conversation_id: ConversationId,
-        actor_id: ActorId,
-        trigger: MessageId,
         locks: ConversationLocks,
     ) -> Result<()> {
         let _execution = tokio::select! { biased; _=self.stop.cancelled()=>return Ok(()), guard=locks.execution.lock()=>guard };
         let s = self.services()?;
-        let (run, client, request, details, cancel) = {
-            let _mutation = locks.mutation.lock().await;
-            // A retry acknowledges the same message; an existing run is never dispatched again.
-            if s.resources
-                .store
-                .run_for_trigger(s.human, trigger)
-                .await?
-                .is_some()
-            {
+        loop {
+            if self.stop.is_cancelled() {
                 return Ok(());
             }
+            let Some(plan) = s
+                .resources
+                .store
+                .next_plan(s.human, conversation_id)
+                .await?
+            else {
+                return Ok(());
+            };
+            match self.execute_plan(&plan, &locks).await {
+                Ok(()) => {}
+                Err(error) => {
+                    if matches!(
+                        error,
+                        SocialError::Storage(
+                            SocialStorageError::Sqlite { .. }
+                                | SocialStorageError::Io { .. }
+                                | SocialStorageError::Json(_)
+                                | SocialStorageError::Counter(_)
+                                | SocialStorageError::Schema { .. }
+                                | SocialStorageError::Legacy { .. }
+                                | SocialStorageError::WorkerClosed
+                        )
+                    ) {
+                        return Err(error);
+                    }
+                    let failure = error.wire();
+                    s.resources
+                        .store
+                        .fail_plan(s.human, plan.id, failure.message.clone())
+                        .await?;
+                    let _ = self.live.send(wire::LiveEvent::Notice {
+                        conversation_id,
+                        error: RunFailure {
+                            code: failure.code.into(),
+                            message: failure.message,
+                        },
+                    });
+                }
+            }
+        }
+    }
+    async fn execute_plan(
+        self: &Arc<Self>,
+        plan: &ParticipationPlan,
+        locks: &ConversationLocks,
+    ) -> Result<()> {
+        let conversation_id = plan.conversation_id;
+        let actor_id = plan.actor_id;
+        let trigger = plan.trigger_id;
+        let s = self.services()?;
+        let (run, client, request, details, cancel) = {
+            let _mutation = locks.mutation.lock().await;
             if self.stop.is_cancelled() {
                 return Ok(());
             }
@@ -48,9 +91,6 @@ impl SocialFeature {
                     trigger,
                 )
                 .await?;
-            if material.conversation.paused {
-                return Ok(());
-            }
             let binding = material
                 .contact
                 .binding
@@ -81,13 +121,9 @@ impl SocialFeature {
             let run = s
                 .resources
                 .store
-                .begin_run(
-                    self.context(
-                        trigger
-                            .to_string()
-                            .parse()
-                            .expect("UUID trigger is a command ID"),
-                    )?,
+                .begin_plan(
+                    s.human,
+                    plan.id,
                     BeginRun {
                         snapshot: prepared.snapshot,
                         expected_revision: prepared.expected_revision,
@@ -155,7 +191,11 @@ impl SocialFeature {
                 _=self.stop.cancelled()=>break RunStatus::Interrupted,
                 _=cancel.cancelled()=>break RunStatus::Cancelled,
                 _=checkpoint.tick(), if dirty => {
-                    s.resources.store.checkpoint_run(s.human,run.id,MessageBody::text(&text),Some(details.clone())).await?;
+                    match s.resources.store.checkpoint_run(s.human,run.id,MessageBody::text(&text),Some(details.clone())).await {
+                        Ok(())=>{},
+                        Err(SocialStorageError::Conflict(_)) if s.resources.store.run(s.human,run.id).await?.status.is_terminal()=>return Ok(()),
+                        Err(error)=>return Err(error.into()),
+                    }
                     dirty=false;
                 }
                 chunk=stream.next()=>match chunk {
@@ -212,10 +252,16 @@ impl SocialFeature {
             .await;
         match result {
             Ok(_) => Ok(()),
-            Err(SocialStorageError::Conflict(_)) if status == RunStatus::Succeeded => {
+            Err(SocialStorageError::Conflict(_)) => {
                 let current = s.resources.store.run(s.human, run.id).await?;
                 if current.status.is_terminal() {
                     return Ok(());
+                }
+                if status != RunStatus::Succeeded {
+                    return Err(SocialStorageError::Conflict(
+                        "run changed before termination".into(),
+                    )
+                    .into());
                 }
                 details.error = Some(failure(
                     "context_changed",

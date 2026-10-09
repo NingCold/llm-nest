@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [API 与事件](07-api-and-events.md)
 
-状态：完整目标设计；M0 已实现 SQLite 基础、共享目录锁、原子操作、备份与只读旧记录导入；M1 首批新增 v2 run_details 迁移、联系人修改和上下文/分页读取，GUI 宿主已启用 SQLite。下述完整首版表按后续里程碑扩展，当前范围见 [M0](m0-implementation.md) 与 [M1 私聊](m1-private-chat.md)。
+状态：完整目标设计；M0 已实现 SQLite 基础、共享目录锁、原子操作、备份和旧记录导入；M1 已接入 GUI 宿主、v2 run_details 与 v3 participation_plans 迁移、上下文/分页读取及成员历史授权。完整首版表继续按里程碑扩展，实际范围见 [M0](m0-implementation.md)、[私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 1. 存储布局与锁
 

@@ -33,6 +33,32 @@ pub struct AppendMessage {
     pub expected_revision: Option<Revision>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMessage {
+    pub conversation_id: ConversationId,
+    pub body: MessageBody,
+    pub reply_to: Option<MessageId>,
+    pub mentions: Vec<ActorId>,
+}
+#[derive(Debug, Clone)]
+pub struct SavedMessage {
+    pub message: SocialMessage,
+    pub plans: Vec<ParticipationPlan>,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryVisibility {
+    FromNow,
+    All,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeMembership {
+    pub conversation_id: ConversationId,
+    pub actor_id: ActorId,
+    pub expected_revision: Revision,
+    /// None removes the member; rejoining grants a new visibility interval.
+    pub history: Option<HistoryVisibility>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMessage {
     pub message_id: MessageId,
     pub body: MessageBody,
@@ -75,6 +101,7 @@ pub struct ConversationRecord {
     pub members: Vec<Membership>,
     pub latest_message: Option<SocialMessage>,
     pub active_run: Option<AiRun>,
+    pub pending_plans: Vec<ParticipationPlan>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,8 +118,11 @@ pub struct ContextMaterial {
     pub conversation: Conversation,
     pub members: Vec<Membership>,
     pub relationship_revision: Option<Revision>,
-    /// Most recent committed messages, in chronological order, through the trigger.
+    /// Current public roster; other members' private profiles are not context.
+    pub participant_names: Vec<String>,
+    /// Recent committed history through the trigger, followed by completed answers to it.
     pub messages: Vec<SocialMessage>,
+    pub trigger_id: MessageId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +153,42 @@ pub use events::SocialFailure as RunFailure;
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn send_message(
+        &self,
+        ctx: CommandContext,
+        input: SendMessage,
+    ) -> SocialStorageResult<SavedMessage>;
+    async fn change_membership(
+        &self,
+        ctx: CommandContext,
+        input: ChangeMembership,
+    ) -> SocialStorageResult<Conversation>;
+    async fn plans(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> SocialStorageResult<Vec<ParticipationPlan>>;
+    async fn next_plan(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> SocialStorageResult<Option<ParticipationPlan>>;
+    async fn queued_conversations(
+        &self,
+        operator: ActorId,
+    ) -> SocialStorageResult<Vec<ConversationId>>;
+    async fn begin_plan(
+        &self,
+        operator: ActorId,
+        plan: PlanId,
+        input: BeginRun,
+    ) -> SocialStorageResult<AiRun>;
+    async fn fail_plan(
+        &self,
+        operator: ActorId,
+        plan: PlanId,
+        failure: String,
+    ) -> SocialStorageResult<()>;
     async fn local_human(&self, initial_name: String) -> SocialStorageResult<Actor>;
     async fn actor(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<Actor>;
     async fn overview(&self, operator: ActorId) -> SocialStorageResult<SocialOverview>;

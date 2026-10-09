@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [意识系统](03-consciousness.md) · [参与与调度](04-participation-and-scheduling.md)
 
-状态：完整目标设计；M1 首批已接通独立私聊 AiRun、同一配置快照的模型调用、正文/思考检查点、原子终态与恢复。首批不声明工具，收到工具调用返回 tool_not_allowed；群聊计划、工具循环和完整控制竞争继续后续实现。当前范围见 [M1 私聊说明](m1-private-chat.md)。
+状态：完整目标设计；M1 已接通私聊/群聊持久计划和独立 AiRun、同一配置快照调用、正文/思考检查点、原子终态与恢复。当前不声明工具，收到工具调用返回 tool_not_allowed；工具循环及完整控制竞争待后续，当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 1. 保留的运行能力
 

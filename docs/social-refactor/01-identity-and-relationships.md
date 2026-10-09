@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [运行时与配置](09-runtime-and-configuration.md)
 
-状态：完整目标设计；M1 首批已实现联系人创建/修改、独立执行绑定与严格模型校验。归档/删除、参与设置等仍待后续，当前范围见 [M1 私聊说明](m1-private-chat.md)。
+状态：完整目标设计；M1 已实现联系人创建/修改、独立执行绑定、严格模型校验与群成员历史授权。归档/删除、参与设置等仍待后续，当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 1. 职责与落点
 

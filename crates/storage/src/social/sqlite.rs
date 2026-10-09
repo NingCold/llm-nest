@@ -160,6 +160,7 @@ pub(super) struct NewMessage {
     pub id: MessageId,
     pub run_id: Option<RunId>,
     pub reply_to: Option<MessageId>,
+    pub mentions: Vec<ActorId>,
 }
 impl Db<'_> {
     pub fn execute(&self, sql: &str, args: impl rusqlite::Params) -> Result<usize> {
@@ -219,13 +220,13 @@ impl Db<'_> {
         self.query_json::<Membership>("SELECT payload FROM memberships WHERE actor_id=?1 AND conversation_id=?2 AND status='active'",params![actor.to_string(),conversation.to_string()])?
             .into_iter().next().ok_or_else(||Error::Forbidden(format!("not an active member of {conversation}")))
     }
-    fn writable(&self, conversation: &Conversation) -> Result<()> {
+    pub(super) fn writable(&self, conversation: &Conversation) -> Result<()> {
         if conversation.legacy || conversation.status != EntityStatus::Active {
             return Err(Error::Invalid("conversation is read-only".into()));
         }
         Ok(())
     }
-    fn expected(&self, actual: Revision, expected: Revision) -> Result<()> {
+    pub(super) fn expected(&self, actual: Revision, expected: Revision) -> Result<()> {
         if actual != expected {
             return Err(Error::Conflict(format!(
                 "revision is {actual}, expected {expected}"
@@ -233,7 +234,7 @@ impl Db<'_> {
         }
         Ok(())
     }
-    fn receipt(
+    pub(super) fn receipt(
         &self,
         ctx: &CommandContext,
         kind: &str,
@@ -251,7 +252,7 @@ impl Db<'_> {
         }
         Ok(None)
     }
-    fn save_receipt(
+    pub(super) fn save_receipt(
         &self,
         ctx: &CommandContext,
         kind: &str,
@@ -419,6 +420,7 @@ impl Db<'_> {
             id,
             run_id,
             reply_to,
+            mentions,
         } = input;
         c.last_sequence = c.last_sequence.next()?;
         c.revision = c.revision.next()?;
@@ -430,6 +432,7 @@ impl Db<'_> {
             sequence: c.last_sequence,
             body,
             reply_to,
+            mentions,
             run_id,
             status,
             revision: Revision::ONE,
@@ -469,7 +472,7 @@ impl Db<'_> {
         )?;
         Ok(())
     }
-    fn update_message(&self, m: &SocialMessage, author: ActorId) -> Result<()> {
+    pub(super) fn update_message(&self, m: &SocialMessage, author: ActorId) -> Result<()> {
         self.execute(
             "UPDATE messages SET revision=?2,status=?3,payload=?4 WHERE id=?1",
             params![
@@ -486,7 +489,7 @@ impl Db<'_> {
             revision: m.revision,
         })
     }
-    fn save_run(&self, run: &AiRun) -> Result<()> {
+    pub(super) fn save_run(&self, run: &AiRun) -> Result<()> {
         self.execute(
             "UPDATE ai_runs SET status=?2,payload=?3 WHERE id=?1",
             params![
@@ -501,7 +504,7 @@ impl Db<'_> {
             revision: run.revision,
         })
     }
-    fn terminate(
+    pub(super) fn terminate(
         &self,
         mut run: AiRun,
         status: RunStatus,
@@ -521,9 +524,10 @@ impl Db<'_> {
         run.status = status;
         run.revision = run.revision.next()?;
         self.save_run(&run)?;
+        self.finish_plan_for_run(&run)?;
         Ok(run)
     }
-    fn cancel_runs(&self, id: ConversationId, status: RunStatus) -> Result<()> {
+    pub(super) fn cancel_runs(&self, id: ConversationId, status: RunStatus) -> Result<()> {
         for run in self.query_json::<AiRun>(
             "SELECT payload FROM ai_runs WHERE conversation_id=?1 AND status='running'",
             [id.to_string()],
@@ -540,7 +544,95 @@ impl Db<'_> {
         }
         Ok(())
     }
-    fn validate_snapshot(&self, snapshot: &ContextSnapshot, operator: ActorId) -> Result<()> {
+    pub(super) fn start_run(
+        &self,
+        operator: ActorId,
+        input: BeginRun,
+        reply_to: Option<MessageId>,
+    ) -> Result<AiRun> {
+        self.validate_snapshot(&input.snapshot, operator)?;
+        let mut c: Conversation =
+            self.get("conversations", input.snapshot.scope.conversation_id)?;
+        self.expected(c.revision, input.expected_revision)?;
+        let bout: Bout = match self
+            .query_json(
+                "SELECT payload FROM bouts WHERE conversation_id=?1 AND status='open'",
+                [c.id.to_string()],
+            )?
+            .into_iter()
+            .next()
+        {
+            Some(b) => b,
+            None => {
+                let b = Bout {
+                    id: BoutId::new(),
+                    conversation_id: c.id,
+                    status: BoutStatus::Open,
+                    revision: Revision::ONE,
+                };
+                self.execute(
+                    "INSERT INTO bouts VALUES(?1,?2,'open',?3)",
+                    params![
+                        b.id.to_string(),
+                        c.id.to_string(),
+                        serde_json::to_string(&b)?
+                    ],
+                )?;
+                self.event(SocialChange::BoutChanged {
+                    conversation_id: c.id,
+                    bout_id: b.id,
+                    revision: b.revision,
+                })?;
+                b
+            }
+        };
+        let id = RunId::new();
+        let ai: Actor = self.get("actors", input.snapshot.scope.actor_id)?;
+        let m = self.allocate_message(
+            &mut c,
+            &ai,
+            NewMessage {
+                body: MessageBody::default(),
+                status: MessageStatus::Generating,
+                id: MessageId::new(),
+                run_id: Some(id),
+                reply_to,
+                mentions: vec![],
+            },
+        )?;
+        let run = AiRun {
+            id,
+            message_id: m.id,
+            bout_id: bout.id,
+            status: RunStatus::Running,
+            revision: Revision::ONE,
+            snapshot: input.snapshot,
+        };
+        self.execute(
+            "INSERT INTO ai_runs VALUES(?1,?2,?3,?4,'running',?5)",
+            params![
+                id.to_string(),
+                c.id.to_string(),
+                m.id.to_string(),
+                bout.id.to_string(),
+                serde_json::to_string(&run)?
+            ],
+        )?;
+        if let Some(details) = &input.details {
+            self.save_details(id, details)?;
+        }
+        self.event(SocialChange::RunChanged {
+            conversation_id: c.id,
+            run_id: id,
+            revision: run.revision,
+        })?;
+        Ok(run)
+    }
+    pub(super) fn validate_snapshot(
+        &self,
+        snapshot: &ContextSnapshot,
+        operator: ActorId,
+    ) -> Result<()> {
         let scope = snapshot.scope;
         let ai: Actor = self.get("actors", scope.actor_id)?;
         if ai.kind != ActorKind::Ai || ai.status != EntityStatus::Active {
@@ -651,7 +743,7 @@ fn validate_text(value: &str, max: usize, field: &str) -> Result<()> {
     }
     Ok(())
 }
-fn validate_body(body: &MessageBody) -> Result<()> {
+pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
     if body.is_empty() || serde_json::to_vec(body)?.len() > 8 * 1024 * 1024 {
         return Err(Error::Invalid("empty or oversized message".into()));
     }
@@ -660,6 +752,70 @@ fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn send_message(&self, ctx: CommandContext, input: SendMessage) -> Result<SavedMessage> {
+        self.call(move |w| w.transact(|db| db.send_message(&ctx, &input)))
+            .await
+    }
+    async fn change_membership(
+        &self,
+        ctx: CommandContext,
+        input: ChangeMembership,
+    ) -> Result<Conversation> {
+        self.call(move |w| w.transact(|db| db.change_membership(&ctx, &input)))
+            .await
+    }
+    async fn plans(&self, operator: ActorId, id: ConversationId) -> Result<Vec<ParticipationPlan>> {
+        self.call(move |w| w.read(|db| { db.operator(operator)?; db.member(operator, id)?;
+            db.query_json("SELECT payload FROM participation_plans WHERE conversation_id=?1 ORDER BY trigger_sequence DESC,ordinal DESC LIMIT 200", [id.to_string()])
+        })).await
+    }
+    async fn next_plan(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> Result<Option<ParticipationPlan>> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.operator(operator)?;
+                db.member(operator, id)?;
+                db.next_plan(id)
+            })
+        })
+        .await
+    }
+    async fn queued_conversations(&self, operator: ActorId) -> Result<Vec<ConversationId>> {
+        self.call(move |w| w.read(|db| {
+            db.operator(operator)?;
+            let rows:Vec<Conversation> = db.query_json("SELECT c.payload FROM conversations c WHERE EXISTS(SELECT 1 FROM participation_plans p WHERE p.conversation_id=c.id AND p.status='queued') AND EXISTS(SELECT 1 FROM memberships m WHERE m.conversation_id=c.id AND m.actor_id=?1 AND m.status='active')", [operator.to_string()])?;
+            Ok(rows.into_iter().map(|c| c.id).collect())
+        })).await
+    }
+    async fn begin_plan(&self, operator: ActorId, plan: PlanId, input: BeginRun) -> Result<AiRun> {
+        self.call(move |w| w.transact(|db| db.begin_plan(operator, plan, input)))
+            .await
+    }
+    async fn fail_plan(&self, operator: ActorId, plan: PlanId, failure: String) -> Result<()> {
+        self.call(move |w| {
+            w.transact(|db| {
+                db.operator(operator)?;
+                let mut p: ParticipationPlan = db.get("participation_plans", plan)?;
+                db.member(operator, p.conversation_id)?;
+                if p.status == PlanStatus::Running {
+                    return Err(Error::Conflict(
+                        "a running plan must finish through its run".into(),
+                    ));
+                }
+                if p.status == PlanStatus::Queued {
+                    p.status = PlanStatus::Failed;
+                    p.failure = Some(failure);
+                    p.revision = p.revision.next()?;
+                    db.save_plan(&p)?;
+                }
+                Ok(())
+            })
+        })
+        .await
+    }
     async fn message_page(
         &self,
         operator: ActorId,
@@ -922,6 +1078,7 @@ impl SocialStore for SqliteSocialStore {
                         id: MessageId::new(),
                         run_id: None,
                         reply_to: input.reply_to,
+                        mentions: vec![],
                     },
                 )?;
                 db.save_receipt(&ctx, "append_message", &input, m.id)?;
@@ -991,6 +1148,7 @@ impl SocialStore for SqliteSocialStore {
                 c.participation_epoch = c.participation_epoch.next()?;
                 if c.paused || c.status == EntityStatus::Archived {
                     db.cancel_runs(c.id, RunStatus::Cancelled)?;
+                    db.cancel_queued(c.id, None)?;
                 }
                 db.save_conversation(&c)?;
                 db.save_receipt(&ctx, "control_conversation", &input, c.id)?;
@@ -1018,82 +1176,8 @@ impl SocialStore for SqliteSocialStore {
                     db.member(ctx.operator, run.snapshot.scope.conversation_id)?;
                     return Ok(run);
                 }
-                db.validate_snapshot(&input.snapshot, ctx.operator)?;
-                let mut c: Conversation =
-                    db.get("conversations", input.snapshot.scope.conversation_id)?;
-                db.expected(c.revision, input.expected_revision)?;
-                let bout: Bout = match db
-                    .query_json(
-                        "SELECT payload FROM bouts WHERE conversation_id=?1 AND status='open'",
-                        [c.id.to_string()],
-                    )?
-                    .into_iter()
-                    .next()
-                {
-                    Some(b) => b,
-                    None => {
-                        let b = Bout {
-                            id: BoutId::new(),
-                            conversation_id: c.id,
-                            status: BoutStatus::Open,
-                            revision: Revision::ONE,
-                        };
-                        db.execute(
-                            "INSERT INTO bouts VALUES(?1,?2,'open',?3)",
-                            params![
-                                b.id.to_string(),
-                                c.id.to_string(),
-                                serde_json::to_string(&b)?
-                            ],
-                        )?;
-                        db.event(SocialChange::BoutChanged {
-                            conversation_id: c.id,
-                            bout_id: b.id,
-                            revision: b.revision,
-                        })?;
-                        b
-                    }
-                };
-                let id = RunId::new();
-                let ai: Actor = db.get("actors", input.snapshot.scope.actor_id)?;
-                let m = db.allocate_message(
-                    &mut c,
-                    &ai,
-                    NewMessage {
-                        body: MessageBody::default(),
-                        status: MessageStatus::Generating,
-                        id: MessageId::new(),
-                        run_id: Some(id),
-                        reply_to: None,
-                    },
-                )?;
-                let run = AiRun {
-                    id,
-                    message_id: m.id,
-                    bout_id: bout.id,
-                    status: RunStatus::Running,
-                    revision: Revision::ONE,
-                    snapshot: input.snapshot.clone(),
-                };
-                db.execute(
-                    "INSERT INTO ai_runs VALUES(?1,?2,?3,?4,'running',?5)",
-                    params![
-                        id.to_string(),
-                        c.id.to_string(),
-                        m.id.to_string(),
-                        bout.id.to_string(),
-                        serde_json::to_string(&run)?
-                    ],
-                )?;
-                if let Some(details) = &input.details {
-                    db.save_details(id, details)?;
-                }
-                db.event(SocialChange::RunChanged {
-                    conversation_id: c.id,
-                    run_id: id,
-                    revision: run.revision,
-                })?;
-                db.save_receipt(&ctx, "begin_run", &input, id)?;
+                let run = db.start_run(ctx.operator, input.clone(), None)?;
+                db.save_receipt(&ctx, "begin_run", &input, run.id)?;
                 Ok(run)
             })
         })
@@ -1186,6 +1270,7 @@ impl SocialStore for SqliteSocialStore {
                 bout.status = BoutStatus::Ended;
                 bout.revision = bout.revision.next()?;
                 db.cancel_runs(bout.conversation_id, RunStatus::Cancelled)?;
+                db.cancel_queued(bout.conversation_id, None)?;
                 db.execute(
                     "UPDATE bouts SET status='ended',payload=?2 WHERE id=?1",
                     params![bout.id.to_string(), serde_json::to_string(&bout)?],

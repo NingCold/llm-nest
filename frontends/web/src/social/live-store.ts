@@ -3,9 +3,9 @@ import { socialClient, subscribe } from "./client"
 import type { Change, LiveEvent, Message, RunDetails, Snapshot } from "./live-types"
 
 export const LIVE_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
-interface Draft { text: string; requestId: string | null }
+interface Draft { text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
 interface Generation { text: string; reasoning: string; sequence: number }
-const emptyDraft = (): Draft => ({ text: "", requestId: null })
+const emptyDraft = (): Draft => ({ text: "", requestId: null, mentions: [], replyTo: null })
 function readDrafts(): Record<string, Draft> {
   try {
     const saved = JSON.parse(localStorage.getItem(LIVE_DRAFT_KEY) ?? "{}") as Record<string, Draft>
@@ -22,6 +22,7 @@ interface SocialState {
   loadHistory(id: string, older?: boolean): Promise<void>
   loadDetails(id: string): Promise<void>
   updateDraft(id: string, text: string): void
+  targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
   action<T>(operation: () => Promise<T>): Promise<T | undefined>
   dismissError(): void
@@ -75,10 +76,16 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     if (details) set({ details: { ...get().details, [id]: details } })
   },
   updateDraft(id, text) {
-    const drafts = { ...get().drafts, [id]: { text, requestId: null } }
+    const drafts = { ...get().drafts, [id]: { ...get().drafts[id], text, requestId: null } }
     set({ drafts })
     try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
     catch { set({ error: "输入保留在页面中，但浏览器未能保存草稿。" }) }
+  },
+  targetDraft(id, mentions, replyTo) {
+    const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), mentions, replyTo, requestId: null } }
+    set({ drafts })
+    try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
+    catch { set({ error: "接话选择保留在页面中，但浏览器未能保存草稿。" }) }
   },
   async send(id) {
     if (get().sending[id]) return
@@ -88,7 +95,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     set({ sending: { ...get().sending, [id]: true }, drafts: { ...get().drafts, [id]: { ...draft, requestId } }, error: null })
     try {
       localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(get().drafts))
-      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: null })
+      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: draft.replyTo ?? null, mentions: draft.mentions ?? [] })
       if (get().drafts[id]?.requestId === requestId) {
         const drafts = { ...get().drafts, [id]: emptyDraft() }
         set({ drafts })

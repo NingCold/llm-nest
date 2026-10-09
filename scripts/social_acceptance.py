@@ -1,4 +1,4 @@
-"""M1 private-chat HTTP acceptance: temporary data and a loopback mock provider.
+"""M1 private/group HTTP acceptance: temporary data and a loopback mock provider.
 python scripts/social_acceptance.py [--binary PATH] [--dist PATH] [--serve]
 No personal configuration or real provider is used. --serve retains the fixture for GUI QA.
 """
@@ -29,7 +29,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         REQUESTS.append(request)
-        content = next(m['content'] for m in reversed(request['messages']) if m['role'] == 'user')
+        content = next(m['content'] for m in reversed(request['messages']) if m['role'] == 'user' and m['content'].startswith('[我 ·'))
         text = content.rsplit('\n', 1)[-1]
         if text == 'provider-error':
             self.send_response(429)
@@ -52,6 +52,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
             if text == 'tool':
                 emit({'tool_calls': [{'index': 0, 'id': 'fixture-call', 'type': 'function', 'function': {'name': 'add', 'arguments': '{"a":2,"b":3}'}}]}, 'tool_calls')
             else:
+                if text.startswith('queue-'):
+                    time.sleep(.2)
                 emit({'content': '回应：' + text})
                 if text.startswith('slow') or text == 'crash':
                     for _ in range(100):
@@ -135,15 +137,31 @@ def main():
     def history(cid):
         return api(f'/conversations/{cid}/messages')['messages']
 
-    def send(cid, text, request_id=None):
-        return api(f'/conversations/{cid}/messages', 'POST', {'requestId': request_id or str(uuid.uuid4()), 'text': text, 'replyTo': None})
+    def send(cid, text, request_id=None, mentions=None, reply_to=None):
+        return api(f'/conversations/{cid}/messages', 'POST', {'requestId': request_id or str(uuid.uuid4()), 'text': text, 'replyTo': reply_to, 'mentions': mentions or []})
 
     def complete(cid, text):
         send(cid, text)
         return wait_for(lambda: next((m for m in history(cid) if m['senderId'] != self_id and m['text'].startswith('回应：' + text) and m['status'] != 'generating'), None))
 
     def provider_count(text):
-        return sum(r['messages'][-1]['content'].endswith('\n' + text) for r in REQUESTS)
+        return len(calls_for(text))
+
+    def calls_for(text):
+        return [r for r in REQUESTS if next(m['content'] for m in reversed(r['messages']) if m['role'] == 'user' and m['content'].startswith('[我 ·')).endswith('\n' + text)]
+
+    def group(title, actors):
+        return api('/groups', 'POST', {'requestId': str(uuid.uuid4()), 'title': title, 'memberIds': [a['id'] for a in actors]})
+
+    def plans(cid):
+        return api(f'/conversations/{cid}/plans')
+
+    def settled(cid):
+        return wait_for(lambda: plans(cid) if plans(cid) and all(p['status'] not in ('queued', 'running') for p in plans(cid)) else None)
+
+    def member(cid, actor, visibility):
+        current = api(f'/conversations/{cid}')
+        return api(f'/conversations/{cid}/members', 'POST', {'requestId': str(uuid.uuid4()), 'actorId': actor['id'], 'history': visibility, 'expectedRevision': current['revision']})
 
     try:
         start()
@@ -235,6 +253,93 @@ def main():
                 break
         stream.close()
         wait_for(lambda: any(m['text'].startswith('回应：slow-disconnect') and m['status'] == 'committed' for m in history(private)))
+
+        # Real groups: no text parsing, independent identities, durable deterministic FIFO.
+        group_id = group('Study group', [alice, bob])
+        other_group = group('Another space', [alice, bob])
+        assert group_id != other_group
+        send(group_id, '@Bob ordinary-message')
+        assert not plans(group_id) and provider_count('@Bob ordinary-message') == 0
+        request_id = str(uuid.uuid4())
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            receipts = list(pool.map(lambda _: send(group_id, 'group-ordered', request_id, [bob['id'], alice['id'], bob['id']]), range(5)))
+        assert len({r['message']['id'] for r in receipts}) == 1
+        assert receipts[0]['message']['mentions'] == [bob['id'], alice['id']]
+        settled(group_id)
+        calls = calls_for('group-ordered')
+        assert len(calls) == 2 and 'persona-Bob' in calls[0]['messages'][0]['content'] and 'persona-Alice-v2' in calls[1]['messages'][0]['content']
+        assert calls[0]['model'] == 'chat-wire' and calls[1]['model'] == 'alt-wire'
+        assert '当前成员：' in calls[0]['messages'][0]['content'] and 'Alice' in calls[0]['messages'][0]['content']
+        assert 'persona-Alice-v2' not in calls[0]['messages'][0]['content'], 'roster must not inject another AI private persona'
+        assert any('[Bob ·' in m['content'] and '回应：group-ordered' in m['content'] and m['role'] == 'user' for m in calls[1]['messages'])
+        assert all('new-model' not in str(m) and 'fixture-private-reasoning' not in str(m) for r in calls for m in r['messages'])
+        assert history(other_group) == []
+        ai_answer = next(m for m in history(group_id) if m['senderId'] == bob['id'])
+        reply = send(group_id, 'group-reply', reply_to=ai_answer['id'])
+        settled(group_id)
+        assert [p['actorId'] for p in plans(group_id) if p['triggerId'] == reply['message']['id']] == [bob['id']]
+        assert provider_count('group-reply') == 1
+        assert any(f"（回复第 {ai_answer['sequence']} 条消息）" in m['content'] for m in calls_for('group-reply')[0]['messages'])
+        try:
+            send(other_group, 'bad-cross-space-reply', reply_to=ai_answer['id'])
+            raise AssertionError('cross-space reply accepted')
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+        assert history(other_group) == []
+        first = send(group_id, 'queue-first', mentions=[bob['id'], alice['id']])
+        started = time.monotonic()
+        second = send(group_id, 'queue-second', mentions=[alice['id']])
+        assert time.monotonic() - started < 1
+        settled(group_id)
+        ordered = sorted([p for p in plans(group_id) if p['triggerId'] in (first['message']['id'], second['message']['id'])], key=lambda p: (int(p['triggerSequence']), p['ordinal']))
+        assert [p['actorId'] for p in ordered] == [bob['id'], alice['id'], alice['id']]
+        assert [p['status'] for p in ordered] == ['succeeded'] * 3
+        assert all('queue-second' not in str(m) for r in calls_for('queue-first') for m in r['messages'])
+        member(group_id, draft, 'from_now')
+        mixed = send(group_id, 'mixed-binding', mentions=[draft['id'], bob['id']])
+        settled(group_id)
+        mixed_plans = sorted([p for p in plans(group_id) if p['triggerId'] == mixed['message']['id']], key=lambda p: p['ordinal'])
+        assert [p['status'] for p in mixed_plans] == ['failed', 'succeeded'] and mixed_plans[0]['failure']
+        assert provider_count('mixed-binding') == 1
+        carol = contact('Carol')
+        member(group_id, carol, 'from_now')
+        three = send(group_id, 'three-AI', mentions=[bob['id'], alice['id'], carol['id']])
+        settled(group_id)
+        assert len(calls_for('three-AI')) == 3
+        assert [p['actorId'] for p in sorted([p for p in plans(group_id) if p['triggerId'] == three['message']['id']], key=lambda p:p['ordinal'])] == [bob['id'], alice['id'], carol['id']]
+
+        scoped = group('History scope', [alice])
+        send(scoped, 'hidden-before-join')
+        joined = member(scoped, bob, 'from_now')
+        assert next(m for m in joined['members'] if m['actorId'] == bob['id'])['historyFromSeq'] == '2'
+        send(scoped, 'visible-after-join', mentions=[bob['id']])
+        settled(scoped)
+        assert all('hidden-before-join' not in str(m) for m in calls_for('visible-after-join')[0]['messages'])
+        send(scoped, 'slow-member-remove', mentions=[bob['id']])
+        active = wait_for(lambda: api(f'/conversations/{scoped}')['activeRun'])
+        queued = send(scoped, 'after-removal', mentions=[bob['id'], alice['id']])
+        removed = member(scoped, bob, None)
+        assert bob['id'] not in removed['memberIds']
+        settled(scoped)
+        assert next(p for p in plans(scoped) if p['runId'] == active['id'])['status'] == 'cancelled'
+        assert sorted((p['actorId'], p['status']) for p in plans(scoped) if p['triggerId'] == queued['message']['id']) == sorted([(bob['id'], 'cancelled'), (alice['id'], 'succeeded')])
+        member(scoped, bob, 'all')
+        send(scoped, 'visible-with-full-grant', mentions=[bob['id']])
+        settled(scoped)
+        assert any('hidden-before-join' in str(m) for m in calls_for('visible-with-full-grant')[0]['messages'])
+
+        # Crash recovery never resends the started response; untouched queue entries resume.
+        recovery_group = group('Recovery group', [alice, bob])
+        trigger = send(recovery_group, 'crash', mentions=[bob['id'], alice['id']])
+        broken = wait_for(lambda: next((m for m in history(recovery_group) if m['status'] == 'generating' and m['text'].startswith('回应：crash')), None))
+        before_calls = provider_count('crash')
+        stop(); start()
+        assert next(m for m in history(recovery_group) if m['id'] == broken['id'])['status'] == 'interrupted'
+        recovered = settled(recovery_group)
+        relevant = sorted([p for p in recovered if p['triggerId'] == trigger['message']['id']], key=lambda p: p['ordinal'])
+        assert [p['status'] for p in relevant] == ['interrupted', 'succeeded']
+        assert provider_count('crash') == before_calls + 1
+        print('PASS: real groups, structured mentions/replies, FIFO/idempotency, per-AI bindings, same-trigger collaboration, window isolation, continuous input, mixed failure, history grants, member revocation and queued crash recovery', flush=True)
 
         send(private, 'crash')
         interrupted = wait_for(lambda: next((m for m in history(private) if m['status'] == 'generating' and m['text'].startswith('回应：crash')), None))

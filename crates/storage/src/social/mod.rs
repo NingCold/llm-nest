@@ -1,6 +1,7 @@
 //! Social persistence, independent of runtime and frontend transports.
 mod error;
 mod legacy;
+mod participation;
 mod reads;
 mod schema;
 mod sqlite;

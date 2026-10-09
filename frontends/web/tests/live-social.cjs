@@ -38,6 +38,7 @@ function harness() {
   await h.store.getState().initialize();
   const sends=[];
   h.api.send=async(_,input)=> { sends.push(input); throw new Error('lost acknowledgement'); };
+  h.store.getState().targetDraft('chat',['bob','alice'],'quoted-message');
   h.store.getState().updateDraft('chat','first');
   await h.store.getState().send('chat');
   const retryId=h.store.getState().drafts.chat.requestId;
@@ -46,7 +47,12 @@ function harness() {
   h.api.send=async(_,input)=> { sends.push(input); return { message:message(input.text),executionNotice:{ code:'model_unavailable',message:'saved without a model' } }; };
   await h.store.getState().send('chat');
   assert.equal(sends[1].requestId,sends[0].requestId);
+  assert.deepEqual(Array.from(sends[1].mentions),['bob','alice']);
+  assert.equal(sends[1].replyTo,'quoted-message');
+  assert.equal(JSON.stringify(sends[1]),JSON.stringify(sends[0]),'structured targets and reply identity survive retry');
   assert.equal(h.store.getState().drafts.chat.text,'');
+  assert.equal(h.store.getState().drafts.chat.mentions.length,0);
+  assert.equal(h.store.getState().drafts.chat.replyTo,null);
   assert.equal(h.store.getState().histories.chat[0].text,'first');
   assert.equal(h.store.getState().error,'saved without a model');
 
@@ -56,10 +62,13 @@ function harness() {
   const send=h.store.getState().send('chat');
   await h.store.getState().send('chat'); assert.equal(count,1);
   h.store.getState().updateDraft('chat','new draft while awaiting acknowledgement');
+  h.store.getState().targetDraft('chat',['carol'],'new-quote');
   h.api.init=async()=> { throw new Error('refresh disconnected'); };
   pending.resolve({ message:{ ...message('old draft'),id:'second',sequence:'2' },executionNotice:null });
   await send;
   assert.equal(h.store.getState().drafts.chat.text,'new draft while awaiting acknowledgement');
+  assert.deepEqual(Array.from(h.store.getState().drafts.chat.mentions),['carol']);
+  assert.equal(h.store.getState().drafts.chat.replyTo,'new-quote');
   assert.ok(h.store.getState().histories.chat.some(m=>m.id==='second'),'a committed acknowledgement survives refresh failure');
   h.api.init=async()=>snapshot('2');
 
@@ -92,5 +101,5 @@ function harness() {
   await assert.rejects(exports.subscribe('0',new AbortController().signal,async e=>{ await Promise.resolve(); applied.push(e.cursor); },e=>applied.push(e.text),async()=>applied.push('resync'),()=>{}),/消息订阅已断开/);
   assert.deepEqual(applied,['9007199254740993','你好🙂','resync']);
   assert.equal(requestHeaders.get('X-LLMN-Client'),'1');
-  console.log('PASS: live social retry identity, committed acknowledgements, independent drafts, cursor application, terminal revisions, incomplete stream resync, Unicode SSE and local headers');
+  console.log('PASS: live social structured mentions/replies, retry identity, committed acknowledgements, independent drafts, cursor application, terminal revisions, incomplete stream resync, Unicode SSE and local headers');
 })().catch(error=> { console.error(error);process.exitCode=1; });

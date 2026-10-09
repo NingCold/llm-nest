@@ -56,6 +56,7 @@ pub struct Message {
     pub text: String,
     pub status: MessageStatus,
     pub revision: Revision,
+    pub mentions: Vec<ActorId>,
     pub reply_to: Option<MessageId>,
     pub run_id: Option<RunId>,
     pub created_at: String,
@@ -80,6 +81,7 @@ impl From<SocialMessage> for Message {
                 .join("\n"),
             status: m.status,
             revision: m.revision,
+            mentions: m.mentions,
             reply_to: m.reply_to,
             run_id: m.run_id,
             created_at: m.created_at.to_rfc3339(),
@@ -117,6 +119,8 @@ pub struct Conversation {
     pub kind: ConversationKind,
     pub title: String,
     pub member_ids: Vec<ActorId>,
+    pub members: Vec<Member>,
+    pub pending_plans: Vec<Plan>,
     pub status: EntityStatus,
     pub paused: bool,
     pub revision: Revision,
@@ -131,7 +135,9 @@ impl From<ConversationRecord> for Conversation {
             id: c.conversation.id,
             kind: c.conversation.kind,
             title: c.conversation.title,
-            member_ids: c.members.into_iter().map(|m| m.actor_id).collect(),
+            member_ids: c.members.iter().map(|m| m.actor_id).collect(),
+            members: c.members.into_iter().map(Into::into).collect(),
+            pending_plans: c.pending_plans.into_iter().map(Into::into).collect(),
             status: c.conversation.status,
             paused: c.conversation.paused,
             revision: c.conversation.revision,
@@ -139,6 +145,51 @@ impl From<ConversationRecord> for Conversation {
             legacy: c.conversation.legacy,
             latest_message: c.latest_message.map(Into::into),
             active_run: c.active_run.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Member {
+    pub actor_id: ActorId,
+    pub history_from_seq: Sequence,
+    pub revision: Revision,
+}
+impl From<Membership> for Member {
+    fn from(m: Membership) -> Self {
+        Self {
+            actor_id: m.actor_id,
+            history_from_seq: m.history_from_seq,
+            revision: m.revision,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub id: PlanId,
+    pub actor_id: ActorId,
+    pub trigger_id: MessageId,
+    pub trigger_sequence: Sequence,
+    pub ordinal: u32,
+    pub status: PlanStatus,
+    pub run_id: Option<RunId>,
+    pub failure: Option<String>,
+    pub revision: Revision,
+}
+impl From<ParticipationPlan> for Plan {
+    fn from(p: ParticipationPlan) -> Self {
+        Self {
+            id: p.id,
+            actor_id: p.actor_id,
+            trigger_id: p.trigger_id,
+            trigger_sequence: p.trigger_sequence,
+            ordinal: p.ordinal,
+            status: p.status,
+            run_id: p.run_id,
+            failure: p.failure,
+            revision: p.revision,
         }
     }
 }
@@ -192,6 +243,8 @@ pub struct Command {
 #[serde(rename_all = "camelCase")]
 pub struct SendInput {
     pub request_id: CommandId,
+    #[serde(default)]
+    pub mentions: Vec<ActorId>,
     pub text: String,
     pub reply_to: Option<MessageId>,
 }
@@ -247,4 +300,20 @@ impl crate::SocialError {
             retryable,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupInput {
+    pub request_id: CommandId,
+    pub title: String,
+    pub member_ids: Vec<ActorId>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipInput {
+    pub request_id: CommandId,
+    pub actor_id: ActorId,
+    pub expected_revision: Revision,
+    pub history: Option<storage::social::HistoryVisibility>,
 }

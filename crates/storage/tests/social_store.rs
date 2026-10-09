@@ -19,6 +19,83 @@ struct Fixture {
     clock: Arc<ManualClock>,
 }
 impl Fixture {
+    async fn group(&self, members: Vec<ActorId>) -> Conversation {
+        self.store
+            .create_group(self.ctx(), "Group".into(), members)
+            .await
+            .unwrap()
+    }
+    async fn send_group(&self, c: ConversationId, targets: Vec<ActorId>) -> SavedMessage {
+        self.store
+            .send_message(
+                self.ctx(),
+                SendMessage {
+                    conversation_id: c,
+                    body: MessageBody::text("trigger"),
+                    reply_to: None,
+                    mentions: targets,
+                },
+            )
+            .await
+            .unwrap()
+    }
+    async fn begin_plan(&self, p: &ParticipationPlan) -> Result<AiRun, SocialStorageError> {
+        let material = self
+            .store
+            .context_material(
+                self.human.id,
+                ContextScope {
+                    actor_id: p.actor_id,
+                    conversation_id: p.conversation_id,
+                },
+                p.trigger_id,
+            )
+            .await?;
+        let snapshot = ContextSnapshot {
+            scope: ContextScope {
+                actor_id: p.actor_id,
+                conversation_id: p.conversation_id,
+            },
+            profile_revision: material.contact.profile.revision,
+            binding_revision: material.contact.binding.unwrap().revision,
+            relationship_revision: material.relationship_revision,
+            budget: ContextBudget {
+                input_token_limit: Counter::new(8192).unwrap(),
+                reserved_output_tokens: Counter::new(1024).unwrap(),
+            },
+            participation_epoch: material.conversation.participation_epoch,
+            dependencies: material
+                .members
+                .iter()
+                .map(|m| VisibilityDependency {
+                    conversation_id: m.conversation_id,
+                    actor_id: m.actor_id,
+                    membership_revision: m.revision,
+                    context_epoch: material.conversation.context_epoch,
+                })
+                .collect(),
+            sources: material
+                .messages
+                .iter()
+                .map(|m| SourceRef::Message {
+                    conversation_id: m.conversation_id,
+                    message_id: m.id,
+                    revision: m.revision,
+                })
+                .collect(),
+        };
+        self.store
+            .begin_plan(
+                self.human.id,
+                p.id,
+                BeginRun {
+                    snapshot,
+                    expected_revision: material.conversation.revision,
+                    details: None,
+                },
+            )
+            .await
+    }
     async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(ManualClock::new(
@@ -196,6 +273,331 @@ impl Fixture {
         self.store.close().await.unwrap();
         drop(self.dir);
     }
+}
+
+#[tokio::test]
+async fn group_queue_is_atomic_idempotent_fifo_and_shares_only_its_committed_answers() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let c = f.group(vec![a.id, b.id]).await;
+    let ctx = f.ctx();
+    let input = SendMessage {
+        conversation_id: c.id,
+        body: MessageBody::text("first"),
+        reply_to: None,
+        mentions: vec![b.id, a.id, b.id],
+    };
+    let first = f
+        .store
+        .send_message(ctx.clone(), input.clone())
+        .await
+        .unwrap();
+    let retry = f.store.send_message(ctx, input).await.unwrap();
+    assert_eq!(first.message.id, retry.message.id);
+    assert_eq!(first.plans, retry.plans);
+    assert_eq!(first.message.mentions, vec![b.id, a.id]);
+    let second = f.send_group(c.id, vec![a.id]).await;
+    assert_eq!(
+        f.store
+            .next_plan(f.human.id, c.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .actor_id,
+        b.id
+    );
+    assert!(matches!(
+        f.begin_plan(&first.plans[1]).await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    let run = f.begin_plan(&first.plans[0]).await.unwrap();
+    assert!(f.store.next_plan(f.human.id, c.id).await.unwrap().is_none());
+    assert!(matches!(
+        f.begin_plan(&first.plans[0]).await,
+        Err(SocialStorageError::Conflict(_))
+    ));
+    f.store
+        .finish_run(
+            f.ctx(),
+            FinishRun {
+                run_id: run.id,
+                expected_revision: run.revision,
+                status: RunStatus::Succeeded,
+                body: MessageBody::text("B answered first"),
+                details: None,
+            },
+        )
+        .await
+        .unwrap();
+    let material = f
+        .store
+        .context_material(
+            f.human.id,
+            ContextScope {
+                actor_id: a.id,
+                conversation_id: c.id,
+            },
+            first.message.id,
+        )
+        .await
+        .unwrap();
+    assert!(material.messages.iter().any(|m| m.id == run.message_id));
+    assert!(
+        !material.messages.iter().any(|m| m.id == second.message.id),
+        "future human input must not change which message is answered"
+    );
+    let run_a = f.begin_plan(&first.plans[1]).await.unwrap();
+    f.store
+        .finish_run(
+            f.ctx(),
+            FinishRun {
+                run_id: run_a.id,
+                expected_revision: run_a.revision,
+                status: RunStatus::Failed,
+                body: MessageBody::text("partial"),
+                details: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .next_plan(f.human.id, c.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        second.plans[0].id,
+        "one failure does not block the next human message"
+    );
+    let history = f
+        .store
+        .messages(f.human.id, c.id, Sequence::ZERO, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .find(|m| m.id == run.message_id)
+            .unwrap()
+            .reply_to,
+        Some(first.message.id)
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == first.plans[1].id)
+            .unwrap()
+            .status,
+        PlanStatus::Failed
+    );
+    f.store
+        .end_bout(f.ctx(), run_a.bout_id, Revision::ONE)
+        .await
+        .unwrap();
+    assert!(f.store.next_plan(f.human.id, c.id).await.unwrap().is_none());
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == second.plans[0].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled,
+        "ending the bout revokes unstarted replies"
+    );
+    f.store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn group_history_grants_removal_and_plan_failure_rollback_preserve_original_messages() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let c = f.group(vec![a.id]).await;
+    let old = f.send_group(c.id, vec![]).await.message;
+    assert!(f.store.plans(f.human.id, c.id).await.unwrap().is_empty());
+    let c = f.store.conversation(f.human.id, c.id).await.unwrap();
+    f.store
+        .change_membership(
+            f.ctx(),
+            ChangeMembership {
+                conversation_id: c.id,
+                actor_id: b.id,
+                expected_revision: c.revision,
+                history: Some(HistoryVisibility::FromNow),
+            },
+        )
+        .await
+        .unwrap();
+    let input = SendMessage {
+        conversation_id: c.id,
+        body: MessageBody::text("rollback"),
+        reply_to: None,
+        mentions: vec![b.id],
+    };
+    let ctx = f.ctx();
+    let cursor = f.store.overview(f.human.id).await.unwrap().cursor;
+    f.sql().execute_batch("CREATE TRIGGER reject_plan BEFORE INSERT ON participation_plans BEGIN SELECT RAISE(ABORT,'synthetic'); END;").unwrap();
+    assert!(
+        f.store
+            .send_message(ctx.clone(), input.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(f.store.overview(f.human.id).await.unwrap().cursor, cursor);
+    assert_eq!(
+        f.store
+            .messages(f.human.id, c.id, Sequence::ZERO, 100)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    f.sql().execute_batch("DROP TRIGGER reject_plan").unwrap();
+    let saved = f.store.send_message(ctx, input).await.unwrap();
+    let scope = ContextScope {
+        actor_id: b.id,
+        conversation_id: c.id,
+    };
+    let material = f
+        .store
+        .context_material(f.human.id, scope, saved.message.id)
+        .await
+        .unwrap();
+    assert!(!material.messages.iter().any(|m| m.id == old.id));
+    assert!(matches!(
+        f.store.context_material(f.human.id, scope, old.id).await,
+        Err(SocialStorageError::Forbidden(_))
+    ));
+    let run = f.begin_plan(&saved.plans[0]).await.unwrap();
+    let waiting = f.send_group(c.id, vec![b.id, a.id]).await;
+    let c = f.store.conversation(f.human.id, c.id).await.unwrap();
+    f.store
+        .change_membership(
+            f.ctx(),
+            ChangeMembership {
+                conversation_id: c.id,
+                actor_id: b.id,
+                expected_revision: c.revision,
+                history: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store.run(f.human.id, run.id).await.unwrap().status,
+        RunStatus::Cancelled
+    );
+    let plans = f.store.plans(f.human.id, c.id).await.unwrap();
+    assert_eq!(
+        plans
+            .iter()
+            .find(|p| p.id == waiting.plans[0].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled
+    );
+    assert_eq!(
+        f.store
+            .next_plan(f.human.id, c.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        waiting.plans[1].id
+    );
+    let c = f.store.conversation(f.human.id, c.id).await.unwrap();
+    f.store
+        .change_membership(
+            f.ctx(),
+            ChangeMembership {
+                conversation_id: c.id,
+                actor_id: b.id,
+                expected_revision: c.revision,
+                history: Some(HistoryVisibility::All),
+            },
+        )
+        .await
+        .unwrap();
+    let new = f.send_group(c.id, vec![b.id]).await;
+    assert!(
+        f.store
+            .context_material(f.human.id, scope, new.message.id)
+            .await
+            .unwrap()
+            .messages
+            .iter()
+            .any(|m| m.id == old.id)
+    );
+    assert_eq!(
+        f.store
+            .plans(f.human.id, c.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.id == waiting.plans[0].id)
+            .unwrap()
+            .status,
+        PlanStatus::Cancelled,
+        "rejoining never revives revoked plans"
+    );
+    f.store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn group_recovery_keeps_unstarted_plans_and_never_replays_started_runs() {
+    let f = Fixture::new().await;
+    let a = f.ai("A").await;
+    let b = f.ai("B").await;
+    let c = f.group(vec![a.id, b.id]).await;
+    let saved = f.send_group(c.id, vec![a.id, b.id]).await;
+    let run = f.begin_plan(&saved.plans[0]).await.unwrap();
+    f.store
+        .checkpoint_run(f.human.id, run.id, MessageBody::text("saved partial"), None)
+        .await
+        .unwrap();
+    f.store.close().await.unwrap();
+    let store =
+        SqliteSocialStore::open(DataDirectoryGuard::acquire(f.dir.path()).unwrap(), f.clock)
+            .await
+            .unwrap();
+    let recovered = store.run(f.human.id, run.id).await.unwrap();
+    assert_eq!(recovered.status, RunStatus::Interrupted);
+    let plans = store.plans(f.human.id, c.id).await.unwrap();
+    assert_eq!(
+        plans
+            .iter()
+            .find(|p| p.id == saved.plans[0].id)
+            .unwrap()
+            .status,
+        PlanStatus::Interrupted
+    );
+    assert_eq!(
+        store.next_plan(f.human.id, c.id).await.unwrap().unwrap().id,
+        saved.plans[1].id
+    );
+    assert_eq!(
+        store.queued_conversations(f.human.id).await.unwrap(),
+        vec![c.id]
+    );
+    assert_eq!(
+        store
+            .messages(f.human.id, c.id, Sequence::ZERO, 100)
+            .await
+            .unwrap()
+            .last()
+            .unwrap()
+            .body,
+        MessageBody::text("saved partial")
+    );
+    store.close().await.unwrap();
 }
 fn source(m: &SocialMessage) -> SourceRef {
     SourceRef::Message {

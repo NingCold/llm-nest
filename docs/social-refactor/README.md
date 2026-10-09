@@ -2,9 +2,9 @@
 
 [文档索引](../README.md) · [当前开发约束](../../AGENTS.md)
 
-状态：目标设计 v0.6；U0/M0 已完成，M1 首批真实长期私聊已实现，M1 其余批次与 M2/M3 待完成。日期：2026-10-09。
+状态：目标设计 v0.7；U0/M0 已完成，M1 真实私聊与群聊批次已实现，M1 其余批次与 M2/M3 待完成。日期：2026-10-09。
 
-本文记录确定的产品方向和目标结构。专项文档中的完整接口和默认参数仍为目标设计；实际实现见 [M0 基础](m0-implementation.md) 与 [M1 首批私聊](m1-private-chat.md)，后续顺序见 [TODO](TODO.md)。普通 Web 已使用真实 SQLite/HTTP 私聊；[浏览器模拟预览](08-frontend-and-desktop.md#当前-web-交互预览)独立保留。群聊用例、完整交谈控制、桌面实时接入与后台记忆仍待后续。当前行为与平台约束以实际源码和 AGENTS.md 为准。
+本文记录确定的产品方向和目标结构。专项文档中的完整接口和默认参数仍为目标设计；实际实现见 [M0 基础](m0-implementation.md)、[M1 私聊](m1-private-chat.md) 与 [M1 群聊](m1-group-chat.md)，后续顺序见 [TODO](TODO.md)。普通 Web 已使用真实 SQLite/HTTP 私聊与群聊；[浏览器模拟预览](08-frontend-and-desktop.md#当前-web-交互预览)独立保留。消息修订、完整交谈控制、桌面实时接入与后台记忆仍待后续。当前行为与平台约束以实际源码和 AGENTS.md 为准。
 
 阅读顺序：先读本总纲确认产品范围、术语和模块职责，再读专项设计，最后按 [交付与验证](10-delivery-and-validation.md) 实施。跨模块规则在对应负责文档中定义，其余文档引用它；发现冲突时同步修订相关章节，不依靠追加“以此为准”保留矛盾。
 
@@ -97,7 +97,7 @@ flowchart TD
     Resources --> Workers[固定白名单工具子进程]
 ```
 
-`crates/social` 已在 M0 实现，`features/social` 已在 M1 首批接通真实私聊。下面列出完整目标的职责拆分；当前只有 feature、consciousness、execution、wire 等实际所需模块。新 Feature 与旧 ChatFeature 在迁移期间服务各自入口；每条旧调用链随后接入同一社交用例或明确退役，避免长期维护两套聊天规则。
+`crates/social` 已在 M0 实现，`features/social` 已在 M1 接通真实私聊和群聊队列。下面列出完整目标的职责拆分；当前只有 feature、consciousness、execution、wire 等实际所需模块。新 Feature 与旧 ChatFeature 在迁移期间服务各自入口；每条旧调用链随后接入同一社交用例或明确退役，避免长期维护两套聊天规则。
 
 ```text
 crates/social/src/

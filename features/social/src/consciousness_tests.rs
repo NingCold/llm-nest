@@ -56,7 +56,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
             revision: Counter::new(5).unwrap(),
         })
         .collect();
-    let messages = ["old ".repeat(1000), "latest".into()]
+    let messages: Vec<SocialMessage> = ["old ".repeat(1000), "latest".into()]
         .into_iter()
         .enumerate()
         .map(|(i, text)| SocialMessage {
@@ -67,13 +67,17 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
             sequence: Counter::new(i as u64 + 1).unwrap(),
             body: MessageBody::text(text),
             reply_to: None,
+            mentions: vec![],
             run_id: None,
             status: MessageStatus::Committed,
             revision: Counter::new(6).unwrap(),
             created_at: "2026-10-09T00:00:00Z".parse().unwrap(),
         })
         .collect();
+    let trigger_id = messages.last().unwrap().id;
     let material = ContextMaterial {
+        participant_names: vec!["Human".into(), "A".into()],
+        trigger_id,
         contact,
         conversation,
         members,
@@ -132,6 +136,72 @@ fn context_selects_recent_sources_with_versions_without_rewriting_history() {
 fn oversized_latest_message_is_rejected_instead_of_silently_truncated() {
     let (mut material, model) = fixture();
     material.messages.last_mut().unwrap().body = MessageBody::text("large".repeat(1000));
+    assert!(matches!(
+        ConsciousnessService::prepare(material, &model),
+        Err(SocialError::BudgetExceeded)
+    ));
+}
+
+#[test]
+fn group_context_keeps_trigger_and_distinguishes_other_ai_from_self() {
+    let (mut material, mut model) = fixture();
+    material.conversation.kind = ConversationKind::Group;
+    material.conversation.relationship_id = None;
+    material.relationship_revision = None;
+    material.participant_names.push("Other AI".into());
+    let mut answer = material.messages.last().unwrap().clone();
+    answer.id = MessageId::new();
+    answer.sequence = answer.sequence.next().unwrap();
+    answer.sender_id = ActorId::new();
+    answer.sender_name = "Other AI".into();
+    answer.body = MessageBody::text("a previous group answer");
+    material.messages.push(answer.clone());
+    model.context_window = Some(2048);
+    let prepared = ConsciousnessService::prepare(material.clone(), &model).unwrap();
+    assert!(prepared.messages[0].text().contains("群聊"));
+    assert!(
+        prepared.messages[0]
+            .text()
+            .contains("当前成员：Human、A、Other AI")
+    );
+    let other = prepared.messages.last().unwrap();
+    assert_eq!(other.role, common::Role::User);
+    assert!(other.text().contains("Other AI"));
+    assert!(prepared.snapshot.sources.iter().any(
+        |s| matches!(s,SourceRef::Message {message_id,..} if *message_id==material.trigger_id)
+    ));
+    material.messages.last_mut().unwrap().body = MessageBody::text("huge".repeat(1000));
+    let prepared = ConsciousnessService::prepare(material, &model).unwrap();
+    assert_eq!(
+        prepared.snapshot.sources.len(),
+        1,
+        "the human trigger remains even when the prior AI answer cannot fit"
+    );
+}
+
+#[test]
+fn explicit_reply_reserves_its_visible_source_and_identifies_the_reference() {
+    let (mut material, model) = fixture();
+    let quoted = material.messages[0].id;
+    material.messages[0].body = MessageBody::text("an earlier point");
+    material.messages[1].reply_to = Some(quoted);
+    let prepared = ConsciousnessService::prepare(material.clone(), &model).unwrap();
+    assert!(
+        prepared
+            .messages
+            .last()
+            .unwrap()
+            .text()
+            .contains("回复第 1 条消息")
+    );
+    assert!(
+        prepared
+            .snapshot
+            .sources
+            .iter()
+            .any(|s| matches!(s,SourceRef::Message {message_id,..} if *message_id==quoted))
+    );
+    material.messages[0].body = MessageBody::text("huge quote".repeat(1000));
     assert!(matches!(
         ConsciousnessService::prepare(material, &model),
         Err(SocialError::BudgetExceeded)

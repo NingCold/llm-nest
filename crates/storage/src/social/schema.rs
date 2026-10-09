@@ -8,6 +8,7 @@ use std::{
 
 const SCHEMA: &str = include_str!("schema.sql");
 const SCHEMA_V2: &str = include_str!("schema-v2.sql");
+const SCHEMA_V3: &str = include_str!("schema-v3.sql");
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -73,10 +74,10 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| sql_error(path, e))?;
-    if !(0..=2).contains(&version) {
+    if !(0..=3).contains(&version) {
         return Err(Error::Schema {
             path: path.to_owned(),
-            detail: format!("unsupported version {version}; expected 0..=2"),
+            detail: format!("unsupported version {version}; expected 0..=3"),
         });
     }
     let tables: i64 = connection
@@ -104,6 +105,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         let expected = [
             (1, migration_digest(SCHEMA)),
             (2, migration_digest(SCHEMA_V2)),
+            (3, migration_digest(SCHEMA_V3)),
         ];
         if ledger != expected[..version as usize] {
             return Err(Error::Schema {
@@ -120,24 +122,27 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         backup(&connection, &backup_path)?;
         apply_initial_migration(&mut connection, path, now, SCHEMA)?;
     }
-    if version < 2 {
+    for (next, script) in [(2, SCHEMA_V2), (3, SCHEMA_V3)] {
+        if version >= next {
+            continue;
+        }
         let backup_path = path.with_file_name(format!(
-            "social.before-v2-{}.sqlite3",
+            "social.before-v{next}-{}.sqlite3",
             ::social::CommandId::new()
         ));
         backup(&connection, &backup_path)?;
         let transaction = connection.transaction().map_err(|e| sql_error(path, e))?;
         transaction
-            .execute_batch(SCHEMA_V2)
+            .execute_batch(script)
             .map_err(|e| sql_error(path, e))?;
         transaction
             .execute(
-                "INSERT INTO schema_migrations VALUES(2,?1,?2)",
-                rusqlite::params![migration_digest(SCHEMA_V2), now],
+                "INSERT INTO schema_migrations VALUES(?1,?2,?3)",
+                rusqlite::params![next, migration_digest(script), now],
             )
             .map_err(|e| sql_error(path, e))?;
         transaction
-            .pragma_update(None, "user_version", 2)
+            .pragma_update(None, "user_version", next)
             .map_err(|e| sql_error(path, e))?;
         transaction.commit().map_err(|e| sql_error(path, e))?;
     }
@@ -199,12 +204,12 @@ mod tests {
         )
         .unwrap();
         drop(old);
-        let current = open(&path, "test-v2").unwrap();
+        let current = open(&path, "test-v3").unwrap();
         assert_eq!(
             current
                 .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            2
+            3
         );
         assert_eq!(
             current
@@ -217,7 +222,7 @@ mod tests {
             current
                 .query_row::<i64, _, _>("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap(),
-            2
+            3
         );
         let backup_path = std::fs::read_dir(dir.path())
             .unwrap()
@@ -238,6 +243,30 @@ mod tests {
         );
         assert_eq!(
             backup
+                .query_row::<String, _, _>("SELECT payload FROM actors WHERE id=?1", [&id], |r| r
+                    .get(0))
+                .unwrap(),
+            payload
+        );
+        let v2_backup_path = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("social.before-v3-")
+            })
+            .unwrap();
+        let v2_backup = Connection::open(v2_backup_path).unwrap();
+        assert_eq!(
+            v2_backup
+                .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            v2_backup
                 .query_row::<String, _, _>("SELECT payload FROM actors WHERE id=?1", [&id], |r| r
                     .get(0))
                 .unwrap(),

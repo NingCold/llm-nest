@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [AI 执行](05-ai-execution.md) · [存储与迁移](06-storage-and-migration.md)
 
-状态：完整目标设计；M1 首批已实现共享目录锁、可选 SocialResources、GUI 专用构造路径、SocialFeature 生命周期与 Web 关闭收尾。持久参与调度、意识后台任务和桌面退出验收仍待后续；当前范围见 [M1 私聊说明](m1-private-chat.md)。
+状态：完整目标设计；M1 已实现共享目录锁、SocialResources、GUI 专用构造路径、SocialFeature 生命周期、持久参与队列/初始化恢复和 Web 关闭收尾。意识后台任务及桌面退出验收待后续；当前范围见 [私聊](m1-private-chat.md) 与 [群聊](m1-group-chat.md)。
 
 ## 1. Runtime 的职责
 

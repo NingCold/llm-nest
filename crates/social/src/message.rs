@@ -39,6 +39,8 @@ pub struct SocialMessage {
     pub sequence: Sequence,
     pub body: MessageBody,
     pub reply_to: Option<MessageId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentions: Vec<ActorId>,
     pub run_id: Option<RunId>,
     pub status: MessageStatus,
     pub revision: Revision,

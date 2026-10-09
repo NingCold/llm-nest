@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use social::{ActorId, BoutId, ConversationId, EventCursor, MessageId, Revision, RunId};
+use social::{ActorId, BoutId, ConversationId, EventCursor, MessageId, PlanId, Revision, RunId};
 
 /// Durable changes contain references only. Consumers re-read current authorized
 /// entities; replay never contains forgotten content or provider request copies.
@@ -10,6 +10,11 @@ use social::{ActorId, BoutId, ConversationId, EventCursor, MessageId, Revision, 
     rename_all_fields = "camelCase"
 )]
 pub enum SocialChange {
+    PlanChanged {
+        conversation_id: ConversationId,
+        plan_id: PlanId,
+        revision: Revision,
+    },
     ActorChanged {
         actor_id: ActorId,
         revision: Revision,

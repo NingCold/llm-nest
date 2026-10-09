@@ -25,6 +25,9 @@ pub enum RuntimeError {
     #[error("Storage error: {0}")]
     Storage(#[from] storage::StorageError),
 
+    #[error("Social storage error: {0}")]
+    SocialStorage(#[from] storage::social::SocialStorageError),
+
     #[error("Feature not found: {0}")]
     FeatureNotFound(String),
 

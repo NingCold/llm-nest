@@ -18,6 +18,8 @@ anyhow.workspace = true
 base64.workspace = true
 
 chat = { path = "../../features/chat" }
+social-feature = { path = "../../features/social" }
+social.workspace = true
 runtime = { path = "../../crates/runtime" }
 events = { path = "../../crates/events" }
 ai-client.workspace = true

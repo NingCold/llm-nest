@@ -1,4 +1,4 @@
-/* The social preview owns its palette; existing desktop and settings tokens stay intact. */
+/* Social views share a palette independent of desktop and settings tokens. */
 .social-shell, .social-dialog {
   --s-bg: #f7f8f5; --s-paper: #fff; --s-rail: #eef1ec; --s-panel: #fbfcfa;
   --s-text: #25382f; --s-muted: #718078; --s-line: #e4e9e2; --s-accent: #3f725d;
@@ -90,6 +90,24 @@
 .preview-indicator strong { font-size: 10px; font-weight: 500; }
 .preview-indicator small { display: block; font-size: 9px; color: var(--s-muted); margin-top: 3px; }
 .preview-indicator > svg { margin-left: auto; width: 13px; color: var(--s-muted); }
+.social-form-fields { border: 0; padding: 0; margin: 0; display: grid; gap: 16px; min-width: 0; }
+.live-message { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0; }
+.live-message.own { flex-direction: row-reverse; }
+.live-message-content { min-width: 0; max-width: 85%; }
+.live-message-label { display: flex; gap: 12px; align-items: center; color: var(--s-muted); font-size: 10px; margin: 0 2px 7px; }
+.live-message-label > span { display: flex; gap: 6px; align-items: center; }
+.live-message.own .live-message-label { justify-content: flex-end; }
+.live-bubble { padding: 12px 16px; border-radius: 12px; border: 1px solid var(--s-line); background: var(--s-panel); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.live-message.own .live-bubble { background: var(--s-own); }
+.live-bubble pre { max-width: 100%; overflow-x: auto; }
+.live-thinking, .live-interruption { color: var(--s-muted); font-size: 11px; }
+.live-run-details { margin-top: 7px; color: var(--s-muted); font-size: 10px; }
+.live-run-details summary { cursor: pointer; }
+.live-run-details pre { white-space: pre-wrap; font-family: inherit; line-height: 1.7; }
+.live-load-history { display: block; margin: 0 auto 20px; }
+.live-consciousness { padding: 18px 0; color: var(--s-muted); font-size: 12px; line-height: 1.9; }
+.live-consciousness > svg { color: var(--s-accent); }
+.live-consciousness h2 { font-size: 15px; color: var(--s-text); margin: 12px 0; }
 .social-workspace { min-width: 0; display: flex; flex-direction: column; flex: 1; }
 .workspace-content { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; }
 .social-error { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 8px 20px; color: var(--s-danger); background: var(--s-paper); border-bottom: 1px solid var(--s-line); }

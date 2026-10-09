@@ -76,7 +76,7 @@ impl Fixture {
                     conversation_id: c.id,
                     body: MessageBody::text(text),
                     reply_to: None,
-                    expected_revision: c.revision,
+                    expected_revision: Some(c.revision),
                 },
             )
             .await
@@ -150,6 +150,7 @@ impl Fixture {
             .begin_run(
                 self.ctx(),
                 BeginRun {
+                    details: None,
                     snapshot,
                     expected_revision: c.revision,
                 },
@@ -244,7 +245,7 @@ async fn identities_direct_uniqueness_archive_restore_and_clock() {
                 f.ctx(),
                 AppendMessage {
                     conversation_id: c.id,
-                    expected_revision: archived.revision,
+                    expected_revision: Some(archived.revision),
                     body: MessageBody::text("read-only"),
                     reply_to: None
                 }
@@ -298,7 +299,7 @@ async fn receipt_returns_current_revision_and_rejects_changed_input() {
         conversation_id: c.id,
         body: MessageBody::text("private-original"),
         reply_to: None,
-        expected_revision: c.revision,
+        expected_revision: Some(c.revision),
     };
     let (first, retry) = tokio::join!(
         f.store.append_message(ctx.clone(), input.clone()),
@@ -396,7 +397,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
                     conversation_id: c.id,
                     body: MessageBody::text("failed"),
                     reply_to: None,
-                    expected_revision: current.revision
+                    expected_revision: Some(current.revision)
                 }
             )
             .await
@@ -435,6 +436,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
             .begin_run(
                 f.ctx(),
                 BeginRun {
+                    details: None,
                     snapshot,
                     expected_revision: current.revision
                 }
@@ -468,6 +470,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
             .finish_run(
                 f.ctx(),
                 FinishRun {
+                    details: None,
                     run_id: run.id,
                     expected_revision: run.revision,
                     status: RunStatus::Succeeded,
@@ -482,6 +485,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
             .finish_run(
                 f.ctx(),
                 FinishRun {
+                    details: None,
                     run_id: run.id,
                     expected_revision: run.revision,
                     status: RunStatus::Cancelled,
@@ -520,7 +524,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
     f.sql().execute_batch("CREATE TRIGGER fail_checkpoint BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT,'injected draft failure'); END").unwrap();
     assert!(
         f.store
-            .checkpoint_run(f.human.id, run.id, MessageBody::text("failed draft"))
+            .checkpoint_run(f.human.id, run.id, MessageBody::text("failed draft"), None)
             .await
             .is_err()
     );
@@ -556,6 +560,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             .begin_run(
                 f.ctx(),
                 BeginRun {
+                    details: None,
                     snapshot: f.snapshot(ai.id, c.id, vec![]).await,
                     expected_revision: f
                         .store
@@ -584,6 +589,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             .finish_run(
                 f.ctx(),
                 FinishRun {
+                    details: None,
                     run_id: run.id,
                     expected_revision: run.revision,
                     status: RunStatus::Succeeded,
@@ -597,6 +603,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
         .finish_run(
             f.ctx(),
             FinishRun {
+                details: None,
                 run_id: run.id,
                 expected_revision: run.revision,
                 status: RunStatus::Interrupted,
@@ -624,6 +631,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             .finish_run(
                 f.ctx(),
                 FinishRun {
+                    details: None,
                     run_id: run.id,
                     expected_revision: run.revision,
                     status: RunStatus::Succeeded,
@@ -650,6 +658,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
     let run = f.begin(ai.id, c.id, vec![]).await;
     let ctx = f.ctx();
     let finish = FinishRun {
+        details: None,
         run_id: run.id,
         expected_revision: run.revision,
         status: RunStatus::Succeeded,
@@ -671,6 +680,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             .finish_run(
                 f.ctx(),
                 FinishRun {
+                    details: None,
                     run_id: run.id,
                     expected_revision: run.revision,
                     status: RunStatus::Succeeded,
@@ -687,6 +697,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             .begin_run(
                 f.ctx(),
                 BeginRun {
+                    details: None,
                     snapshot: f.snapshot(ai.id, c.id, vec![source(&private_m)]).await,
                     expected_revision: f
                         .store
@@ -1112,6 +1123,7 @@ fn social_worker_child() {
             .begin_run(
                 ctx(),
                 BeginRun {
+                    details: None,
                     snapshot,
                     expected_revision: c.revision,
                 },
@@ -1119,7 +1131,7 @@ fn social_worker_child() {
             .await
             .unwrap();
         store
-            .checkpoint_run(human.id, run.id, MessageBody::text("durable draft"))
+            .checkpoint_run(human.id, run.id, MessageBody::text("durable draft"), None)
             .await
             .unwrap();
         // Leave an uncommitted write in WAL; process kill must roll it back.

@@ -10,6 +10,7 @@ members = [
     "crates/storage",
     "crates/web-server",
     "features/chat",
+    "features/social",
     "frontends/cli",
     "frontends/tui",
     "frontends/tauri/src-tauri",

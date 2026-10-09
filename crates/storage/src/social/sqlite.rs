@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -21,8 +21,8 @@ struct Worker {
     clock: Arc<dyn Clock>,
 }
 pub struct SqliteSocialStore {
-    sender: Option<mpsc::Sender<Job>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    sender: Mutex<Option<mpsc::Sender<Job>>>,
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     path: PathBuf,
 }
 impl SqliteSocialStore {
@@ -61,8 +61,8 @@ impl SqliteSocialStore {
                 source,
             })?;
         let store = Self {
-            sender: Some(sender),
-            thread: Some(thread),
+            sender: Mutex::new(Some(sender)),
+            thread: Mutex::new(Some(thread)),
             path,
         };
         match received.await.map_err(|_| Error::WorkerClosed)? {
@@ -77,9 +77,13 @@ impl SqliteSocialStore {
         &self.path
     }
     /// Drain accepted work and release SQLite/OS lock before inspecting or removing files.
-    pub async fn close(mut self) -> Result<()> {
-        self.sender.take();
-        if let Some(thread) = self.thread.take() {
+    pub async fn close(self) -> Result<()> {
+        self.shutdown().await
+    }
+    async fn stop_writer(&self) -> Result<()> {
+        self.sender.lock().expect("sender mutex").take();
+        let thread = self.thread.lock().expect("thread mutex").take();
+        if let Some(thread) = thread {
             tokio::task::spawn_blocking(move || thread.join())
                 .await
                 .map_err(|_| Error::WorkerClosed)?
@@ -92,9 +96,13 @@ impl SqliteSocialStore {
         f: impl FnOnce(&mut Worker) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         let (send, receive) = oneshot::channel();
-        self.sender
-            .as_ref()
-            .ok_or(Error::WorkerClosed)?
+        let sender = self
+            .sender
+            .lock()
+            .expect("sender mutex")
+            .clone()
+            .ok_or(Error::WorkerClosed)?;
+        sender
             .send(Box::new(move |db| {
                 let _ = send.send(f(db));
             }))
@@ -105,7 +113,7 @@ impl SqliteSocialStore {
 }
 impl Drop for SqliteSocialStore {
     fn drop(&mut self) {
-        self.sender.take();
+        self.sender.get_mut().expect("sender mutex").take();
     }
 }
 impl Worker {
@@ -117,10 +125,20 @@ impl Worker {
         }
     }
     fn transact<T>(&mut self, f: impl FnOnce(&Db<'_>) -> Result<T>) -> Result<T> {
+        self.transaction(TransactionBehavior::Immediate, f)
+    }
+    fn read<T>(&mut self, f: impl FnOnce(&Db<'_>) -> Result<T>) -> Result<T> {
+        self.transaction(TransactionBehavior::Deferred, f)
+    }
+    fn transaction<T>(
+        &mut self,
+        behavior: TransactionBehavior,
+        f: impl FnOnce(&Db<'_>) -> Result<T>,
+    ) -> Result<T> {
         let now = self.clock.now();
         let tx = self
             .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .transaction_with_behavior(behavior)
             .map_err(|e| schema::sql_error(&self.path, e))?;
         let result = f(&Db {
             connection: &tx,
@@ -642,6 +660,120 @@ fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn message_page(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+        before: Option<Sequence>,
+    ) -> Result<(Vec<SocialMessage>, bool)> {
+        self.call(move |w| w.read(|db| {
+            db.operator(operator)?;
+            let member=db.member(operator,id)?;
+            let mut messages:Vec<SocialMessage>=db.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND sequence>=?2 AND (?3 IS NULL OR sequence<?3) ORDER BY sequence DESC LIMIT 201",params![id.to_string(),member.history_from_seq.get() as i64,before.map(|s|s.get() as i64)])?;
+            let more=messages.len()>200;
+            messages.truncate(200); messages.reverse();
+            Ok((messages,more))
+        })).await
+    }
+    async fn conversation_record(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> Result<ConversationRecord> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.operator(operator)?;
+                db.conversation_record(operator, db.get("conversations", id)?)
+            })
+        })
+        .await
+    }
+    async fn overview(&self, operator: ActorId) -> Result<SocialOverview> {
+        self.call(move |w| w.read(|db| db.overview(operator))).await
+    }
+    async fn contact(&self, operator: ActorId, id: ActorId) -> Result<ContactRecord> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.operator(operator)?;
+                db.contact_record(id)
+            })
+        })
+        .await
+    }
+    async fn context_material(
+        &self,
+        operator: ActorId,
+        scope: ContextScope,
+        trigger: MessageId,
+    ) -> Result<ContextMaterial> {
+        self.call(move |w| w.read(|db| db.context_material(operator, scope, trigger)))
+            .await
+    }
+    async fn run(&self, operator: ActorId, id: RunId) -> Result<AiRun> {
+        self.call(move |w| w.read(|db| db.authorized_run(operator, id)))
+            .await
+    }
+    async fn run_for_trigger(
+        &self,
+        operator: ActorId,
+        trigger: MessageId,
+    ) -> Result<Option<AiRun>> {
+        self.call(move |w| w.read(|db| {
+            db.operator(operator)?;
+            let message: SocialMessage = db.get("messages",trigger)?;
+            db.member(operator,message.conversation_id)?;
+            let id: Option<String> = db.connection.query_row("SELECT entity_id FROM command_receipts WHERE operator_id=?1 AND kind='begin_run' AND request_id=?2", params![operator.to_string(),trigger.to_string()], |r|r.get(0)).optional().map_err(|e|schema::sql_error(db.path,e))?;
+            id.map(|id| db.get("ai_runs",id)).transpose()
+        })).await
+    }
+    async fn run_details(&self, operator: ActorId, id: RunId) -> Result<Option<RunDetails>> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.authorized_run(operator, id)?;
+                Ok(db
+                    .query_json(
+                        "SELECT payload FROM run_details WHERE run_id=?1",
+                        [id.to_string()],
+                    )?
+                    .into_iter()
+                    .next())
+            })
+        })
+        .await
+    }
+    async fn update_ai(
+        &self,
+        ctx: CommandContext,
+        input: UpdateAi,
+        id: ActorId,
+    ) -> Result<ContactRecord> {
+        self.call(move |w| w.transact(|db| {
+            if db.receipt(&ctx,"update_ai",&(id,&input))?.is_some() { return db.contact_record(id); }
+            let mut record = db.contact_record(id)?;
+            if record.actor.status != EntityStatus::Active { return Err(Error::Invalid("AI is archived".into())); }
+            db.expected(record.actor.revision,input.expected_revision)?;
+            validate_text(&input.display_name,120,"display name")?;
+            validate_text(&input.persona,32*1024,"persona")?;
+            record.actor.display_name = input.display_name.clone();
+            record.actor.revision = record.actor.revision.next()?;
+            record.profile.persona = input.persona.clone();
+            record.profile.revision = record.profile.revision.next()?;
+            db.execute("UPDATE actors SET revision=?2,payload=?3 WHERE id=?1",params![id.to_string(),record.actor.revision.get() as i64,serde_json::to_string(&record.actor)?])?;
+            db.execute("UPDATE ai_profiles SET revision=?2,payload=?3 WHERE actor_id=?1",params![id.to_string(),record.profile.revision.get() as i64,serde_json::to_string(&record.profile)?])?;
+            if let Some(candidate) = &input.binding {
+                validate_text(&candidate.provider_id,120,"provider")?;
+                validate_text(&candidate.model_id,240,"model")?;
+                let binding = ExecutionBinding { id: record.binding.as_ref().map(|b|b.id).unwrap_or_default(), actor_id:id, provider_id:candidate.provider_id.clone(), model_id:candidate.model_id.clone(), reasoning_effort:candidate.reasoning_effort.clone(), revision: record.binding.as_ref().map(|b|b.revision.next()).transpose()?.unwrap_or(Revision::ONE) };
+                db.execute("INSERT INTO execution_bindings VALUES(?1,?2,?3) ON CONFLICT(actor_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload",params![id.to_string(),binding.revision.get() as i64,serde_json::to_string(&binding)?])?;
+            } else { db.execute("DELETE FROM execution_bindings WHERE actor_id=?1",[id.to_string()])?; }
+            db.event(SocialChange::ActorChanged { actor_id:id, revision:record.actor.revision })?;
+            db.save_receipt(&ctx,"update_ai",&(id,&input),id)?;
+            db.contact_record(id)
+        })).await
+    }
+    async fn shutdown(&self) -> Result<()> {
+        self.stop_writer().await
+    }
     async fn local_human(&self, initial_name: String) -> Result<Actor> {
         self.call(move |w| {
             w.transact(|db| {
@@ -771,7 +903,9 @@ impl SocialStore for SqliteSocialStore {
                 let mut c: Conversation = db.get("conversations", input.conversation_id)?;
                 db.member(ctx.operator, c.id)?;
                 db.writable(&c)?;
-                db.expected(c.revision, input.expected_revision)?;
+                if let Some(expected) = input.expected_revision {
+                    db.expected(c.revision, expected)?;
+                }
                 if let Some(id) = input.reply_to {
                     let m: SocialMessage = db.get("messages", id)?;
                     if m.conversation_id != c.id || m.status == MessageStatus::Withdrawn {
@@ -951,6 +1085,9 @@ impl SocialStore for SqliteSocialStore {
                         serde_json::to_string(&run)?
                     ],
                 )?;
+                if let Some(details) = &input.details {
+                    db.save_details(id, details)?;
+                }
                 db.event(SocialChange::RunChanged {
                     conversation_id: c.id,
                     run_id: id,
@@ -967,6 +1104,7 @@ impl SocialStore for SqliteSocialStore {
         operator: ActorId,
         run_id: RunId,
         body: MessageBody,
+        details: Option<RunDetails>,
     ) -> Result<()> {
         self.call(move |w| {
             w.transact(|db| {
@@ -986,6 +1124,9 @@ impl SocialStore for SqliteSocialStore {
                     "UPDATE messages SET payload=?2 WHERE id=?1",
                     params![m.id.to_string(), serde_json::to_string(&m)?],
                 )?;
+                if let Some(details) = &details {
+                    db.save_details(run_id, details)?;
+                }
                 Ok(())
             })
         })
@@ -1016,6 +1157,9 @@ impl SocialStore for SqliteSocialStore {
                     return Err(Error::Invalid("oversized partial answer".into()));
                 }
                 let run = db.terminate(run, input.status, Some(input.body.clone()))?;
+                if let Some(details) = &input.details {
+                    db.save_details(run.id, details)?;
+                }
                 db.save_receipt(&ctx, "finish_run", &input, run.id)?;
                 Ok(run)
             })

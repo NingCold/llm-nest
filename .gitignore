@@ -38,6 +38,7 @@ config/llmn.toml
 STATE.md
 /frontends/tauri/dist/
 /frontends/web/.social-preview-dist/
+/frontends/web/.social-runtime-dist/
 
 # Tauri rebuilds permission schemas/manifests for each target platform.
 /frontends/tauri/src-tauri/gen/schemas/

@@ -5,7 +5,7 @@ use events::SocialEvent;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// An authenticated local operator is supplied by the future application layer.
+/// The application supplies the persisted local operator, never a client sender.
 /// Store validates it against the single persisted human, never an arbitrary sender.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandContext {
@@ -29,7 +29,8 @@ pub struct AppendMessage {
     pub conversation_id: ConversationId,
     pub body: MessageBody,
     pub reply_to: Option<MessageId>,
-    pub expected_revision: Revision,
+    /// Appends allocate sequence in the transaction; callers may opt into a revision check.
+    pub expected_revision: Option<Revision>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMessage {
@@ -48,6 +49,8 @@ pub struct ConversationControl {
 pub struct BeginRun {
     pub snapshot: ContextSnapshot,
     pub expected_revision: Revision,
+    #[serde(default)]
+    pub details: Option<RunDetails>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinishRun {
@@ -55,7 +58,66 @@ pub struct FinishRun {
     pub expected_revision: Revision,
     pub status: RunStatus,
     pub body: MessageBody,
+    #[serde(default)]
+    pub details: Option<RunDetails>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactRecord {
+    pub actor: Actor,
+    pub profile: AiProfile,
+    pub binding: Option<ExecutionBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationRecord {
+    pub conversation: Conversation,
+    pub members: Vec<Membership>,
+    pub latest_message: Option<SocialMessage>,
+    pub active_run: Option<AiRun>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SocialOverview {
+    pub human: Actor,
+    pub contacts: Vec<ContactRecord>,
+    pub conversations: Vec<ConversationRecord>,
+    pub cursor: EventCursor,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMaterial {
+    pub contact: ContactRecord,
+    pub conversation: Conversation,
+    pub members: Vec<Membership>,
+    pub relationship_revision: Option<Revision>,
+    /// Most recent committed messages, in chronological order, through the trigger.
+    pub messages: Vec<SocialMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAi {
+    pub display_name: String,
+    pub persona: String,
+    pub binding: Option<BindingCandidate>,
+    pub expected_revision: Revision,
+}
+
+/// Execution details remain separate from social message content and context.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDetails {
+    pub provider: String,
+    pub model: String,
+    pub wire_model: String,
+    pub protocol: String,
+    pub reasoning: String,
+    pub usage: Option<common::Usage>,
+    pub timings: Option<common::MessageTimings>,
+    pub error: Option<RunFailure>,
+}
+
+pub use events::SocialFailure as RunFailure;
 
 /// Bounded, asynchronous, typed operations. Transactions never span model calls.
 /// All mutation receipts and persistent references commit with their entities.
@@ -63,6 +125,31 @@ pub struct FinishRun {
 pub trait SocialStore: Send + Sync {
     async fn local_human(&self, initial_name: String) -> SocialStorageResult<Actor>;
     async fn actor(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<Actor>;
+    async fn overview(&self, operator: ActorId) -> SocialStorageResult<SocialOverview>;
+    async fn contact(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<ContactRecord>;
+    async fn update_ai(
+        &self,
+        ctx: CommandContext,
+        input: UpdateAi,
+        id: ActorId,
+    ) -> SocialStorageResult<ContactRecord>;
+    async fn context_material(
+        &self,
+        operator: ActorId,
+        scope: ContextScope,
+        trigger: MessageId,
+    ) -> SocialStorageResult<ContextMaterial>;
+    async fn run(&self, operator: ActorId, id: RunId) -> SocialStorageResult<AiRun>;
+    async fn run_for_trigger(
+        &self,
+        operator: ActorId,
+        trigger: MessageId,
+    ) -> SocialStorageResult<Option<AiRun>>;
+    async fn run_details(
+        &self,
+        operator: ActorId,
+        id: RunId,
+    ) -> SocialStorageResult<Option<RunDetails>>;
     async fn create_ai(&self, ctx: CommandContext, input: CreateAi) -> SocialStorageResult<Actor>;
     async fn open_direct(
         &self,
@@ -80,6 +167,11 @@ pub trait SocialStore: Send + Sync {
         operator: ActorId,
         id: ConversationId,
     ) -> SocialStorageResult<Conversation>;
+    async fn conversation_record(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> SocialStorageResult<ConversationRecord>;
     async fn append_message(
         &self,
         ctx: CommandContext,
@@ -102,12 +194,19 @@ pub trait SocialStore: Send + Sync {
         after: Sequence,
         limit: u32,
     ) -> SocialStorageResult<Vec<SocialMessage>>;
+    async fn message_page(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+        before: Option<Sequence>,
+    ) -> SocialStorageResult<(Vec<SocialMessage>, bool)>;
     async fn begin_run(&self, ctx: CommandContext, input: BeginRun) -> SocialStorageResult<AiRun>;
     async fn checkpoint_run(
         &self,
         operator: ActorId,
         run_id: RunId,
         body: MessageBody,
+        details: Option<RunDetails>,
     ) -> SocialStorageResult<()>;
     async fn finish_run(&self, ctx: CommandContext, input: FinishRun)
     -> SocialStorageResult<AiRun>;
@@ -130,4 +229,6 @@ pub trait SocialStore: Send + Sync {
         operator: ActorId,
         preview: LegacyPreview,
     ) -> SocialStorageResult<LegacyImportResult>;
+    /// Drain the writer after all feature tasks have stopped.
+    async fn shutdown(&self) -> SocialStorageResult<()>;
 }

@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [AI 执行](05-ai-execution.md) · [存储与迁移](06-storage-and-migration.md)
 
-状态：目标设计，尚未实现。
+状态：完整目标设计；M1 首批已实现共享目录锁、可选 SocialResources、GUI 专用构造路径、SocialFeature 生命周期与 Web 关闭收尾。持久参与调度、意识后台任务和桌面退出验收仍待后续；当前范围见 [M1 私聊说明](m1-private-chat.md)。
 
 ## 1. Runtime 的职责
 
@@ -24,7 +24,7 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 6. 构造 Runtime 资源，初始化 SocialFeature；启动事件消费与调度，读取已提交位置。
 7. 暴露 init 快照与业务入口。存储和历史恢复未成功时不能发送或启动自动任务。
 
-无 providers 仍是有效首次启动状态：可以配置联系人草稿和设置，无法执行 AI。目标版本将消息保存与模型可用性分开，切换时同步修改当前 GUI 发送约束。
+无 providers 仍是有效首次启动状态：可以配置联系人和设置，无法执行 AI。当前社交私聊已经把真人消息保存与模型可用性分开；旧 Harness 入口保持原发送约束。
 
 ## 3. 配置分工
 

@@ -34,6 +34,8 @@ pub struct Runtime {
     /// [`Runtime::from_config`]; used to auto-reload before a `/refresh` of a
     /// provider that is not yet in the in-memory snapshot.
     pub(crate) config_path: Option<PathBuf>,
+    pub(crate) directory_guard: Option<Arc<storage::DataDirectoryGuard>>,
+    pub(crate) social: Option<Arc<crate::feature::SocialResources>>,
 }
 
 impl Runtime {
@@ -55,6 +57,8 @@ impl Runtime {
             features: Arc::new(RwLock::new(FeatureRegistry::new())),
             tools: Arc::new(tools::ToolRegistry::with_builtins()),
             config_path: None,
+            directory_guard: None,
+            social: None,
         }
     }
 
@@ -288,6 +292,7 @@ impl Runtime {
             llm: self.llm.clone(),
             events: self.event_bus.clone(),
             tools: self.tools.clone(),
+            social: self.social.clone(),
         }
     }
 
@@ -312,7 +317,12 @@ impl Runtime {
 
     pub async fn shutdown_features(&self) -> Result<()> {
         let features = self.features.read().await;
-        features.shutdown_all().await
+        let features_result = features.shutdown_all().await;
+        let storage_result = match &self.social {
+            Some(resources) => resources.store.shutdown().await.map_err(RuntimeError::from),
+            None => Ok(()),
+        };
+        features_result.and(storage_result)
     }
 
     pub async fn get_feature<T: Feature + 'static>(&self, id: &str) -> Option<Arc<T>> {

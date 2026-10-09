@@ -18,7 +18,7 @@ const sections = [
   { id: "about", label: "关于", icon: Info, description: "查看应用版本与当前运行状态。" },
 ] as const
 
-export function SettingsPage({ notices }: { notices?: ReactNode }) {
+export function SettingsPage({ notices, onBack, availableSections }: { notices?: ReactNode; onBack?: () => void; availableSections?: SettingsSection[] }) {
   const page = useUiStore(s => s.page)
   const section = useUiStore(s => s.settingsSection)
   const showSettings = useUiStore(s => s.showSettings)
@@ -30,7 +30,8 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
   const model = useConfigStore(s => s.config?.currentModel)
   const heading = useRef<HTMLHeadingElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
-  const current = sections.find(item => item.id === section) ?? sections[0]
+  const visibleSections = availableSections ? sections.filter(item => availableSections.includes(item.id)) : sections
+  const current = visibleSections.find(item => item.id === section) ?? visibleSections[0]
 
   useEffect(() => {
     if (page !== "settings") return
@@ -39,7 +40,7 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
   }, [page, section])
 
   const panel = (id: SettingsSection, children: ReactNode) => (
-    <section hidden={section !== id} aria-label={sections.find(item => item.id === id)?.label}>
+    <section hidden={current.id !== id} aria-label={sections.find(item => item.id === id)?.label}>
       {children}
     </section>
   )
@@ -50,14 +51,14 @@ export function SettingsPage({ notices }: { notices?: ReactNode }) {
           <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM Nest</span>
         </div>
         <div className="px-3 py-4">
-          <button type="button" onClick={showChat} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <button type="button" onClick={onBack ?? showChat} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowLeft className="h-4 w-4" />返回聊天
           </button>
         </div>
         <p className="px-6 pb-2 text-xs font-medium text-sidebar-muted">设置</p>
         <nav aria-label="设置分类" className="space-y-1 px-3">
-          {sections.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" aria-current={section === id ? "page" : undefined} onClick={() => showSettings(id)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", section === id ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
+          {visibleSections.map(({ id, label, icon: Icon }) => (
+            <button key={id} type="button" aria-current={current.id === id ? "page" : undefined} onClick={() => showSettings(id)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", current.id === id ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
               <Icon className="h-4 w-4 shrink-0" />{label}
             </button>
           ))}

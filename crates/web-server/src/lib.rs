@@ -6,6 +6,7 @@
 //! over Tauri IPC.
 
 pub mod api;
+pub mod social_api;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,6 +20,8 @@ use tokio_util::sync::CancellationToken;
 pub struct AppState {
     pub runtime: Runtime,
     pub chat: Arc<chat::ChatFeature>,
+    pub social: Arc<social_feature::SocialFeature>,
+    pub shutdown: CancellationToken,
     pub cancel_map: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 

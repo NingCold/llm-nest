@@ -9,11 +9,13 @@ use tokio_util::sync::CancellationToken;
 pub mod commands;
 mod config_path;
 mod directories;
+mod social_commands;
 mod window_frame;
 
 pub struct AppState {
     pub runtime: Runtime,
     pub chat: Arc<chat::ChatFeature>,
+    pub social: Arc<social_feature::SocialFeature>,
     pub cancel_map: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
@@ -32,11 +34,14 @@ impl BackendState {
         paths.prepare()?;
         let config_path = paths.config_file.clone();
         let runtime = Arc::new(
-            Runtime::from_config_persistent(&config_path, &paths.data_dir)
+            Runtime::from_config_social_persistent(&config_path, &paths.data_dir)
+                .await
                 .map_err(|e| e.to_string())?,
         );
         let chat = Arc::new(chat::ChatFeature::new());
+        let social = Arc::new(social_feature::SocialFeature::new());
         runtime.register_feature(chat.clone()).await;
+        runtime.register_feature(social.clone()).await;
         runtime
             .initialize_features()
             .await
@@ -54,6 +59,7 @@ impl BackendState {
         let state = Arc::new(AppState {
             runtime: (*runtime).clone(),
             chat,
+            social,
             cancel_map: Arc::new(Mutex::new(HashMap::new())),
         });
         *inner = Some(state.clone());
@@ -93,6 +99,16 @@ pub fn run() {
             commands::sync_catalog,
             commands::upsert_provider,
             commands::delete_provider,
+            social_commands::social_init,
+            social_commands::social_create_contact,
+            social_commands::social_update_contact,
+            social_commands::social_open_direct,
+            social_commands::social_conversation,
+            social_commands::social_messages,
+            social_commands::social_send,
+            social_commands::social_events,
+            social_commands::social_run_details,
+            social_commands::social_cancel_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

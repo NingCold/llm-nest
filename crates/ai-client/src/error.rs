@@ -24,6 +24,9 @@ pub enum AiError {
     #[error("Stream error: {0}")]
     StreamError(String),
 
+    #[error("stream ended without a completion event")]
+    UnexpectedEof,
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
 

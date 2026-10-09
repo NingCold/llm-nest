@@ -404,6 +404,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/catalog/sync", post(sync_catalog))
         .route("/api/providers", post(upsert_provider))
         .route("/api/providers/{id}", delete(delete_provider))
+        .merge(crate::social_api::routes())
         // Static frontend (production: built `frontends/web/dist`).
         .fallback(serve_static)
         .layer(axum::middleware::from_fn(local_request_guard))

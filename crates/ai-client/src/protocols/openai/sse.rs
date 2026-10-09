@@ -164,9 +164,7 @@ impl Stream for OpenAIStream {
                 Poll::Ready(Some(Ok(payload))) => self.consume(&payload),
                 Poll::Ready(Some(Err(err))) => Err(err),
                 Poll::Ready(None) if self.saw_finish => self.finish(),
-                Poll::Ready(None) => Err(AiError::StreamError(
-                    "stream ended without a completion event".into(),
-                )),
+                Poll::Ready(None) => Err(AiError::UnexpectedEof),
                 Poll::Pending => return Poll::Pending,
             };
             if let Err(err) = outcome {

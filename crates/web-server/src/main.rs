@@ -48,12 +48,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime::worker_entry();
     let config_path = find_config_path()?;
     let runtime =
-        Runtime::from_config_persistent(&config_path, storage::prepare_default_data_dir()?)
+        Runtime::from_config_social_persistent(&config_path, storage::prepare_default_data_dir()?)
+            .await
             .map_err(|e| format!("failed to load config: {e}"))?;
     let runtime = Arc::new(runtime);
 
     let chat = Arc::new(chat::ChatFeature::new());
+    let social = Arc::new(social_feature::SocialFeature::new());
     runtime.register_feature(chat.clone()).await;
+    runtime.register_feature(social.clone()).await;
     runtime.initialize_features().await?;
     let (watch_tx, mut watch_rx) = tokio::sync::mpsc::unbounded_channel();
     let _watcher = runtime::config::watcher::spawn_config_watcher(
@@ -69,9 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let shutdown = CancellationToken::new();
     let state = Arc::new(web_server::AppState {
         runtime: (*runtime).clone(),
         chat,
+        social,
+        shutdown: shutdown.clone(),
         cancel_map: Arc::new(Mutex::new(std::collections::HashMap::<
             String,
             CancellationToken,
@@ -89,6 +95,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "web-server listening on http://{addr} (config: {})",
         config_path.display()
     );
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            shutdown.cancel();
+        })
+        .await?;
+    runtime.shutdown_features().await?;
     Ok(())
 }

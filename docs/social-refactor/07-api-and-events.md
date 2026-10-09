@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [存储与迁移](06-storage-and-migration.md) · [界面与桌面](08-frontend-and-desktop.md)
 
-状态：完整目标契约；M0 已实现 SocialStore 命令、共享持久事件引用与回执。下面的 HTTP 路由、IPC 名称和订阅仍待 M1，见 [M0 说明](m0-implementation.md)。
+状态：完整目标契约；M1 首批已实现联系人/私聊 HTTP、共享 DTO 的基础 IPC 命令、持久引用回放与临时生成 SSE。下面的完整群聊/控制/记忆契约及实时 IPC 仍待后续；已实现的路由、字段与限制见 [M1 私聊说明](m1-private-chat.md)，不可按目标表推断接口已可调用。
 
 ## 1. 共享业务入口
 

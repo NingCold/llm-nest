@@ -2,7 +2,7 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
-状态：完整目标设计；M0 已实现范围、来源、记忆/摘要与快照基础类型，以及运行事务的消息来源/权限版本校验。ContextBuilder 和意识系统服务留到 M1/M2，见 [M0 说明](m0-implementation.md)。
+状态：完整目标设计；M1 首批已实现 ConsciousnessService 的近期原文、角色设定、文本预算和版本化来源快照。当前每次只读本私聊窗口的可见 committed 消息；摘要、显式记忆与跨窗口接续留到 M2，实际范围见 [M1 私聊说明](m1-private-chat.md)。
 
 ## 0. 名称与定义
 

@@ -3660,6 +3660,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "social",
  "storage",
  "temp-env",
  "thiserror 2.0.18",
@@ -4208,6 +4209,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "social-feature"
+version = "0.1.1-alpha.2"
+dependencies = [
+ "ai-client",
+ "common",
+ "events",
+ "futures-util",
+ "runtime",
+ "serde",
+ "serde_json",
+ "social",
+ "storage",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4616,6 +4635,8 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "social",
+ "social-feature",
  "storage",
  "tauri",
  "tauri-build",
@@ -5060,6 +5081,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -5726,6 +5748,8 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "social",
+ "social-feature",
  "storage",
  "tokio",
  "tokio-stream",

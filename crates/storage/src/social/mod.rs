@@ -1,6 +1,7 @@
-//! M0 foundation, deliberately not activated by Runtime or GUI yet.
+//! Social persistence, independent of runtime and frontend transports.
 mod error;
 mod legacy;
+mod reads;
 mod schema;
 mod sqlite;
 mod store;

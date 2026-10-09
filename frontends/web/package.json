@@ -9,9 +9,10 @@
     "dev:social": "vite --mode social-preview",
     "build": "vite build",
     "build:social": "vite build --mode social-preview --outDir .social-preview-dist",
+    "build:social-runtime": "vite build --outDir .social-runtime-dist",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/regressions.cjs && node tests/social-preview.cjs"
+    "test": "node tests/regressions.cjs && node tests/social-preview.cjs && node tests/live-social.cjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.21",

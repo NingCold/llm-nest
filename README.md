@@ -14,11 +14,11 @@
   <a href="https://github.com/NingCold/llm-nest/issues">反馈问题</a>
 </p>
 
-LLM Nest 是一个以本地会话为基础的 AI 工作空间，也是一套正在发展的 AI Harness。你可以在图形界面里配置模型、阅读流式回答，也可以在 CLI 或 TUI 中使用同一套模型路由、会话存储和工具执行逻辑。
+LLM Nest 正从本地 AI 工作空间转向人与 AI 的社交空间。Web 已采用“消息”和“通讯录”，支持稳定 AI 联系人、独立模型配置和持续私聊；桌面、CLI/TUI 暂时保留原有 Harness 入口，共用 Rust 运行时和模型协议能力。
 
 **当前处于开发预览阶段。** 聊天、设置、持久化和内置工具循环已经落地；通用编码代理、MCP、知识库和工作流编排尚未实现。
 
-**下一阶段方向已确定为人与 AI 的社交空间。** 首版规划个人与多个 AI 的持续私聊、群聊，围绕稳定身份、意识系统（Consciousness）和聊天参与机制重构。意识系统统一管理软件上下文、摘要、记忆、召回与遗忘。[Web 交互预览](#社交-web-交互预览)已可体验，使用独立模拟数据；[M0 领域与 SQLite 基础](docs/social-refactor/m0-implementation.md)已落地，真实社交用例与意识系统尚未接入。目标结构见 [重构总纲](docs/social-refactor/README.md)，进度见 [TODO](docs/social-refactor/TODO.md)，以下现有功能介绍仍以 Harness 实现为主。
+**M1 首批真实私聊已接通。** 创建 AI 后始终使用同一个长期私聊，完整历史保存在 SQLite；基础意识系统（Consciousness）为每次回复准备角色设定和本窗口近期记录。未配置模型仍可保存真人消息，AI 生成期间可以继续输入。群聊参与、完整修订/交谈控制、摘要、长期记忆和群话题接续按后续批次实现。[实现与验证](docs/social-refactor/m1-private-chat.md)区分当前能力与待办；[独立模拟预览](#社交-web-交互预览)继续用于完整交互探索。目标结构见 [总纲](docs/social-refactor/README.md)，进度见 [TODO](docs/social-refactor/TODO.md)，下表描述保留的 Harness 功能。
 
 ## 为什么做 LLM Nest
 
@@ -98,7 +98,9 @@ pnpm --dir frontends/web build
 cargo run -p web-server
 ```
 
-打开 `http://127.0.0.1:8787`。Web 服务默认仅监听本机，不具备面向公网的完整身份认证与多用户隔离。
+打开 `http://127.0.0.1:8787`，默认进入消息/通讯录；在设置中添加模型服务，再创建 AI 联系人并选择其回复模型。`?legacy=1` 可进入迁移期旧聊天。Web 服务默认仅监听本机，不具备面向公网的完整身份认证与多用户隔离。
+
+离线检查真实存储和 HTTP 链路可运行 `python scripts/social_acceptance.py`；使用 `--serve` 保留隔离测试页面。该脚本使用临时配置与本机模拟 provider，不调用付费模型。Windows MSVC 单独 target 的二进制通过 `--binary` 指定，页面产物通过 `--dist` 指定；详见 [首批私聊说明](docs/social-refactor/m1-private-chat.md)。
 
 ### 社交 Web 交互预览
 
@@ -108,11 +110,11 @@ pnpm --dir frontends/web dev:social --host 127.0.0.1
 
 打开 `http://127.0.0.1:1420`，无需启动 Rust 后端或配置 API Key。可体验消息/通讯录、联系人创建与编辑、唯一长期私聊、独立群聊、邀请 AI 接话、停止/暂停/结束，以及详情中的记忆与摘要、群话题接续私聊。
 
-页面标注“Web 交互预览”，回复为固定模拟内容，摘要整理为原文摘录；记录与草稿保存在当前浏览器的独立 localStorage 中，不能作为正式数据存储或真实记忆验收。默认 Web 开发、生产构建与 Tauri 继续使用原有后端；也可在普通 Web 开发页显式添加 `?social-preview=1`。更多边界与验证见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)。
+页面标注“Web 交互预览”，回复为固定模拟内容，摘要整理为原文摘录；记录与草稿保存在当前浏览器的独立 localStorage 中，不能作为正式数据存储或真实记忆验收。它与普通 Web 的真实私聊独立；也可在普通 Web 开发页显式添加 `?social-preview=1`，Tauri 不启用预览。更多边界与验证见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)。
 
 ## 数据与运行边界
 
-- 会话以 JSON 保存在本机；配置为 TOML。默认会话目录与桌面安装版的配置目录为用户主目录下的 `.llmn`（Windows：`%USERPROFILE%/.llmn`；Linux：`~/.llmn`），可通过 `LLMN_DATA_DIR` 指定。桌面版在“设置 → 配置 → 配置与数据”显示实际路径并可打开目录。
+- 社交联系人与私聊保存到 `social.sqlite3`；旧 Harness 会话仍为 JSON，配置为 TOML，旧记录不自动导入社交库。默认数据目录与桌面安装版的配置目录为用户主目录下的 `.llmn`（Windows：`%USERPROFILE%/.llmn`；Linux：`~/.llmn`），可通过 `LLMN_DATA_DIR` 指定。桌面版在“设置 → 配置 → 配置与数据”显示实际路径并可打开目录。
 - **同一个数据目录只能由一个独立 Runtime 写入。** 多入口共用实现，不等于多个进程可以同时打开同一存储目录；同时运行时应使用不同目录。
 - 配置与会话目前未加密。密钥可使用环境变量引用；发送到远程模型的消息会交给所选供应商处理。
 - 恢复以最近一次落盘的检查点为准，不承诺零片段丢失，也不提供工具副作用回滚或模型 token 游标续传。
@@ -123,7 +125,7 @@ pnpm --dir frontends/web dev:social --host 127.0.0.1
 ```text
 frontends/cli · frontends/tui · frontends/tauri · crates/web-server
                          │
-                    features/chat
+               features/social · features/chat
                          │
                      runtime
                     /    |    \
@@ -136,9 +138,9 @@ frontends/cli · frontends/tui · frontends/tauri · crates/web-server
 
 ## 接下来重点做什么
 
-1. 完成 Linux GNOME 实机验收，并跑通 GitHub 托管构建与发布流程。
-2. 完善运行记录和故障诊断，让失败原因与恢复边界更容易理解。
-3. 围绕一个可验收的实际任务扩展工具，先完成权限和执行边界，再考虑更广泛的插件接入。
+1. 接通独立群聊、成员和多 AI @ 队列，继续完成 M1。
+2. 补齐消息修订、暂停/结束和桌面实时接入，再完善意识系统与参与节奏。
+3. 维持平台与发布基线，按对应阶段继续安装和实机验收。
 
 欢迎提供具体任务和复现步骤：你当时想做什么、选了什么模型、期望和实际结果分别是什么。请勿在 Issue、日志或截图中附带 API Key。
 

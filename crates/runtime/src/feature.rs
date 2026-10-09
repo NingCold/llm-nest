@@ -14,6 +14,11 @@ use crate::session_manager::SessionManager;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+pub struct SocialResources {
+    pub store: Arc<dyn storage::social::SocialStore>,
+    pub clock: Arc<dyn social::Clock>,
+}
+
 #[derive(Clone)]
 pub struct FeatureContext {
     pub sessions: Arc<RwLock<SessionManager>>,
@@ -21,6 +26,7 @@ pub struct FeatureContext {
     pub events: EventBus<RuntimeEvent>,
     /// Tools the chat feature may call during its agent loop.
     pub tools: Arc<tools::ToolRegistry>,
+    pub social: Option<Arc<SocialResources>>,
 }
 
 pub trait Feature: Send + Sync {

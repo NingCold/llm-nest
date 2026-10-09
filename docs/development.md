@@ -53,7 +53,17 @@ cargo run -p web-server
 pnpm --dir frontends/web dev
 ```
 
-打开 `http://localhost:1420`。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。
+打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；`?legacy=1` 保留旧入口。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。桌面仍使用旧界面，社交实时 IPC 待后续接入。
+
+真实社交私聊的隔离离线验收：
+
+```bash
+pnpm --dir frontends/web build:social-runtime
+cargo build -p web-server --locked
+python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist
+```
+
+添加 `--serve` 可检查临时数据页面，Windows MSVC 指定 target 后通过 `--binary target/x86_64-pc-windows-msvc/debug/web-server.exe` 选择产物。脚本使用本机模拟 provider，不读取个人配置；当前范围见 [M1 私聊说明](social-refactor/m1-private-chat.md)。
 
 社交界面可以先独立开发和验证，无需启动 Runtime：
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use storage::{FileSessionStore, SessionStore};
+use storage::{DataDirectoryGuard, FileSessionStore, SessionStore};
 
 use crate::{
     config::RuntimeConfig, error::Result, event::RuntimeEvent, event_bus::EventBus,
@@ -14,6 +14,7 @@ pub struct RuntimeBuilder {
     event_bus: Option<EventBus<RuntimeEvent>>,
     storage_dir: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
+    social: Option<Arc<crate::feature::SocialResources>>,
 }
 
 impl RuntimeBuilder {
@@ -24,6 +25,7 @@ impl RuntimeBuilder {
             event_bus: None,
             storage_dir: None,
             catalog_path: None,
+            social: None,
         }
     }
 
@@ -50,6 +52,11 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn social_resources(mut self, resources: crate::feature::SocialResources) -> Self {
+        self.social = Some(Arc::new(resources));
+        self
+    }
+
     pub fn build(self) -> Result<Runtime> {
         let config = self.config.unwrap_or_default();
 
@@ -62,6 +69,7 @@ impl RuntimeBuilder {
         let catalog = crate::catalog::CatalogState::load(catalog_path.as_deref());
         let llm = Arc::new(catalog.client(&config)?);
 
+        let mut directory_guard = None;
         let state = match (self.state, self.storage_dir) {
             (Some(_), Some(_)) => {
                 return Err(crate::error::RuntimeError::ConfigError(
@@ -70,7 +78,10 @@ impl RuntimeBuilder {
             }
             (Some(state), None) => state,
             (None, Some(dir)) => {
-                let store: Arc<dyn SessionStore> = Arc::new(FileSessionStore::new(dir)?);
+                let guard = DataDirectoryGuard::acquire(dir)?;
+                let store: Arc<dyn SessionStore> =
+                    Arc::new(FileSessionStore::from_guard(guard.clone()));
+                directory_guard = Some(guard);
                 SessionManager::from_store(store)?
             }
             (None, None) => SessionManager::new(),
@@ -80,6 +91,8 @@ impl RuntimeBuilder {
         let mut runtime = Runtime::new(state, event_bus, llm);
         runtime.catalog_path = catalog_path;
         runtime.catalog_state = Arc::new(tokio::sync::RwLock::new(catalog));
+        runtime.directory_guard = directory_guard;
+        runtime.social = self.social;
         Ok(runtime)
     }
 }
@@ -91,6 +104,26 @@ impl Default for RuntimeBuilder {
 }
 
 impl Runtime {
+    /// GUI hosts explicitly activate SQLite; CLI/TUI retain their legacy path.
+    pub async fn from_config_social_persistent(
+        path: impl AsRef<std::path::Path>,
+        storage_dir: impl Into<PathBuf>,
+    ) -> Result<Self> {
+        let mut runtime = Self::from_config_persistent(path, storage_dir)?;
+        let guard = runtime
+            .directory_guard
+            .as_ref()
+            .expect("persistent runtime owns its directory guard")
+            .clone();
+        let clock: Arc<dyn social::Clock> = Arc::new(social::SystemClock);
+        let store = storage::social::SqliteSocialStore::open(guard, clock.clone()).await?;
+        runtime.social = Some(Arc::new(crate::feature::SocialResources {
+            store: Arc::new(store),
+            clock,
+        }));
+        Ok(runtime)
+    }
+
     pub fn from_config(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let config = crate::config::ConfigLoader::load(&path)?;
         let mut builder = RuntimeBuilder::new().config(config);

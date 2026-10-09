@@ -1,0 +1,18 @@
+[package]
+name = "social-feature"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ai-client.workspace = true
+common.workspace = true
+social.workspace = true
+storage.workspace = true
+runtime = { path = "../../crates/runtime" }
+events = { path = "../../crates/events" }
+tokio.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

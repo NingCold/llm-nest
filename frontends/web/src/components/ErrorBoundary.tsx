@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react"
+import { useUiStore } from "@/store/ui"
 
 interface Props { children: ReactNode; fallback?: ReactNode }
 interface State { hasError: boolean; error?: Error }
@@ -8,6 +9,7 @@ class ErrorBoundary extends Component<Props, State> {
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error }
   }
+  componentDidCatch() { useUiStore.getState().setDesktopReady() }
   render() {
     if (this.state.hasError) {
       return this.props.fallback ?? (

@@ -64,7 +64,7 @@ CLI/TUI 与显式 `?legacy=1` 的桌面/Web 入口仍使用以下行为，和社
 | 入口 | 状态 |
 | --- | --- |
 | Windows 桌面 x64 | MSVC 社交 NSIS/MSI 已构建；NSIS 覆盖升级、安装版 IPC/保存/恢复与资源检查通过，见 [阶段记录](docs/social-refactor/m1-stage-validation.md)；[本机 NSIS 卸载重装](docs/windows-reinstall-2026-10-09.md)通过，干净系统与 MSI 实际安装验收仍待完成 |
-| Linux 桌面 x64 | Ubuntu 24.04 基线 deb/AppImage、包内 worker 与社交 IPC 通过；Ubuntu 26.04 GNOME 的 Wayland/XWayland/FUSE 自动检查和用户人工确认通过；见 [记录](docs/social-refactor/m1-stage-validation.md) |
+| Linux 桌面 x64 | 既有 Ubuntu 24.04 基线 deb/AppImage、包内 worker 与社交 IPC 通过；Ubuntu 26.04 GNOME 的 Wayland/XWayland/FUSE 自动检查和用户人工确认通过，见 [记录](docs/social-refactor/m1-stage-validation.md)；本批无系统标题栏的新布局尚待构建和实机复验 |
 | Web | 真实社交 HTTP/SQLite 与浏览器界面通过模拟 provider 验收；保留的 Harness 另有历史真实 API 验收 |
 | CLI / TUI | 已实现，命令分别为 `llmn` / `llmnt` |
 | macOS / 移动端 | 尚未构建和实机验收 |
@@ -75,7 +75,9 @@ CLI/TUI 与显式 `?legacy=1` 的桌面/Web 入口仍使用以下行为，和社
 
 1. 从 [GitHub Releases](https://github.com/NingCold/llm-nest/releases) 获取已发布的对应平台安装包。若还没有公开版本，可按 [开发指南](docs/development.md) 自行构建。
 2. 打开 LLM Nest，进入 **设置 → 模型**，添加供应商、API Key 和模型。
-3. 新建对话，选择模型后开始聊天。没有模型时，界面会显示设置入口。
+3. 在「我的账号 → AI 角色管理」创建 AI 并选择其回复模型，从消息或通讯录进入持续私聊；也可建立独立群聊。未配置模型时仍可创建账号和保存真人消息，界面提示该 AI 需要配置。
+
+桌面后端随应用在同一进程内启动，无需另开 Web Server。Windows 打开时先显示空白磨砂玻璃，再加载消息/通讯录；窗口按钮位于内容右上角，没有独立标题栏。
 
 安装包不附带 API Key，也不需要安装 Node.js 或 Rust。Windows 需要 WebView2 Runtime；当前安装器在缺失时联网下载。
 
@@ -151,8 +153,8 @@ frontends/cli · frontends/tui · frontends/tauri · crates/web-server
 
 ## 接下来重点做什么
 
-1. M1 业务、界面、异常与包验证、本机 NSIS 卸载重装已完成，补齐干净 Windows 与 MSI 实际安装/卸载重装验收；工具授权按具体需求作为独立链路实施。
-2. M2 完善摘要、显式记忆和群话题接续；M3 加入有限自动接话与约定联系。
+1. M1 业务、界面与启动修复已完成。干净 Windows 与 MSI 实际安装/卸载重装验收按用户要求暂缓，Linux 新窗口布局待实机复验，范围见 [剩余工作](docs/social-refactor/pending.md)。
+2. 下一批开发为 M2 的简单显式记忆，再接入窗口摘要和群话题接续；M3 加入有限自动接话与约定联系。工具授权按具体需求作为独立链路实施。
 3. 维持平台与发布基线，按对应阶段继续安装和实机验收。
 
 欢迎提供具体任务和复现步骤：你当时想做什么、选了什么模型、期望和实际结果分别是什么。请勿在 Issue、日志或截图中附带 API Key。

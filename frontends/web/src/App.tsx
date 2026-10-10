@@ -5,6 +5,7 @@ import { useUiStore } from "@/store/ui"
 import { WindowControls } from "@/components/layout/WindowControls"
 import { IS_SOCIAL_PREVIEW } from "@/lib/social-preview"
 import { IS_DESKTOP } from "@/lib/desktop"
+import { StartupSurface } from "@/components/StartupSurface"
 
 const LegacyApp = lazy(() => import("./LegacyApp"))
 const PreviewApp = lazy(() => import("./social/PreviewApp").then(module => ({ default: module.PreviewApp })))
@@ -23,7 +24,15 @@ function ShutdownError() {
 
 function ThemeSync() {
   const theme = useUiStore(s => s.theme)
-  useEffect(() => { document.documentElement.classList.toggle("dark", theme === "dark") }, [theme])
+  const ready = useUiStore(s => s.desktopReady)
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.toggle("dark", theme === "dark")
+    if (IS_DESKTOP) {
+      root.classList.toggle("desktop-starting", !ready)
+      root.classList.toggle("desktop-ready", ready)
+    }
+  }, [theme, ready])
   return null
 }
 
@@ -43,7 +52,7 @@ function NavigationSync() {
 
 export default function App() {
   return <><ThemeSync /><NavigationSync /><WindowControls /><ShutdownError /><ErrorBoundary>
-    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">正在打开 LLM Nest…</div>}>
+    <Suspense fallback={<StartupSurface />}>
       {IS_SOCIAL_PREVIEW ? <PreviewApp /> : legacy ? <LegacyApp /> : <SocialApp />}
     </Suspense>
   </ErrorBoundary></>

@@ -21,6 +21,7 @@ export function WindowControls() {
   const [error, setError] = useState("")
   const [fallbackFrame, setFallbackFrame] = useState(false)
   const theme = useUiStore(s => s.theme)
+  const ready = useUiStore(s => s.desktopReady)
 
   useEffect(() => {
     if (!CUSTOM_WINDOW_CHROME) return
@@ -37,7 +38,7 @@ export function WindowControls() {
       const stop = await win.listen<FrameInfo>("window-frame-changed", event => accept(event.payload))
       if (!active) { stop(); return }
       unlisten = stop
-      await win.setBackgroundColor(theme === "dark" ? "#0c0c0e" : "#ffffff")
+      await win.setBackgroundColor(!ready ? "#00000000" : theme === "dark" ? "#181818" : "#ffffff")
       if (!active) return
       accept(await invoke<FrameInfo>("set_window_appearance", { dark: theme === "dark" }))
       if (active) setFallbackFrame(false)
@@ -45,7 +46,7 @@ export function WindowControls() {
       if (active) { setFallbackFrame(true); setError(`窗口外观更新失败：${String(e)}`) }
     })
     return () => { active = false; unlisten?.() }
-  }, [theme])
+  }, [theme, ready])
 
   if (!CUSTOM_WINDOW_CHROME) return null
   const maximized = frame?.maximized ?? false
@@ -56,7 +57,7 @@ export function WindowControls() {
     try { await getCurrentWindow()[name]() }
     catch (e) { setError(`窗口操作失败：${String(e)}`) }
   }
-  const button = "flex h-14 w-11 items-center justify-center text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+  const button = "flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
   return <>
     {clientFrame && !maximized && !fullscreen && <div
       aria-hidden="true"
@@ -64,7 +65,7 @@ export function WindowControls() {
       data-focused={frame?.focused ?? true}
       style={{ borderWidth: 1 / (frame?.scaleFactor || 1) }}
     />}
-    <div className="fixed right-0 top-0 z-50 flex select-none" aria-label="窗口控制">
+    <div className="desktop-window-controls fixed right-2 top-2 z-50 flex select-none gap-0.5" aria-label="窗口控制">
       <button type="button" aria-label="最小化窗口" title="最小化" className={`${button} hover:bg-accent hover:text-foreground`} onClick={() => void action("minimize")}><Minus className="h-4 w-4" /></button>
       <button type="button" aria-label={maximized ? "还原窗口" : "最大化窗口"} title={maximized ? "还原" : "最大化"} className={`${button} hover:bg-accent hover:text-foreground`} onClick={() => void action("toggleMaximize")}>
         {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}

@@ -10,7 +10,7 @@
         "decorations": false,
         "shadow": false,
         "transparent": true,
-        "backgroundColor": "#0c0c0e",
+        "backgroundColor": "#00000000",
         "fullscreen": false,
         "minWidth": 800,
         "minHeight": 600

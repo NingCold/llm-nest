@@ -82,7 +82,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 ### 模型、配置与凭据
 
 - 模型名、provider、reasoning effort 严格校验，错误返回可用候选。不要把不存在的模型静默换成另一个。
-- 内置目录允许省略协议、地址和模型列表；自定义 provider 需要声明这些内容。空 providers 是有效首次启动状态。旧 Harness 禁止无模型发送；社交允许先保存真人消息，未配置/失效模型返回执行提示，不生成模拟回答、不替换模型。
+- 内置目录允许省略协议、地址和模型列表；自定义 provider 需要声明这些内容。空文件、仅注释或空 providers 都是有效首次启动配置；错误 TOML 或字段类型仍报错。旧 Harness 禁止无模型发送；社交允许先保存真人消息，未配置/失效模型返回执行提示，不生成模拟回答、不替换模型。
 - 热更新先整体校验，成功才替换；失败保留旧配置。在飞请求继续使用原快照。
 - `/refresh` 通过 `toml_edit` 定点补充模型，保留注释和其他配置；不可悄悄重写整份 TOML。
 - GUI“同步模型目录”由 `ai-client/catalog_sync` 适配 Pi 公共数据，Runtime 校验后原子保存到实际数据目录的 `cache/catalog.json`（不能放会话根目录）。优先级为用户显式字段 > 同步缓存 > 内置目录；不重写配置/源码、不导入远端凭据或端点、不改变默认模型。失败保留旧数据；所有配置重建路径必须合并缓存，在飞请求仍使用原快照。
@@ -122,12 +122,12 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - Web 与 Tauri 默认共用真实社交界面；`?legacy=1`/`?demo=1` 保留迁移期旧入口。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存草稿与重试 ID；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
 - IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先拒绝新命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
-- `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 只控制 Windows 自绘窗口区域。不要把二者混同，Linux 仍使用桌面 IPC。
+- `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。旧 Harness 历史未加载或无模型时禁止发送；社交保存与 AI 执行可用性分开。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
 - 设置路由为 `#/settings/models|generation|appearance|config|about`，旧聊天为 `#/chat`。真实社交 Web 和模拟预览采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单；隐藏聊天 Header 时卸载其菜单 portal。
-- Windows 的窗口参数位于 `tauri.windows.conf.json`；Linux 首版使用系统装饰。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。
-- Windows 保留 `shadow=false`、透明 WebView 合成表面、不透明 HTML 背景。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
+- Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
+- Windows 保留 `shadow=false`、透明 WebView 合成表面；启动阶段为空白透明 HTML，露出原生 Acrylic，初始化成功或失败后显示不透明界面。其他平台不声称具有 Windows 原生玻璃效果。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
 - 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。
 - 不恢复 tao 阴影边距，不使用透明外边距、SetWindowRgn、自建阴影窗口或 CSS 裁切整个应用。窗口状态变化发事件，revision 防止迟到事件覆盖新状态。
 - Windows 10 不支持 DWM 属性时回退细边框；DWM 返回成功不等同于所有机器视觉验收通过。

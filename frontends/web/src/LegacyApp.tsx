@@ -9,6 +9,8 @@ import { useUiStore } from "@/store/ui"
 import { SettingsPage } from "@/components/settings/SettingsPage"
 import { IS_DESKTOP } from "@/lib/desktop"
 import { cn } from "@/lib/utils"
+import { useDesktopReady } from "@/hooks/useDesktopReady"
+import { StartupSurface } from "@/components/StartupSurface"
 
 function StartupDragRegion() {
   return IS_DESKTOP ? <div data-tauri-drag-region className="fixed left-0 right-[132px] top-0 h-14 select-none" /> : null
@@ -17,6 +19,7 @@ function StartupDragRegion() {
 /** Existing Harness frontend, kept behind its original HTTP/Tauri adapters during migration. */
 export default function LegacyApp() {
   const { ready, error, retry } = useInit()
+  useDesktopReady(ready || !!error)
   const page = useUiStore(s => s.page)
   const saveError = useConfigStore(s => s.saveError)
   const retrySave = useConfigStore(s => s.retrySave)
@@ -33,10 +36,7 @@ export default function LegacyApp() {
     <button className="rounded border px-4 py-2" onClick={retry}>重新连接</button>
   </div>
 
-  if (!ready) return <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
-    <StartupDragRegion />
-    <div className="flex items-center gap-2 text-sm text-muted-foreground"><span className="h-2 w-2 rounded-full bg-zinc-400 animate-pulse-dot" />正在启动…</div>
-  </div>
+  if (!ready) return <StartupSurface />
 
   const notices = <>
     {sessionError && <div role="alert" className="border-b p-3 text-sm text-red-500">{sessionError} <button disabled={sessionLoading} onClick={() => void refreshSessions()} className="underline">重试刷新</button></div>}

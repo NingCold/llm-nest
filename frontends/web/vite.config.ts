@@ -10,7 +10,7 @@ export default defineConfig({
   // Tauri supplies the target platform; standalone dev uses the local OS.
   // Only this boolean enters the bundle, never the process environment.
   define: {
-    __LLMN_CUSTOM_WINDOW_CHROME__: ["windows", "win32"].includes(targetPlatform),
+    __LLMN_CUSTOM_WINDOW_CHROME__: ["windows", "win32", "linux"].includes(targetPlatform),
   },
   plugins: [react(), tailwindcss()],
   clearScreen: false,

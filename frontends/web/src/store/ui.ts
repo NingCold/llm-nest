@@ -44,6 +44,8 @@ interface UiStore {
   showChat: () => void
   syncRoute: () => void
   theme: Theme
+  desktopReady: boolean
+  setDesktopReady: () => void
   sidebarCollapsed: boolean
   /** 当前选中的思考强度（off/low/medium/high/max） */
   reasoningEffort: string
@@ -77,6 +79,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
     set(route.page === "settings" ? route : { page: "chat" })
   },
   theme: initialTheme(),
+  desktopReady: false,
+  setDesktopReady: () => set({ desktopReady: true }),
   sidebarCollapsed:
     new URLSearchParams(location.search).get("sidebar") === "collapsed",
   reasoningEffort: "high",

@@ -16,10 +16,10 @@
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "decorations": true,
+        "decorations": false,
         "shadow": true,
         "transparent": false,
-        "backgroundColor": "#0c0c0e",
+        "backgroundColor": "#181818",
         "fullscreen": false,
         "minWidth": 800,
         "minHeight": 600

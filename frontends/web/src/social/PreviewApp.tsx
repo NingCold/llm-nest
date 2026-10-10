@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Archive, ArrowRight, Check, ChevronDown, MessageCircle, Moon, Pin, Plus, Search, Settings, Sun, Users, X } from "lucide-react"
-import { useUiStore } from "@/store/ui"
+import { Archive, ArrowRight, Check, ChevronDown, Pin, Plus, Search, Users, X } from "lucide-react"
 import { useConfigStore } from "@/store/config"
 import { useInit } from "@/hooks/useInit"
 import { SettingsPage } from "@/components/settings/SettingsPage"
@@ -13,6 +12,7 @@ import type { Editor } from "./components/EditorDialogs"
 import { ConversationView } from "./components/ConversationView"
 import { ContactView } from "./components/ContactView"
 import { DetailsPanel } from "./components/DetailsPanel"
+import { SocialSidebar } from "./components/SocialSidebar"
 import "./social.css"
 
 function PreviewSettings() {
@@ -30,9 +30,6 @@ export function PreviewApp() {
   const loading = useSocialStore(s => s.loading)
   const initialize = useSocialStore(s => s.initialize)
   const dismissError = useSocialStore(s => s.dismissError)
-  const theme = useUiStore(s => s.theme)
-  const toggleTheme = useUiStore(s => s.toggleTheme)
-  const showSettings = useUiStore(s => s.showSettings)
   const [route, setRoute] = useState(() => parseSocialRoute(location.hash))
   const [messageQuery, setMessageQuery] = useState("")
   const [contactQuery, setContactQuery] = useState("")
@@ -86,11 +83,7 @@ export function PreviewApp() {
 
   return <div className="social-shell">
     <div className={`social-main ${route.page === "settings" ? "is-hidden" : ""} ${route.id ? "has-selection" : ""} ${conversation ? "has-chat" : ""}`}>
-      <nav className="social-rail" aria-label="主导航">
-        <div className="rail-brand" title="LLM Nest"><BrandMark className="h-8 w-8" /></div>
-        <div className="rail-nav"><button className={route.page === "messages" ? "selected" : ""} aria-current={route.page === "messages" ? "page" : undefined} onClick={() => navigate("messages", lastMessage.current)}><span><MessageCircle />{!!totalUnread && <i />}</span><small>消息</small></button><button className={route.page === "contacts" ? "selected" : ""} aria-current={route.page === "contacts" ? "page" : undefined} onClick={() => navigate("contacts", lastContact.current)}><Users /><small>通讯录</small></button></div>
-        <div className="rail-bottom"><IconButton label={theme === "light" ? "切换深色主题" : "切换浅色主题"} onClick={toggleTheme}>{theme === "light" ? <Moon /> : <Sun />}</IconButton><IconButton label="设置" onClick={() => showSettings()}><Settings /></IconButton><Avatar self size="small" /></div>
-      </nav>
+      <SocialSidebar page={route.page} navigate={page => navigate(page, page === "messages" ? lastMessage.current : lastContact.current)} unread={!!totalUnread}>
       <aside className="social-list-pane">
         <header className="list-header"><div><h1>{route.page === "contacts" ? "通讯录" : "消息"}</h1><p>{route.page === "contacts" ? `${snapshot.contacts.length} 位 AI 朋友` : "把每一次对话，连成日常"}</p></div><div className="list-add"><IconButton label={route.page === "contacts" ? "添加 AI 联系人" : "新建聊天"} aria-expanded={addMenu} onClick={() => route.page === "contacts" ? edit({ kind: "contact" }) : setAddMenu(!addMenu)}><Plus /></IconButton>{addMenu && <div className="list-add-menu"><button onClick={() => edit({ kind: "contact" })}><Plus />添加 AI 联系人</button><button onClick={() => edit({ kind: "group" })}><Users />创建群聊</button></div>}</div></header>
         <div className="list-search"><Search /><input aria-label={route.page === "contacts" ? "搜索联系人" : "搜索聊天"} placeholder={route.page === "contacts" ? "搜索名字、兴趣…" : "搜索聊天…"} value={route.page === "contacts" ? contactQuery : messageQuery} onChange={e => route.page === "contacts" ? setContactQuery(e.target.value) : setMessageQuery(e.target.value)} />{(route.page === "contacts" ? contactQuery : messageQuery) && <IconButton label="清空搜索" onClick={() => route.page === "contacts" ? setContactQuery("") : setMessageQuery("")}><X /></IconButton>}</div>
@@ -108,6 +101,7 @@ export function PreviewApp() {
         </div>
         <div className="preview-indicator"><span /><div><strong>Web 交互预览</strong><small>模拟数据 · 保存在当前浏览器</small></div><ChevronDown /></div>
       </aside>
+      </SocialSidebar>
       <main className="social-workspace">
         {error && !editor && <div className="social-error" role="alert"><span>{error}</span><IconButton label="关闭错误提示" onClick={dismissError}><X /></IconButton></div>}
         <div className="workspace-content">{conversation ? <><ConversationView conversation={conversation} details={route.details} edit={edit} />{route.details && <DetailsPanel conversation={conversation} memories={route.memories} edit={edit} />}</> : contact ? <ContactView contact={contact} memories={route.memories} edit={edit} /> : <EmptyState title={route.id ? "这个页面不存在" : route.page === "contacts" ? "从认识开始，让对话有归属" : "故事在对话中继续"} description={route.id ? "请从左侧重新选择聊天或联系人。" : route.page === "contacts" ? "给 AI 一个名字、一种性格，也给彼此一个可以持续相处的空间。" : "选择一段聊天，或邀请几位 AI 朋友一起聊聊。"}><button className="social-button primary" onClick={() => route.page === "contacts" ? edit({ kind: "contact" }) : edit({ kind: "group" })}><Plus />{route.page === "contacts" ? "添加 AI 联系人" : "创建群聊"}</button></EmptyState>}</div>

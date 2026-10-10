@@ -26,7 +26,7 @@ pnpm --dir frontends/tauri exec tauri dev
 
 Ubuntu 24.04 的构建依赖可参考 [构建 Dockerfile](../scripts/linux/Dockerfile)，主要包括 GTK 3、WebKitGTK 4.1、OpenSSL 开发包和编译工具。各发行版安装命令见 [Tauri 官方前置条件](https://v2.tauri.app/start/prerequisites/#linux)。
 
-Linux 首版使用系统标题栏；Windows 专用的圆角、细边框及自绘控制按钮不应用到 Linux。不要通过修改公共窗口参数破坏已验收的 Windows 行为。
+当前 Windows/Linux 关闭系统标题栏，使用共用内容内窗口控制；Windows 的 Acrylic、DWM 圆角与贴边细边框仍在平台模块。Linux 新窗口布局尚待构建与 GNOME 实机复验，历史包的系统装饰验收不能替代，见 [本批记录](social-refactor/m1-desktop-surface.md)。修改公共窗口参数时同时检查 Windows 专用配置，维持已验收的边框和退出保存行为。
 
 ## 运行入口
 

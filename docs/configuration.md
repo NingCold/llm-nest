@@ -28,6 +28,8 @@
 
 ## 最小配置
 
+没有模型服务时，空文件、只有注释或 `[providers]` 空表均可启动。桌面后端随应用在同一进程内初始化，无需另开 Web Server；配置语法、字段类型或数据目录错误仍会显示具体原因及重试入口。
+
 ```toml
 [providers.deepseek]
 api_key = { env = "DEEPSEEK_API_KEY" }

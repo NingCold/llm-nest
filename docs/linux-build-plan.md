@@ -17,7 +17,7 @@
 
 ## 项目适配顺序
 
-1. 保留共用 React 前端与 Rust 业务层，将 Windows 窗口配置移到平台专用配置；Linux 初版使用系统装饰并相应隐藏自绘窗口控制区，避免两套标题栏。
+1. 保留共用 React 前端与 Rust 业务层，Windows 原生边框与外观位于平台模块。当前 Windows/Linux 已改为内容内窗口控制，Linux 新布局尚待构建与实机复验；当前界面约束见 [界面与桌面](social-refactor/08-frontend-and-desktop.md#当前真实桌面)。
 2. 检查 Linux 编译、配置/存储目录、文件锁、工具 worker 的退出清理与资源限制。Windows Job Object 的保障不能自动算作 Linux 已有保障。
 3. 构建两种包并检查包内工具 worker、依赖和独立启动；在没有源码或开发环境的用户会话中做聊天、取消、历史恢复及设置验收。
 

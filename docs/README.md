@@ -42,6 +42,7 @@
 | [M1 账号管理与联系人关系](social-refactor/m1-account-management.md) | 共同资料、管理授权与只读视角、关系移除、管理员停用及 v6 迁移 |
 | [M1 独立生成参数](social-refactor/m1-generation-parameters.md) | 管理员按 AI 保存温度与输出上限、协议约束、意识预算与双适配验证 |
 | [M1 共用界面现代化](social-refactor/m1-ui-modernization.md) | 中性双主题与蓝色、聊天/账号/设置布局、响应式与键盘检查 |
+| [M1 桌面启动与界面](social-refactor/m1-desktop-surface.md) | 空白原生玻璃启动、内容内窗口控制、紧凑侧栏、空配置启动修复与 Windows 实测；安装任务暂缓 |
 | [M1 异常、安装包与平台](social-refactor/m1-stage-validation.md) | 双平台异常复验、四种包、Windows 覆盖升级与退出保存、GNOME 自动/人工确认及剩余干净 Windows 检查 |
 | [Windows 本机卸载重装](windows-reinstall-2026-10-09.md) | NSIS 实际卸载重装、原目录/登记/快捷方式恢复、个人配置保留与隔离社交历史读取；不替代干净系统或 MSI 安装验收 |
 | [M1 联系人生命周期](social-refactor/m1-contact-lifecycle.md) | 归档/恢复、移除默认归档、跨空间取消、历史与群身份保留及双适配验证 |

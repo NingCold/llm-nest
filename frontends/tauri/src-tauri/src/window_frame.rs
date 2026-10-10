@@ -1,5 +1,5 @@
 //! DWM corners for floating windows, an inset hairline for vertically docked ones.
-//! Keep tao's shadow insets disabled and the WebView's HTML background opaque.
+//! Keep tao's shadow insets disabled; HTML becomes opaque after startup.
 
 use std::sync::{
     Mutex,
@@ -37,10 +37,18 @@ pub fn setup(app: &tauri::App) {
         dark: AtomicBool::new(true),
         ..Default::default()
     });
-    if cfg!(windows)
-        && let Some(webview) = app.get_webview_window("main")
-    {
+    if let Some(webview) = app.get_webview_window("main") {
         let window = webview.as_ref().window();
+        // Transparent first paint exposes the system backdrop, then the loaded
+        // interface covers it. This doesn't add shadow insets or alter hit testing.
+        #[cfg(windows)]
+        if let Err(error) = window.set_effects(
+            tauri::window::EffectsBuilder::new()
+                .effect(tauri::window::Effect::Acrylic)
+                .build(),
+        ) {
+            eprintln!("window backdrop setup failed: {error}");
+        }
         if let Err(error) = update(&window) {
             eprintln!("window frame setup failed: {error}");
         }

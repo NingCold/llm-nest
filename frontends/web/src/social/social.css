@@ -30,7 +30,6 @@
 .is-hidden { display: none !important; }
 .social-main { display: flex; height: 100%; }
 .social-shell.desktop-chrome { position: relative; }
-.desktop-drag-edge { position: absolute; top: 0; left: 288px; right: 140px; height: 14px; z-index: 40; }
 .desktop-chrome :is(.conversation-header, .contact-header, .details-panel > header) { padding-right: 148px; }
 .desktop-chrome .social-error { padding-right: 148px; min-height: 56px; }
 .social-sidebar { width: 288px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--s-panel); border-right: 1px solid var(--s-line); min-height: 0; }
@@ -352,7 +351,6 @@
   .message-body { max-width: 82%; }
 }
 @media (max-width: 850px) {
-  .desktop-drag-edge { left: 0; }
   .social-sidebar { width: 100%; }
   .social-workspace { display: none; }
   .has-selection .social-sidebar { display: none; }

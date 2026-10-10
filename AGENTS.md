@@ -127,6 +127,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
 - 设置路由为 `#/settings/models|generation|appearance|config|about`，旧聊天为 `#/chat`。真实社交 Web 和模拟预览采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单；隐藏聊天 Header 时卸载其菜单 portal。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
+- 无标题栏界面在侧栏空白与页面头部使用 Tauri 原生拖动区域；`deep` 区域排除交互元素，搜索容器显式禁用。空页面只拖动自身空白，聊天/账号正文保留选字；不要用覆盖内容的拖动层扩大命中范围。双击最大化不能替代连续拖动验收。
 - Windows 保留 `shadow=false`、透明 WebView 合成表面；启动阶段为空白透明 HTML，露出原生 Acrylic，初始化成功或失败后显示不透明界面。其他平台不声称具有 Windows 原生玻璃效果。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
 - 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。
 - 不恢复 tao 阴影边距，不使用透明外边距、SetWindowRgn、自建阴影窗口或 CSS 裁切整个应用。窗口状态变化发事件，revision 防止迟到事件覆盖新状态。

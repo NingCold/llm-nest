@@ -46,7 +46,7 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
   )
   return (
     <div className="settings-layout flex h-full min-h-0 w-full">
-      <aside className="settings-sidebar flex w-48 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:w-56">
+      <aside data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined} className="settings-sidebar flex w-48 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:w-56">
         <div data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className="settings-brand flex h-14 shrink-0 select-none items-center gap-2.5 px-5">
           <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM Nest</span>
         </div>
@@ -66,7 +66,7 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
         <div className="settings-footer mt-auto px-6 py-5 text-xs text-sidebar-muted">LLM Nest · {version || APP_VERSION}</div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        <header data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", CUSTOM_WINDOW_CHROME && "pr-[140px]")}>
+        <header data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", CUSTOM_WINDOW_CHROME && "pr-[140px]")}>
           <span className="pointer-events-none text-muted-foreground">设置</span><span className="pointer-events-none text-muted-foreground/50">/</span><span className="pointer-events-none font-medium">{current.label}</span>
         </header>
         {notices}

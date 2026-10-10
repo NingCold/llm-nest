@@ -25,6 +25,7 @@ function load(name) {
     if (spec==='./router') return {navigate:()=>{}};
     if (spec==='./components/common') return {Avatar:()=>null,EmptyState:()=>null,IconButton:({children,...props})=>React.createElement('button',props,children)};
     if (spec==='@/components/chat/MarkdownView') return {MarkdownView:()=>null};
+    if (spec==='@/lib/desktop') return {CUSTOM_WINDOW_CHROME:false};
     if (spec==='@/components/ui/dialog') return {Dialog:()=>null,DialogContent:()=>null,DialogDescription:()=>null,DialogTitle:()=>null};
     return require(spec);
   }});

@@ -17,7 +17,7 @@ export function SocialSidebar({ page, navigate, onAccount, self, name, unread, c
 }) {
   const theme = useUiStore(s => s.theme), toggleTheme = useUiStore(s => s.toggleTheme)
   const showSettings = useUiStore(s => s.showSettings)
-  return <aside className="social-sidebar">
+  return <aside className="social-sidebar" data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined}>
     <nav className="social-rail" aria-label="主导航">
       <div className="rail-brand" data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined}>
         <BrandMark className="pointer-events-none" /><span className="pointer-events-none">LLM Nest</span>

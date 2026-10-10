@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react"
 import { MessageSquare, Users } from "lucide-react"
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import type { AiContact } from "../types"
 
 export function Avatar({ contact, group = false, self = false, size = "normal" }: { contact?: Pick<AiContact,"avatar"|"color">; group?: boolean; self?: boolean; size?: "small" | "normal" | "large" }) {
@@ -13,7 +14,7 @@ export function IconButton({ label, children, className = "", ...props }: Button
 }
 
 export function EmptyState({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
-  return <div className="social-empty"><span className="empty-illustration"><MessageSquare /></span><h2>{title}</h2><p>{description}</p>{children}</div>
+  return <div className="social-empty" data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined}><span className="empty-illustration"><MessageSquare /></span><h2>{title}</h2><p>{description}</p>{children}</div>
 }
 
 export function shortTime(value: string) {

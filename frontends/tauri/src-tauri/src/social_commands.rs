@@ -1,9 +1,70 @@
 //! The same business DTOs and feature methods as the HTTP adapter.
 use crate::BackendState;
-use social::{ActorId, ConversationId, EventCursor, MessageId, RunId, Sequence};
+use social::{
+    ActorId, ContextScope, ConversationId, EventCursor, MemoryId, MessageId, RunId, Sequence,
+};
 use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
+
+#[tauri::command]
+pub async fn social_memories(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    actor: ActorId,
+) -> Result<Vec<wire::Memory>> {
+    feature(state)
+        .await?
+        .memories(ContextScope {
+            actor_id: actor,
+            conversation_id: id,
+        })
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_create_memory(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    actor: ActorId,
+    input: wire::CreateMemoryInput,
+) -> Result<wire::Memory> {
+    feature(state)
+        .await?
+        .create_memory(
+            ContextScope {
+                actor_id: actor,
+                conversation_id: id,
+            },
+            input,
+        )
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_update_memory(
+    state: tauri::State<'_, BackendState>,
+    id: MemoryId,
+    input: wire::UpdateMemoryInput,
+) -> Result<wire::Memory> {
+    feature(state)
+        .await?
+        .update_memory(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_forget_memory(
+    state: tauri::State<'_, BackendState>,
+    id: MemoryId,
+    input: wire::VersionedCommand,
+) -> Result<wire::Memory> {
+    feature(state)
+        .await?
+        .forget_memory(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
 
 #[tauri::command]
 pub async fn social_control_account(

@@ -79,11 +79,25 @@ pub enum MaterialStatus {
 pub struct MemoryRecord {
     pub id: MemoryId,
     pub owner_actor_id: ActorId,
+    pub conversation_id: ConversationId,
     pub scope: MemoryScope,
+    pub kind: MemoryKind,
     pub text: String,
     pub status: MaterialStatus,
     pub revision: Revision,
     pub sources: Vec<SourceRef>,
+    pub created_by: ActorId,
+    pub updated_by: ActorId,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryKind {
+    Preference,
+    Fact,
+    SharedExperience,
+    OpenTopic,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationSummary {

@@ -15,6 +15,7 @@ export interface Message {
 }
 export interface Run { id: string; conversationId: string; actorId: string; messageId: string; status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; revision: string }
 export interface Conversation {
+  memoryOwnerIds: string[]
   id: string; kind: "direct" | "group"; title: string; memberIds: string[]; status: "active" | "archived"
   paused: boolean; revision: string; lastSequence: string; legacy: boolean; latestMessage: Message | null; activeRun: Run | null
   members: Membership[]; pendingPlans: ParticipationPlan[]; currentBout: { id: string; status: "open" | "ended"; revision: string } | null
@@ -31,9 +32,15 @@ export interface RunDetails {
 export interface SendInput { requestId: string; text: string; replyTo: string | null; mentions: string[] }
 export interface SendReceipt { message: Message; executionNotice: Failure | null }
 export interface MessagePage { messages: Message[]; hasMore: boolean }
-export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; runId?: string; actorId?: string; revision: string } }
+export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision: string } }
 export type LiveEvent = { type: "execution.notice"; conversationId: string; error: Failure }
   | { type: "generation.delta" | "generation.reasoning_delta"; conversationId: string; runId: string; messageId: string; actorId: string; deltaSeq: number; text: string }
 
 export type ControlAction = "pause" | "resume" | "archive" | "restore" | "end"
 export interface VersionedCommand { requestId: string; expectedRevision: string }
+export type MemoryKind = "preference" | "fact" | "shared_experience" | "open_topic"
+export interface MemoryContent { kind: MemoryKind; text: string; source: { messageId: string; revision: string } | null }
+export interface Memory extends MemoryContent {
+  id: string; actorId: string; conversationId: string; status: "confirmed" | "stale" | "forgotten"; revision: string
+  createdBy: string; updatedBy: string; createdAt: string; updatedAt: string
+}

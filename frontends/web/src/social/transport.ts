@@ -2,6 +2,10 @@ import type { Account, AccountView, AiInput, ContactEntry, ContactInput, Managed
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
+  memories(id: string, actor: string): Promise<import("./live-types").Memory[]>
+  createMemory(id: string, actor: string, input: import("./live-types").MemoryContent & { requestId: string }): Promise<import("./live-types").Memory>
+  updateMemory(id: string, input: import("./live-types").MemoryContent & VersionedCommand): Promise<import("./live-types").Memory>
+  forgetMemory(id: string, input: VersionedCommand): Promise<import("./live-types").Memory>
   message(id: string): Promise<Message>
   revise(id: string, input: VersionedCommand & { text: string }): Promise<Message>
   withdraw(id: string, input: VersionedCommand): Promise<Message>

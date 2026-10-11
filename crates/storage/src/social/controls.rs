@@ -24,7 +24,7 @@ impl Db<'_> {
                     .unwrap_or_default();
                 details.error = Some(RunFailure {
                     code: "context_changed".into(),
-                    message: "消息来源已修改或撤回，本次回复已中断".into(),
+                    message: "消息或记忆来源已变化，本次回复已中断".into(),
                 });
                 self.save_details(run.id, &details)?;
                 self.terminate(run, RunStatus::Interrupted, None)?;
@@ -69,6 +69,7 @@ impl Db<'_> {
         c.context_epoch = c.context_epoch.next()?;
         c.revision = c.revision.next()?;
         self.update_message(&m, ctx.operator)?;
+        self.stale_memories(m.id)?;
         // Old revisions must not revive withdrawn text or attachments.
         self.execute("UPDATE message_revisions SET payload=json_set(payload,'$.body',json('[]'),'$.status','withdrawn') WHERE message_id=?1", [m.id.to_string()])?;
         self.invalidate_context(c.id)?;

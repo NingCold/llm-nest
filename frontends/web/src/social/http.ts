@@ -14,6 +14,10 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient: SocialClient = {
+  memories: (id, actor) => request(`/conversations/${id}/memories/${actor}`),
+  createMemory: (id, actor, input) => request(`/conversations/${id}/memories/${actor}`, "POST", input),
+  updateMemory: (id, input) => request(`/memories/${id}`, "PATCH", input),
+  forgetMemory: (id, input) => request(`/memories/${id}/forget`, "POST", input),
   message: id => request(`/messages/${id}`),
   revise: (id, input) => request(`/messages/${id}/revise`, "POST", input),
   withdraw: (id, input) => request(`/messages/${id}/withdraw`, "POST", input),

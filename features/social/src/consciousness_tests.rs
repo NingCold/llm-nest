@@ -79,6 +79,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         .collect();
     let trigger_id = messages.last().unwrap().id;
     let material = ContextMaterial {
+        memories: vec![],
         participant_names: vec!["Human".into(), "A".into()],
         trigger_id,
         contact,
@@ -132,6 +133,64 @@ fn context_selects_recent_sources_with_versions_without_rewriting_history() {
             .dependencies
             .iter()
             .all(|d| d.context_epoch == material.conversation.context_epoch)
+    );
+}
+
+#[test]
+fn explicit_memory_is_budgeted_background_and_snapshot_tracks_only_selected_entries() {
+    let (mut material, mut model) = fixture();
+    model.context_window = Some(8192);
+    let time = material.contact.actor.created_at;
+    let memory = MemoryRecord {
+        id: MemoryId::new(),
+        owner_actor_id: material.contact.actor.id,
+        conversation_id: material.conversation.id,
+        scope: MemoryScope::Relationship {
+            relationship_id: material.conversation.relationship_id.unwrap(),
+        },
+        kind: MemoryKind::Preference,
+        text: "prefer short paragraphs".into(),
+        status: MaterialStatus::Confirmed,
+        revision: Revision::ONE,
+        sources: vec![],
+        created_by: material.members[0].actor_id,
+        updated_by: material.members[0].actor_id,
+        created_at: time,
+        updated_at: time,
+    };
+    let mut large = memory.clone();
+    large.id = MemoryId::new();
+    large.text = "oversized memory".repeat(1000);
+    material.memories = vec![large.clone(), memory.clone()];
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert_eq!(prepared.messages[1].role, common::Role::User);
+    assert!(prepared.messages[1].text().contains(&memory.text));
+    assert!(!prepared.messages[0].text().contains(&memory.text));
+    assert!(prepared.snapshot.sources.contains(&SourceRef::Memory {
+        memory_id: memory.id,
+        revision: memory.revision
+    }));
+    assert!(
+        !prepared
+            .snapshot
+            .sources
+            .iter()
+            .any(|s| matches!(s, SourceRef::Memory { memory_id, .. } if *memory_id == large.id))
+    );
+    assert!(
+        prepared
+            .messages
+            .iter()
+            .any(|m| m.text().contains("latest"))
+    );
+    // The memory belongs to the account; changing the execution model retains it.
+    material.contact.binding.as_mut().unwrap().model_id = "replacement".into();
+    let changed = ConsciousnessService::prepare(material, &model, 128).unwrap();
+    assert!(
+        changed
+            .messages
+            .iter()
+            .any(|m| m.text().contains(&memory.text))
     );
 }
 

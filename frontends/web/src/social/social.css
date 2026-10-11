@@ -135,6 +135,15 @@
 .live-consciousness { padding: 18px 0; color: var(--s-muted); font-size: 12px; line-height: 1.9; }
 .live-consciousness > svg { color: var(--s-accent); }
 .live-consciousness h2 { font-size: 15px; color: var(--s-text); margin: 12px 0; }
+.memory-owner { display: flex; flex-direction: column; gap: 6px; margin: 16px 0; color: var(--s-text); font-size: 13px; }
+.memory-owner select { padding: 9px 12px; border: 1px solid var(--s-line); border-radius: 10px; background: var(--s-paper); color: var(--s-text); }
+.memory-list { display: grid; gap: 12px; }
+.memory-list > button { justify-self: start; }
+.memory-card { padding: 16px; border: 1px solid var(--s-line); border-radius: 14px; background: var(--s-paper); }
+.memory-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--s-muted); }
+.memory-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--s-text); font-size: 14px; margin: 10px 0; }
+.memory-card blockquote, .memory-source blockquote { margin: 12px 0; padding: 8px 12px; border-left: 2px solid var(--s-line); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
+.memory-note { color: var(--s-muted); font-size: 12px; }
 .social-workspace { min-width: 0; display: flex; flex-direction: column; flex: 1; }
 .workspace-content { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; }
 .social-error { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 8px 20px; color: var(--s-danger); background: var(--s-paper); border-bottom: 1px solid var(--s-line); }

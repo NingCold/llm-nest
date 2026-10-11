@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { socialClient, subscribe } from "./client"
-import type { Change, LiveEvent, Message, RunDetails, Snapshot } from "./live-types"
+import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot } from "./live-types"
 
 export const LIVE_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
 interface Draft { text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
@@ -14,6 +14,8 @@ function readDrafts(): Record<string, Draft> {
 }
 
 interface SocialState {
+  memories: Record<string, Memory[]>; loadingMemories: Record<string, boolean>; memoryErrors: Record<string, string | null>
+  loadMemories(conversation: string, actor: string): Promise<void>
   snapshot: Snapshot | null; loading: boolean; error: string | null; connectionError: string | null; connected: boolean
   histories: Record<string, Message[]>; hasMore: Record<string, boolean>; loadingHistory: Record<string, boolean>
   generations: Record<string, Generation>; details: Record<string, RunDetails>; drafts: Record<string, Draft>; sending: Record<string, boolean>
@@ -36,8 +38,29 @@ let connection: AbortController | null = null
 let cursor = "0"
 let historyGeneration = 0
 let active = false
+const memoryReads = new Map<string, Promise<void>>()
 
 export const useLiveSocialStore = create<SocialState>((set, get) => ({
+  memories: {}, loadingMemories: {}, memoryErrors: {},
+  async loadMemories(conversation, actor) {
+    const key = `${conversation}/${actor}`
+    // UI refreshes and subscription reads share ordering. A previous read reports
+    // its own error to its caller; it must not prevent the next explicit retry.
+    const previous = memoryReads.get(key) ?? Promise.resolve()
+    const read = previous.catch(() => {}).then(async () => {
+      const generation = historyGeneration
+      set({ memories: { ...get().memories, [key]: get().memories[key] ?? [] }, loadingMemories: { ...get().loadingMemories, [key]: true } })
+      try {
+        const memories = await socialClient.memories(conversation, actor)
+        if (generation === historyGeneration) set({ memories: { ...get().memories, [key]: memories }, memoryErrors: { ...get().memoryErrors, [key]: null } })
+      } catch (error) {
+        if (generation === historyGeneration) set({ memories: { ...get().memories, [key]: [] }, memoryErrors: { ...get().memoryErrors, [key]: String(error) } })
+        throw error
+      } finally { set({ loadingMemories: { ...get().loadingMemories, [key]: false } }) }
+    })
+    memoryReads.set(key, read)
+    try { await read } finally { if (memoryReads.get(key) === read) memoryReads.delete(key) }
+  },
   snapshot: null, loading: false, error: null, connectionError: null, connected: false,
   histories: {}, hasMore: {}, loadingHistory: {}, generations: {}, details: {}, drafts: readDrafts(), sending: {},
   initialize() {
@@ -158,6 +181,10 @@ async function applyChange(event: Change, signal: AbortSignal) {
     else await store.loadHistory(event.change.conversationId)
   }
   if (event.change.runId && !signal.aborted) await store.loadDetails(event.change.runId)
+  if (event.change.kind === "memory_changed" && !signal.aborted) {
+    const { conversationId, actorId } = event.change
+    if (conversationId && actorId && `${conversationId}/${actorId}` in useLiveSocialStore.getState().memories) await store.loadMemories(conversationId, actorId)
+  }
   if (!signal.aborted) cursor = event.cursor
 }
 
@@ -197,10 +224,12 @@ function startSubscription() {
           if (attemptSignal.aborted) return
           const store = useLiveSocialStore.getState()
           const ids = Object.keys(store.histories)
+          const memoryScopes = Object.keys(store.memories)
           historyGeneration++
-          useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {} })
+          useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {}, memories: {}, memoryErrors: {} })
           await store.refresh()
           for (const id of ids) { if (attemptSignal.aborted) return; await store.loadHistory(id) }
+          for (const key of memoryScopes) { if (attemptSignal.aborted) return; const [conversation, actor] = key.split("/"); await store.loadMemories(conversation, actor) }
         }, () => { if (!attemptSignal.aborted) useLiveSocialStore.setState({ connected: true, connectionError: null }) })
       } catch (error) {
         attempt.abort()

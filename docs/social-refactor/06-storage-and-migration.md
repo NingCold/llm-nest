@@ -16,7 +16,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 ## 2. 当前 Schema 与目标关系
 
-当前 schema 版本为 6；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+当前 schema 版本为 7；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 | 参与/执行 | participation_plans、ai_runs、run_details | 联系意图、消费进度、工具/协议审计、预算预留 |
 | 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
 | 迁移 | schema_migrations、legacy_imports、legacy_id_map、legacy_entries、legacy_session_data | 按后续 schema 变更迁移 |
-| 意识派生数据 | 尚无摘要/记忆业务表 | M2 memories、sources、summaries、遗忘抑制与跨窗口依赖；表名在实现时确定 |
+| 意识派生数据 | memories、memory_revisions、memory_message_sources；forgotten 条目保留来源作为遗忘抑制标记 | 窗口分段摘要、跨窗口依赖、自动提取与巩固 |
 
 这是一份职责模型，实施时可以合并一对一表，但不能省略事务或来源约束。外键、唯一索引和 CHECK 约束要实际启用并验证；不能只在 Rust 层假设有效。
 
@@ -35,7 +35,7 @@ message_context_refs 关联目标私聊消息、目标 AI、发起者、来源�
 
 上述来源引用、摘要、记忆与 AiRun 中保存的 ContextSnapshot 共同支撑意识系统，存储仍统一使用 SocialStore。原消息由聊天用例写入，意识系统只持久化自身派生材料和必要依赖，不另建独立 consciousness 数据库或完整请求副本。M1 使用消息来源快照；M2 启用摘要、显式记忆与跨窗口引用。
 
-SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。记忆/意图操作随 M2/M3 加入，不预先承诺不存在的方法。前端和 Feature 不直接拼 SQL。
+SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。显式记忆提供 memories/memory/create_memory/update_memory/forget_memory；摘要与意图操作后续加入。前端和 Feature 不直接拼 SQL。
 
 ## 3. 关键事务
 
@@ -59,7 +59,7 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 编辑/遗忘 | 修订或遗忘记录、派生内容失效、上下文版本、撤销标记、事件 |
 | 保存/失效摘要 | 来源与权限版本复核、分段摘要版本/状态、派生依赖、变更事件 |
 
-上表为完整目标事务；预算、联系意图、记忆/摘要与工具轨迹当前尚未接入。当前发送事务创建计划，Bout 在开始运行事务创建；不通过事件消费重复安排。上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
+上表为完整目标事务；预算、联系意图、摘要与工具轨迹当前尚未接入。显式记忆的实体、修订、来源索引、上下文版本、运行中断、事件和回执同事务提交；原消息修订/撤回在原事务中将对应记忆标 stale。当前发送事务创建计划，Bout 在开始运行事务创建；不通过事件消费重复安排。上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
 
 command_receipts 保存稳定实体引用、请求摘要和结果分类，不保存撤回后仍可取出的原响应正文。重复请求返回同一实体的当前可见状态；幂等检查先于已经成功请求的 revision 冲突判断。
 
@@ -77,9 +77,11 @@ M0 使用 rusqlite 0.40.2 bundled，WAL、foreign_keys=ON、synchronous=FULL，�
 
 ## 5. Schema 升级
 
+v7 增加记忆、修订和消息来源索引表，保留既有账号、关系、聊天及命令回执。记忆正文在遗忘事务中从当前条目及所有修订中清空，范围与来源仍作为 tombstone 保存；原聊天、已发布回答、备份和 SQLite 物理页不属于安全擦除承诺。旧 v6 程序不能打开 v7 数据库；回退须明确使用升级前备份，不能自动覆盖新数据。
+
 v6 为既有 AI 补入本地真人的初始管理权与各自的通讯录条目。旧 archived Actor 仍保持停用，真人通讯录条目设为未列出，不自动恢复；公开简介初始化为空，内部 persona 不复制为公开内容。账号、关系、私聊 ID、群成员与历史保留，升级前的 v5 备份可核对原文。实现与验证见 [账号管理记录](m1-account-management.md)。
 
-独立生成参数沿用 execution_bindings 的 JSON payload，schema 仍为 v6，无新增迁移。temperature/max_tokens 缺失时按 None 读取；领域与命令候选序列化省略 None，保持旧 payload 与已保存命令摘要的语义一致。参数与账号/档案修改同事务提交，权限、失败回滚和关闭重开验证见 [参数记录](m1-generation-parameters.md)。旧 JSON 导入的绑定不复制 Harness 全局温度或输出上限。
+独立生成参数沿用 execution_bindings 的 JSON payload，该批沿用 v6，无新增迁移。temperature/max_tokens 缺失时按 None 读取；领域与命令候选序列化省略 None，保持旧 payload 与已保存命令摘要的语义一致。参数与账号/档案修改同事务提交，权限、失败回滚和关闭重开验证见 [参数记录](m1-generation-parameters.md)。旧 JSON 导入的绑定不复制 Harness 全局温度或输出上限。
 
 每次 schema 变更有顺序版本与校验记录。打开数据库先取得目录锁，再检查版本和执行事务迁移。未知较新版本拒绝写入并提示需要匹配应用，不尝试降级解释。
 

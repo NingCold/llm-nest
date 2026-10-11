@@ -10,13 +10,24 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, de::DeserializeOwned};
-use social::{ActorId, ConversationId, EventCursor, MessageId, RunId, Sequence};
+use social::{
+    ActorId, ContextScope, ConversationId, EventCursor, MemoryId, MessageId, RunId, Sequence,
+};
 use social_feature::{SocialError, wire};
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
+        .route(
+            "/api/social/conversations/{id}/memories/{actor}",
+            get(memories).post(create_memory),
+        )
+        .route(
+            "/api/social/memories/{id}",
+            axum::routing::patch(update_memory),
+        )
+        .route("/api/social/memories/{id}/forget", post(forget_memory))
         .route(
             "/api/social/ai-accounts",
             get(managed_accounts).post(create_ai),
@@ -142,6 +153,50 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequestParts<S> for ApiQuery<T> {
     }
 }
 type Result<T> = std::result::Result<Json<T>, ApiError>;
+async fn memories(
+    State(s): State<Arc<AppState>>,
+    ApiPath((id, actor)): ApiPath<(ConversationId, ActorId)>,
+) -> Result<Vec<wire::Memory>> {
+    Ok(Json(
+        s.social
+            .memories(ContextScope {
+                actor_id: actor,
+                conversation_id: id,
+            })
+            .await?,
+    ))
+}
+async fn create_memory(
+    State(s): State<Arc<AppState>>,
+    ApiPath((id, actor)): ApiPath<(ConversationId, ActorId)>,
+    ApiJson(input): ApiJson<wire::CreateMemoryInput>,
+) -> Result<wire::Memory> {
+    Ok(Json(
+        s.social
+            .create_memory(
+                ContextScope {
+                    actor_id: actor,
+                    conversation_id: id,
+                },
+                input,
+            )
+            .await?,
+    ))
+}
+async fn update_memory(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<MemoryId>,
+    ApiJson(input): ApiJson<wire::UpdateMemoryInput>,
+) -> Result<wire::Memory> {
+    Ok(Json(s.social.update_memory(id, input).await?))
+}
+async fn forget_memory(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<MemoryId>,
+    ApiJson(input): ApiJson<wire::VersionedCommand>,
+) -> Result<wire::Memory> {
+    Ok(Json(s.social.forget_memory(id, input).await?))
+}
 async fn create_group(
     State(s): State<Arc<AppState>>,
     ApiJson(input): ApiJson<wire::CreateGroupInput>,

@@ -14,6 +14,30 @@ pub struct CommandContext {
     pub request_id: CommandId,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryMessageSource {
+    pub message_id: MessageId,
+    pub revision: Revision,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryContent {
+    pub kind: MemoryKind,
+    pub text: String,
+    pub source: Option<MemoryMessageSource>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMemory {
+    pub scope: ContextScope,
+    pub content: MemoryContent,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateMemory {
+    pub id: MemoryId,
+    pub expected_revision: Revision,
+    pub content: MemoryContent,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAi {
     pub display_name: String,
     pub bio: String,
@@ -148,6 +172,7 @@ pub struct ContactRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationRecord {
+    pub memory_owner_ids: Vec<ActorId>,
     pub conversation: Conversation,
     pub members: Vec<Membership>,
     pub latest_message: Option<SocialMessage>,
@@ -167,6 +192,7 @@ pub struct SocialOverview {
 
 #[derive(Debug, Clone)]
 pub struct ContextMaterial {
+    pub memories: Vec<MemoryRecord>,
     pub contact: ContactRecord,
     pub conversation: Conversation,
     pub members: Vec<Membership>,
@@ -247,6 +273,28 @@ pub use events::SocialFailure as RunFailure;
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn memories(
+        &self,
+        operator: ActorId,
+        scope: ContextScope,
+    ) -> SocialStorageResult<Vec<MemoryRecord>>;
+    async fn memory(&self, operator: ActorId, id: MemoryId) -> SocialStorageResult<MemoryRecord>;
+    async fn create_memory(
+        &self,
+        ctx: CommandContext,
+        input: CreateMemory,
+    ) -> SocialStorageResult<MemoryRecord>;
+    async fn update_memory(
+        &self,
+        ctx: CommandContext,
+        input: UpdateMemory,
+    ) -> SocialStorageResult<MemoryRecord>;
+    async fn forget_memory(
+        &self,
+        ctx: CommandContext,
+        id: MemoryId,
+        expected_revision: Revision,
+    ) -> SocialStorageResult<MemoryRecord>;
     async fn managed_accounts(&self, operator: ActorId)
     -> SocialStorageResult<Vec<ManagedAccount>>;
     async fn managed_account(

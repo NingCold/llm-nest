@@ -37,6 +37,10 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
   const h = harness();
   const inputs = { requestId: 'command', expectedRevision: '2', text: 'hello', actorId: 'ai', paused: true, action: 'pause' };
   const cases = [
+    ['memories', ['chat', 'ai'], 'social_memories', { id: 'chat', actor: 'ai' }],
+    ['createMemory', ['chat', 'ai', inputs], 'social_create_memory', { id: 'chat', actor: 'ai', input: inputs }],
+    ['updateMemory', ['id', inputs], 'social_update_memory', { id: 'id', input: inputs }],
+    ['forgetMemory', ['id', inputs], 'social_forget_memory', { id: 'id', input: inputs }],
     ['message', ['id'], 'social_message', { id: 'id' }],
     ['revise', ['id', inputs], 'social_revise_message', { id: 'id', input: inputs }],
     ['withdraw', ['id', inputs], 'social_withdraw_message', { id: 'id', input: inputs }],

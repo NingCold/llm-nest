@@ -6,13 +6,13 @@
 
 ## 1. 共享业务入口
 
-HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。记忆/摘要用例后续由内部意识服务承担，原消息仍由聊天用例维护。
+HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。显式记忆管理位于 SocialFeature 内部 memory 模块，ConsciousnessService 读取并构造上下文；摘要后续沿此边界加入，原消息仍由聊天用例维护。
 
 外部业务字段为 camelCase，枚举值按各自 serde 契约；ID 为 UUID 字符串，revision、sequence、cursor 为十进制字符串。请求使用 requestId；expectedRevision 针对被修改对象，不能拿空间 revision 替代消息或成员 revision。
 
 ## 2. 当前接口
 
-HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 24 个 HTTP 路径与 30 个 IPC 命令。
+HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 27 个 HTTP 路径与 34 个 IPC 命令。
 
 | 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
@@ -32,6 +32,9 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
 | 分页历史/发送文本 | GET/POST /conversations/{id}/messages | social_messages / social_send |
 | 单条消息 | GET /messages/{id} | social_message |
+| 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
+| 编辑记忆 | PATCH /memories/{id} | social_update_memory |
+| 遗忘记忆 | POST /memories/{id}/forget | social_forget_memory |
 | 编辑/撤回真人消息 | POST /messages/{id}/revise；POST /messages/{id}/withdraw | social_revise_message / social_withdraw_message |
 | 窗口控制 | POST /conversations/{id}/control | social_control_conversation |
 | 成员暂停/恢复 | POST /conversations/{id}/members/participation | social_pause_member |
@@ -58,6 +61,12 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 编辑/撤回 | requestId、消息 expectedRevision；编辑另带 text |
 | 窗口控制 | requestId、空间 expectedRevision、action(pause/resume/end/archive/restore) |
 | 成员暂停/恢复 | requestId、actorId、成员 expectedRevision、paused |
+| 创建/编辑记忆 | requestId、kind(preference/fact/shared_experience/open_topic)、text(1–2000 字符)、source(null 或 messageId/revision)；编辑追加记忆 expectedRevision。窗口与 AI 由创建路径确定，编辑不能修改归属 |
+| 遗忘记忆 | requestId、记忆 expectedRevision；返回已清空正文的 forgotten 条目，旧成功回执也只返回当前状态 |
+
+Memory 返回 id/actorId/conversationId/kind/text/status/revision/source/createdBy/updatedBy/createdAt/updatedAt。列表包含 confirmed 和 stale，排除 forgotten；来源查看复用单条消息接口。当前窗口成员可以管理本空间记忆，创建/编辑要求目标 AI 仍是成员，原消息必须为同窗口 committed 的确定版本。归档窗口或 AI 已离群时仍可遗忘已有记忆。管理员权限不会扩大范围。来源修订/撤回和记忆编辑/遗忘提升上下文版本、中断该窗口在飞回复；新增记忆只作用于新运行。
+
+Conversation.memoryOwnerIds 列出本窗口仍有 confirmed/stale 条目的 AI，包括已离群 AI，供详情页继续查看与遗忘；不使它重新成为成员。模型请求只读取当前运行 AI 的 confirmed 条目。
 
 共同 Account 字段为 id/kind/name/avatarRef/bio/status/revision，真人与 AI 相同。ManagedAi 包含 account、persona、binding、administrators(accountId/initial)、isInitialAdministrator，仅供有权限的管理接口。联系人操作返回 ContactEntry(ownerId/accountId/listed/revision)。
 
@@ -88,7 +97,7 @@ AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被�
 
 ## 4. 持久事件
 
-SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、run_changed、bout_changed、plan_changed；各自带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；通讯录变更与 Actor 的管理/资料/停用变更分别表达。
+SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、run_changed、bout_changed、plan_changed；各自带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
 
 ```json
 {
@@ -138,7 +147,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：阶段完整双适配验收归 M1；记忆、摘要与 contextReferences 归 M2；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：阶段完整双适配验收归 M1；窗口摘要与 contextReferences 为 M2 剩余范围；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

@@ -65,6 +65,7 @@ impl Db<'_> {
             .into_iter()
             .next();
         Ok(ConversationRecord {
+            memory_owner_ids: self.query_json("SELECT DISTINCT json_quote(owner_actor_id) FROM memories WHERE conversation_id=?1 AND status!='forgotten' ORDER BY owner_actor_id", [conversation.id.to_string()])?,
             conversation,
             members,
             latest_message,
@@ -144,6 +145,7 @@ impl Db<'_> {
             })
             .transpose()?;
         Ok(ContextMaterial {
+            memories: self.memories(operator, scope)?.into_iter().filter(|m| m.status == MaterialStatus::Confirmed).collect(),
             participant_names: self.query_json::<Actor>("SELECT a.payload FROM actors a JOIN memberships m ON m.actor_id=a.id WHERE m.conversation_id=?1 AND m.status='active' ORDER BY a.id", [conversation.id.to_string()])?.into_iter().map(|a|a.display_name).collect(),
             contact: self.contact_record(scope.actor_id)?,
             conversation,

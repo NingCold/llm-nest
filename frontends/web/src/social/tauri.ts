@@ -13,6 +13,10 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   catch (error) { throw apiError(error) }
 }
 export const socialClient: SocialClient = {
+  memories: (id, actor) => command("social_memories", { id, actor }),
+  createMemory: (id, actor, input) => command("social_create_memory", { id, actor, input }),
+  updateMemory: (id, input) => command("social_update_memory", { id, input }),
+  forgetMemory: (id, input) => command("social_forget_memory", { id, input }),
   message: id => command("social_message", { id }),
   revise: (id, input) => command("social_revise_message", { id, input }),
   withdraw: (id, input) => command("social_withdraw_message", { id, input }),

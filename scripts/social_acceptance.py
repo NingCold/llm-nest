@@ -562,6 +562,9 @@ def main():
             assert error.code == 400
         print('PASS: administrator account stop/restore, cross-space cancellation and FIFO continuation, saved fragments/history, archived sends, current-state receipts/conflicts, independent pause settings, restart/no replay and unique private identity', flush=True)
 
+        from social_memory_acceptance import verify_memory
+        verify_memory(api, contact, direct, group, complete, send, history, wait_for, stop, start, calls_for)
+
         # Crash recovery never resends the started response; untouched queue entries resume.
         recovery_group = group('Recovery group', [alice, bob])
         trigger = send(recovery_group, 'crash', mentions=[bob['id'], alice['id']])

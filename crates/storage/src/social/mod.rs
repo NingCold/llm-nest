@@ -4,6 +4,7 @@ mod accounts;
 mod controls;
 mod error;
 mod legacy;
+mod memory;
 mod participation;
 mod reads;
 mod schema;

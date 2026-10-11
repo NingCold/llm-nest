@@ -40,6 +40,7 @@
 | [M1 消息与控制实现验证](social-refactor/m1-message-controls.md) | 修订/撤回、来源失效、成员/窗口暂停、结束交谈、归档/恢复及 v5 迁移 |
 | [M1 实时 IPC 与桌面](social-refactor/m1-desktop-ipc.md) | 共用订阅、Channel 确认与恢复、共用社交 GUI、退出保存及双平台编译/测试 |
 | [M1 账号管理与联系人关系](social-refactor/m1-account-management.md) | 共同资料、管理授权与只读视角、关系移除、管理员停用及 v6 迁移 |
+| [M2 显式记忆](social-refactor/m2-explicit-memory.md) | 接手核对、按 AI/空间保存与读取、来源失效、遗忘、Web/IPC 及 v7 迁移 |
 | [M1 独立生成参数](social-refactor/m1-generation-parameters.md) | 管理员按 AI 保存温度与输出上限、协议约束、意识预算与双适配验证 |
 | [M1 共用界面现代化](social-refactor/m1-ui-modernization.md) | 中性双主题与蓝色、聊天/账号/设置布局、响应式与键盘检查 |
 | [M1 桌面启动与界面](social-refactor/m1-desktop-surface.md) | 空白原生玻璃启动、内容内窗口控制、紧凑侧栏、空配置启动修复与 Windows 实测；安装任务暂缓 |

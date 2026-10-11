@@ -12,6 +12,7 @@ const SCHEMA_V3: &str = include_str!("schema-v3.sql");
 const SCHEMA_V4: &str = include_str!("schema-v4.sql");
 const SCHEMA_V5: &str = include_str!("schema-v5.sql");
 const SCHEMA_V6: &str = include_str!("schema-v6.sql");
+const SCHEMA_V7: &str = include_str!("schema-v7.sql");
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -77,10 +78,10 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| sql_error(path, e))?;
-    if !(0..=6).contains(&version) {
+    if !(0..=7).contains(&version) {
         return Err(Error::Schema {
             path: path.to_owned(),
-            detail: format!("unsupported version {version}; expected 0..=6"),
+            detail: format!("unsupported version {version}; expected 0..=7"),
         });
     }
     let tables: i64 = connection
@@ -112,6 +113,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
             (4, migration_digest(SCHEMA_V4)),
             (5, migration_digest(SCHEMA_V5)),
             (6, migration_digest(SCHEMA_V6)),
+            (7, migration_digest(SCHEMA_V7)),
         ];
         if ledger != expected[..version as usize] {
             return Err(Error::Schema {
@@ -134,6 +136,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         (4, SCHEMA_V4),
         (5, SCHEMA_V5),
         (6, SCHEMA_V6),
+        (7, SCHEMA_V7),
     ] {
         if version >= next {
             continue;
@@ -221,7 +224,7 @@ mod tests {
             current
                 .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            6
+            7
         );
         let migrated: serde_json::Value = serde_json::from_str(
             &current
@@ -238,7 +241,7 @@ mod tests {
             current
                 .query_row::<i64, _, _>("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap(),
-            6
+            7
         );
         let backup_path = std::fs::read_dir(dir.path())
             .unwrap()

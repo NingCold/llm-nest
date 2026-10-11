@@ -5,6 +5,7 @@ mod controls;
 mod execution;
 mod feature;
 mod generation;
+mod memory;
 mod subscription;
 pub mod wire;
 

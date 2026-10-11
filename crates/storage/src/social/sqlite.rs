@@ -697,6 +697,14 @@ impl Db<'_> {
         self.require_dependency(snapshot, operator, scope.conversation_id)?;
         self.require_dependency(snapshot, ai.id, scope.conversation_id)?;
         for source in &snapshot.sources {
+            if let SourceRef::Memory {
+                memory_id,
+                revision,
+            } = source
+            {
+                self.validate_memory_source(scope, *memory_id, *revision)?;
+                continue;
+            }
             let SourceRef::Message {
                 conversation_id,
                 message_id,
@@ -704,7 +712,7 @@ impl Db<'_> {
             } = source
             else {
                 return Err(Error::Invalid(
-                    "M0 accepts message sources only; memory/summary readers arrive in M2".into(),
+                    "only committed messages and confirmed explicit memories are supported".into(),
                 ));
             };
             let m: SocialMessage = self.get("messages", message_id)?;
@@ -760,6 +768,39 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn memories(&self, operator: ActorId, scope: ContextScope) -> Result<Vec<MemoryRecord>> {
+        self.call(move |w| w.read(|db| db.memories(operator, scope)))
+            .await
+    }
+    async fn memory(&self, operator: ActorId, id: MemoryId) -> Result<MemoryRecord> {
+        self.call(move |w| w.read(|db| db.authorized_memory(operator, id)))
+            .await
+    }
+    async fn create_memory(
+        &self,
+        ctx: CommandContext,
+        input: CreateMemory,
+    ) -> Result<MemoryRecord> {
+        self.call(move |w| w.transact(|db| db.create_memory(&ctx, &input)))
+            .await
+    }
+    async fn update_memory(
+        &self,
+        ctx: CommandContext,
+        input: UpdateMemory,
+    ) -> Result<MemoryRecord> {
+        self.call(move |w| w.transact(|db| db.update_memory(&ctx, &input)))
+            .await
+    }
+    async fn forget_memory(
+        &self,
+        ctx: CommandContext,
+        id: MemoryId,
+        expected_revision: Revision,
+    ) -> Result<MemoryRecord> {
+        self.call(move |w| w.transact(|db| db.forget_memory(&ctx, id, expected_revision)))
+            .await
+    }
     async fn managed_accounts(&self, operator: ActorId) -> Result<Vec<ManagedAccount>> {
         self.call(move |w|w.read(|db| {
             db.operator(operator)?;
@@ -1246,6 +1287,7 @@ impl SocialStore for SqliteSocialStore {
                 c.context_epoch = c.context_epoch.next()?;
                 c.revision = c.revision.next()?;
                 db.update_message(&m, ctx.operator)?;
+                db.stale_memories(m.id)?;
                 db.invalidate_context(c.id)?;
                 db.cancel_trigger_plans(m.id)?;
                 db.save_conversation(&c)?;

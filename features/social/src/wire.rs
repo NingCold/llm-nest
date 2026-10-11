@@ -3,6 +3,67 @@ use serde::{Deserialize, Serialize};
 use social::*;
 use storage::social::{BindingCandidate, ConversationRecord, RunFailure};
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Memory {
+    pub id: MemoryId,
+    pub actor_id: ActorId,
+    pub conversation_id: ConversationId,
+    pub kind: MemoryKind,
+    pub text: String,
+    pub status: MaterialStatus,
+    pub revision: Revision,
+    pub source: Option<storage::social::MemoryMessageSource>,
+    pub created_by: ActorId,
+    pub updated_by: ActorId,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl From<MemoryRecord> for Memory {
+    fn from(m: MemoryRecord) -> Self {
+        let source = m.sources.iter().find_map(|s| match s {
+            SourceRef::Message {
+                message_id,
+                revision,
+                ..
+            } => Some(storage::social::MemoryMessageSource {
+                message_id: *message_id,
+                revision: *revision,
+            }),
+            _ => None,
+        });
+        Self {
+            id: m.id,
+            actor_id: m.owner_actor_id,
+            conversation_id: m.conversation_id,
+            kind: m.kind,
+            text: m.text,
+            status: m.status,
+            revision: m.revision,
+            source,
+            created_by: m.created_by,
+            updated_by: m.updated_by,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMemoryInput {
+    pub request_id: CommandId,
+    #[serde(flatten)]
+    pub content: storage::social::MemoryContent,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemoryInput {
+    pub request_id: CommandId,
+    pub expected_revision: Revision,
+    #[serde(flatten)]
+    pub content: storage::social::MemoryContent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Binding {
@@ -158,6 +219,7 @@ impl From<AiRun> for Run {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
+    pub memory_owner_ids: Vec<ActorId>,
     pub id: ConversationId,
     pub kind: ConversationKind,
     pub title: String,
@@ -176,6 +238,7 @@ pub struct Conversation {
 impl From<ConversationRecord> for Conversation {
     fn from(c: ConversationRecord) -> Self {
         Self {
+            memory_owner_ids: c.memory_owner_ids,
             id: c.conversation.id,
             kind: c.conversation.kind,
             title: c.conversation.title,

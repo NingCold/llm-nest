@@ -2,7 +2,7 @@
 
 [文档索引](../README.md) · [当前开发约束](../../AGENTS.md)
 
-更新日期：2026-10-09。本文维护产品范围、术语、架构边界和依赖方向。
+更新日期：2026-10-11。本文维护产品范围、术语、架构边界和依赖方向。
 
 | 文档 | 唯一职责 |
 | --- | --- |
@@ -10,7 +10,7 @@
 | [TODO](TODO.md) | 实施顺序与完成勾选 |
 | 本总纲与 01–09 专项文档 | 所属领域的设计规则；已实现字段/接口与未来扩展分别标明 |
 | [交付与验证](10-delivery-and-validation.md) | 里程碑完成条件、验证场景与待细化决策 |
-| M0/M1 批次记录 | 当时的实现和验收证据，不作为当前 API 清单或下一步计划 |
+| M0/M1/M2 批次记录 | 当时的实现和验收证据，不作为当前 API 清单或下一步计划 |
 | [AGENTS](../../AGENTS.md) / [开发指南](../development.md) | 修改约束 / 环境、运行与复现命令 |
 
 阅读时先确认状态，再查负责该规则的专项文档；当前可调用契约集中在 [API 与事件](07-api-and-events.md)。实现与设计冲突时核对调用链并同步修订，不追加“以此为准”留下旧规则。测试数量只在对应验收记录中维护，下一步只在正在推进文件维护。
@@ -135,7 +135,7 @@ features/social/src/
 
 目录按实际职责与规模拆分，不为未来功能创建空模块。Cargo 包名已采用 `social` 与 `social-feature`。当前意识实现为单文件 `consciousness.rs`，后续按需求拆为目录。
 
-ConsciousnessService 是 SocialFeature 内部服务，不另建 consciousness Cargo 包或独立 Feature。M1 交付近期上下文，M2 加入摘要、显式记忆和跨窗口接续；后续后台巩固沿此边界扩展，不提前创建空“做梦”模块。
+ConsciousnessService 是 SocialFeature 内部服务，不另建 consciousness Cargo 包或独立 Feature。M1 交付近期上下文，M2 按显式记忆 → 窗口分段摘要 → 跨窗口接续分批交付；后续后台巩固沿此边界扩展，不提前创建空“做梦”模块。
 
 依赖约束：`social` 仅依赖基础类型和序列化等通用库，不依赖 runtime、storage、ai-client 或前端；`events` 可以依赖 social；`storage` 可以依赖 social 与 events；`runtime` 注入这些资源；`social-feature` 依赖 runtime 并实现用例。runtime 不反向依赖具体 Feature，防止循环依赖。
 

@@ -101,6 +101,29 @@ function harness() {
   assert.equal(h.store.getState().histories.chat.length,1,'resync discards old loaded pages and pre-resync read responses');
   assert.equal(h.store.getState().histories.chat[0].id,'latest');
 
+  h.api.memories=async()=>[{ id:'memory',text:'remembered',revision:'1' }];
+  await h.store.getState().loadMemories('chat','ai');
+  let memoryReads=0;
+  h.api.memories=async()=>{ memoryReads++; if(memoryReads===1)throw new Error('memory read failed'); return []; };
+  h.api.init=async()=>snapshot('4');
+  const forgotten={ cursor:'4',change:{kind:'memory_changed',conversationId:'chat',actorId:'ai',memoryId:'memory',revision:'2'} };
+  await assert.rejects(h.handlers().change(forgotten),/memory read failed/);
+  assert.equal(h.store.getState().memories['chat/ai'].length,0,'a failed read does not display stale memory');
+  await h.handlers().change(forgotten);
+  assert.equal(memoryReads,2,'memory event is replayed until its read succeeds');
+  assert.equal(h.store.getState().memoryErrors['chat/ai'],null);
+  const delayedMemory=defer(); let orderedReads=0;
+  h.api.memories=()=> ++orderedReads===1 ? delayedMemory.promise : Promise.resolve([]);
+  const oldMemoryRead=h.store.getState().loadMemories('chat','ai');
+  const currentMemoryRead=h.store.getState().loadMemories('chat','ai');
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(orderedReads,1,'reads for the same scope are ordered');
+  delayedMemory.resolve([{id:'memory',text:'old',revision:'1'}]);
+  await oldMemoryRead; await currentMemoryRead;
+  assert.equal(h.store.getState().memories['chat/ai'].length,0,'late UI reads cannot restore a forgotten memory');
+  await h.handlers().resync();
+  assert.equal(orderedReads,3,'resync reloads previously viewed memory scopes');
+
 
 
   const live=(deltaSeq,text)=>({ type:'generation.delta',conversationId:'other',runId:'run',messageId:'live-message',actorId:'ai',deltaSeq,text });

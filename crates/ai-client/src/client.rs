@@ -163,6 +163,8 @@ impl AiClient {
                     cfg.models.insert(
                         ModelId::new(m.id.clone()),
                         ModelConfig {
+                            image_input: None,
+                            catalog_image_input: None,
                             model: m.id.clone(),
                             display_name: m.display_name.clone(),
                             context_window: m.context_window,
@@ -281,6 +283,15 @@ impl AiClient {
             .as_ref()
             .map(|r| r.resolve(&req.selection))
             .transpose()?;
+        if resolved.as_ref().is_some_and(|r| {
+            r.spec.image_input.support == crate::image_input::ImageSupport::Unsupported
+        }) && req.messages.iter().any(|m| {
+            m.content
+                .iter()
+                .any(|p| matches!(p, common::ContentPart::Image { .. }))
+        }) {
+            return Err(AiError::ImageInputUnsupported);
+        }
         let provider = match &resolved {
             Some(r) => self.route_resolved(r).await?,
             None => self.route(&req.selection).await?,
@@ -389,6 +400,65 @@ mod tests {
     use crate::config::{ApiKey, ModelConfig, ModelId};
 
     #[tokio::test]
+    async fn image_guard_checks_whole_request_and_uses_frozen_catalog() {
+        use common::{ContentPart, GenerationOptions, Message, Role};
+        let mut configs: HashMap<ProviderId, ProviderConfig> = toml::from_str("[test]\nprotocol='openai'\nbase_url='http://127.0.0.1:9/v1'\napi_key='fixture'\n[test.models.alias]\nmodel='wire'\nimage_input=false").unwrap();
+        let client = AiClient::from_config(&configs).unwrap();
+        let request = ChatRequest {
+            selection: ModelSelection {
+                provider: "test".into(),
+                model: "alias".into(),
+                reasoning_effort: None,
+            },
+            messages: vec![
+                Message::new(
+                    Role::User,
+                    vec![ContentPart::Image {
+                        mime: Some("image/png".into()),
+                        data: vec![1],
+                    }],
+                ),
+                Message::user("follow-up"),
+            ],
+            options: GenerationOptions::default(),
+            tools: vec![],
+            resolved: None,
+        };
+        assert!(matches!(
+            client.complete(request.clone()).await,
+            Err(AiError::ImageInputUnsupported)
+        ));
+        assert!(matches!(
+            client.complete_stream(request.clone()).await,
+            Err(AiError::ImageInputUnsupported)
+        ));
+        let mut text_only = request.clone();
+        text_only.messages.remove(0);
+        assert!(client.prepare(text_only).await.is_ok());
+        let frozen = client.snapshot().await;
+        for support in [None, Some(true)] {
+            configs
+                .get_mut(&ProviderId::new("test"))
+                .unwrap()
+                .models
+                .get_mut(&ModelId::new("alias"))
+                .unwrap()
+                .image_input = support;
+            client.reload_config(&configs).await.unwrap();
+            let (_, prepared) = client.prepare(request.clone()).await.unwrap();
+            assert_eq!(prepared.wire_model(), "wire");
+            assert!(matches!(
+                prepared.messages[0].content[0],
+                ContentPart::Image { .. }
+            ));
+            assert!(matches!(
+                frozen.prepare(request.clone()).await,
+                Err(AiError::ImageInputUnsupported)
+            ));
+        }
+    }
+
+    #[tokio::test]
     async fn routes_by_effective_protocol() {
         // gateway provider: default openai, one model overriding to responses
         let mut configs = HashMap::new();
@@ -403,6 +473,8 @@ mod tests {
                     m.insert(
                         ModelId::new("chat"),
                         ModelConfig {
+                            image_input: None,
+                            catalog_image_input: None,
                             model: "chat-model".into(),
                             display_name: None,
                             context_window: None,
@@ -414,6 +486,8 @@ mod tests {
                     m.insert(
                         ModelId::new("resp"),
                         ModelConfig {
+                            image_input: None,
+                            catalog_image_input: None,
                             model: "resp-model".into(),
                             display_name: None,
                             context_window: None,

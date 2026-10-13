@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [图片消息第五批](social-refactor/image-capabilities.md) | 目录图片能力、人工覆盖与来源、聊天发送提示、历史图片/引用检查、混合能力群聊与隔离验收 |
 | [图片消息第四批](social-refactor/image-processing.md) | 发送前缩放与压缩、原图/结果预览、确认后保存、透明与照片方向、多图总量验证 |
 | [图片消息第三批](social-refactor/image-drafts.md) | 本机图片草稿持久保存、跨刷新/重开恢复、完整命令重试、失败提示与桌面关闭等待 |
 | [图片消息第二批](social-refactor/image-message-export.md) | 原图另存为、Markdown/JSON 携图 ZIP、版本与权限复核、Web 下载及桌面文件保存 |

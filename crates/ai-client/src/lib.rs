@@ -6,6 +6,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod generation;
+pub mod image_input;
 pub mod protocols;
 pub mod reasoning;
 pub mod request;

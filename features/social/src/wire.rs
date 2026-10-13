@@ -426,6 +426,7 @@ pub struct ContactIntentInput {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelOption {
+    pub image_input: ai_client::image_input::ImageInputCapability,
     pub provider_id: String,
     pub model_id: String,
     pub display_name: String,
@@ -437,6 +438,7 @@ pub struct ModelOption {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Init {
+    pub image_inputs: std::collections::HashMap<ActorId, ai_client::image_input::ImageSupport>,
     pub self_id: ActorId,
     pub self_name: String,
     pub self_account: Account,

@@ -12,7 +12,7 @@ export interface ContactBlockInput { requestId: string; blocked: boolean; expect
 export interface ContactInput { requestId: string; listed: boolean; expectedRevision: string | null }
 export interface AccountView { operatorId: string; snapshot: Snapshot }
 export interface GenerationLimits { temperatureMax: number | null; minOutputTokens: number; maxOutputTokens: number | null }
-export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[]; generationLimits: Record<string, GenerationLimits> }
+export interface ModelOption { imageInput: import("@/lib/image-input").ImageInputCapability; providerId: string; modelId: string; displayName: string; reasoningLevels: string[]; generationLimits: Record<string, GenerationLimits> }
 export interface Message {
   images: { index: number; mime: string | null; byteLength: number }[]
   contextReference?: ContextReference | null
@@ -40,7 +40,7 @@ export interface ContactIntent { id: string; conversationId: string; actorId: st
 export interface ParticipationPolicy { revision: string; mergeDelayMs: number; idleSeconds: number; limitedAuto: boolean; maxConsecutive: number; maxAutoPerBout: number; maxAutoPerDay: number; dailyTokenBudget: number }
 export type ParticipationReason = "waiting" | "input_pending" | "turn_limit" | "daily_limit" | "token_limit" | "no_candidate" | "expired" | "idle" | "user_ended" | "policy_changed"
 export interface ParticipationView { policy: ParticipationPolicy; state: { lastActivity: string | null; consecutiveAi: number; boutAutoTurns: number; reason: ParticipationReason | null }; budgetDay: string; autoTurnsToday: number; reservedTokensToday: number }
-export interface Snapshot { selfId: string; selfName: string; selfAccount: Account; accounts: Account[]; addressBook: ContactEntry[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
+export interface Snapshot { imageInputs: Record<string, import("@/lib/image-input").ImageSupport>; selfId: string; selfName: string; selfAccount: Account; accounts: Account[]; addressBook: ContactEntry[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
 export interface Failure { code: string; message: string }
 export interface RunDetails {
   provider: string; model: string; wireModel: string; protocol: string; reasoning: string

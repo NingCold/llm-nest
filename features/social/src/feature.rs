@@ -84,10 +84,28 @@ impl SocialFeature {
     pub async fn init(&self) -> Result<wire::Init> {
         let s = self.services()?;
         let overview = s.resources.store.overview(s.human).await?;
-        let models = s
-            .llm
-            .list_models()
-            .await
+        let catalog = s.llm.list_models().await;
+        let image_inputs = overview
+            .accounts
+            .iter()
+            .filter(|a| a.kind == ActorKind::Ai)
+            .map(|account| {
+                let support = overview
+                    .bindings
+                    .iter()
+                    .find(|b| b.actor_id == account.id)
+                    .and_then(|b| {
+                        catalog.iter().find(|m| {
+                            m.provider == b.provider_id
+                                && (m.spec.id == b.model_id || m.spec.wire == b.model_id)
+                        })
+                    })
+                    .map(|m| m.spec.image_input.support)
+                    .unwrap_or_default();
+                (account.id, support)
+            })
+            .collect();
+        let models = catalog
             .into_iter()
             .map(|m| {
                 let mut levels = vec![None];
@@ -115,6 +133,7 @@ impl SocialFeature {
                     })
                     .collect();
                 wire::ModelOption {
+                    image_input: m.spec.image_input,
                     provider_id: m.provider,
                     model_id: m.spec.id,
                     display_name: m.spec.display_name,
@@ -133,6 +152,7 @@ impl SocialFeature {
             })
             .collect();
         Ok(wire::Init {
+            image_inputs,
             self_id: overview.account.id,
             self_name: overview.account.display_name.clone(),
             self_account: overview.account.clone().into(),

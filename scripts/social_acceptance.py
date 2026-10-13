@@ -105,6 +105,7 @@ def main():
     parser.add_argument('--dist', type=Path)
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--only-images', action='store_true', help='Run only the isolated image-message acceptance batch')
+    parser.add_argument('--only-image-capabilities', action='store_true', help='Run only model image capability and dispatch checks')
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix='llmn-social-acceptance-'))
     provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -201,6 +202,15 @@ def main():
         start()
         initial = api('/init')
         self_id = initial['selfId']
+        if args.only_image_capabilities:
+            from social_image_capability_acceptance import verify_image_capabilities
+            def settings(path, method='GET', data=None):
+                body = None if data is None else json.dumps(data).encode()
+                with urllib.request.urlopen(urllib.request.Request(base.removesuffix('/social') + path, data=body, method=method, headers={'X-LLMN-Client': '1', 'Content-Type': 'application/json'}), timeout=15) as response:
+                    return json.load(response)
+            verify_image_capabilities(api, settings, contact, direct, group, history, wait_for, REQUESTS, stop, start)
+            print('Fixture:', work)
+            return
         if args.only_images:
             from social_image_acceptance import verify_images
             verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start, request)

@@ -27,6 +27,7 @@ function load(name) {
     if (spec==='./components/common') return {Avatar:()=>null,EmptyState:()=>null,IconButton:({children,...props})=>React.createElement('button',props,children)};
     if (spec==='@/components/chat/MarkdownView') return {MarkdownView:()=>null};
     if (spec==='@/lib/desktop') return {CUSTOM_WINDOW_CHROME:false};
+    if (spec==='@/lib/image-input') { const exports={}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,'../lib/image-input.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports}); return exports; }
     if (spec==='@/components/ui/dialog') return {Dialog:()=>null,DialogContent:()=>null,DialogDescription:()=>null,DialogTitle:()=>null};
     return require(spec);
   }});

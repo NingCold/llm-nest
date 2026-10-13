@@ -1,4 +1,5 @@
 export interface SettingsApi {
+  setModelImageInput(input: { provider: string; model: string; imageInput: boolean | null }): Promise<ProviderInfo[]>
   init(): Promise<SettingsSnapshot>
   listProviderTemplates(): Promise<ProviderTemplate[]>
   catalogStatus(): Promise<CatalogStatus>
@@ -49,6 +50,7 @@ export interface ProviderInfo {
 }
 
 export interface ModelInfo {
+  imageInput: import("@/lib/image-input").ImageInputCapability
   id: string
   displayName: string
   /** 模型支持的思考强度（off/low/medium/high/max）；缺省 = 不支持思考 */

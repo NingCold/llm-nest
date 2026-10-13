@@ -35,6 +35,7 @@ pub struct ProviderInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
+    pub image_input: ai_client::image_input::ImageInputCapability,
     pub id: String,
     pub display_name: String,
     /// 模型支持的思考强度（off/low/medium/high/max），来自模型快照；
@@ -106,6 +107,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/providers/templates", get(provider_templates))
         .route("/api/catalog", get(catalog_status))
         .route("/api/catalog/sync", post(sync_catalog))
+        .route("/api/models/image-input", post(set_model_image_input))
         .route("/api/providers", post(upsert_provider))
         .route("/api/providers/{id}", delete(delete_provider))
         .merge(crate::social_api::routes())
@@ -398,6 +400,7 @@ async fn build_providers(runtime: &Runtime) -> Vec<ProviderInfo> {
             }
         };
         provider.models.push(ModelInfo {
+            image_input: m.spec.image_input,
             id: m.spec.id,
             display_name: m.spec.display_name,
             reasoning_levels: m
@@ -408,6 +411,18 @@ async fn build_providers(runtime: &Runtime) -> Vec<ProviderInfo> {
         });
     }
     providers
+}
+
+pub async fn set_model_image_input(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<runtime::image_input::ImageInputUpdate>,
+) -> ApiResult<Json<Vec<ProviderInfo>>> {
+    state
+        .runtime
+        .set_model_image_input(input)
+        .await
+        .map_err(|e| ApiError(e.to_string()))?;
+    Ok(Json(build_providers(&state.runtime).await))
 }
 
 #[cfg(test)]

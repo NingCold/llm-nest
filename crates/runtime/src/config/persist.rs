@@ -134,6 +134,52 @@ pub fn render_remove_provider(text: &str, id: &str) -> Result<String> {
     Ok(doc.to_string())
 }
 
+pub fn render_image_input(
+    text: &str,
+    provider: &str,
+    id: &str,
+    wire: &str,
+    image_input: Option<bool>,
+) -> Result<String> {
+    let mut doc: DocumentMut = text
+        .parse()
+        .map_err(|e| RuntimeError::ConfigError(format!("无法读取配置：{e}")))?;
+    let provider = doc
+        .get_mut("providers")
+        .and_then(Item::as_table_like_mut)
+        .and_then(|t| t.get_mut(provider))
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| RuntimeError::ConfigError("模型提供商不存在".into()))?;
+    if provider.get("models").is_none() {
+        provider.insert("models", Item::Table(Table::new()));
+    }
+    let models = provider
+        .get_mut("models")
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| RuntimeError::ConfigError("models 必须是表".into()))?;
+    if models.get(id).is_none() {
+        if image_input.is_none() {
+            return Ok(text.into());
+        }
+        let mut entry = Table::new();
+        entry["model"] = value(wire);
+        models.insert(id, Item::Table(entry));
+    }
+    let entry = models
+        .get_mut(id)
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| RuntimeError::ConfigError("模型配置必须是表".into()))?;
+    match image_input {
+        Some(supported) => {
+            entry.insert("image_input", value(supported));
+        }
+        None => {
+            entry.remove("image_input");
+        }
+    }
+    Ok(doc.to_string())
+}
+
 /// Append `models` into `[providers.<provider>]`'s `models` table of the
 /// document at `path`. A no-op when `models` is empty. Fails when the
 /// document has no `[providers]`/`[providers.<provider>]` table or when

@@ -76,9 +76,11 @@ pnpm --dir frontends/web typecheck
 pnpm --dir frontends/web test
 cargo build -p web-server --locked
 python scripts/acceptance.py
+python scripts/social_acceptance.py
+python scripts/social_acceptance.py --only-image-capabilities
 ```
 
-`acceptance.py` 验证空配置启动、旧接口 404、本地访问限制、模型服务配置原子更新、所选旧 JSON 导入/来源校验/只读历史/重启以及底层 worker。`social_acceptance.py` 验证实际 HTTP、SocialFeature、SQLite、私聊/群聊、意识系统与 M3 调度。全部使用独立临时数据，后者使用本机模拟 provider；两项都应执行。
+`acceptance.py` 验证空配置启动、旧接口 404、本地访问限制、模型服务配置原子更新、所选旧 JSON 导入/来源校验/只读历史/重启以及底层 worker。`social_acceptance.py` 验证实际 HTTP、SocialFeature、SQLite、私聊/群聊、意识系统与 M3 调度；`--only-image-capabilities` 独立检查模型图片能力设置、重启、真实请求拦截和混合群回复。全部使用独立临时数据与本机模拟 provider；CI 和发布检查执行这三条命令。
 
 真实模型验收会产生调用费用，按单独安排执行；既有报告见[历史记录](history.md)。
 

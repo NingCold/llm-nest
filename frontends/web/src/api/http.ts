@@ -28,6 +28,7 @@ function jsonInit(method: string, body: unknown): RequestInit {
 }
 
 export const httpApi: SettingsApi = {
+  setModelImageInput: input => req<ProviderInfo[]>("/models/image-input", jsonInit("POST", input)),
   init: () => req<SettingsSnapshot>("/settings"),
   async listProviderTemplates(): Promise<ProviderTemplate[]> {
     return req<ProviderTemplate[]>("/providers/templates")

@@ -496,6 +496,8 @@ mod tests {
                     m.insert(
                         ModelId::new("m"),
                         ModelConfig {
+                            image_input: None,
+                            catalog_image_input: None,
                             model: "gemini-2.5-pro".into(),
                             display_name: None,
                             context_window: None,

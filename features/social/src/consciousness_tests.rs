@@ -93,6 +93,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         messages,
     };
     let model = ModelSpec {
+        image_input: Default::default(),
         id: "model".into(),
         wire: "model-wire".into(),
         display_name: "Model".into(),

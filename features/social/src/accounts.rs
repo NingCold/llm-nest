@@ -137,6 +137,7 @@ impl SocialFeature {
         Ok(wire::AccountView {
             operator_id: s.human,
             snapshot: wire::Init {
+                image_inputs: Default::default(),
                 self_id: o.account.id,
                 self_name: o.account.display_name.clone(),
                 self_account: o.account.into(),

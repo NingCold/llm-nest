@@ -29,6 +29,7 @@ use crate::request::ModelSelection;
 /// table and the configuration (configuration wins field by field).
 #[derive(Debug, Clone)]
 pub struct ModelSpec {
+    pub image_input: crate::image_input::ImageInputCapability,
     /// Configuration key of the model (the `models.<key>` in `llmn.toml`).
     pub id: String,
     /// The model name sent on the wire.
@@ -121,7 +122,10 @@ impl ModelRouter {
             if let Some(builtin) = builtin_provider(&provider) {
                 for bm in builtin.models {
                     if !models.values().any(|s| s.wire == bm.id) {
-                        models.insert(bm.id.to_string(), Self::builtin_spec(bm, protocol));
+                        models.insert(
+                            bm.id.to_string(),
+                            Self::builtin_spec(&provider, bm, protocol),
+                        );
                     }
                 }
             }
@@ -190,6 +194,11 @@ impl ModelRouter {
         }
         let builtin = builtin_model(provider, &mcfg.model);
         Ok(ModelSpec {
+            image_input: crate::image_input::ImageInputCapability::resolve(
+                mcfg.image_input,
+                mcfg.catalog_image_input,
+                crate::image_input::builtin_image_input(provider, &mcfg.model),
+            ),
             id,
             wire: mcfg.model.clone(),
             display_name: mcfg.display_name.clone().unwrap_or_else(|| {
@@ -215,10 +224,16 @@ impl ModelRouter {
     /// config); inherits the provider protocol unless the builtin entry
     /// overrides it.
     fn builtin_spec(
+        provider: &str,
         bm: &crate::catalog::BuiltinModelEntry,
         provider_protocol: Protocol,
     ) -> ModelSpec {
         ModelSpec {
+            image_input: crate::image_input::ImageInputCapability::resolve(
+                None,
+                None,
+                crate::image_input::builtin_image_input(provider, bm.id),
+            ),
             id: bm.id.to_string(),
             wire: bm.id.to_string(),
             display_name: bm.display_name.to_string(),
@@ -350,6 +365,8 @@ mod tests {
 
     fn model(wire: &str) -> ModelConfig {
         ModelConfig {
+            image_input: None,
+            catalog_image_input: None,
             model: wire.into(),
             display_name: None,
             context_window: None,
@@ -361,6 +378,8 @@ mod tests {
 
     fn reasoning_model(wire: &str, levels: Vec<ReasoningEffort>) -> ModelConfig {
         ModelConfig {
+            image_input: None,
+            catalog_image_input: None,
             model: wire.into(),
             display_name: None,
             context_window: None,
@@ -390,6 +409,8 @@ mod tests {
                     (
                         "custom".into(),
                         ModelConfig {
+                            image_input: None,
+                            catalog_image_input: None,
                             model: "my-model".into(),
                             display_name: Some("My Model".into()),
                             context_window: None,

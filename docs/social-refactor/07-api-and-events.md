@@ -124,6 +124,10 @@ Conversation.contactSchedule 返回 settings 与 intents（全部活动及最近
 
 模型服务与目录同步接口继续使用；设置快照由 `/api/settings` 和 `settings_snapshot` 提供。旧 `/api/sessions`、旧聊天 IPC 与 chat-event 已删除。联系人关系和 AI 账号管理分别使用上表的专用接口，历史记录通过显式导入进入新版。
 
+模型图片能力覆盖使用设置接口 `POST /api/models/image-input` / IPC `set_model_image_input`，共用 `{provider,model,imageInput}`；imageInput 为 true/false，null 表示跟随目录。成功返回更新后的 ProviderInfo 数组，保存失败保留原配置。ModelInfo 与社交 ModelOption 都提供 `imageInput: {support,source}`，support 为 supported/unsupported/unknown，source 为 config/catalog/builtin/unknown。
+
+普通社交 Init 的 `imageInputs` 仅将 AI 账号 ID 映射到三态能力，不包含模型绑定或内部设定；管理员只读账号视角没有输入区，返回空映射。能力设置不生成聊天事件；界面返回社交页时刷新快照。执行按实际冻结配置检查全部请求，明确不支持图片时保存 RunDetails.error.code 为 `image_input_unsupported`，不调用 provider，真人消息仍保存。详见[图片能力记录](image-capabilities.md)。
+
 摘要分页返回 settings/segments/hasMore，每页 50 段、按 throughSequence 降序，before 排除该边界。SummarySettings 返回 id（窗口 ID）、enabled、binding、revision；未配置时 revision="0"、enabled=false。保存参数为 requestId/expectedRevision/enabled/binding，binding 包含 providerId/modelId/reasoningEffort/maxTokens，不包含密钥、温度或 AI 人格。
 
 开始摘要参数为 requestId/retry，retry 为 null 表示下一段，或 {id, expectedRevision} 表示重建同一分段。没有较早原文时返回 null，不调用模型。摘要包含范围、text/status/revision、来源、模型绑定、attempt、错误和时间；sources 沿用 SourceRef 的 snake_case 字段（kind/message_id/conversation_id/revision），其余 DTO 为 camelCase。发起人由后端固定，范围由存储推导；调用方不能指定摘要正文、原文集合或任意操作者。配置/请求回执幂等，冲突返回共享错误。

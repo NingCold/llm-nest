@@ -35,6 +35,7 @@ mod tests {
                 reasoning_effort: None,
             },
             spec: ModelSpec {
+                image_input: Default::default(),
                 id: "model".into(),
                 wire: "wire".into(),
                 display_name: "Model".into(),

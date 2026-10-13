@@ -182,6 +182,8 @@ mod tests {
                     m.insert(
                         crate::config::ModelId::new("m"),
                         crate::config::ModelConfig {
+                            image_input: None,
+                            catalog_image_input: None,
                             model: "test-model".into(),
                             display_name: None,
                             context_window: None,

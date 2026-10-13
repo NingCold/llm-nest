@@ -29,6 +29,7 @@ mod tests {
                 reasoning_effort: effort,
             },
             spec: ModelSpec {
+                image_input: Default::default(),
                 id: "fixture".into(),
                 wire: "wire".into(),
                 display_name: "Fixture".into(),

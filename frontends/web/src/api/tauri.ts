@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import type { SettingsApi, SettingsSnapshot, ProviderDraft, ProviderInfo, ProviderTemplate, CatalogStatus, CatalogSyncResponse } from "./types"
 export const tauriApi: SettingsApi = {
+  setModelImageInput: input => invoke<ProviderInfo[]>("set_model_image_input", { input }),
   init: () => invoke<SettingsSnapshot>("settings_snapshot"),
   async listProviderTemplates(): Promise<ProviderTemplate[]> {
     return invoke<ProviderTemplate[]>("provider_templates")

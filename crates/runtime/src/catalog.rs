@@ -220,6 +220,7 @@ mod tests {
 
     fn download_fixture() -> Download {
         let model = CatalogModel {
+            image_input: None,
             id: "sync-test-model".into(),
             display_name: "Synced model".into(),
             context_window: 10000,
@@ -319,5 +320,133 @@ mod tests {
         assert_eq!(state.warnings.len(), 1);
         assert!(state.warnings[0].contains(path.to_str().unwrap()));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn image_override_survives_sync_reload_and_restart_then_returns_to_catalog() {
+        use crate::image_input::ImageInputUpdate;
+        use ai_client::image_input::{CapabilitySource, ImageSupport};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("llmn.toml");
+        let source = "# keep comment\n[providers.deepseek]\napi_key='fixture'\ndefault_model='alias'\n[providers.deepseek.models.alias]\nmodel='sync-test-model'\ncontext_window=12345\n";
+        std::fs::write(&path, source).unwrap();
+        let runtime = Runtime::open(&path, dir.path().join("data")).await.unwrap();
+        let selection = ai_client::ModelSelection {
+            provider: "deepseek".into(),
+            model: "alias".into(),
+            reasoning_effort: None,
+        };
+        assert_eq!(
+            runtime
+                .resolve_model(&selection)
+                .await
+                .unwrap()
+                .spec
+                .image_input
+                .support,
+            ImageSupport::Unknown
+        );
+        let mut download = download_fixture();
+        download
+            .models
+            .get_mut("deepseek")
+            .unwrap()
+            .get_mut("sync-test-model")
+            .unwrap()
+            .image_input = Some(true);
+        runtime.install_catalog(download).await.unwrap();
+        let frozen = runtime.llm_client().snapshot().await;
+        assert_eq!(
+            frozen
+                .resolve(&selection)
+                .await
+                .unwrap()
+                .unwrap()
+                .spec
+                .image_input
+                .source,
+            CapabilitySource::Catalog
+        );
+        runtime
+            .set_model_image_input(ImageInputUpdate {
+                provider: "deepseek".into(),
+                model: "alias".into(),
+                image_input: Some(false),
+            })
+            .await
+            .unwrap();
+        let mut download = download_fixture();
+        download
+            .models
+            .get_mut("deepseek")
+            .unwrap()
+            .get_mut("sync-test-model")
+            .unwrap()
+            .image_input = Some(true);
+        runtime.install_catalog(download).await.unwrap();
+        runtime.reload_config(&path).await.unwrap();
+        let current = runtime.resolve_model(&selection).await.unwrap().spec;
+        assert_eq!(current.image_input.support, ImageSupport::Unsupported);
+        assert_eq!(current.image_input.source, CapabilitySource::Config);
+        assert_eq!(
+            frozen
+                .resolve(&selection)
+                .await
+                .unwrap()
+                .unwrap()
+                .spec
+                .image_input
+                .support,
+            ImageSupport::Supported
+        );
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            saved.contains("# keep comment")
+                && saved.contains("api_key='fixture'")
+                && saved.contains("context_window=12345")
+        );
+        assert!(!saved.contains("catalog_image_input"));
+        assert!(
+            runtime
+                .set_model_image_input(ImageInputUpdate {
+                    provider: "deepseek".into(),
+                    model: "nonexistent".into(),
+                    image_input: Some(true)
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        runtime.shutdown_features().await.unwrap();
+        drop(runtime);
+        let runtime = Runtime::open(&path, dir.path().join("data")).await.unwrap();
+        assert_eq!(
+            runtime
+                .resolve_model(&selection)
+                .await
+                .unwrap()
+                .spec
+                .image_input
+                .support,
+            ImageSupport::Unsupported
+        );
+        runtime
+            .set_model_image_input(ImageInputUpdate {
+                provider: "deepseek".into(),
+                model: "alias".into(),
+                image_input: None,
+            })
+            .await
+            .unwrap();
+        let current = runtime.resolve_model(&selection).await.unwrap().spec;
+        assert_eq!(current.image_input.support, ImageSupport::Supported);
+        assert_eq!(current.image_input.source, CapabilitySource::Catalog);
+        assert_eq!(current.context_window, Some(12345));
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("image_input")
+        );
+        runtime.shutdown_features().await.unwrap();
     }
 }

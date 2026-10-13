@@ -44,7 +44,7 @@ export function CatalogSync({ disabled }: { disabled: boolean }) {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">
         <p className="text-sm font-medium">模型目录</p>
-        <p className="mt-1 text-xs text-muted-foreground">从 Pi 更新已适配提供商的模型名称和容量信息。</p>
+        <p className="mt-1 text-xs text-muted-foreground">从 Pi 更新已适配提供商的模型名称、容量与图片能力。</p>
       </div>
       <button type="button" disabled={disabled || loading || syncing || !status?.cachePath}
         onClick={() => void sync()}

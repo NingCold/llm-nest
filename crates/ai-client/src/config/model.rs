@@ -29,6 +29,12 @@ impl Display for ModelId {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
+    /// Explicit local override. Absence follows catalog metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_input: Option<bool>,
+    /// Cache overlay only; never persisted as a user override.
+    #[serde(skip)]
+    pub catalog_image_input: Option<bool>,
     /// The model name sent on the wire.
     pub model: String,
     /// Name shown by frontends; defaults to the wire name.

@@ -16,6 +16,8 @@ python scripts/social_acceptance.py
 
 只检查图片消息时，运行 `python scripts/social_acceptance.py --only-images`。这会验证发送、重开、修改与撤回、群引用，以及较大图片的保存和读取。
 
+检查模型图片能力时，运行 `python scripts/social_acceptance.py --only-image-capabilities`。它会检查人工设置和恢复跟随目录、未知能力的尝试、历史图片与群引用，以及群内不同 AI 的独立回复。
+
 想打开测试页面，可以先构建界面，再运行：
 
 ```bash

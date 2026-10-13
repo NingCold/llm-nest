@@ -168,6 +168,7 @@ pub fn run() {
             commands::provider_templates,
             commands::catalog_status,
             commands::sync_catalog,
+            commands::set_model_image_input,
             commands::upsert_provider,
             commands::delete_provider,
             social_commands::social_init,

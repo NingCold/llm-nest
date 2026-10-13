@@ -1,3 +1,4 @@
+import { imageSourceLabels, imageSupportLabels } from "@/lib/image-input"
 import { MessageImages } from "./MessageImages"
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { ArrowLeft, Brain, MessageCircle, Pencil, Plus, RefreshCw } from "lucide-react"
@@ -71,7 +72,8 @@ function AiEditor({ managed, models, done, close }: { managed?: ManagedAi; model
     <label>名字<input autoFocus required maxLength={40} value={name} onChange={e => setName(e.target.value)} placeholder="账号的公开名字" /></label>
     <label>公开简介<textarea maxLength={1000} rows={2} value={bio} onChange={e => setBio(e.target.value)} placeholder="所有人都能在账号资料中看到" /></label>
     <label>内部角色设定<textarea required maxLength={2000} rows={4} value={persona} onChange={e => setPersona(e.target.value)} placeholder="性格、背景和行为设定，仅管理员可查看和修改" /></label>
-    <label>回复模型<select value={model} onChange={e => { setModel(e.target.value); setEffort("") }}><option value="">暂不配置</option>{models.map(m => <option key={`${m.providerId}/${m.modelId}`} value={`${m.providerId}/${m.modelId}`}>{m.displayName} · {m.providerId}</option>)}{model && !selected && <option value={model}>当前模型已不可用，请重新选择</option>}</select></label>
+    <label>回复模型<select value={model} onChange={e => { setModel(e.target.value); setEffort("") }}><option value="">暂不配置</option>{models.map(m => <option key={`${m.providerId}/${m.modelId}`} value={`${m.providerId}/${m.modelId}`}>{m.displayName} · {m.providerId} · {imageSupportLabels[m.imageInput.support]}</option>)}{model && !selected && <option value={model}>当前模型已不可用，请重新选择</option>}</select></label>
+    {selected && <p className="form-note">{imageSupportLabels[selected.imageInput.support]} · 来源：{imageSourceLabels[selected.imageInput.source]}</p>}
     {!!selected?.reasoningLevels.length && <label>思考强度<select value={effort} onChange={e => setEffort(e.target.value)}><option value="">使用模型默认值</option>{selected.reasoningLevels.map(level => <option key={level} value={level}>{level}</option>)}</select></label>}
     {limits && <GenerationFields temperature={temperature} output={output} limits={limits} setTemperature={setTemperature} setOutput={setOutput} />}
     <p className="form-note">修改设定与模型保留账号、关系和历史。新的运行使用新配置，正在回复的运行保留原配置。{!models.length && "请先在设置中添加模型服务。"}</p>

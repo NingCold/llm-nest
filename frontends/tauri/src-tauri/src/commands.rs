@@ -24,6 +24,7 @@ pub struct ProviderInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
+    pub image_input: ai_client::image_input::ImageInputCapability,
     pub id: String,
     pub display_name: String,
     /// 模型支持的思考强度（off/low/medium/high/max），来自配置声明；
@@ -57,6 +58,7 @@ async fn build_providers(runtime: &Runtime) -> Vec<ProviderInfo> {
             }
         };
         provider.models.push(ModelInfo {
+            image_input: m.spec.image_input,
             id: m.spec.id,
             display_name: m.spec.display_name,
             reasoning_levels: m
@@ -67,6 +69,20 @@ async fn build_providers(runtime: &Runtime) -> Vec<ProviderInfo> {
         });
     }
     providers
+}
+
+#[tauri::command]
+pub async fn set_model_image_input(
+    state: State<'_, BackendState>,
+    input: runtime::image_input::ImageInputUpdate,
+) -> Result<Vec<ProviderInfo>, String> {
+    let state = state.get().await?;
+    state
+        .runtime
+        .set_model_image_input(input)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(build_providers(&state.runtime).await)
 }
 
 #[derive(Debug, Clone, Serialize)]

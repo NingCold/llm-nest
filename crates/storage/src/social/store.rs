@@ -203,6 +203,8 @@ pub struct ConversationRecord {
 
 #[derive(Debug, Clone)]
 pub struct SocialOverview {
+    /// Internal input for derived runtime capabilities; never an account DTO.
+    pub bindings: Vec<ExecutionBinding>,
     pub account: Actor,
     pub accounts: Vec<Actor>,
     pub address_book: Vec<ContactEntry>,

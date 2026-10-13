@@ -218,6 +218,13 @@ impl SocialFeature {
         };
         let mut stream = match opened {
             Ok(stream) => stream,
+            Err(ai_client::AiError::ImageInputUnsupported) => {
+                details.error = Some(failure(
+                    "image_input_unsupported",
+                    "聊天记录已保存，但本次上下文包含图片，这个 AI 当前不支持查看图片，因此没有调用模型。可请管理员检查图片能力设置。",
+                ));
+                return self.finish(run, RunStatus::Failed, text, details).await;
+            }
             Err(_) => {
                 details.error = Some(failure("provider_error", provider_error));
                 return self.finish(run, RunStatus::Failed, text, details).await;

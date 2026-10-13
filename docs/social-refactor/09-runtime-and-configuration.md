@@ -58,6 +58,8 @@ GUI 的实际操作者固定为后端的本地真人。账号查看只传被查�
 
 目录同步仍使用 Pi 公共目录适配、Runtime 校验、原子缓存和用户字段优先级。所有配置重建路径合并缓存；不重写源码/整份配置、不导入远端凭据和端点、不改变默认模型。
 
+模型图片能力为支持/不支持/未知，按精确 provider/model 采用人工 image_input > 同步目录 > 内置声明 > 未知。目录的输入模态缺失时不推断为不支持；同步覆盖放在内部 catalog_image_input，不序列化成人工配置。Runtime::set_model_image_input 持有配置更新锁，解析当前模型、定点修改 TOML、整体校验、原子保存后再发布；null 只移除人工字段。既有 run 的 AiClient 快照不会改变，新运行在分发前检查实际图片。配置与接口见[图片能力记录](image-capabilities.md)。
+
 ## 5. 生命周期与关闭
 
 当前 SocialFeature.initialize 恢复运行并继续持久 queued 计划、Bout 与有效约定调度；重复初始化不能产生多个调度器。Clock 与 mock provider 可注入，业务代码不自行创建真实凭据或新的独立 Runtime。

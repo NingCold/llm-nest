@@ -4,6 +4,8 @@ use crate::reasoning::ReasoningEffort;
 
 #[derive(Debug, Error)]
 pub enum AiError {
+    #[error("本次上下文包含图片，但该模型已明确标为不支持图片输入")]
+    ImageInputUnsupported,
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
 

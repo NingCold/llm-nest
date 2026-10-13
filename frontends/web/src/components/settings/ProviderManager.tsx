@@ -4,6 +4,7 @@ import { useConfigStore } from "@/store/config"
 import { cn } from "@/lib/utils"
 import type { ProviderDraft, ProviderInfo, ProviderTemplate } from "@/api/types"
 import { CatalogSync } from "./CatalogSync"
+import { ModelImageInput } from "./ModelImageInput"
 
 async function getApi() {
   const mod = await import("@/api")
@@ -188,6 +189,7 @@ export function ProviderManager() {
   return (
     <div className="space-y-2.5">
       <CatalogSync disabled={adding || busy} />
+      <ModelImageInput disabled={adding || busy} />
       <p className="text-sm font-medium">模型供应商</p>
 
       {error && !adding && <p role="alert" className="text-sm text-red-500">{error}</p>}

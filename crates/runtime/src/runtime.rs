@@ -235,6 +235,8 @@ mod tests {
                         (
                             ModelId::new("chat"),
                             ModelConfig {
+                                image_input: None,
+                                catalog_image_input: None,
                                 model: "deepseek-chat".into(),
                                 display_name: None,
                                 context_window: None,
@@ -246,6 +248,8 @@ mod tests {
                         (
                             ModelId::new("reasoner"),
                             ModelConfig {
+                                image_input: None,
+                                catalog_image_input: None,
                                 model: "deepseek-reasoner".into(),
                                 display_name: None,
                                 context_window: None,

@@ -31,6 +31,8 @@ pub const SOURCES: &[(&str, &str, &str)] = &[
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CatalogModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_input: Option<bool>,
     pub id: String,
     pub display_name: String,
     pub context_window: u32,
@@ -77,6 +79,8 @@ pub fn validate(models: &CatalogModels) -> Result<()> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PiModel {
+    #[serde(default)]
+    input: Option<Vec<String>>,
     id: String,
     name: String,
     provider: String,
@@ -135,6 +139,15 @@ fn parse(
         result.insert(
             model.id.clone(),
             CatalogModel {
+                image_input: model.input.as_ref().and_then(|input| {
+                    if input.iter().any(|kind| kind == "image") {
+                        Some(true)
+                    } else if input.iter().any(|kind| kind == "text") {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                }),
                 id: model.id,
                 display_name: model.name,
                 context_window: model.context_window,
@@ -257,6 +270,7 @@ pub fn apply(
                     .get_or_insert_with(|| model.display_name.clone());
                 existing.context_window.get_or_insert(model.context_window);
                 existing.max_tokens.get_or_insert(model.max_tokens);
+                existing.catalog_image_input = model.image_input;
                 if existing.protocol.is_none() {
                     existing.protocol = model.protocol;
                 }
@@ -265,6 +279,8 @@ pub fn apply(
                 cfg.models.insert(
                     ModelId::new(&model.id),
                     ModelConfig {
+                        image_input: None,
+                        catalog_image_input: model.image_input,
                         model: model.id.clone(),
                         display_name: Some(model.display_name.clone()),
                         context_window: Some(model.context_window),
@@ -285,6 +301,41 @@ pub fn apply(
 mod tests {
     use super::*;
     use crate::{ApiKey, ModelRouter};
+
+    #[test]
+    fn reads_declared_input_and_keeps_missing_metadata_unknown() {
+        let row = serde_json::json!({"id":"new","name":"New","provider":"openai","api":"openai-responses","contextWindow":1000,"maxTokens":100});
+        for (input, expected) in [
+            (serde_json::json!(["text", "image"]), Some(true)),
+            (serde_json::json!(["text"]), Some(false)),
+            (serde_json::json!([]), None),
+            (serde_json::Value::Null, None),
+        ] {
+            let mut row = row.clone();
+            row["input"] = input;
+            let (models, _) = parse(
+                "openai",
+                "openai",
+                "openai-responses",
+                &serde_json::to_vec(&serde_json::json!({"new":row})).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(models["new"].image_input, expected);
+        }
+        let mut invalid = row.clone();
+        invalid["input"] = serde_json::json!(true);
+        assert!(
+            parse(
+                "openai",
+                "openai",
+                "openai-responses",
+                &serde_json::to_vec(&serde_json::json!({"new":invalid})).unwrap()
+            )
+            .is_err()
+        );
+        let old: CatalogModel = serde_json::from_value(serde_json::json!({"id":"old","displayName":"Old","contextWindow":1000,"maxTokens":100})).unwrap();
+        assert_eq!(old.image_input, None);
+    }
 
     #[test]
     fn only_supported_protocols_and_compatibility_enter_cache() {
@@ -339,6 +390,8 @@ mod tests {
         cfg.models.insert(
             ModelId::new("alias"),
             ModelConfig {
+                image_input: None,
+                catalog_image_input: None,
                 model: "ecnu-max".into(),
                 display_name: Some("Mine".into()),
                 context_window: Some(777),
@@ -349,6 +402,7 @@ mod tests {
         );
         let input = HashMap::from([(ProviderId::new("chatecnu"), cfg)]);
         let model = CatalogModel {
+            image_input: None,
             id: "ecnu-max".into(),
             display_name: "Remote".into(),
             context_window: 999,

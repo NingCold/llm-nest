@@ -1,4 +1,5 @@
 import { ChatComposer } from "./ChatComposer"
+import { ImageCapabilityHint } from "./ImageCapabilityHint"
 import { MessageImages } from "./MessageImages"
 import { ConversationExportPanel } from "./ConversationExportPanel"
 import { useEffect, useRef, useState } from "react"
@@ -94,6 +95,7 @@ export function Chat({ conversation, contact, details, memories, messageId }: { 
       {draft?.replyTo && <div className="live-reply-target"><span>回复 {reply?.senderName ?? "早前的消息"}{reply && (reply.status === "withdrawn" ? "：消息已撤回" : `：${(reply.text || (reply.images?.length ? "[图片]" : "")).slice(0, 60)}`)}</span><IconButton disabled={!state.draftsReady || state.draftsClosing} label="取消回复" onClick={() => state.targetDraft(conversation.id, draft.mentions ?? [], null)}><X /></IconButton></div>}
       {draft?.reference && <ReferenceCard input={draft.reference} remove={state.draftsReady && !state.draftsClosing ? () => state.referenceDraft(conversation.id, null) : undefined} />}
       {group && <MentionChoices conversation={conversation} />}
+      <ImageCapabilityHint snapshot={snapshot} conversation={conversation} draft={draft} reply={reply} />
       <ChatComposer key={conversation.id} id={conversation.id} title={title} hint={group ? conversation.participation.policy.limitedAuto ? "有限自动接话 · @ 可指定对象" : "@ 或回复 AI 才接话" : run ? "正在回复，你可以继续发送消息" : "每条消息都会先保存"} />
       <div className="composer-caption"><span>Enter 发送 · Shift + Enter 换行</span>{run && <button onClick={() => void state.action(() => socialClient.cancel(run.id))}><CircleStop />停止 {name(run.actorId)} 的当前回复</button>}</div>
     </div>}

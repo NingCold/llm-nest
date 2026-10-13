@@ -131,6 +131,7 @@ impl Db<'_> {
             )
             .map_err(|e| super::schema::sql_error(self.path, e))?;
         Ok(SocialOverview {
+            bindings: self.query_json("SELECT payload FROM execution_bindings", [])?,
             account,
             accounts: self.query_json("SELECT payload FROM actors ORDER BY rowid", [])?,
             address_book: self.address_book(operator)?,

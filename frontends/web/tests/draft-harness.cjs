@@ -8,8 +8,10 @@ function harness(options={}) {
   const factory=options.factory??new IDBFactory();
   const values=options.values??new Map([['llm-nest-social-preview-drafts-v1',JSON.stringify({chat:{text:'preview-only'}})]]);
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-  const globals={crypto:webcrypto,Blob,Uint8Array,atob,btoa,indexedDB:factory,localStorage:storage,AbortController,Map,BigInt,Date,setTimeout};
-  const types={},persistence={};
+  const globals={crypto:webcrypto,Blob,File,URL,Uint8Array,atob,btoa,indexedDB:factory,localStorage:storage,AbortController,Map,BigInt,Date,setTimeout};
+  const types={},persistence={},images={},processing={};
+  vm.runInNewContext(compile('images'),{...globals,exports:images});
+  vm.runInNewContext(compile('image-processing'),{...globals,exports:processing});
   vm.runInNewContext(compile('drafts'),{...globals,exports:types});
   vm.runInNewContext(compile('draft-storage'),{...globals,exports:persistence});
   const database=persistence.draftDatabase;
@@ -19,12 +21,13 @@ function harness(options={}) {
   vm.runInNewContext(compile('live-store'),{...globals,exports,require:spec=>{
     if(spec==='./drafts')return types;
     if(spec==='./draft-storage')return {draftDatabase:database};
-    if(spec==='./images')return {readImages:options.readImages??(async()=>{throw new Error('unexpected file read')})};
+    if(spec==='./images')return {...images,readImages:options.readImages??(async()=>{throw new Error('unexpected file read')})};
+    if(spec==='./image-processing')return {...processing,...options.processing};
     if(spec==='./client')return {socialClient:api,subscribe:(_,signal,change,live,resync)=>{handlers={signal,change,live,resync};return new Promise(()=>{})}};
     if(spec==='zustand')return {create:initialize=>{let state;const hook=selector=>selector(state);const set=update=>{state={...state,...(typeof update==='function'?update(state):update)}};hook.getState=()=>state;hook.setState=set;state=initialize(set,hook.getState);return hook}};
     throw new Error('unexpected dependency: '+spec);
   }});
-  return {store:exports.useLiveSocialStore,api,storage,values,factory,database,types,persistence,handlers:()=>handlers,flush:exports.flushDrafts,unsaved:exports.hasUnsavedDrafts,
+  return {store:exports.useLiveSocialStore,images,processing,api,storage,values,factory,database,types,persistence,handlers:()=>handlers,flush:exports.flushDrafts,unsaved:exports.hasUnsavedDrafts,
     async record(id,owner='human'){return (await new persistence.DraftDatabase(factory,storage).load(owner,[id]))[id]}};
 }
 module.exports={harness,snapshot,message,compile};

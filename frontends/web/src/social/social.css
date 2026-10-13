@@ -513,3 +513,20 @@
 .export-status { overflow-wrap: anywhere; }
 
 .pending-send-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; }
+
+.draft-image > .social-icon-button:last-child { top: auto; bottom: -6px; }
+.social-dialog.image-processing-dialog { max-width: 780px; max-height: 90dvh; overflow-y: auto; }
+.image-processing-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; border: 0; padding: 0; margin: 4px 0; }
+.image-processing-options label { display: grid; gap: 6px; font-size: 13px; }
+.image-processing-options select { width: 100%; padding: 8px; border: 1px solid var(--s-line); border-radius: 8px; background: var(--s-paper); color: var(--s-text); }
+.image-processing-note, .image-processing-status { margin: 0; font-size: 12px; line-height: 1.6; color: var(--s-muted); }
+.image-processing-list { display: grid; gap: 18px; }
+.image-processing-item > strong { display: block; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 8px; }
+.image-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.image-comparison figure { margin: 0; min-width: 0; }
+.image-comparison .image-thumbnail, .image-processing-placeholder { width: 100%; height: 180px; background-color: var(--s-panel); background-image: repeating-conic-gradient(var(--s-line) 0% 25%, transparent 0% 50%); background-size: 16px 16px; }
+.image-comparison .image-thumbnail img { width: 100%; height: 100%; max-width: none; object-fit: contain; }
+.image-processing-placeholder { display: grid; place-items: center; background-image: none; color: var(--s-muted); border: 1px dashed var(--s-line); border-radius: 10px; font-size: 12px; }
+.image-comparison figcaption { margin-top: 7px; color: var(--s-muted); font-size: 12px; line-height: 1.5; }
+.image-processing-dialog .form-actions { flex-wrap: wrap; }
+@media (max-width: 520px) { .image-processing-options { grid-template-columns: 1fr; gap: 8px; } .image-comparison .image-thumbnail, .image-processing-placeholder { height: 128px; } }

@@ -3,7 +3,8 @@ import { socialClient, subscribe } from "./client"
 import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot, SummaryState } from "./live-types"
 import { acknowledgeDraft, emptyDraft, sendInput, type Draft, type DraftRecord, type PendingDraft } from "./drafts"
 import { draftDatabase } from "./draft-storage"
-import { readImages } from "./images"
+import { ImageProcessingRequired, readImages } from "./images"
+import { draftImageFile, imageSelectionIssue, inspectImages, releaseImages, type ImageSelection, type ImageSource } from "./image-processing"
 interface Generation { text: string; reasoning: string; sequence: number }
 interface DraftSaveState { status: "saving" | "saved" | "error"; error?: string }
 
@@ -32,6 +33,10 @@ interface SocialState {
   updateDraft(id: string, text: string): void
   imageDraft(id: string, images: import("./images").DraftImage[]): void
   addDraftImages(id: string, files: File[]): Promise<void>
+  imageSelection: ImageSelection | null
+  editDraftImage(id: string, imageId: string): Promise<void>
+  cancelImageSelection(): void
+  acceptImageSelection(selection: ImageSelection, sources: ImageSource[]): Promise<void>
   referenceDraft(id: string, reference: import("./live-types").ReferenceInput | null): void
   targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
@@ -54,6 +59,18 @@ let draftLoading: Promise<void> | null = null
 function requireDrafts() {
   if (!useLiveSocialStore.getState().draftsReady) throw new Error("请先恢复本地草稿再编辑或发送")
   if (useLiveSocialStore.getState().draftsClosing) throw new Error("应用正在保存并关闭，请稍后编辑")
+}
+
+async function trackDraftRead(id: string, operation: () => Promise<void>) {
+  requireDrafts()
+  if (draftReads.size) throw new Error("请等待当前图片读取完成")
+  const read = operation()
+  draftReads.set(id, read)
+  try { await read } finally { draftReads.delete(id) }
+}
+
+function selectionAllowed() {
+  if (useLiveSocialStore.getState().imageSelection) throw new Error("请先确认或取消当前图片处理")
 }
 
 function persistDraft(id: string): Promise<void> {
@@ -236,18 +253,53 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     set({ drafts })
     persistEditedDraft(id)
   },
+  imageSelection: null,
   async addDraftImages(id, files) {
-    requireDrafts()
-    if (draftReads.has(id)) throw new Error("请等待当前图片读取完成")
-    const read = (async () => {
-      const selected = await readImages(files, get().drafts[id]?.images ?? [])
+    selectionAllowed()
+    await trackDraftRead(id, async () => {
+      let selected
+      try { selected = await readImages(files, get().drafts[id]?.images ?? []) }
+      catch (error) {
+        if (!(error instanceof ImageProcessingRequired)) throw error
+        const sources = await inspectImages(files)
+        set({ imageSelection: { id: crypto.randomUUID(), conversationId: id, sources, reason: error.message } })
+        return
+      }
       const draft = get().drafts[id] ?? emptyDraft()
       // A selection started before close must finish and persist before the host exits.
       set({ drafts: { ...get().drafts, [id]: { ...draft, images: [...(draft.images ?? []), ...selected], requestId: null } } })
       await persistDraft(id)
-    })()
-    draftReads.set(id, read)
-    try { await read } finally { draftReads.delete(id) }
+    })
+  },
+  async editDraftImage(id, imageId) {
+    selectionAllowed()
+    await trackDraftRead(id, async () => {
+      const image = get().drafts[id]!.images!.find(image => image.id === imageId)!
+      const sources = await inspectImages([draftImageFile(image)])
+      set({ imageSelection: { id: crypto.randomUUID(), conversationId: id, sources, reason: "调整这张草稿图片，确认后替换", replaceId: imageId } })
+    })
+  },
+  cancelImageSelection() {
+    if (get().imageSelection) releaseImages(get().imageSelection!.sources)
+    set({ imageSelection: null })
+  },
+  async acceptImageSelection(selection, sources) {
+    await trackDraftRead(selection.conversationId, async () => {
+      if (get().imageSelection !== selection) throw new Error("这次图片选择已取消")
+      const id = selection.conversationId
+      const draft = get().drafts[id] ?? emptyDraft()
+      const remaining = (draft.images ?? []).filter(image => image.id !== selection.replaceId)
+      const issue = imageSelectionIssue(sources, remaining)
+      if (issue) throw new Error(issue)
+      const selected = await readImages(sources.map(source => source.file), remaining)
+      if (get().imageSelection !== selection) throw new Error("这次图片选择已取消")
+      const current = get().drafts[id] ?? emptyDraft()
+      if (selection.replaceId && !current.images?.some(image => image.id === selection.replaceId)) throw new Error("原草稿图片已移除，请取消后重新选择")
+      const images = selection.replaceId ? current.images!.map(image => image.id === selection.replaceId ? selected[0] : image) : [...(current.images ?? []), ...selected]
+      set({ drafts: { ...get().drafts, [id]: { ...current, images, requestId: null } }, imageSelection: null })
+      releaseImages(selection.sources)
+      await persistDraft(id)
+    })
   },
   referenceDraft(id, reference) {
     requireDrafts()
@@ -263,7 +315,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
   },
   async send(id) {
     requireDrafts()
-    if (get().sending[id] || draftReads.has(id)) return
+    if (get().sending[id] || draftReads.has(id) || get().imageSelection?.conversationId === id) return
     const pending = get().pendingSends[id]
     const draft = pending ?? get().drafts[id] ?? emptyDraft()
     if (!draft.text.trim() && !draft.images?.length) return
@@ -296,11 +348,12 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
 }))
 
 export function hasUnsavedDrafts(): boolean {
-  return draftReads.size > 0 || Object.values(useLiveSocialStore.getState().draftSaveStates).some(value => value.status !== "saved")
+  return !!useLiveSocialStore.getState().imageSelection || draftReads.size > 0 || Object.values(useLiveSocialStore.getState().draftSaveStates).some(value => value.status !== "saved")
 }
 
 export async function flushDrafts(): Promise<void> {
   while (draftReads.size) await Promise.all(draftReads.values())
+  if (useLiveSocialStore.getState().imageSelection) throw new Error("请先确认图片处理结果或取消选图，再关闭应用")
   while (draftWrites.size) await Promise.all(draftWrites.values())
   // Retry also covers drafts hidden by a later block/archive or a different page.
   const failed = Object.entries(useLiveSocialStore.getState().draftSaveStates).filter(([, value]) => value.status === "error")

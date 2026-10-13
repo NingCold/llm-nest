@@ -19,7 +19,7 @@ function load(name) {
   vm.runInNewContext(output, { exports, location:{hash:''}, require:spec=> {
     if (spec==='@/lib/desktop') return {IS_DESKTOP:true,CUSTOM_WINDOW_CHROME:true};
     if (spec==='@/store/ui') return {useUiStore:Object.assign(fn=>fn(ui),{getState:()=>ui})};
-    if (spec==='./live-store') return {useLiveSocialStore:()=>state};
+    if (spec==='./live-store') return {useLiveSocialStore:selector=>selector?selector(state):state};
     if (spec==='./AccountPages') return {AccountDetails:()=>null,AccountViewer:()=>null,AiManagement:()=>null};
     if (spec==='./LiveChat') return {Chat:()=>null};
     if (spec==='./GroupControls') return {CreateGroupForm:()=>null};

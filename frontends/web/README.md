@@ -6,6 +6,8 @@
 
 聊天输入框支持选择、拖入和粘贴图片，发送前可预览、移除，历史图片可以点开放大并保存原图。聊天详情中可以导出记录，勾选“包含图片”会一起下载原图。相关界面在 [ChatComposer.tsx](src/social/ChatComposer.tsx)、[MessageImages.tsx](src/social/MessageImages.tsx) 和 [ConversationExportPanel.tsx](src/social/ConversationExportPanel.tsx)。
 
+图片超限时可以先缩放或压缩，预览结果后加入草稿。已有草稿中的图片也能处理，取消后保留原草稿。相关代码在 [ImageProcessingDialog.tsx](src/social/ImageProcessingDialog.tsx) 和 [image-processing.ts](src/social/image-processing.ts)。
+
 未发送的文字、图片和回复对象会自动保存在当前浏览器，刷新或重新打开同一地址后可以继续编辑。保存失败时，输入框下方会提示重试。上次发送结果尚未确认时，可以查看原内容并手动重试。草稿保存代码在 [draft-storage.ts](src/social/draft-storage.ts)。
 
 ## 开发时运行

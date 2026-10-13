@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { ArrowUp, ImagePlus, X } from "lucide-react"
+import { ArrowUp, ImagePlus, SlidersHorizontal, X } from "lucide-react"
 import { IconButton } from "./components/common"
 import { useLiveSocialStore } from "./live-store"
 import { imageUrl } from "./images"
@@ -27,7 +27,7 @@ export function ChatComposer({ id, title, hint }: { id: string; title: string; h
     onDragOver={e => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragging(true) } }}
     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false) }}
     onDrop={e => { setDragging(false); if (e.dataTransfer.files.length) { e.preventDefault(); void add(Array.from(e.dataTransfer.files)) } }}>
-    {!!images.length && <div className="draft-images">{images.map(image => <div className="draft-image" key={image.id}><ImagePreview src={imageUrl(image)} label={image.name} /><IconButton label={`移除图片 ${image.name}`} disabled={!ready || busy} onClick={() => state.imageDraft(id, images.filter(i => i.id !== image.id))}><X /></IconButton></div>)}</div>}
+    {!!images.length && <div className="draft-images">{images.map(image => <div className="draft-image" key={image.id}><ImagePreview src={imageUrl(image)} label={image.name} /><IconButton label={`移除图片 ${image.name}`} disabled={!ready || busy} onClick={() => state.imageDraft(id, images.filter(i => i.id !== image.id))}><X /></IconButton><IconButton label={`处理图片 ${image.name}`} disabled={!ready || busy} onClick={() => void state.action(() => state.editDraftImage(id, image.id))}><SlidersHorizontal /></IconButton></div>)}</div>}
     <textarea aria-label="消息输入框" rows={2} maxLength={20000} disabled={!ready} placeholder={dragging ? "松开添加图片" : `给 ${title} 发消息…`} value={draft?.text ?? ""}
       onChange={e => state.updateDraft(id, e.target.value)}
       onPaste={e => { const files = Array.from(e.clipboardData.items).filter(i => i.kind === "file").map(i => i.getAsFile()).filter((f): f is File => f !== null); if (files.length) { e.preventDefault(); void add(files) } }}

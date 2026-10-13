@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [首版本地社交体验收尾](social-refactor/first-release-experience.md) | 完整流程复验、五类实际问题修复、浏览器附件草稿重启与实际 ZIP 下载；平台验收仍独立保留 |
 | [通用文件附件第二批](social-refactor/file-message-export.md) | 图片/文件独立导出选项、同一快照原字节、重名与空文件、Markdown 链接和 JSON v3、编译产物清理 |
 | [通用文件附件第一批](social-refactor/file-messages.md) | 文件选择/草稿/发送/保存、原字节下载、只读元信息、权限与修订复核 |
 | [图片消息第五批](social-refactor/image-capabilities.md) | 目录图片能力、人工覆盖与来源、聊天发送提示、历史图片/引用检查、混合能力群聊与隔离验收 |

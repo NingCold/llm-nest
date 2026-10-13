@@ -7,7 +7,7 @@ const { webcrypto } = require('node:crypto');
 const ts = require('typescript');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const defer = () => { let resolve; const promise = new Promise(r => resolve=r); return {promise,resolve}; };
-const message = {id:'source',conversationId:'group',senderId:'ai',senderName:'A',text:'selected body',status:'committed',revision:'1',sequence:'1'};
+const message = {id:'source',conversationId:'group',senderId:'ai',senderName:'A',text:'selected body',images:[],files:[],status:'committed',revision:'1',sequence:'1'};
 function harness(component, props) {
   const slots=[], effects=[]; let index=0; const calls=[];
   const state={ snapshot:{cursor:'0',accounts:[{id:'ai',name:'A',kind:'ai',status:'active'}],conversations:[{id:'group',memberIds:['human','ai']}]}, connected:true, histories:{group:[message]},summaries:{},summaryErrors:{},error:null,
@@ -45,13 +45,20 @@ function harness(component, props) {
   h.state.connected=true;h.props.stale=true;assert.doesNotMatch(JSON.stringify(h.render()),/current body/);
   assert.match(JSON.stringify(h.render()),/引用已失效/);
 
-  const e=harness('ContinueEditor',{conversation:{id:'group'},message,done(){}});
+  const e=harness('ContinueEditor',{conversation:{id:'group'},message,messages:[message],done(){}});
   assert.equal(e.calls.length,0);
   e.nodes().find(n=>n.type==='button'&&n.props.children==='带入私聊草稿').props.onClick();await flush();
   assert.deepEqual(e.calls.map(c=>c[0]),['preview','open','draft','navigate']);
   assert.equal(e.calls[2][1],'unique-private');
   assert.equal(e.calls[2][2].selection.sources[0].revision,'1');
-  const denied=harness('ContinueEditor',{conversation:{id:'group'},message,done(){}});
+  const located={...message,id:'older-source',sequence:'0',text:'older located message'};
+  const search=harness('ContinueEditor',{conversation:{id:'group'},message:located,messages:[located,message],done(){}});
+  search.state.histories.group=[message];
+  const sourceChoice=search.nodes().find(n=>n.type==='input'&&n.props.checked);
+  assert.ok(sourceChoice,'search-located source remains selectable even outside latest history');
+  search.nodes().find(n=>n.type==='button'&&n.props.children==='带入私聊草稿').props.onClick();await flush();
+  assert.equal(search.calls[0][1].selection.sources[0].message_id,'older-source');
+  const denied=harness('ContinueEditor',{conversation:{id:'group'},message,messages:[message],done(){}});
   denied.client.referencePreview=async()=>{throw new Error('source revoked')};
   denied.nodes().find(n=>n.type==='button'&&n.props.children==='带入私聊草稿').props.onClick();await flush();
   assert.equal(denied.calls.length,0,'failed authorization never opens a private chat or replaces a draft');

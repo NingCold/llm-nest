@@ -32,7 +32,7 @@ export function ReferenceCard({ input, stale, remove }: { input: ReferenceInput;
   return <div className={`live-reference ${stale ? "stale" : ""}`}><Link2 /><button className="text-button" onClick={() => setOpen(true)}>{stale ? "群话题引用已失效" : `群话题引用 · ${input.selection.sources.filter(s => s.kind === "message").length} 条原文${input.selection.sources.some(s => s.kind === "summary") ? "与摘要" : ""}`}</button>{remove && <button className="social-icon-button" aria-label="移除群话题引用" onClick={remove}><X /></button>}<Dialog open={open} onOpenChange={setOpen}><DialogContent className="social-dialog"><DialogTitle>群话题来源</DialogTitle><DialogDescription>只读取双方仍可见的所选内容，来源变化后不会采用旧版本。</DialogDescription><Preview input={input} stale={stale} /></DialogContent></Dialog></div>
 }
 
-function ContinueEditor({ conversation, message, done }: { conversation: Conversation; message: Message; done(): void }) {
+function ContinueEditor({ conversation, message, messages, done }: { conversation: Conversation; message: Message; messages: Message[]; done(): void }) {
   const state = useLiveSocialStore()
   const snapshot = state.snapshot!
   const current = snapshot.conversations.find(c => c.id === conversation.id)
@@ -41,7 +41,7 @@ function ContinueEditor({ conversation, message, done }: { conversation: Convers
   const [selected, setSelected] = useState([message.id])
   const [summaryId, setSummaryId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const history = state.histories[conversation.id] ?? []
+  const history = messages
   const anchor = history.findIndex(m => m.id === message.id)
   const choices = history.slice(Math.max(0, anchor - 4), anchor + 4).filter(m => m.status === "committed")
   const summaries = state.summaries[conversation.id]?.segments.filter(s => s.status === "ready" && s.sources.some(source => selected.includes(source.message_id))) ?? []
@@ -69,7 +69,7 @@ function ContinueEditor({ conversation, message, done }: { conversation: Convers
       <label>与谁私聊<select value={actorId} onChange={e => setActorId(e.target.value)}>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
       {!actors.length && <p>当前没有可接续话题的共同 AI 成员。</p>}
       <p>选择需要带入私聊的原文（最多 8 条）。可以先在群聊加载更早记录。</p>
-      <div className="reference-choices">{choices.map(m => <label key={m.id}><input type="checkbox" checked={selected.includes(m.id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, m.id] : ids.filter(id => id !== m.id))} /><span><small>{m.senderName} · #{m.sequence}</small><span>{m.text || (m.images?.length ? "[图片]" : "")}</span></span></label>)}</div>
+      <div className="reference-choices">{choices.map(m => <label key={m.id}><input type="checkbox" checked={selected.includes(m.id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, m.id] : ids.filter(id => id !== m.id))} /><span><small>{m.senderName} · #{m.sequence}</small><span>{m.text || (m.images.length ? "[图片]" : m.files.length ? "[文件]" : "")}</span></span></label>)}</div>
       {!!summaries.length && <label>可附带相关群摘要<select value={summary?.id ?? ""} onChange={e => setSummaryId(e.target.value || null)}><option value="">仅引用原文</option>{summaries.map(s => <option key={s.id} value={s.id}>第 {s.fromSequence}–{s.throughSequence} 条消息的摘要</option>)}</select></label>}
       {summary && <blockquote className="reference-summary">{summary.text}</blockquote>}
       {state.summaryErrors[conversation.id] && <p>摘要未能读取，仍可选择原文。<button className="text-button" onClick={() => void state.action(() => state.loadSummaries(conversation.id))}>重试摘要</button></p>}
@@ -79,7 +79,7 @@ function ContinueEditor({ conversation, message, done }: { conversation: Convers
   </div>
 }
 
-export function ContinuePrivately({ conversation, message }: { conversation: Conversation; message: Message }) {
+export function ContinuePrivately({ conversation, message, messages }: { conversation: Conversation; message: Message; messages: Message[] }) {
   const [open, setOpen] = useState(false)
-  return <><button className="live-reply" onClick={() => setOpen(true)}><ArrowUpRight />私聊继续</button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="social-dialog"><DialogTitle>与 AI 私聊继续</DialogTitle><DialogDescription>选择共同群话题，接续到这个 AI 的长期私聊。</DialogDescription>{open && <ContinueEditor conversation={conversation} message={message} done={() => setOpen(false)} />}</DialogContent></Dialog></>
+  return <><button className="live-reply" onClick={() => setOpen(true)}><ArrowUpRight />私聊继续</button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="social-dialog"><DialogTitle>与 AI 私聊继续</DialogTitle><DialogDescription>选择共同群话题，接续到这个 AI 的长期私聊。</DialogDescription>{open && <ContinueEditor conversation={conversation} message={message} messages={messages} done={() => setOpen(false)} />}</DialogContent></Dialog></>
 }

@@ -15,7 +15,7 @@ export function useConversationRead(conversation: Conversation, atLatest: boolea
   const loading = state.loadingHistory[conversation.id]
   useEffect(() => {
     if (!canAutoRead(focused, atLatest, loading, through, conversation)) return
-    const timer = setTimeout(() => { void state.action(() => state.updateList(conversation.id, { kind: "read", through: through! })) }, 500)
+    const timer = setTimeout(() => { void state.action(() => state.updateList(conversation.id, { kind: "read", through: through! }), false) }, 500)
     return () => clearTimeout(timer)
   }, [focused, atLatest, loading, through, conversation.id, conversation.listState.revision, state.action, state.updateList])
 }

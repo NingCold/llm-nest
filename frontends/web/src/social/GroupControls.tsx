@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent } from "react"
 import { Plus, X } from "lucide-react"
 import { Avatar } from "./components/common"
 import { socialClient } from "./client"
-import { MemberParticipation } from "./LiveControls"
+import { MemberParticipation, useVersionedAction } from "./LiveControls"
 import { useLiveSocialStore } from "./live-store"
 import { contactAvatar } from "./live-ui"
 import { navigate } from "./router"
@@ -34,25 +34,20 @@ export function GroupMembers({ conversation }: { conversation: Conversation }) {
   const snapshot = state.snapshot!
   const [adding, setAdding] = useState(false)
   const [actor, setActor] = useState("")
-  const [saving, setSaving] = useState(false)
-  const requestId = useRef(crypto.randomUUID())
-  const expectedRevision = useRef<string | null>(null)
+  const { busy: saving, execute } = useVersionedAction()
   const available = snapshot.accounts.filter(c => c.kind === "ai" && c.status === "active" && !conversation.memberIds.includes(c.id))
   const change = async (actorId: string, action: "add" | "remove") => {
-    setSaving(true)
-    expectedRevision.current ??= conversation.revision
-    const result = await state.action(() => socialClient.changeMembership(conversation.id, { requestId: requestId.current, actorId, action, expectedRevision: expectedRevision.current! }))
-    if (result) { await state.action(state.refresh); setAdding(false); setActor(""); requestId.current = crypto.randomUUID(); expectedRevision.current = null }
-    setSaving(false)
+    const result = await execute(`${actorId}:${action}`, conversation.revision, input => socialClient.changeMembership(conversation.id, { ...input, actorId, action }))
+    if (result) { await state.action(state.refresh); setAdding(false); setActor("") }
   }
   return <section className="live-group-members"><h3>群成员 · {conversation.memberIds.length}</h3>
     <div className="live-member-row"><Avatar self size="small" /><span>{snapshot.selfName}<small>你 · 群管理者</small></span></div>
     {conversation.members.filter(m => m.actorId !== snapshot.selfId).map(member => {
       const contact = snapshot.accounts.find(c => c.id === member.actorId)
-      return <div className="live-member-row" key={member.actorId}><button onClick={() => navigate("contacts", member.actorId)}><Avatar contact={contactAvatar(contact)} size="small" /><span>{contact?.name}<small>共享完整群历史{contact?.status === "archived" ? " · 账号已停用" : member.paused && " · 已暂停接话"}</small></span></button><MemberParticipation conversation={conversation} member={member} /><button className="live-remove-member" aria-label={`移出 ${contact?.name}`} disabled={saving} onClick={() => { requestId.current = crypto.randomUUID(); expectedRevision.current = null; void change(member.actorId, "remove") }}><X /></button></div>
+      return <div className="live-member-row" key={member.actorId}><button onClick={() => navigate("contacts", member.actorId)}><Avatar contact={contactAvatar(contact)} size="small" /><span>{contact?.name}<small>共享完整群历史{contact?.status === "archived" ? " · 账号已停用" : member.paused && " · 已暂停接话"}</small></span></button><MemberParticipation conversation={conversation} member={member} /><button className="live-remove-member" aria-label={`移出 ${contact?.name}`} disabled={saving} onClick={() => void change(member.actorId, "remove")}><X /></button></div>
     })}
     {!adding ? <button className="social-button secondary" disabled={!available.length || saving} onClick={() => setAdding(true)}><Plus />添加成员</button> : <form className="social-form" onSubmit={event => { event.preventDefault(); void change(actor, "add") }}><fieldset className="social-form-fields" disabled={saving}>
-      <label>新成员<select required value={actor} onChange={event => { setActor(event.target.value); requestId.current = crypto.randomUUID(); expectedRevision.current = null }}><option value="">选择 AI 联系人</option>{available.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}{actor && !available.some(c => c.id === actor) && <option value={actor}>{snapshot.accounts.find(c => c.id === actor)?.name}</option>}</select></label>
+      <label>新成员<select required value={actor} onChange={event => setActor(event.target.value)}><option value="">选择 AI 联系人</option>{available.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}{actor && !available.some(c => c.id === actor) && <option value={actor}>{snapshot.accounts.find(c => c.id === actor)?.name}</option>}</select></label>
       <p className="form-note">成员变更会停止当前回复，并保留已生成片段。所有当前成员共享完整群历史，包括加入前的记录。移出的 AI 不再接话或读取群记录。</p>
       <div className="dialog-actions"><button type="button" className="social-button secondary" onClick={() => setAdding(false)}>取消</button><button className="social-button primary" disabled={!actor}>加入群聊</button></div>
     </fieldset></form>}

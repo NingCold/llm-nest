@@ -31,13 +31,13 @@ function all(n){return !n||typeof n!=='object'?[]:[n,...[n.props?.children].flat
 
 (async()=>{
   const h=hooks(),events={},writes=[];let focused=true,atLatest=true;
-  const state={historyReadThrough:{a:'2'},loadingHistory:{a:false},action:fn=>fn(),updateList:async(id,input)=>writes.push([id,input])};
+  const state={historyReadThrough:{a:'2'},loadingHistory:{a:false},error:'消息已保存；请配置模型',action:(fn,clearError=true)=>{if(clearError)state.error=null;return fn()},updateList:async(id,input)=>writes.push([id,input])};
   const doc={visibilityState:'visible',hasFocus:()=>focused,addEventListener:(n,f)=>events[n]=f,removeEventListener:n=>delete events[n]};
   const out={};vm.runInNewContext(compile('useConversationRead.ts'),{exports:out,document:doc,window:doc,setTimeout:h.setTimeout,clearTimeout:h.clearTimeout,require:name=>name==='react'?h.react:name==='./live-store'?{useLiveSocialStore:()=>state}:helpers});
   const render=()=>h.render(()=>out.useConversationRead(a,atLatest));
   render();focused=false;events.blur();render();h.tick();assert.equal(writes.length,0,'blur cancels a pending read acknowledgement');
   focused=true;events.focus();atLatest=false;render();h.tick();assert.equal(writes.length,0,'search and older history never mark the window read');
-  atLatest=true;render();h.tick();await flush();assert.equal(writes.length,1);assert.equal(writes[0][1].through,'2');
+  atLatest=true;render();h.tick();await flush();assert.equal(writes.length,1);assert.equal(writes[0][1].through,'2');assert.equal(state.error,'消息已保存；请配置模型','automatic read acknowledgement keeps visible execution notices');
   a.listState={...a.listState,revision:'2',readThrough:'2'};render();h.tick();assert.equal(writes.length,1,'the saved watermark cannot cause an acknowledgement loop');h.close();
 
   const s=hooks(),calls=[],client={searchMessages:input=>{const d=defer();calls.push({input,...d});return d.promise}},exp={};

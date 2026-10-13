@@ -465,6 +465,10 @@ def main():
         assert [p['status'] for p in mixed_plans] == ['failed', 'succeeded'] and mixed_plans[0]['failure']
         assert provider_count('mixed-binding') == 1
         carol = contact('Carol')
+        third_private = direct(carol)
+        before_third = history(private)
+        complete(third_private, 'third-private-before-group')
+        assert direct(carol) == third_private and history(private) == before_third
         member(group_id, carol, 'add')
         three = send(group_id, 'three-AI', mentions=[bob['id'], alice['id'], carol['id']])
         settled(group_id)

@@ -68,9 +68,16 @@ def verify_files(api, contact, direct, group, history, wait, requests, stop, sta
     denied(path(sent, index=999))
     settled(cid)
     metadata_only(requests[-1])
+    # Attachment-bearing windows retain the same personal list state across recovery.
+    for action in [{'kind': 'pin', 'pinned': True}, {'kind': 'unread'}]:
+        state = api(f'/conversations/{cid}')['listState']
+        api(f'/conversations/{cid}/list-state', 'POST', {'requestId': str(uuid.uuid4()), 'expectedRevision': state['revision'], 'action': action})
+    list_state = api(f'/conversations/{cid}')['listState']
     stop(); start()
+    assert api(f'/conversations/{cid}')['listState'] == list_state
     assert next(m for m in history(cid) if m['id'] == sent['id'])['files'] == sent['files']
     assert download(path(sent))[1] == private_content
+    assert api(f'/conversations/{cid}')['listState'] == list_state
 
     revised = api(f'/messages/{sent["id"]}/revise', 'POST', {'requestId': str(uuid.uuid4()), 'expectedRevision': sent['revision'], 'text': '补充说明'})
     assert revised['files'][0]['index'] == 1

@@ -44,7 +44,7 @@ interface SocialState {
   referenceDraft(id: string, reference: import("./live-types").ReferenceInput | null): void
   targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
-  action<T>(operation: () => Promise<T>): Promise<T | undefined>
+  action<T>(operation: () => Promise<T>, clearError?: boolean): Promise<T | undefined>
   dismissError(): void
 }
 
@@ -380,8 +380,8 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     } catch (error) { set({ error: String(error) }) }
     finally { set({ sending: { ...get().sending, [id]: false } }) }
   },
-  async action(operation) {
-    try { set({ error: null }); return await operation() }
+  async action(operation, clearError = true) {
+    try { if (clearError) set({ error: null }); return await operation() }
     catch (error) { set({ error: String(error) }); return undefined }
   },
   dismissError() { set({ error: null, connectionError: null }) },

@@ -14,6 +14,18 @@ const message = (text, revision='1', status='committed') => ({ id:'message',conv
 const { harness } = require('./draft-harness.cjs');
 
 (async()=> {
+  const noticeHarness=harness();await noticeHarness.store.getState().initialize();
+  const noticeState=()=>noticeHarness.store.getState();
+  noticeHarness.api.send=async(_,input)=>({message:message(input.text),executionNotice:{code:'model_unavailable',message:'消息已保存；请配置模型'}});
+  noticeState().updateDraft('chat','saved without a model');await noticeState().send('chat');
+  assert.equal(noticeState().error,'消息已保存；请配置模型');
+  await noticeState().action(()=>noticeState().loadHistory('chat'),false);
+  await noticeState().action(()=>noticeState().loadDetails('run'),false);
+  await noticeState().action(async()=>{},false);
+  assert.equal(noticeState().error,'消息已保存；请配置模型','successful background reads keep the execution notice');
+  await noticeState().action(async()=>{});assert.equal(noticeState().error,null,'explicit new user operation clears old error');
+  await noticeState().action(async()=>{throw new Error('background read failed')},false);
+  assert.match(noticeState().error,/background read failed/,'background failures still surface');
   const h=harness();
   const imageHarness=harness();
   const imageStore=imageHarness.store;

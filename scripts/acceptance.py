@@ -108,6 +108,21 @@ def main():
         assert api('/settings')['providers']==[]
         assert source.read_bytes()==original
         print('PASS: provider transactions, selected/checksummed/idempotent import, stable IDs, readonly history and restart')
+        # A genuinely empty provider catalog must still persist a normal private message.
+        actor=api('/social/ai-accounts','POST',{'requestId':str(uuid.uuid4()),'name':'未配置模型','bio':'','persona':'fixture-only','binding':None})['account']
+        private=api(f'/social/accounts/{actor["id"]}/direct','POST',{'requestId':str(uuid.uuid4())})
+        command={'requestId':str(uuid.uuid4()),'text':'空配置也保留真人消息🙂','mentions':[]}
+        saved=api(f'/social/conversations/{private}/messages','POST',command)
+        assert saved['executionNotice']['code']=='model_unavailable'
+        assert saved['message']['status']=='committed' and saved['message']['text']==command['text']
+        stop();start()
+        assert api('/settings')['providers']==[]
+        assert api(f'/social/accounts/{actor["id"]}/direct','POST',{'requestId':str(uuid.uuid4())})==private
+        history=api(f'/social/conversations/{private}/messages')['messages']
+        assert history==[saved['message']] and history[0]['runId'] is None
+        assert api(f'/social/conversations/{private}/messages','POST',command)['message']==saved['message']
+        assert len(api(f'/social/conversations/{private}/messages')['messages'])==1
+        print('PASS: empty model catalog still saves private messages and execution notice; restart/retry retains one original message without AI replay')
         result=subprocess.run([str(binary),'--llmn-tool-worker','add'],input=b'{"a":2,"b":3}',capture_output=True,env={},timeout=10,check=True,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         assert json.loads(result.stdout)=={'result':{'sum':5}}

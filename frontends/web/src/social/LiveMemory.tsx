@@ -14,7 +14,8 @@ function MemoryEditor({ conversation, actor, memory, message, done }: { conversa
   const [text, setText] = useState(memory?.text ?? message?.text ?? "")
   const [kind, setKind] = useState<MemoryKind>(memory?.kind ?? "fact")
   const [source, setSource] = useState<MemoryContent["source"]>(memory?.source ?? (message ? { messageId: message.id, revision: message.revision } : null))
-  const [current, setCurrent] = useState<Message | null>(null)
+  const [sourceRead, setCurrent] = useState<{ cursor: string; message: Message } | null>(null)
+  const current = sourceRead?.cursor === state.snapshot!.cursor ? sourceRead.message : null
   useEffect(() => { setCurrent(null) }, [state.snapshot?.cursor])
   const [revision] = useState(memory?.revision ?? "1")
   const { busy, execute } = useVersionedAction()
@@ -31,7 +32,7 @@ function MemoryEditor({ conversation, actor, memory, message, done }: { conversa
     <fieldset className="social-form-fields" disabled={busy}>
       <label>类型<select value={kind} onChange={event => setKind(event.target.value as MemoryKind)}>{Object.entries(labels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <label>记忆内容<textarea autoFocus required rows={4} maxLength={2000} value={text} onChange={event => setText(event.target.value)} /></label>
-      {source ? <div className="memory-source"><p>来源消息 · 版本 {source.revision}</p><button type="button" className="text-button" onClick={() => void state.action(async () => setCurrent(await socialClient.message(source.messageId)))}>查看当前原文</button>
+      {source ? <div className="memory-source"><p>来源消息 · 版本 {source.revision}</p><button type="button" className="text-button" onClick={() => void state.action(async () => setCurrent({ cursor: state.snapshot!.cursor, message: await socialClient.message(source.messageId) }))}>查看当前原文</button>
         {current && <><blockquote>{current.status === "withdrawn" ? "消息已撤回" : current.text}</blockquote><p>{current.senderName} · 当前版本 {current.revision}</p>{current.status === "committed" && current.revision !== source.revision && <button type="button" className="social-button secondary" onClick={() => setSource({ messageId: current.id, revision: current.revision })}>已核对，采用此版本</button>}</>}
         <button type="button" className="text-button" onClick={() => { setSource(null); setCurrent(null) }}>移除消息依据，改为手动记忆</button></div> : <p>手动记忆，由你确认内容。只用于当前{conversation.kind === "group" ? "群聊" : "私聊"}。</p>}
       {memory?.status === "stale" && <p>来源已变化。请查看当前原文并核对版本，或明确改为手动记忆。</p>}
@@ -63,13 +64,15 @@ function MemoryList({ conversation, actor }: { conversation: Conversation; actor
   const [refresh, setRefresh] = useState(0)
   const [editor, setEditor] = useState<Memory | "new" | null>(null)
   const [forgetting, setForgetting] = useState<Memory | null>(null)
-  const [source, setSource] = useState<{ memory: string; message: Message } | null>(null)
+  const [sourceRead, setSource] = useState<{ cursor: string; memory: string; message: Message } | null>(null)
+  const source = sourceRead?.cursor === state.snapshot!.cursor ? sourceRead : null
+  const sourceRequest = useRef(0)
   const trigger = useRef<HTMLButtonElement | null>(null)
   const { busy, execute } = useVersionedAction()
   useEffect(() => {
     void state.action(() => state.loadMemories(conversation.id, actor))
   }, [conversation.id, actor, refresh])
-  useEffect(() => { setSource(null) }, [state.snapshot?.cursor])
+  useEffect(() => { sourceRequest.current++; setSource(null) }, [state.snapshot?.cursor])
   const writable = conversation.status === "active" && !conversation.legacy && conversation.memberIds.includes(actor)
   const forget = async () => {
     if (!forgetting) return
@@ -81,7 +84,7 @@ function MemoryList({ conversation, actor }: { conversation: Conversation; actor
     {error && <p role="alert" className="form-error">{error}<button className="text-button" onClick={() => setRefresh(n => n + 1)}>重试</button></p>}
     {loading ? <p role="status">正在读取记忆…</p> : !items.length && !error ? <p>还没有记忆。可以手动添加，或在一条消息上选择“记住”。</p> : null}
     {items.map(memory => <article className="memory-card" key={memory.id}><div className="memory-meta"><span>{labels[memory.kind]}</span><span>{memory.status === "stale" ? "来源已变化 · 暂不使用" : "已确认"}</span></div><p className="memory-text">{memory.text}</p><small>{new Date(memory.updatedAt).toLocaleString()} · 版本 {memory.revision}</small>
-      <div className="live-message-actions">{memory.source ? <button onClick={() => void state.action(async () => setSource({ memory: memory.id, message: await socialClient.message(memory.source!.messageId) }))}>查看来源 · v{memory.source.revision}</button> : <span>手动添加</span>}<button disabled={!writable} onClick={event => { trigger.current = event.currentTarget; setEditor(memory) }}>编辑</button><button onClick={event => { trigger.current = event.currentTarget; setForgetting(memory) }}>遗忘</button></div>
+      <div className="live-message-actions">{memory.source ? <button onClick={() => { const request = ++sourceRequest.current, cursor = state.snapshot!.cursor; setSource(null); void state.action(async () => { const message = await socialClient.message(memory.source!.messageId); if (request === sourceRequest.current) setSource({ cursor, memory: memory.id, message }) }) }}>查看来源 · v{memory.source.revision}</button> : <span>手动添加</span>}<button disabled={!writable} onClick={event => { trigger.current = event.currentTarget; setEditor(memory) }}>编辑</button><button onClick={event => { trigger.current = event.currentTarget; setForgetting(memory) }}>遗忘</button></div>
       {source?.memory === memory.id && <blockquote>{source.message.senderName} · 当前版本 {source.message.revision}<br />{source.message.status === "withdrawn" ? "消息已撤回" : source.message.text}</blockquote>}
     </article>)}
     <p className="memory-note">遗忘会移除记忆条目，原聊天记录仍保留，近期上下文仍可能读到原文。需要移除原文时，请在聊天中撤回对应消息。</p>

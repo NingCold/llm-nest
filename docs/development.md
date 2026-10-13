@@ -81,7 +81,7 @@ python scripts/social_acceptance.py --only-image-capabilities
 python scripts/social_acceptance.py --only-files
 ```
 
-`acceptance.py` 验证空配置启动、旧接口 404、本地访问限制、模型服务配置原子更新、所选旧 JSON 导入/来源校验/只读历史/重启以及底层 worker。`social_acceptance.py` 验证实际 HTTP、SocialFeature、SQLite、私聊/群聊、意识系统与 M3 调度；`--only-image-capabilities` 独立检查模型图片能力设置与实际调用；`--only-files` 检查普通文件的保存/下载、权限/修订、重试、模型元信息与附件 ZIP 导出。全部使用独立临时数据与本机模拟 provider；CI 和发布检查执行这四条命令。
+`acceptance.py` 验证空配置启动与无模型私聊保存/提示/重启重试、旧接口 404、本地访问限制、模型服务配置原子更新、所选旧 JSON 导入/来源校验/只读历史/重启以及底层 worker。`social_acceptance.py` 验证实际 HTTP、SocialFeature、SQLite、私聊/群聊、意识系统与 M3 调度；`--only-image-capabilities` 独立检查模型图片能力设置与实际调用；`--only-files` 检查普通文件的保存/下载、权限/修订、重试、模型元信息与附件 ZIP 导出。全部使用独立临时数据与本机模拟 provider；CI 和发布检查执行这四条命令。
 
 真实模型验收会产生调用费用，按单独安排执行；既有报告见[历史记录](history.md)。
 

@@ -46,5 +46,14 @@ const compile=name=>ts.transpileModule(fs.readFileSync(path.resolve(__dirname,'.
  resolveSave({outcome:'downloaded',fileName:'file'});await new Promise(resolve=>setImmediate(resolve));assert.ok(render().some(node=>node.props.role==='status'));
  saveMode='error';click();await new Promise(resolve=>setImmediate(resolve));assert.ok(render().some(node=>node.props.role==='alert'&&node.props.children==='无权下载'));
  saveMode='cancel';click();await new Promise(resolve=>setImmediate(resolve));assert.ok(render().some(node=>node.props.role==='status'&&node.props.children==='已取消保存'));
+ slots.length=0;const controls={},edits=[];
+ const editState={action:async fn=>fn(),refresh:async()=>{},applyMessage:()=>{}};
+ const editMessage={id:'file-message',revision:'1',text:'file caption',images:[],files:[{index:1,name:'data.txt',byteLength:3,mime:'text/plain'}]};
+ vm.runInNewContext(compile('LiveControls.tsx'),{exports:controls,crypto:require('node:crypto').webcrypto,require:name=>name==='react'?react:name==='react/jsx-runtime'?{jsx,jsxs:jsx}:name==='./live-store'?{useLiveSocialStore:()=>editState}:name==='./client'?{socialClient:{revise:async(id,input)=>{edits.push({id,input});return{...editMessage,text:input.text,revision:'2'}}},SocialApiError:class extends Error{}}:{}});
+ const editView=()=>{slot=0;return all(controls.OwnMessageControls({message:editMessage}))};
+ editView().find(node=>node.type==='button'&&node.props.children[1]==='编辑').props.onClick();
+ editView().find(node=>node.type==='textarea').props.onChange({target:{value:''}});
+ assert.equal(editView().find(node=>node.type==='button'&&node.props.children==='保存修改').props.disabled,false,'file-only revision is allowed');
+ editView()[0].props.onSubmit({preventDefault(){}});await new Promise(resolve=>setImmediate(resolve));assert.equal(edits[0].input.text,'');assert.equal(edits[0].id,'file-message');
  console.log('PASS: generic file limits, empty files, filename/MIME/base64/read errors, purefile send, blob draft and pending retry, preservation, metadata escaping, HTTP/IPC download contract');
 })().catch(error=>{console.error(error);process.exitCode=1});

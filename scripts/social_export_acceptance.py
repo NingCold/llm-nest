@@ -17,6 +17,9 @@ def verify_exports(api, contact, direct, group, send, history, wait_for):
         send(cid, f'导出消息 {i}')
     page = api(f'/conversations/{cid}/messages')
     assert page['hasMore'] and len(page['messages']) == 200
+    # This actor has no model, but its final coalesced input plan still needs to
+    # settle before comparing a read-only export with the surrounding snapshot.
+    wait_for(lambda: all(p['status'] not in ('queued','running') for p in api(f'/conversations/{cid}/plans')))
     before = api('/init')
     json_file = api(f'/conversations/{cid}/export?format=json')
     markdown = api(f'/conversations/{cid}/export?format=markdown')

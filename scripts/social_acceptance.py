@@ -21,6 +21,10 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 REQUESTS = []
 
+def message_text(message):
+    content = message['content']
+    return content if isinstance(content, str) else ''.join(p.get('text', '') for p in content if p.get('type') == 'text')
+
 
 class Provider(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -53,9 +57,9 @@ class Provider(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         REQUESTS.append(request)
-        if any(m['content'].startswith('[窗口分段摘要原文]') for m in request['messages'] if m['role'] == 'user'):
+        if any(message_text(m).startswith('[窗口分段摘要原文]') for m in request['messages'] if m['role'] == 'user'):
             return self.summary_response(request)
-        content = next(m['content'] for m in reversed(request['messages']) if m['role'] == 'user' and (m['content'].startswith('[我 ·') or m['content'].startswith('[用户明确授权的一次性约定')))
+        content = next(message_text(m) for m in reversed(request['messages']) if m['role'] == 'user' and (message_text(m).startswith('[我 ·') or message_text(m).startswith('[用户明确授权的一次性约定')))
         text = content.rsplit('\n', 1)[-1]
         if text == 'provider-error':
             self.send_response(429)
@@ -100,6 +104,7 @@ def main():
     parser.add_argument('--binary', type=Path)
     parser.add_argument('--dist', type=Path)
     parser.add_argument('--serve', action='store_true')
+    parser.add_argument('--only-images', action='store_true', help='Run only the isolated image-message acceptance batch')
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix='llmn-social-acceptance-'))
     provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -196,6 +201,11 @@ def main():
         start()
         initial = api('/init')
         self_id = initial['selfId']
+        if args.only_images:
+            from social_image_acceptance import verify_images
+            verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start)
+            print('Fixture:', work)
+            return
         assert initial['addressBook'] == [] and len(initial['accounts']) == 1 and initial['conversations'] == []
         # Parsing must fail before a command can write, and still return the shared error body.
         invalid_requests = [
@@ -643,6 +653,9 @@ def main():
 
         from social_contact_acceptance import verify_contacts
         verify_contacts(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
+
+        from social_image_acceptance import verify_images
+        verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start)
 
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:

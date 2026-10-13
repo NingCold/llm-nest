@@ -7,6 +7,7 @@
         "width": 1200,
         "height": 800,
         "resizable": true,
+        "dragDropEnabled": false,
         "decorations": false,
         "shadow": false,
         "transparent": true,

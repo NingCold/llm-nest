@@ -186,7 +186,7 @@ async fn source_revision_requires_reconfirmation_and_cancels_late_commit() {
             f.ctx(),
             ReviseMessage {
                 message_id: message.id,
-                body: MessageBody::text("corrected"),
+                text: "corrected".into(),
                 expected_revision: message.revision,
             },
         )

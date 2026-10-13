@@ -8,7 +8,7 @@
 
 在启动时解析并冻结的实际数据目录中使用唯一运行存储 `social.sqlite3`。默认目录继续为 `~/.llmn`，`LLMN_DATA_DIR`、`LLMN_CONFIG` 的覆盖及原有目录迁移条件继续有效。模型目录缓存仍为实际数据目录的 `cache/catalog.json`。
 
-SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转为数据目录内受管理的文件；引用使用相对对象标识，后端限制大小与解析范围，不接受任意文件路径。API Key、`.env` 和 provider 凭据不写入业务数据库或导出档案。
+SQLite 存储身份、聊天、记忆、计划与执行元数据。图片当前随 MessageBody 以原始字节存入 SQLite 的 JSON DTO，沿用已有格式，数据库仍为 v13；存储消息总量按原始字节计（8 MiB 附件加 80000 字节文字），避免把 JSON 数字数组膨胀当作文件大小。未来大文件可独立设计受管理对象存储，不接受任意文件路径。API Key、`.env` 和 provider 凭据不写入业务数据库或导出档案。
 
 保留 `.llmn.lock` 的 OS 排他锁，一个目录只允许一个独立 Runtime。DataDirectoryGuard 由 SQLite 持有，旧 JSON 仅经 writer 的显式导入读取。旧 FileSessionStore 已移除，不再在启动时解析或补写 JSON，也不能用 SQLite 文件锁替代整个目录的应用锁。
 

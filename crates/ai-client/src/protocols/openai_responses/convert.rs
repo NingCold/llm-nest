@@ -1,5 +1,6 @@
 //! Wire types and conversions for the OpenAI Responses API.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use common::{ContentPart, Message, Role, ToolCall, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -157,6 +158,18 @@ fn wire_input(message: &Message) -> Vec<serde_json::Value> {
         })
         .collect();
     if calls.is_empty() {
+        if message
+            .content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image { .. }))
+        {
+            let content: Vec<_> = message.content.iter().filter_map(|p| match p {
+                ContentPart::Text(text) => Some(serde_json::json!({"type": "input_text", "text": text})),
+                ContentPart::Image { mime, data } => Some(serde_json::json!({"type": "input_image", "image_url": format!("data:{};base64,{}", mime.as_deref().unwrap_or("image/png"), STANDARD.encode(data))})),
+                _ => None,
+            }).collect();
+            return vec![serde_json::json!({"role": message.role, "content": content})];
+        }
         return vec![message.to_wire_value()];
     }
 

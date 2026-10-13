@@ -265,6 +265,10 @@ impl SocialFeature {
         if self.stop.is_cancelled() {
             return Err(SocialError::Unavailable);
         }
+        let body =
+            tokio::task::spawn_blocking(move || crate::images::body(input.text, input.images))
+                .await
+                .map_err(|e| SocialError::Invalid(format!("图片处理失败：{e}")))??;
         let saved = s
             .resources
             .store
@@ -272,7 +276,7 @@ impl SocialFeature {
                 self.context(input.request_id)?,
                 SendMessage {
                     conversation_id: id,
-                    body: MessageBody::text(input.text),
+                    body,
                     reply_to: input.reply_to,
                     mentions: input.mentions,
                     reference: input.reference,
@@ -553,6 +557,7 @@ mod rhythm_tests {
             .await
             .unwrap();
         let input = || wire::SendInput {
+            images: vec![],
             request_id: CommandId::new(),
             text: "hello".into(),
             mentions: vec![],

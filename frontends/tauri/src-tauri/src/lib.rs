@@ -183,6 +183,8 @@ pub fn run() {
             social_commands::social_plans,
             social_commands::social_message,
             social_commands::social_revise_message,
+            social_commands::social_message_image,
+            social_commands::social_account_view_image,
             social_commands::social_withdraw_message,
             social_commands::social_control_conversation,
             social_commands::social_pause_member,

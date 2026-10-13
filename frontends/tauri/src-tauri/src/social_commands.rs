@@ -7,6 +7,33 @@ use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
 #[tauri::command]
+pub async fn social_account_view_image(
+    state: tauri::State<'_, BackendState>,
+    account: ActorId,
+    id: MessageId,
+    index: usize,
+    revision: social::Revision,
+) -> Result<social_feature::ImagePayload> {
+    feature(state)
+        .await?
+        .account_view_image(account, id, index, revision)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_message_image(
+    state: tauri::State<'_, BackendState>,
+    id: MessageId,
+    index: usize,
+    revision: social::Revision,
+) -> Result<social_feature::ImagePayload> {
+    feature(state)
+        .await?
+        .message_image(id, index, revision)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
 pub async fn social_preview_legacy(
     state: tauri::State<'_, BackendState>,
 ) -> Result<storage::social::LegacyPreview> {

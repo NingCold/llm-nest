@@ -6,7 +6,8 @@ export function contactAvatar(contact?: Account) {
 
 export function conversationPreview(conversation: Conversation) {
   const message = conversation.latestMessage
-  if (message?.text) return message.text
+  if (message?.text) return `${message.images?.length ? "[图片] " : ""}${message.text}`
+  if (message?.images?.length) return "[图片]"
   if (conversation.activeRun) return "正在回复…"
   if (!message) return "开始你们的第一段对话"
   if (message.status === "interrupted") return "回复已中断"

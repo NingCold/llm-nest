@@ -14,6 +14,7 @@ export interface AccountView { operatorId: string; snapshot: Snapshot }
 export interface GenerationLimits { temperatureMax: number | null; minOutputTokens: number; maxOutputTokens: number | null }
 export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[]; generationLimits: Record<string, GenerationLimits> }
 export interface Message {
+  images: { index: number; mime: string | null; byteLength: number }[]
   contextReference?: ContextReference | null
   id: string; conversationId: string; senderId: string; senderName: string
   sequence: string; text: string; status: "committed" | "generating" | "interrupted" | "withdrawn"
@@ -46,7 +47,8 @@ export interface RunDetails {
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number | null } | null
   timings: { ttft_ms: number | null; reasoning_ms: number | null; total_ms: number | null } | null; error: Failure | null
 }
-export interface SendInput { reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
+export interface ImageInput { mime: string; data: string }
+export interface SendInput { images?: ImageInput[]; reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
 export interface SendReceipt { message: Message; executionNotice: Failure | null }
 export interface MessagePage { messages: Message[]; hasMore: boolean; readThrough: string | null }
 export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision?: string } }

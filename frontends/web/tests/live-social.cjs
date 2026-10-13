@@ -34,6 +34,28 @@ function harness() {
 
 (async()=> {
   const h=harness();
+  const imageHarness=harness();
+  const imageStore=imageHarness.store;
+  const image={ id:'image-draft', name:'photo.png', mime:'image/png', data:'AQID', byteLength:3 };
+  imageStore.getState().imageDraft('images',[image]);
+  const imageCalls=[];
+  imageHarness.api.send=async(_,input)=>{imageCalls.push(input);throw new Error('lost image receipt')};
+  await imageStore.getState().send('images');
+  assert.equal(imageCalls.length,1,'image-only draft sends');
+  assert.equal(imageStore.getState().drafts.images.images[0].data,'AQID');
+  const persisted=JSON.parse(imageHarness.values.get(imageHarness.key)).images;
+  assert.equal(persisted.images,undefined,'binary drafts never occupy localStorage');
+  assert.equal(persisted.requestId,null,'reload must not reuse an image command for text-only input');
+  await imageStore.getState().send('images');
+  assert.equal(imageCalls[0].requestId,imageCalls[1].requestId,'in-app retries keep exact image command');
+  const imagePending=defer(); imageHarness.api.send=()=>imagePending.promise;
+  const imageSend=imageStore.getState().send('images');
+  imageStore.getState().updateDraft('images','next message');
+  imageStore.getState().imageDraft('images',[image,{...image,id:'new-image'}]);
+  imagePending.resolve({message:{...message(''),conversationId:'images',images:[{index:0,mime:'image/png',byteLength:3}]},executionNotice:null});
+  await imageSend;
+  assert.equal(imageStore.getState().drafts.images.text,'next message');
+  assert.deepEqual(Array.from(imageStore.getState().drafts.images.images,i=>i.id),['new-image'],'ack removes only sent images and preserves new input');
   assert.equal(h.store.getState().drafts.chat,undefined,'preview drafts are isolated');
   await h.store.getState().initialize();
   const sends=[];

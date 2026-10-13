@@ -1,3 +1,4 @@
+import { MessageImages } from "./MessageImages"
 import { useEffect, useState } from "react"
 import { ArrowUpRight, Link2, X } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
@@ -22,7 +23,7 @@ function Preview({ input, stale = false }: { input: ReferenceInput; stale?: bool
   if (visible?.error) return <p role="alert">{visible.error}<button className="text-button" onClick={() => setRetry(n => n + 1)}>重新读取</button></p>
   if (!visible?.data) return <p role="status">正在核对群成员与原文版本…</p>
   const data = visible.data
-  return <div className="reference-preview"><strong>来自群聊 · {data.title}</strong>{data.messages.map(m => <blockquote key={m.id}><small>{m.senderName} · {new Date(m.createdAt).toLocaleString()} · #{m.sequence}</small><p>{m.text}</p></blockquote>)}{data.summary && <section><strong>附带分段摘要 · #{data.summary.fromSequence}–{data.summary.throughSequence}</strong><p>{data.summary.text}</p><small>摘要有损，需要具体原话时请查看群记录。</small></section>}</div>
+  return <div className="reference-preview"><strong>来自群聊 · {data.title}</strong>{data.messages.map(m => <blockquote key={m.id}><small>{m.senderName} · {new Date(m.createdAt).toLocaleString()} · #{m.sequence}</small><p>{m.text}</p><MessageImages message={m} /></blockquote>)}{data.summary && <section><strong>附带分段摘要 · #{data.summary.fromSequence}–{data.summary.throughSequence}</strong><p>{data.summary.text}</p><small>摘要有损，需要具体原话时请查看群记录。</small></section>}</div>
 }
 
 export function ReferenceCard({ input, stale, remove }: { input: ReferenceInput; stale?: boolean; remove?: () => void }) {
@@ -67,7 +68,7 @@ function ContinueEditor({ conversation, message, done }: { conversation: Convers
       <label>与谁私聊<select value={actorId} onChange={e => setActorId(e.target.value)}>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
       {!actors.length && <p>当前没有可接续话题的共同 AI 成员。</p>}
       <p>选择需要带入私聊的原文（最多 8 条）。可以先在群聊加载更早记录。</p>
-      <div className="reference-choices">{choices.map(m => <label key={m.id}><input type="checkbox" checked={selected.includes(m.id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, m.id] : ids.filter(id => id !== m.id))} /><span><small>{m.senderName} · #{m.sequence}</small><span>{m.text}</span></span></label>)}</div>
+      <div className="reference-choices">{choices.map(m => <label key={m.id}><input type="checkbox" checked={selected.includes(m.id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, m.id] : ids.filter(id => id !== m.id))} /><span><small>{m.senderName} · #{m.sequence}</small><span>{m.text || (m.images?.length ? "[图片]" : "")}</span></span></label>)}</div>
       {!!summaries.length && <label>可附带相关群摘要<select value={summary?.id ?? ""} onChange={e => setSummaryId(e.target.value || null)}><option value="">仅引用原文</option>{summaries.map(s => <option key={s.id} value={s.id}>第 {s.fromSequence}–{s.throughSequence} 条消息的摘要</option>)}</select></label>}
       {summary && <blockquote className="reference-summary">{summary.text}</blockquote>}
       {state.summaryErrors[conversation.id] && <p>摘要未能读取，仍可选择原文。<button className="text-button" onClick={() => void state.action(() => state.loadSummaries(conversation.id))}>重试摘要</button></p>}

@@ -1805,7 +1805,7 @@ async fn revisions_and_withdrawal_preserve_later_history_and_revoke_old_replies_
     let edit_ctx = f.ctx();
     let edit = ReviseMessage {
         message_id: sent.message.id,
-        body: MessageBody::text("edited source"),
+        text: "edited source".into(),
         expected_revision: sent.message.revision,
     };
     let revised = f
@@ -1848,7 +1848,7 @@ async fn revisions_and_withdrawal_preserve_later_history_and_revoke_old_replies_
         "stale edits are rejected"
     );
     let mut changed = edit.clone();
-    changed.body = MessageBody::text("different retry");
+    changed.text = "different retry".into();
     assert!(
         f.store
             .revise_message(edit_ctx.clone(), changed)
@@ -2314,7 +2314,7 @@ async fn receipt_returns_current_revision_and_rejects_changed_input() {
             f.ctx(),
             ReviseMessage {
                 message_id: m.id,
-                body: MessageBody::text("corrected"),
+                text: "corrected".into(),
                 expected_revision: m.revision,
             },
         )
@@ -2412,7 +2412,7 @@ async fn every_command_rolls_back_entities_events_and_receipts() {
                 f.ctx(),
                 ReviseMessage {
                     message_id: m.id,
-                    body: MessageBody::text("failed"),
+                    text: "failed".into(),
                     expected_revision: m.revision
                 }
             )
@@ -2609,7 +2609,7 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
             f.ctx(),
             ReviseMessage {
                 message_id: gm.id,
-                body: MessageBody::text("changed"),
+                text: "changed".into(),
                 expected_revision: gm.revision,
             },
         )

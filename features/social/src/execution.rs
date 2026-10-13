@@ -187,6 +187,15 @@ impl SocialFeature {
     ) -> Result<()> {
         let s = self.services()?;
         let started = Instant::now();
+        let provider_error = if request.messages.iter().any(|m| {
+            m.content
+                .iter()
+                .any(|p| matches!(p, common::ContentPart::Image { .. }))
+        }) {
+            "图片已保存，但模型请求失败；请确认该模型支持图片，并检查模型服务与配置"
+        } else {
+            "模型请求失败，请检查模型服务与配置"
+        };
         let mut text = String::new();
         let mut ttft = None;
         let mut first_answer = None;
@@ -210,10 +219,7 @@ impl SocialFeature {
         let mut stream = match opened {
             Ok(stream) => stream,
             Err(_) => {
-                details.error = Some(failure(
-                    "provider_error",
-                    "模型请求失败，请检查模型服务与配置",
-                ));
+                details.error = Some(failure("provider_error", provider_error));
                 return self.finish(run, RunStatus::Failed, text, details).await;
             }
         };
@@ -249,7 +255,7 @@ impl SocialFeature {
                     }
                     Some(Ok(ChatChunk::ToolCall { .. }))=> { details.error=Some(failure("tool_not_allowed","该联系人尚未获准使用工具")); break RunStatus::Failed; }
                     Some(Err(ai_client::AiError::UnexpectedEof))=> { details.error=Some(failure("unexpected_eof","连接在模型确认完成之前结束")); break RunStatus::Interrupted; }
-                    Some(Err(_))=> { details.error=Some(failure("provider_error","模型回复中断，请检查模型服务")); break RunStatus::Failed; }
+                    Some(Err(_))=> { details.error=Some(failure("provider_error",provider_error)); break RunStatus::Failed; }
                     None=> { details.error=Some(failure("unexpected_eof","连接在模型确认完成之前结束")); break RunStatus::Interrupted; }
                 }
             }

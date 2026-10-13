@@ -149,7 +149,7 @@ async fn segments_are_atomic_nonoverlapping_idempotent_and_source_checked() {
             ReviseMessage {
                 message_id: messages[0].id,
                 expected_revision: messages[0].revision,
-                body: MessageBody::text("corrected source"),
+                text: "corrected source".into(),
             },
         )
         .await

@@ -14,6 +14,8 @@ python scripts/social_acceptance.py
 
 第一个脚本检查应用启动、配置和历史导入；第二个检查私聊、群聊、记忆、摘要与约定联系。它们创建临时数据，模型回复由本机测试服务提供。
 
+只检查图片消息时，运行 `python scripts/social_acceptance.py --only-images`。这会验证发送、重开、修改与撤回、群引用，以及较大图片的保存和读取。
+
 想打开测试页面，可以先构建界面，再运行：
 
 ```bash

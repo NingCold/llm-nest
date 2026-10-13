@@ -1,5 +1,6 @@
 //! Wire types and conversions for the Gemini API.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use common::{ContentPart, Message, Role, ToolCall, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,8 @@ use crate::response::ProviderResponse;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Part {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_data: Option<InlineData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Thinking marker: `{text, thought: true}` is the model's chain-of-thought
@@ -35,6 +38,7 @@ impl Part {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: Some(text.into()),
+            inline_data: None,
             thought: None,
             function_call: None,
             function_response: None,
@@ -45,6 +49,7 @@ impl Part {
     pub fn function_call(name: impl Into<String>, args: serde_json::Value) -> Self {
         Self {
             text: None,
+            inline_data: None,
             thought: None,
             function_call: Some(FunctionCall {
                 name: name.into(),
@@ -58,6 +63,7 @@ impl Part {
     pub fn function_response(name: impl Into<String>, response: serde_json::Value) -> Self {
         Self {
             text: None,
+            inline_data: None,
             thought: None,
             function_call: None,
             function_response: Some(FunctionResponse {
@@ -67,6 +73,23 @@ impl Part {
             thought_signature: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineData {
+    pub mime_type: String,
+    pub data: String,
+}
+
+fn image_part(mime: &Option<String>, data: &[u8]) -> Part {
+    let mut part = Part::text("");
+    part.text = None;
+    part.inline_data = Some(InlineData {
+        mime_type: mime.clone().unwrap_or_else(|| "image/png".into()),
+        data: STANDARD.encode(data),
+    });
+    part
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,7 +237,23 @@ pub fn to_request(req: &ChatRequest) -> Request {
             Role::System | Role::Developer => system.push(message.text()),
             Role::User => contents.push(Content {
                 role: "user".into(),
-                parts: vec![Part::text(message.text())],
+                parts: if message
+                    .content
+                    .iter()
+                    .any(|p| matches!(p, ContentPart::Image { .. }))
+                {
+                    message
+                        .content
+                        .iter()
+                        .filter_map(|p| match p {
+                            ContentPart::Text(text) => Some(Part::text(text)),
+                            ContentPart::Image { mime, data } => Some(image_part(mime, data)),
+                            _ => None,
+                        })
+                        .collect()
+                } else {
+                    vec![Part::text(message.text())]
+                },
             }),
             Role::Assistant => {
                 let mut parts: Vec<Part> = message
@@ -222,6 +261,7 @@ pub fn to_request(req: &ChatRequest) -> Request {
                     .iter()
                     .filter_map(|part| match part {
                         ContentPart::Text(t) if !t.is_empty() => Some(Part::text(t.clone())),
+                        ContentPart::Image { mime, data } => Some(image_part(mime, data)),
                         ContentPart::ToolCall(tc) => {
                             // Gemini 3.x / Gemma 4: the echoed functionCall
                             // part MUST carry the original thoughtSignature,

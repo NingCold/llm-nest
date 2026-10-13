@@ -13,6 +13,8 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   catch (error) { throw apiError(error) }
 }
 export const socialClient: SocialClient = {
+  accountViewImage: (account, id, index, revision) => command("social_account_view_image", { account, id, index, revision }),
+  messageImage: (id, index, revision) => command("social_message_image", { id, index, revision }),
   exportConversation: (id, format) => command("social_export_conversation", { id, format }),
   updateConversationList: (id, input) => command("social_update_conversation_list", { id, input }),
   messageContext: id => command("social_message_context", { id }),

@@ -3,9 +3,13 @@ import { socialClient, subscribe } from "./client"
 import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot, SummaryState } from "./live-types"
 
 export const LIVE_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
-interface Draft { reference?: import("./live-types").ReferenceInput | null; text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
+interface Draft { images?: import("./images").DraftImage[]; reference?: import("./live-types").ReferenceInput | null; text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
 interface Generation { text: string; reasoning: string; sequence: number }
 const emptyDraft = (): Draft => ({ text: "", requestId: null, mentions: [], replyTo: null })
+function persistDrafts(drafts: Record<string, Draft>) {
+  const saved = Object.fromEntries(Object.entries(drafts).map(([id, { images, ...draft }]) => [id, { ...draft, requestId: images?.length ? null : draft.requestId }]))
+  localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(saved))
+}
 function readDrafts(): Record<string, Draft> {
   try {
     const saved = JSON.parse(localStorage.getItem(LIVE_DRAFT_KEY) ?? "{}") as Record<string, Draft>
@@ -31,6 +35,7 @@ interface SocialState {
   loadMessage(id: string): Promise<void>
   applyMessage(message: Message): void
   updateDraft(id: string, text: string): void
+  imageDraft(id: string, images: import("./images").DraftImage[]): void
   referenceDraft(id: string, reference: import("./live-types").ReferenceInput | null): void
   targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
@@ -167,36 +172,45 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
   updateDraft(id, text) {
     const drafts = { ...get().drafts, [id]: { ...get().drafts[id], text, requestId: null } }
     set({ drafts })
-    try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
+    try { persistDrafts(drafts) }
     catch { set({ error: "输入保留在页面中，但浏览器未能保存草稿。" }) }
+  },
+  imageDraft(id, images) {
+    const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), images, requestId: null } }
+    set({ drafts })
+    try { persistDrafts(drafts) } catch { set({ error: "输入保留在页面中，但浏览器未能保存文字草稿。" }) }
   },
   referenceDraft(id, reference) {
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), reference, requestId: null } }
     set({ drafts })
-    try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
+    try { persistDrafts(drafts) }
     catch { set({ error: "引用保留在页面中，但浏览器未能保存草稿。" }) }
   },
   targetDraft(id, mentions, replyTo) {
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), mentions, replyTo, requestId: null } }
     set({ drafts })
-    try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
+    try { persistDrafts(drafts) }
     catch { set({ error: "接话选择保留在页面中，但浏览器未能保存草稿。" }) }
   },
   async send(id) {
     if (get().sending[id]) return
     const draft = get().drafts[id] ?? emptyDraft()
-    if (!draft.text.trim()) return
+    if (!draft.text.trim() && !draft.images?.length) return
     const generation = historyGeneration
     const requestId = draft.requestId ?? crypto.randomUUID()
     set({ sending: { ...get().sending, [id]: true }, drafts: { ...get().drafts, [id]: { ...draft, requestId } }, error: null })
     try {
-      localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(get().drafts))
-      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: draft.replyTo ?? null, mentions: draft.mentions ?? [], ...(draft.reference ? { reference: draft.reference.selection } : {}) })
+      persistDrafts(get().drafts)
+      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: draft.replyTo ?? null, mentions: draft.mentions ?? [], ...(draft.images?.length ? { images: draft.images.map(({ mime, data }) => ({ mime, data })) } : {}), ...(draft.reference ? { reference: draft.reference.selection } : {}) })
       if (get().drafts[id]?.requestId === requestId) {
         const drafts = { ...get().drafts, [id]: emptyDraft() }
         set({ drafts })
-        try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
+        try { persistDrafts(drafts) }
         catch { set({ error: "消息已保存，但浏览器未能更新草稿缓存。" }) }
+      }
+      if (draft.images?.length && get().drafts[id]?.requestId !== requestId) {
+        const current = get().drafts[id]
+        if (current?.images?.length) get().imageDraft(id, current.images.filter(image => !draft.images!.some(sent => sent.id === image.id)))
       }
       // The acknowledgement is already committed; a subsequent refresh error must not undo it.
       const messages = get().histories[id] ?? []

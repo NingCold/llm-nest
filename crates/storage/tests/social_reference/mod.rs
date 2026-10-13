@@ -109,7 +109,7 @@ async fn selected_summary_tracks_all_originals_and_invalidation_rolls_back_atomi
     let change = ReviseMessage {
         message_id: originals[1].id,
         expected_revision: originals[1].revision,
-        body: MessageBody::text("changed covered original"),
+        text: "changed covered original".into(),
     };
     let before = f.counts();
     f.inject();
@@ -287,7 +287,7 @@ async fn references_require_common_group_current_versions_and_explicit_snapshot_
             ReviseMessage {
                 message_id: original.id,
                 expected_revision: original.revision,
-                body: MessageBody::text("revised"),
+                text: "revised".into(),
             },
         )
         .await

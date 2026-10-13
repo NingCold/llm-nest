@@ -105,7 +105,8 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 - 一次性 ContactIntent 由真人成员在独立窗口授权开启后明确创建，时间按 UTC 与创建时固定偏移保存；到期通过 participation_tick 原子领取并排入既有执行队列，不伪造真人消息。意图正文不可就地修改，取消后可新建；创建/取消/设置用幂等回执和各自版本。免打扰仅影响约定联系，支持延后或跳过；开始和最终提交复核授权/成员/暂停/有效期，执行中到期停止并保留片段。主动调用与有限自动接话共用额度；一次成功联系不继续自动接话。结束 Bout 保留 pending 未来意图，关闭授权、账号停用、窗口归档或目标退群取消对应意图；恢复不重放。queued/claimed 未开始工作重启后重评，executing 恢复为 uncertain（已过期则 expired），终态/消息/run 同事务完成且不自动重发。Web/IPC 共用 contact_schedule_changed；首版无重复日程、系统唤醒或离线推送。
 - 下一次模型请求过滤中断消息；展示元数据（ID、反馈、思考、计时、用量、中断状态）通过 wire 转换剥离。工具调用与结果按各协议规则成对转换。
 - Usage 的 prompt_tokens 包含缓存输入；cached_tokens 是命中部分，缓存命中率为 cached / prompt，避免再次加到分母。
-- 附件以持久化 DTO 保存二进制；持久化格式与 provider wire 格式分开。
+- 图片消息通过共享发送用例保存原始字节，支持 PNG/JPEG/WebP，每条最多 4 张，单张 4 MiB、合计 8 MiB，边长 4096；服务端校验真实格式与解码限制，不接受路径或远程 URL。历史 DTO 只返回 index/mime/byteLength，图片按消息 ID、part index 和 revision 读取，普通读取复核当前成员，账号视角复核管理员及目标成员。改文字保留图片，撤回清空图片及旧修订；Web/IPC 共用语义。
+- 意识系统按选中的原文携带图片，共同群引用使用原生图片 part，不将二进制转为文本；图片按尺寸估算上下文，实际用量由模型返回，单次请求另限 16 张/16 MiB。必要材料超限报错，普通旧历史按预算截取。四种协议分别转换原生图片格式，不静默丢弃图片或替换模型；摘要首版仍只看文字和附件占位。持久化格式与 provider wire 格式分开。
 
 - 单窗口导出在只读事务中复核实际操作者的当前成员身份，读取完整有序消息；不能用界面的一页历史代替。仅当前正文和状态、附件占位及引用 ID/版本，不展开其他窗口，不导出记忆、摘要、思考、角色内部设定或凭据；不改变已读、事件和运行。HTTP 与 IPC 共用格式化；桌面路径只来自原生保存对话框，选择后重新检查权限，临时文件完成后替换，写入失败不报成功。导出文件不等同整库备份，不接入旧历史导入器。
 
@@ -133,7 +134,7 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 ### GUI 与平台
 
 - React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`，Web 输出 `frontends/web/dist`；两者均忽略，不提交派生 bundle。
-- Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存草稿与重试 ID；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
+- Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存文字、提及/回复/引用草稿与相应重试 ID；图片草稿仅存当前进程内存，含图草稿的持久重试 ID 清空，防止重载后以无图内容重用同一命令；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
 - IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先拒绝新命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
@@ -141,6 +142,7 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
 - 设置路由为 `#/settings/models|appearance|config|about`。Web/Tauri 采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
+- Tauri 公共与 Windows 窗口配置均关闭原生文件拖放拦截（dragDropEnabled=false），由共用 Web File 接收图片拖放，不增加任意路径读取 IPC。
 - 无标题栏界面在侧栏空白与页面头部使用 Tauri 原生拖动区域；`deep` 区域排除交互元素，搜索容器显式禁用。空页面只拖动自身空白，聊天/账号正文保留选字；不要用覆盖内容的拖动层扩大命中范围。双击最大化不能替代连续拖动验收。
 - Windows 保留 `shadow=false`、透明 WebView 合成表面；启动阶段为空白透明 HTML，露出原生 Acrylic，初始化成功或失败后显示不透明界面。其他平台不声称具有 Windows 原生玻璃效果。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
 - 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。

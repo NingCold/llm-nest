@@ -245,7 +245,7 @@ async fn search_uses_current_full_text_and_respects_membership_and_paging() {
             f.ctx(),
             ReviseMessage {
                 message_id: first.id,
-                body: MessageBody::text("replacement"),
+                text: "replacement".into(),
                 expected_revision: first.revision,
             },
         )

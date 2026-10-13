@@ -1,4 +1,21 @@
 /* Quiet, continuous surfaces; blue is reserved for focus and small actions. */
+.composer.image-drop-active { outline: 2px solid var(--s-accent); outline-offset: 3px; }
+.draft-images, .message-images { display: flex; flex-wrap: wrap; gap: 8px; }
+.draft-images { padding: 12px 12px 0; }
+.draft-image { position: relative; }
+.draft-image .image-thumbnail img { width: 76px; height: 76px; object-fit: cover; }
+.draft-image > .social-icon-button { position: absolute; top: -6px; right: -6px; width: 23px; height: 23px; background: var(--s-paper); border: 1px solid var(--s-line); }
+.draft-image > .social-icon-button svg { width: 13px; height: 13px; }
+.image-thumbnail { display: block; border-radius: 10px; overflow: hidden; border: 1px solid var(--s-line); background: var(--s-panel); cursor: zoom-in; }
+.image-thumbnail:focus-visible { outline: 2px solid var(--s-accent); outline-offset: 3px; }
+.image-thumbnail img { display: block; max-width: 280px; max-height: 240px; width: 100%; object-fit: contain; }
+.message-images { margin-top: 6px; }
+.message-image { min-width: 100px; }
+.image-placeholder { width: 200px; min-height: 120px; padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--s-muted); background: var(--s-panel); border: 1px solid var(--s-line); border-radius: 10px; font-size: 12px; overflow-wrap: anywhere; }
+.image-placeholder svg { width: 24px; height: 24px; }
+.image-draft-hint { margin: 0; padding: 0 14px 10px; color: var(--s-muted); font-size: 11px; }
+.social-dialog.image-preview-dialog { max-width: min(92vw, 1000px); }
+.image-preview-dialog > img { display: block; margin: auto; max-width: 100%; max-height: 72vh; object-fit: contain; }
 .message-list-filters { display: flex; gap: 6px; padding: 0 16px 10px; }
 .message-list-filters button { color: var(--s-muted); border-radius: 7px; padding: 3px 10px; font-size: 12px; }
 .message-list-filters button[aria-pressed="true"] { background: var(--s-soft); color: var(--s-text); }

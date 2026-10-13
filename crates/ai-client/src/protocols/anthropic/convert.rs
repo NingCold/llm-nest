@@ -1,5 +1,6 @@
 //! Wire types and conversions for the Anthropic Messages API.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use common::{ContentPart, Message, Role, ToolCall, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -138,7 +139,7 @@ fn split_system(messages: &[Message]) -> (String, Vec<serde_json::Value>) {
     for message in messages {
         match message.role {
             Role::System | Role::Developer => system.push(message.text()),
-            Role::User => turns.push(message.to_wire_value()),
+            Role::User => turns.push(wire_turn(message)),
             Role::Assistant => turns.push(wire_turn(message)),
             Role::Tool => turns.push(wire_turn(message)),
         }
@@ -182,7 +183,12 @@ fn wire_turn(message: &Message) -> serde_json::Value {
         return serde_json::json!({ "role": "user", "content": vec![block] });
     }
 
-    if calls.is_empty() {
+    if calls.is_empty()
+        && !message
+            .content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image { .. }))
+    {
         return message.to_wire_value();
     }
 
@@ -193,11 +199,14 @@ fn wire_turn(message: &Message) -> serde_json::Value {
             ContentPart::Text(t) if !t.is_empty() => {
                 Some(serde_json::json!({ "type": "text", "text": t }))
             }
+            ContentPart::Image { mime, data } => Some(serde_json::json!({
+                "type": "image", "source": {"type": "base64", "media_type": mime.as_deref().unwrap_or("image/png"), "data": STANDARD.encode(data)}
+            })),
             _ => None,
         })
         .collect();
     blocks.extend(calls);
-    serde_json::json!({ "role": "assistant", "content": blocks })
+    serde_json::json!({ "role": message.role, "content": blocks })
 }
 
 /// Map the routed neutral effort to the Anthropic `thinking` block. Only

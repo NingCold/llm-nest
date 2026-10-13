@@ -158,6 +158,7 @@ pub struct Message {
     pub sender_name: String,
     pub sequence: Sequence,
     pub text: String,
+    pub images: Vec<MessageImage>,
     pub status: MessageStatus,
     pub revision: Revision,
     pub mentions: Vec<ActorId>,
@@ -166,9 +167,33 @@ pub struct Message {
     pub run_id: Option<RunId>,
     pub created_at: String,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageImage {
+    pub index: usize,
+    pub mime: Option<String>,
+    pub byte_length: usize,
+}
 impl From<SocialMessage> for Message {
     fn from(m: SocialMessage) -> Self {
+        let images = m
+            .body
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(index, part)| match part {
+                SocialContent::Image { mime, data } if m.status != MessageStatus::Withdrawn => {
+                    Some(MessageImage {
+                        index,
+                        mime: mime.clone(),
+                        byte_length: data.len(),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
         Self {
+            images,
             id: m.id,
             conversation_id: m.conversation_id,
             sender_id: m.sender_id,
@@ -472,6 +497,8 @@ pub struct SendInput {
     #[serde(default)]
     pub mentions: Vec<ActorId>,
     pub text: String,
+    #[serde(default)]
+    pub images: Vec<crate::ImageInput>,
     pub reply_to: Option<MessageId>,
 }
 

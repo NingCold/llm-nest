@@ -496,6 +496,20 @@ fn cross_window_material_is_labeled_bounded_and_snapshot_records_only_actual_rea
     assert!(prepared.snapshot.dependencies.contains(&dependency));
     assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Message { message_id, conversation_id, .. } if *message_id == original.id && *conversation_id == group.id)));
     assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Reference { message_id, .. } if *message_id == material.trigger.message_id().unwrap())));
+    material.reference.as_mut().unwrap().preview.messages[0]
+        .body
+        .0
+        .push(SocialContent::Image {
+            mime: Some("image/png".into()),
+            data: vec![137, 80, 78, 71],
+        });
+    let with_image = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert!(
+        with_image.messages[1].content.iter().any(
+            |p| matches!(p, common::ContentPart::Image { data, .. } if data == &[137,80,78,71])
+        )
+    );
+    assert!(!with_image.messages[1].text().contains("137,80,78,71"));
     material.reference.as_mut().unwrap().preview.messages[0].body =
         MessageBody::text("oversized group source".repeat(1000));
     assert!(matches!(
@@ -512,4 +526,32 @@ fn cross_window_material_is_labeled_bounded_and_snapshot_records_only_actual_rea
             .iter()
             .any(|s| matches!(s, SourceRef::Reference { .. }))
     );
+}
+
+#[test]
+fn required_images_reserve_budget_and_request_size_is_bounded() {
+    let (mut material, mut model) = fixture();
+    model.context_window = Some(200_000);
+    let image = SocialContent::Image {
+        mime: Some("image/png".into()),
+        data: vec![1; 1024 * 1024],
+    };
+    material.messages[1].body = MessageBody(vec![image.clone(); 4]);
+    let result = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert_eq!(
+        result
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .iter()
+            .filter(|p| matches!(p, common::ContentPart::Image { .. }))
+            .count(),
+        4
+    );
+    material.messages[1].body = MessageBody(vec![image; 17]);
+    assert!(matches!(
+        ConsciousnessService::prepare(material, &model, 128),
+        Err(SocialError::BudgetExceeded)
+    ));
 }

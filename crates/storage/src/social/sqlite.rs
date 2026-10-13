@@ -826,7 +826,17 @@ pub(super) fn validate_text(value: &str, max: usize, field: &str) -> Result<()> 
     Ok(())
 }
 pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
-    if body.is_empty() || serde_json::to_vec(body)?.len() > 8 * 1024 * 1024 {
+    if body.is_empty()
+        || body
+            .0
+            .iter()
+            .map(|p| match p {
+                SocialContent::Text { text } => text.len(),
+                SocialContent::Image { data, .. } | SocialContent::File { data, .. } => data.len(),
+            })
+            .sum::<usize>()
+            > 8 * 1024 * 1024 + 80_000
+    {
         return Err(Error::Invalid("empty or oversized message".into()));
     }
     Ok(())
@@ -999,6 +1009,22 @@ impl SocialStore for SqliteSocialStore {
                 db.operator(operator)?;
                 let m: SocialMessage = db.get("messages", id)?;
                 db.member(operator, m.conversation_id)?;
+                Ok(m)
+            })
+        })
+        .await
+    }
+    async fn account_view_message(
+        &self,
+        operator: ActorId,
+        account: ActorId,
+        id: MessageId,
+    ) -> Result<SocialMessage> {
+        self.call(move |w| {
+            w.read(|db| {
+                db.administrator(operator, account)?;
+                let m: SocialMessage = db.get("messages", id)?;
+                db.member(account, m.conversation_id)?;
                 Ok(m)
             })
         })
@@ -1482,12 +1508,24 @@ impl SocialStore for SqliteSocialStore {
     ) -> Result<SocialMessage> {
         self.call(move |w| {
             w.transact(|db| {
-                if let Some(id) = db.receipt(&ctx, "revise_message", &input)? {
+                // Retain the persisted text-edit command digest; attachment bytes are
+                // authoritative message data, never part of an edit retry identity.
+                #[derive(Serialize)]
+                struct ReceiptInput {
+                    message_id: MessageId,
+                    body: MessageBody,
+                    expected_revision: Revision,
+                }
+                let receipt = ReceiptInput {
+                    message_id: input.message_id,
+                    body: MessageBody::text(&input.text),
+                    expected_revision: input.expected_revision,
+                };
+                if let Some(id) = db.receipt(&ctx, "revise_message", &receipt)? {
                     let m: SocialMessage = db.get("messages", id)?;
                     db.member(ctx.operator, m.conversation_id)?;
                     return Ok(m);
                 }
-                validate_body(&input.body)?;
                 let mut m: SocialMessage = db.get("messages", input.message_id)?;
                 db.member(ctx.operator, m.conversation_id)?;
                 let mut c: Conversation = db.get("conversations", m.conversation_id)?;
@@ -1498,8 +1536,26 @@ impl SocialStore for SqliteSocialStore {
                     ));
                 }
                 db.expected(m.revision, input.expected_revision)?;
+                if input.text.len() > 80_000 {
+                    return Err(Error::Invalid(
+                        "message text exceeds 80000 UTF-8 bytes".into(),
+                    ));
+                }
+                let body = MessageBody(
+                    std::iter::once(SocialContent::Text {
+                        text: input.text.clone(),
+                    })
+                    .chain(
+                        m.body
+                            .0
+                            .into_iter()
+                            .filter(|p| !matches!(p, SocialContent::Text { .. })),
+                    )
+                    .collect(),
+                );
+                validate_body(&body)?;
                 m.revision = m.revision.next()?;
-                m.body = input.body.clone();
+                m.body = body;
                 c.context_epoch = c.context_epoch.next()?;
                 c.revision = c.revision.next()?;
                 db.update_message(&m, ctx.operator)?;
@@ -1509,7 +1565,7 @@ impl SocialStore for SqliteSocialStore {
                 db.invalidate_context(c.id)?;
                 db.cancel_trigger_plans(m.id)?;
                 db.save_conversation(&c)?;
-                db.save_receipt(&ctx, "revise_message", &input, m.id)?;
+                db.save_receipt(&ctx, "revise_message", &receipt, m.id)?;
                 Ok(m)
             })
         })

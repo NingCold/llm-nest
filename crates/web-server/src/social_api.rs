@@ -31,6 +31,14 @@ async fn export_conversation(
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
+        .route(
+            "/api/social/messages/{id}/images/{index}",
+            get(message_image),
+        )
+        .route(
+            "/api/social/ai-accounts/{account}/view/messages/{id}/images/{index}",
+            get(account_view_image),
+        )
         .route("/api/social/init", get(init))
         .route(
             "/api/social/conversations/{id}/export",
@@ -128,12 +136,38 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/social/conversations/{id}", get(conversation))
         .route(
             "/api/social/conversations/{id}/messages",
-            get(messages).post(send),
+            get(messages)
+                .post(send)
+                .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
         .route("/api/social/runs/{id}", get(run_details))
         .route("/api/social/runs/{id}/cancel", post(cancel))
         .route("/api/social/events", get(events))
         .route("/api/social/subscribe", get(subscribe))
+}
+
+#[derive(Deserialize)]
+struct ImageQuery {
+    revision: social::Revision,
+}
+async fn account_view_image(
+    State(s): State<Arc<AppState>>,
+    ApiPath((account, id, index)): ApiPath<(ActorId, MessageId, usize)>,
+    ApiQuery(q): ApiQuery<ImageQuery>,
+) -> std::result::Result<Response, ApiError> {
+    let image = s
+        .social
+        .account_view_image(account, id, index, q.revision)
+        .await?;
+    Ok(([("Cache-Control", "no-store")], Json(image)).into_response())
+}
+async fn message_image(
+    State(s): State<Arc<AppState>>,
+    ApiPath((id, index)): ApiPath<(MessageId, usize)>,
+    ApiQuery(q): ApiQuery<ImageQuery>,
+) -> std::result::Result<Response, ApiError> {
+    let image = s.social.message_image(id, index, q.revision).await?;
+    Ok(([("Cache-Control", "no-store")], Json(image)).into_response())
 }
 
 async fn preview_legacy(

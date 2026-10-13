@@ -128,7 +128,7 @@ pub struct ChangeMembership {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviseMessage {
     pub message_id: MessageId,
-    pub body: MessageBody,
+    pub text: String,
     pub expected_revision: Revision,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -501,6 +501,12 @@ pub trait SocialStore: Send + Sync {
     ) -> SocialStorageResult<(Vec<SocialMessage>, bool)>;
     async fn message(&self, operator: ActorId, id: MessageId)
     -> SocialStorageResult<SocialMessage>;
+    async fn account_view_message(
+        &self,
+        operator: ActorId,
+        account: ActorId,
+        id: MessageId,
+    ) -> SocialStorageResult<SocialMessage>;
     async fn withdraw_message(
         &self,
         ctx: CommandContext,

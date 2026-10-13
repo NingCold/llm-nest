@@ -49,7 +49,7 @@ impl SocialFeature {
                 self.context(input.request_id)?,
                 ReviseMessage {
                     message_id: id,
-                    body: MessageBody::text(input.text),
+                    text: input.text,
                     expected_revision: input.expected_revision,
                 },
             )

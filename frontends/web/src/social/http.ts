@@ -15,6 +15,8 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient: SocialClient = {
+  accountViewImage: (account, id, index, revision) => request(`/ai-accounts/${account}/view/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
+  messageImage: (id, index, revision) => request(`/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
   exportConversation: async (id, format) => downloadExport(await request<ConversationExport>(`/conversations/${id}/export?format=${format}`)),
   updateConversationList: (id, input) => request(`/conversations/${id}/list-state`, "POST", input),
   messageContext: id => request(`/messages/${id}/context`),

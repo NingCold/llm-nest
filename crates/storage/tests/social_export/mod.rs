@@ -188,17 +188,15 @@ async fn snapshots_keep_current_revisions_statuses_and_attachment_placeholders()
     let f = Fixture::new().await;
     let a = f.ai("A").await;
     let c = f.direct(a.id).await;
-    let m = f.append(c.id, "old-secret").await;
-    let withdrawn = f.append(c.id, "withdrawn-secret").await;
-    let revised = f
+    let m = f
         .store
-        .revise_message(
+        .append_message(
             f.ctx(),
-            ReviseMessage {
-                message_id: m.id,
+            AppendMessage {
+                conversation_id: c.id,
                 body: MessageBody(vec![
                     SocialContent::Text {
-                        text: "现在的正文\n🙂".into(),
+                        text: "old-secret".into(),
                     },
                     SocialContent::Image {
                         mime: Some("image/png".into()),
@@ -209,6 +207,20 @@ async fn snapshots_keep_current_revisions_statuses_and_attachment_placeholders()
                         data: b"file-secret".to_vec(),
                     },
                 ]),
+                reply_to: None,
+                expected_revision: None,
+            },
+        )
+        .await
+        .unwrap();
+    let withdrawn = f.append(c.id, "withdrawn-secret").await;
+    let revised = f
+        .store
+        .revise_message(
+            f.ctx(),
+            ReviseMessage {
+                message_id: m.id,
+                text: "现在的正文\n🙂".into(),
                 expected_revision: m.revision,
             },
         )

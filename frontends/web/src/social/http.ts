@@ -14,6 +14,7 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient: SocialClient = {
+  referencePreview: input => request("/references/preview", "POST", input),
   summaries: (id, before) => request(`/conversations/${id}/summaries${before ? `?before=${before}` : ""}`),
   configureSummaries: (id, input) => request(`/conversations/${id}/summary-settings`, "POST", input),
   requestSummary: (id, input) => request(`/conversations/${id}/summaries`, "POST", input),

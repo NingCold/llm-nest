@@ -63,6 +63,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         .into_iter()
         .enumerate()
         .map(|(i, text)| SocialMessage {
+            context_reference: None,
             id: MessageId::new(),
             conversation_id: id,
             sender_id: human,
@@ -79,6 +80,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         .collect();
     let trigger_id = messages.last().unwrap().id;
     let material = ContextMaterial {
+        reference: None,
         summaries: vec![],
         memories: vec![],
         participant_names: vec!["Human".into(), "A".into()],
@@ -391,4 +393,58 @@ fn explicit_output_budget_is_reserved_and_large_output_limits_are_not_clamped() 
         ConsciousnessService::prepare(material, &model, 8000),
         Err(SocialError::BudgetExceeded)
     ));
+}
+
+#[test]
+fn cross_window_material_is_labeled_bounded_and_snapshot_records_only_actual_reads() {
+    let (mut material, mut model) = fixture();
+    model.context_window = Some(8192);
+    let mut group = material.conversation.clone();
+    group.id = ConversationId::new();
+    group.kind = ConversationKind::Group;
+    group.title = "source group".into();
+    let mut original = material.messages.last().unwrap().clone();
+    original.id = MessageId::new();
+    original.conversation_id = group.id;
+    original.body = MessageBody::text("selected group point");
+    let dependency = VisibilityDependency {
+        conversation_id: group.id,
+        actor_id: material.contact.actor.id,
+        membership_revision: Revision::ONE,
+        context_epoch: group.context_epoch,
+    };
+    material.reference = Some(storage::social::ReferenceMaterial {
+        message_id: material.trigger_id,
+        revision: Revision::ONE,
+        required: true,
+        preview: storage::social::ReferencePreview {
+            conversation: group.clone(),
+            messages: vec![original.clone()],
+            summary: None,
+            dependencies: vec![dependency.clone()],
+        },
+    });
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert!(prepared.messages[1].text().contains("source group"));
+    assert!(prepared.messages[1].text().contains("selected group point"));
+    assert_eq!(prepared.messages[1].role, common::Role::User);
+    assert!(prepared.snapshot.dependencies.contains(&dependency));
+    assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Message { message_id, conversation_id, .. } if *message_id == original.id && *conversation_id == group.id)));
+    assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Reference { message_id, .. } if *message_id == material.trigger_id)));
+    material.reference.as_mut().unwrap().preview.messages[0].body =
+        MessageBody::text("oversized group source".repeat(1000));
+    assert!(matches!(
+        ConsciousnessService::prepare(material.clone(), &model, 128),
+        Err(SocialError::BudgetExceeded)
+    ));
+    material.reference.as_mut().unwrap().required = false;
+    let skipped = ConsciousnessService::prepare(material, &model, 128).unwrap();
+    assert!(!skipped.snapshot.dependencies.contains(&dependency));
+    assert!(
+        !skipped
+            .snapshot
+            .sources
+            .iter()
+            .any(|s| matches!(s, SourceRef::Reference { .. }))
+    );
 }

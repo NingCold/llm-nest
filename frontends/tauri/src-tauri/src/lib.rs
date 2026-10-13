@@ -167,6 +167,7 @@ pub fn run() {
             commands::delete_provider,
             social_commands::social_init,
             social_commands::social_summaries,
+            social_commands::social_reference_preview,
             social_commands::social_configure_summaries,
             social_commands::social_request_summary,
             social_commands::social_memories,

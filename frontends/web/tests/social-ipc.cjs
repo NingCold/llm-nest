@@ -37,6 +37,7 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
   const h = harness();
   const inputs = { requestId: 'command', expectedRevision: '2', text: 'hello', actorId: 'ai', paused: true, action: 'pause' };
   const cases = [
+    ['referencePreview', [inputs], 'social_reference_preview', { input: inputs }],
     ['summaries', ['chat'], 'social_summaries', { id: 'chat', before: null }],
     ['summaries', ['chat', '90'], 'social_summaries', { id: 'chat', before: '90' }],
     ['configureSummaries', ['chat', inputs], 'social_configure_summaries', { id: 'chat', input: inputs }],

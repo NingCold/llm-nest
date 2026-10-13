@@ -145,6 +145,7 @@ impl Db<'_> {
             })
             .transpose()?;
         Ok(ContextMaterial {
+            reference: self.reference_material(operator, scope, &messages, &trigger)?,
             summaries: self.query_json("SELECT payload FROM conversation_summaries WHERE conversation_id=?1 AND status='ready' AND through_sequence<?2 ORDER BY through_sequence DESC LIMIT 64",params![conversation.id.to_string(),trigger.sequence.get() as i64])?,
             memories: self.memories(operator, scope)?.into_iter().filter(|m| m.status == MaterialStatus::Confirmed).collect(),
             participant_names: self.query_json::<Actor>("SELECT a.payload FROM actors a JOIN memberships m ON m.actor_id=a.id WHERE m.conversation_id=?1 AND m.status='active' ORDER BY a.id", [conversation.id.to_string()])?.into_iter().map(|a|a.display_name).collect(),

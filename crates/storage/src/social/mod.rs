@@ -7,6 +7,7 @@ mod legacy;
 mod memory;
 mod participation;
 mod reads;
+mod reference;
 mod schema;
 mod sqlite;
 mod store;

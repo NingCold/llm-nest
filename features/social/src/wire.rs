@@ -162,6 +162,7 @@ pub struct Message {
     pub revision: Revision,
     pub mentions: Vec<ActorId>,
     pub reply_to: Option<MessageId>,
+    pub context_reference: Option<ContextReference>,
     pub run_id: Option<RunId>,
     pub created_at: String,
 }
@@ -187,6 +188,7 @@ impl From<SocialMessage> for Message {
             revision: m.revision,
             mentions: m.mentions,
             reply_to: m.reply_to,
+            context_reference: m.context_reference,
             run_id: m.run_id,
             created_at: m.created_at.to_rfc3339(),
         }
@@ -426,6 +428,7 @@ pub struct AccountControlInput {
 #[serde(rename_all = "camelCase")]
 pub struct SendInput {
     pub request_id: CommandId,
+    pub reference: Option<ReferenceSelection>,
     #[serde(default)]
     pub mentions: Vec<ActorId>,
     pub text: String,
@@ -526,4 +529,19 @@ pub struct SummaryRequest {
 pub struct SummaryRetry {
     pub id: social::SummaryId,
     pub expected_revision: social::Revision,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceInput {
+    pub actor_id: ActorId,
+    pub selection: ReferenceSelection,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferencePreview {
+    pub conversation_id: ConversationId,
+    pub title: String,
+    pub messages: Vec<Message>,
+    pub summary: Option<ConversationSummary>,
 }

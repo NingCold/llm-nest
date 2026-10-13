@@ -100,7 +100,17 @@ impl Db<'_> {
                 memberships.push(membership);
             }
         }
-        let message = self.allocate_message(
+        let preview = input
+            .reference
+            .as_ref()
+            .map(|selection| {
+                if c.kind != ConversationKind::Direct || targets.len() != 1 {
+                    return Err(Error::Invalid("群话题引用只能发送到唯一私聊".into()));
+                }
+                self.reference_preview(ctx.operator, targets[0], selection)
+            })
+            .transpose()?;
+        let mut message = self.allocate_message(
             &mut c,
             &sender,
             NewMessage {
@@ -112,6 +122,9 @@ impl Db<'_> {
                 mentions,
             },
         )?;
+        if let (Some(selection), Some(preview)) = (&input.reference, preview) {
+            self.attach_reference(&mut message, targets[0], selection.clone(), &preview)?;
+        }
         let mut plans = Vec::new();
         if !c.paused {
             for (ordinal, membership) in memberships.into_iter().enumerate() {
@@ -276,7 +289,9 @@ impl Db<'_> {
         self.cancel_runs(c.id, RunStatus::Cancelled)?;
         if status == MembershipStatus::Left {
             self.cancel_queued(c.id, Some(actor.id))?;
+            self.stale_references_for_member(c.id, actor.id)?;
         }
+        self.invalidate_context(c.id)?;
         self.save_conversation(&c)?;
         self.save_receipt(ctx, "change_membership", input, c.id)?;
         Ok(c)

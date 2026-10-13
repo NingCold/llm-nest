@@ -40,6 +40,12 @@ function harness() {
   h.api.send=async(_,input)=> { sends.push(input); throw new Error('lost acknowledgement'); };
   h.store.getState().targetDraft('chat',['bob','alice'],'quoted-message');
   h.store.getState().updateDraft('chat','first');
+  const reference={actorId:'ai',selection:{conversationId:'group',sources:[{kind:'message',conversation_id:'group',message_id:'source',revision:'3'}]}};
+  h.store.getState().referenceDraft('chat',reference);
+  assert.equal(h.store.getState().drafts.chat.text,'first');
+  assert.equal(sends.length,0,'adding a reference only prepares a draft');
+  assert.deepEqual(JSON.parse(h.values.get(h.key)).chat.reference,reference);
+
   await h.store.getState().send('chat');
   const retryId=h.store.getState().drafts.chat.requestId;
   assert.equal(h.store.getState().drafts.chat.text,'first');
@@ -49,6 +55,8 @@ function harness() {
   assert.equal(sends[1].requestId,sends[0].requestId);
   assert.deepEqual(Array.from(sends[1].mentions),['bob','alice']);
   assert.equal(sends[1].replyTo,'quoted-message');
+  assert.deepEqual(sends[1].reference,reference.selection);
+  assert.equal(h.store.getState().drafts.chat.reference,undefined);
   assert.equal(JSON.stringify(sends[1]),JSON.stringify(sends[0]),'structured targets and reply identity survive retry');
   assert.equal(h.store.getState().drafts.chat.text,'');
   assert.equal(h.store.getState().drafts.chat.mentions.length,0);
@@ -56,6 +64,11 @@ function harness() {
   assert.equal(h.store.getState().histories.chat[0].text,'first');
   assert.equal(h.store.getState().error,'saved without a model');
 
+  h.store.getState().updateDraft('chat','keep this input');
+  h.store.getState().referenceDraft('chat',reference);
+  h.store.getState().referenceDraft('chat',null);
+  assert.equal(h.store.getState().drafts.chat.text,'keep this input');
+  assert.equal(h.store.getState().drafts.chat.reference,null);
   const pending=defer(); let count=0;
   h.api.send=(_,input)=> { count++; return pending.promise; };
   h.store.getState().updateDraft('chat','old draft');

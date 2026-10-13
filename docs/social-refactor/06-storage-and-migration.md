@@ -16,26 +16,26 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 ## 2. 当前 Schema 与目标关系
 
-当前 schema 版本为 8；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+当前 schema 版本为 9；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
 | 身份 | actors、ai_profiles、execution_bindings、relationships、address_book、account_admins | 关系设置与工具策略 |
-| 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 跨窗口引用、正式已读用例 |
+| 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 正式已读用例 |
 | 参与/执行 | participation_plans、ai_runs、run_details | 联系意图、消费进度、工具/协议审计、预算预留 |
 | 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
 | 迁移 | schema_migrations、legacy_imports、legacy_id_map、legacy_entries、legacy_session_data | 按后续 schema 变更迁移 |
-| 意识派生数据 | memories、memory_revisions、memory_message_sources；summary_settings、conversation_summaries、summary_revisions、summary_message_sources；保留来源 tombstone | 跨窗口依赖、自动提取与巩固 |
+| 意识派生数据 | memories、memory_revisions、memory_message_sources；summary_settings、conversation_summaries、summary_revisions、summary_message_sources；context_references、context_reference_sources；保留来源 tombstone | 自动提取与巩固 |
 
 这是一份职责模型，实施时可以合并一对一表，但不能省略事务或来源约束。外键、唯一索引和 CHECK 约束要实际启用并验证；不能只在 Rust 层假设有效。
 
 direct 的 relationship_id 非空且唯一，group 不使用该字段；归档不会释放私聊唯一性。窗口完整消息是权威记录，摘要、近期消息选择和 ContextSnapshot 是派生材料，不因压缩删除原记录。上下文状态或缓存按 ActorId + ConversationId 隔离。
 
-message_context_refs 关联目标私聊消息、目标 AI、发起者、来源窗口与消息/话题范围，不重复保存源正文或授予源权限。源修订、撤回和权限变化要覆盖所有依赖该来源的窗口。summaries 不能仅按 conversation_id 唯一保存；分段范围、来源版本和有效状态共同决定是否可复用。
+ContextReference 保存在 messages/message_revisions 的可选 context_reference 字段中，旧消息缺失该字段时读取为 None。context_references 按源群/目标 AI 索引关联私聊消息；context_reference_sources 索引全部原文依赖，包括所选摘要覆盖的原文。不重复保存源正文或授予源权限。源修订、撤回和权限变化要覆盖所有依赖该来源的窗口。summaries 不能仅按 conversation_id 唯一保存；分段范围、来源版本和有效状态共同决定是否可复用。
 
 上述来源引用、摘要、记忆与 AiRun 中保存的 ContextSnapshot 共同支撑意识系统，存储仍统一使用 SocialStore。原消息由聊天用例写入，意识系统只持久化自身派生材料和必要依赖，不另建独立 consciousness 数据库或完整请求副本。M1 使用消息来源快照；M2 启用摘要、显式记忆与跨窗口引用。
 
-SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。显式记忆提供 memories/memory/create_memory/update_memory/forget_memory；摘要提供 summaries/configure_summaries/queue_summary/begin_summary/finish_summary/interrupt_summary_tasks；联系意图操作后续加入。前端和 Feature 不直接拼 SQL。
+SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。显式记忆提供 memories/memory/create_memory/update_memory/forget_memory；摘要提供 summaries/configure_summaries/queue_summary/begin_summary/finish_summary/interrupt_summary_tasks；reference_preview 复核双方源群成员及选中原文/摘要，send_message 原子保存引用；联系意图操作后续加入。前端和 Feature 不直接拼 SQL。
 
 ## 3. 关键事务
 
@@ -46,7 +46,7 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 修改 AI 设定/绑定 | 管理权限检查、Actor/档案/绑定版本、事件、回执；已开始运行仍使用原快照 |
 | 添加/移除联系人 | address_book 的 owner/account/listed/revision、contact_changed 事件、回执；不改变账号、空间、运行或队列 |
 | 授予/撤销管理员 | 初始管理员权限检查、account_admins、Actor.revision、事件、回执 |
-| 发送真人消息 | 消息、空间顺序/版本、接话计划、事件、回执；M2 加入可选上下文引用 |
+| 发送真人消息 | 消息、空间顺序/版本、接话计划、事件、回执、可选 ContextReference 与来源索引 |
 | 处理触发事件 | consumer offset、去重后的参与计划 |
 | 开始 AI 运行 | 计划转 running、取得/创建 Bout、AiRun、generating 消息、开始事件；后续加入预算预留 |
 | 完成 AI 运行 | 最终消息、run 终态、计划/意图终态、预算结算、事件 |
@@ -76,6 +76,9 @@ M0 使用 rusqlite 0.40.2 bundled，WAL、foreign_keys=ON、synchronous=FULL，�
 草稿检查点约 500ms 保存有变化的内容；工具调用与结果及时提交。持久事件日志不保存逐 token delta，减少放大写入。
 
 ## 5. Schema 升级
+
+v9 增加两张跨窗口引用索引表，不改写 v1–v8。引用正文仍是消息 payload 中的类型化来源，旧发送命令的 reference=None 序列化省略，保留旧命令摘要。源编辑/撤回或相关成员退出时，同事务更新目标引用 stale、消息/context 版本、依赖记忆/摘要、运行/计划和引用事件；索引包含选中摘要的全部原文。升级前保留一致的 v8 备份；旧程序不能打开 v9。
+
 
 v8 增加四张摘要表，原有账号、记忆和聊天均保留；每窗口只允许一个 queued/running 摘要。分段重建保持范围与 ID，修订表保存尝试和终态；编辑/撤回来源清空当前及修订的摘要正文，留下来源与 stale 状态。启动/关闭中断未完成任务，不重放模型调用。升级前备份保持 v7，可明确回退，不允许旧程序打开 v8。
 

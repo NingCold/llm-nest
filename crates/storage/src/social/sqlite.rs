@@ -454,6 +454,7 @@ impl Db<'_> {
             conversation_id: c.id,
             sender_id: sender.id,
             sender_name: sender.display_name.clone(),
+            context_reference: None,
             sequence: c.last_sequence,
             body,
             reply_to,
@@ -704,13 +705,49 @@ impl Db<'_> {
         // Both target members must have a versioned dependency, including empty context.
         self.require_dependency(snapshot, operator, scope.conversation_id)?;
         self.require_dependency(snapshot, ai.id, scope.conversation_id)?;
+        let mut references = Vec::new();
         for source in &snapshot.sources {
+            if let SourceRef::Reference {
+                message_id,
+                revision,
+            } = source
+            {
+                let reference = self.validate_reference(operator, scope, *message_id, *revision)?;
+                for actor in [operator, ai.id] {
+                    self.require_dependency(snapshot, actor, reference.selection.conversation_id)?;
+                }
+                references.push(reference);
+            }
+        }
+        for source in &snapshot.sources {
+            if matches!(source, SourceRef::Reference { .. }) {
+                continue;
+            }
             if let SourceRef::Summary {
                 summary_id,
                 revision,
             } = source
             {
-                self.validate_summary_source(scope, *summary_id, *revision)?;
+                let summary: ConversationSummary =
+                    self.get("conversation_summaries", summary_id)?;
+                if summary.conversation_id != scope.conversation_id
+                    && !references
+                        .iter()
+                        .any(|r| r.selection.sources.contains(source))
+                {
+                    return Err(Error::Forbidden("跨窗口摘要需要显式话题引用".into()));
+                }
+                for actor in [operator, ai.id] {
+                    self.require_dependency(snapshot, actor, summary.conversation_id)?;
+                }
+                self.validate_summary_source(
+                    ContextScope {
+                        conversation_id: summary.conversation_id,
+                        ..scope
+                    },
+                    *summary_id,
+                    *revision,
+                )?;
                 continue;
             }
             if let SourceRef::Memory {
@@ -731,6 +768,13 @@ impl Db<'_> {
                     "only committed messages, confirmed memories and valid window summaries are supported".into(),
                 ));
             };
+            if *conversation_id != scope.conversation_id
+                && !references
+                    .iter()
+                    .any(|r| r.selection.sources.contains(source))
+            {
+                return Err(Error::Forbidden("跨窗口原文需要显式话题引用".into()));
+            }
             let m: SocialMessage = self.get("messages", message_id)?;
             if m.conversation_id != *conversation_id
                 || m.revision != *revision
@@ -784,6 +828,16 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn reference_preview(
+        &self,
+        operator: ActorId,
+        actor: ActorId,
+        selection: ReferenceSelection,
+    ) -> Result<ReferencePreview> {
+        self.call(move |w| w.read(|db| db.reference_preview(operator, actor, &selection)))
+            .await
+    }
+
     async fn interrupt_summary_tasks(&self) -> Result<()> {
         self.call(move |w| w.transact(|db| db.recover_summaries()))
             .await
@@ -1348,6 +1402,7 @@ impl SocialStore for SqliteSocialStore {
                 db.update_message(&m, ctx.operator)?;
                 db.stale_memories(m.id)?;
                 db.stale_summaries(m.id)?;
+                db.stale_references_for_message(m.id)?;
                 db.invalidate_context(c.id)?;
                 db.cancel_trigger_plans(m.id)?;
                 db.save_conversation(&c)?;

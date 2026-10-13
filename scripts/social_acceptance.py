@@ -626,6 +626,9 @@ def main():
         from social_summary_acceptance import verify_summaries
         verify_summaries(api, contact, group, send, history, wait_for, stop, start, REQUESTS, Provider)
 
+        from social_reference_acceptance import verify_references
+        verify_references(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
+
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:
             print('Serving fixture until STOP file or interrupt.', flush=True)

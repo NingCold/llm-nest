@@ -19,6 +19,7 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
+        .route("/api/social/references/preview", post(reference_preview))
         .route(
             "/api/social/conversations/{id}/summaries",
             get(summaries).post(request_summary),
@@ -204,6 +205,12 @@ async fn forget_memory(
     ApiJson(input): ApiJson<wire::VersionedCommand>,
 ) -> Result<wire::Memory> {
     Ok(Json(s.social.forget_memory(id, input).await?))
+}
+async fn reference_preview(
+    State(state): State<Arc<AppState>>,
+    ApiJson(input): ApiJson<wire::ReferenceInput>,
+) -> Result<wire::ReferencePreview> {
+    Ok(Json(state.social.reference_preview(input).await?))
 }
 async fn summaries(
     State(s): State<Arc<AppState>>,

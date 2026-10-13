@@ -9,6 +9,7 @@ export interface AccountView { operatorId: string; snapshot: Snapshot }
 export interface GenerationLimits { temperatureMax: number | null; minOutputTokens: number; maxOutputTokens: number | null }
 export interface ModelOption { providerId: string; modelId: string; displayName: string; reasoningLevels: string[]; generationLimits: Record<string, GenerationLimits> }
 export interface Message {
+  contextReference?: ContextReference | null
   id: string; conversationId: string; senderId: string; senderName: string
   sequence: string; text: string; status: "committed" | "generating" | "interrupted" | "withdrawn"
   revision: string; mentions: string[]; replyTo: string | null; runId: string | null; createdAt: string
@@ -29,7 +30,7 @@ export interface RunDetails {
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number | null } | null
   timings: { ttft_ms: number | null; reasoning_ms: number | null; total_ms: number | null } | null; error: Failure | null
 }
-export interface SendInput { requestId: string; text: string; replyTo: string | null; mentions: string[] }
+export interface SendInput { reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
 export interface SendReceipt { message: Message; executionNotice: Failure | null }
 export interface MessagePage { messages: Message[]; hasMore: boolean }
 export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision: string } }
@@ -57,3 +58,9 @@ export interface Summary {
 export interface SummaryState { settings: SummarySettings; segments: Summary[]; hasMore: boolean }
 export interface SummarySettingsInput extends VersionedCommand { enabled: boolean; binding: SummaryBinding | null }
 export interface SummaryRequest { requestId: string; retry: { id: string; expectedRevision: string } | null }
+
+export type ReferenceSource = { kind: "message"; conversation_id: string; message_id: string; revision: string } | { kind: "summary"; summary_id: string; revision: string }
+export interface ReferenceSelection { conversationId: string; sources: ReferenceSource[] }
+export interface ReferenceInput { actorId: string; selection: ReferenceSelection }
+export interface ContextReference { target: { actor_id: string; conversation_id: string }; initiatedBy: string; attachedTo: string; selection: ReferenceSelection; stale: boolean }
+export interface ReferencePreview { conversationId: string; title: string; messages: Message[]; summary: Summary | null }

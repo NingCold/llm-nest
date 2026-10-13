@@ -35,6 +35,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
 | 编辑记忆 | PATCH /memories/{id} | social_update_memory |
 | 遗忘记忆 | POST /memories/{id}/forget | social_forget_memory |
+| 群话题来源预览 | POST /references/preview | social_reference_preview |
 | 窗口摘要分页 | GET /conversations/{id}/summaries?before={sequence} | social_summaries |
 | 开始下一段/重试摘要 | POST /conversations/{id}/summaries | social_request_summary |
 | 摘要模型与启用设置 | POST /conversations/{id}/summary-settings | social_configure_summaries |
@@ -60,12 +61,16 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 打开私聊 | requestId；即使联系人未列出仍沿用原窗口；停用 AI 的已有私聊返回原 ID，不自动恢复，也不能为停用 AI 创建新私聊 |
 | 创建群 | requestId、title、memberIds |
 | 成员加入/移出 | requestId、actorId、action(add/remove)、空间 expectedRevision；没有历史范围选项 |
-| 发送文本 | requestId、text、replyTo；mentions 可省略，按顺序选择接话 AI |
+| 发送文本 | requestId、text、replyTo；mentions 可省略，按顺序选择接话 AI；reference 可省略/null，或 ReferenceSelection |
 | 编辑/撤回 | requestId、消息 expectedRevision；编辑另带 text |
 | 窗口控制 | requestId、空间 expectedRevision、action(pause/resume/end/archive/restore) |
 | 成员暂停/恢复 | requestId、actorId、成员 expectedRevision、paused |
 | 创建/编辑记忆 | requestId、kind(preference/fact/shared_experience/open_topic)、text(1–2000 字符)、source(null 或 messageId/revision)；编辑追加记忆 expectedRevision。窗口与 AI 由创建路径确定，编辑不能修改归属 |
 | 遗忘记忆 | requestId、记忆 expectedRevision；返回已清空正文的 forgotten 条目，旧成功回执也只返回当前状态 |
+
+ReferenceSelection 为 {conversationId, sources}；sources 只接受 1–8 个 message（kind/conversation_id/message_id/revision），可附带一个覆盖所选消息的 summary（kind/summary_id/revision）。预览参数为 {actorId, selection}，返回 {conversationId,title,messages,summary}；检查双方当前群成员和全部版本，不写消息、不调用模型、不接受客户端正文。发送时目标 AI/窗口和发起者由唯一私聊与实际操作者推导。
+
+Message 增加 contextReference（无引用为 null），字段为 target/initiatedBy/attachedTo/selection/stale；target 沿用领域 ContextScope 的 actor_id/conversation_id，selection 为 camelCase，SourceRef 内部字段为 snake_case。修改/撤回来源与退群使关联消息的引用 stale，并通过已有 message_changed/conversation_changed/run_changed 等事件通知；回执重读返回当前状态，不回放旧原文。快照 SourceRef::Reference 固定关联消息版本，源原文/摘要另行记录，跨窗口材料必须有显式引用及双方权限依赖。
 
 Memory 返回 id/actorId/conversationId/kind/text/status/revision/source/createdBy/updatedBy/createdAt/updatedAt。列表包含 confirmed 和 stale，排除 forgotten；来源查看复用单条消息接口。当前窗口成员可以管理本空间记忆，创建/编辑要求目标 AI 仍是成员，原消息必须为同窗口 committed 的确定版本。归档窗口或 AI 已离群时仍可遗忘已有记忆。管理员权限不会扩大范围。来源修订/撤回和记忆编辑/遗忘提升上下文版本、中断该窗口在飞回复；新增记忆只作用于新运行。
 
@@ -154,7 +159,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：阶段完整双适配验收归 M1；群话题接续的 contextReferences 为 M2 剩余范围；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：阶段完整双适配验收归 M1；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

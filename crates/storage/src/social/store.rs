@@ -88,6 +88,8 @@ pub struct SendMessage {
     pub body: MessageBody,
     pub reply_to: Option<MessageId>,
     pub mentions: Vec<ActorId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<ReferenceSelection>,
 }
 #[derive(Debug, Clone)]
 pub struct SavedMessage {
@@ -95,6 +97,20 @@ pub struct SavedMessage {
     pub plans: Vec<ParticipationPlan>,
     /// Resolved response targets include paused/archived identities so the use case can explain availability.
     pub response_targets: Vec<ActorId>,
+}
+#[derive(Debug, Clone)]
+pub struct ReferencePreview {
+    pub conversation: Conversation,
+    pub messages: Vec<SocialMessage>,
+    pub summary: Option<ConversationSummary>,
+    pub dependencies: Vec<VisibilityDependency>,
+}
+#[derive(Debug, Clone)]
+pub struct ReferenceMaterial {
+    pub message_id: MessageId,
+    pub revision: Revision,
+    pub required: bool,
+    pub preview: ReferencePreview,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -192,6 +208,7 @@ pub struct SocialOverview {
 
 #[derive(Debug, Clone)]
 pub struct ContextMaterial {
+    pub reference: Option<ReferenceMaterial>,
     pub summaries: Vec<ConversationSummary>,
     pub memories: Vec<MemoryRecord>,
     pub contact: ContactRecord,
@@ -310,6 +327,12 @@ pub struct FinishSummary {
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn reference_preview(
+        &self,
+        operator: ActorId,
+        actor: ActorId,
+        selection: ReferenceSelection,
+    ) -> SocialStorageResult<ReferencePreview>;
     async fn interrupt_summary_tasks(&self) -> SocialStorageResult<()>;
     async fn summaries(
         &self,

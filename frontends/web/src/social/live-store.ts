@@ -3,7 +3,7 @@ import { socialClient, subscribe } from "./client"
 import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot, SummaryState } from "./live-types"
 
 export const LIVE_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
-interface Draft { text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
+interface Draft { reference?: import("./live-types").ReferenceInput | null; text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
 interface Generation { text: string; reasoning: string; sequence: number }
 const emptyDraft = (): Draft => ({ text: "", requestId: null, mentions: [], replyTo: null })
 function readDrafts(): Record<string, Draft> {
@@ -29,6 +29,7 @@ interface SocialState {
   loadMessage(id: string): Promise<void>
   applyMessage(message: Message): void
   updateDraft(id: string, text: string): void
+  referenceDraft(id: string, reference: import("./live-types").ReferenceInput | null): void
   targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
   action<T>(operation: () => Promise<T>): Promise<T | undefined>
@@ -154,6 +155,12 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
     catch { set({ error: "输入保留在页面中，但浏览器未能保存草稿。" }) }
   },
+  referenceDraft(id, reference) {
+    const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), reference, requestId: null } }
+    set({ drafts })
+    try { localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(drafts)) }
+    catch { set({ error: "引用保留在页面中，但浏览器未能保存草稿。" }) }
+  },
   targetDraft(id, mentions, replyTo) {
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), mentions, replyTo, requestId: null } }
     set({ drafts })
@@ -169,7 +176,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     set({ sending: { ...get().sending, [id]: true }, drafts: { ...get().drafts, [id]: { ...draft, requestId } }, error: null })
     try {
       localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(get().drafts))
-      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: draft.replyTo ?? null, mentions: draft.mentions ?? [] })
+      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: draft.replyTo ?? null, mentions: draft.mentions ?? [], ...(draft.reference ? { reference: draft.reference.selection } : {}) })
       if (get().drafts[id]?.requestId === requestId) {
         const drafts = { ...get().drafts, [id]: emptyDraft() }
         set({ drafts })

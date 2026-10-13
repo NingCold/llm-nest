@@ -13,6 +13,8 @@ use storage::social::*;
 use storage::{DataDirectoryGuard, FileSessionStore, SessionRecord, SessionStore};
 #[path = "social_memory/mod.rs"]
 mod memory_tests;
+#[path = "social_reference/mod.rs"]
+mod reference_tests;
 #[path = "social_summary/mod.rs"]
 mod summary_tests;
 
@@ -155,6 +157,7 @@ impl Fixture {
             .send_message(
                 self.ctx(),
                 SendMessage {
+                    reference: None,
                     conversation_id: c,
                     body: MessageBody::text("trigger"),
                     reply_to: None,
@@ -384,6 +387,8 @@ impl Fixture {
             "legacy_id_map",
             "account_admins",
             "address_book",
+            "context_references",
+            "context_reference_sources",
             "summary_settings",
             "conversation_summaries",
             "summary_revisions",
@@ -434,7 +439,7 @@ async fn v5_account_migration_preserves_history_private_settings_and_old_disable
     let operator = f.human.id;
     f.store.close().await.unwrap();
     let old = Connection::open(&path).unwrap();
-    old.execute_batch("DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
+    old.execute_batch("DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
     drop(old);
     let store = SqliteSocialStore::open(
         DataDirectoryGuard::acquire(f.dir.path()).unwrap(),
@@ -1476,6 +1481,7 @@ async fn group_queue_is_atomic_idempotent_fifo_and_shares_only_its_committed_ans
     let c = f.group(vec![a.id, b.id]).await;
     let ctx = f.ctx();
     let input = SendMessage {
+        reference: None,
         conversation_id: c.id,
         body: MessageBody::text("first"),
         reply_to: None,
@@ -1630,6 +1636,7 @@ async fn group_shared_history_removal_and_plan_failure_rollback_preserve_origina
         .await
         .unwrap();
     let input = SendMessage {
+        reference: None,
         conversation_id: c.id,
         body: MessageBody::text("rollback"),
         reply_to: None,
@@ -1821,6 +1828,7 @@ async fn revisions_and_withdrawal_preserve_later_history_and_revoke_old_replies_
         .send_message(
             f.ctx(),
             SendMessage {
+                reference: None,
                 conversation_id: c.id,
                 body: MessageBody::text("replying to revised source"),
                 reply_to: Some(revised.id),
@@ -2515,7 +2523,36 @@ async fn stop_finish_competition_cross_window_versions_and_continuous_input() {
         .await
         .unwrap();
     let gm = f.append(g.id, "group topic").await;
-    let run = f.begin(ai.id, c.id, vec![source(&gm)]).await;
+    let saved = f
+        .store
+        .send_message(
+            f.ctx(),
+            SendMessage {
+                conversation_id: c.id,
+                body: MessageBody::text("continue"),
+                reply_to: None,
+                mentions: vec![],
+                reference: Some(ReferenceSelection {
+                    conversation_id: g.id,
+                    sources: vec![source(&gm)],
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    let run = f
+        .begin(
+            ai.id,
+            c.id,
+            vec![
+                source(&gm),
+                SourceRef::Reference {
+                    message_id: saved.message.id,
+                    revision: saved.message.revision,
+                },
+            ],
+        )
+        .await;
     f.append(c.id, "still sending during generation").await;
     assert!(
         f.store

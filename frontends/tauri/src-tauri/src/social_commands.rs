@@ -465,3 +465,15 @@ pub async fn social_account_view_messages(
         .await
         .map_err(|e| e.wire())
 }
+
+#[tauri::command]
+pub async fn social_reference_preview(
+    state: tauri::State<'_, BackendState>,
+    input: wire::ReferenceInput,
+) -> Result<wire::ReferencePreview> {
+    feature(state)
+        .await?
+        .reference_preview(input)
+        .await
+        .map_err(|e| e.wire())
+}

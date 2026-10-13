@@ -127,6 +127,7 @@ features/social/src/
     context.rs      # ContextBuilder，为目标 AI 和空间准备上下文
     recall.rs       # 近期历史、显式来源与有效记忆筛选
     summary.rs      # 窗口分段摘要与来源视图
+    reference.rs    # 群话题引用预览与权限复核
     memory.rs       # 简单记忆条目、修订与遗忘
   participation.rs  # 事件触发的参与决策与队列
   scheduler.rs      # 持久意图的领取、执行与恢复

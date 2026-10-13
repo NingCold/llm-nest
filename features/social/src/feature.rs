@@ -265,6 +265,7 @@ impl SocialFeature {
                     body: MessageBody::text(input.text),
                     reply_to: input.reply_to,
                     mentions: input.mentions,
+                    reference: input.reference,
                 },
             )
             .await?;
@@ -383,6 +384,7 @@ impl SocialFeature {
         {
             cancel.cancel();
         }
+        self.stop_terminal_executions().await?;
         self.schedule_queue(id);
         self.conversation(id).await
     }

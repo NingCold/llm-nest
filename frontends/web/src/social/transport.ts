@@ -2,6 +2,7 @@ import type { Account, AccountView, AiInput, ContactEntry, ContactInput, Managed
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
+  referencePreview(input: import("./live-types").ReferenceInput): Promise<import("./live-types").ReferencePreview>
   summaries(id: string, before?: string): Promise<import("./live-types").SummaryState>
   configureSummaries(id: string, input: import("./live-types").SummarySettingsInput): Promise<import("./live-types").SummarySettings>
   requestSummary(id: string, input: import("./live-types").SummaryRequest): Promise<import("./live-types").Summary | null>

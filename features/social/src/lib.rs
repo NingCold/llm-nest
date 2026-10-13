@@ -6,6 +6,7 @@ mod execution;
 mod feature;
 mod generation;
 mod memory;
+mod reference;
 mod subscription;
 mod summary;
 pub mod wire;
@@ -24,7 +25,7 @@ pub enum SocialError {
     Invalid(String),
     #[error("{0}")]
     ModelUnavailable(String),
-    #[error("近期消息与角色设定超出本次上下文预算")]
+    #[error("本次消息、角色设定或引用内容超出上下文预算")]
     BudgetExceeded,
     #[error("社交服务尚未初始化或已关闭")]
     Unavailable,

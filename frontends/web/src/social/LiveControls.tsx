@@ -92,5 +92,5 @@ export function OwnMessageControls({ message }: { message: Message }) {
   }
   if (editing) return <form className="live-message-editor" onSubmit={event => { event.preventDefault(); void save() }}><textarea aria-label="编辑消息正文" rows={3} maxLength={20000} disabled={busy} value={text} onChange={event => setText(event.target.value)} /><p>保存修改会停止依赖旧内容的回复，后续聊天记录保留。</p><div><button type="button" disabled={busy} onClick={() => setEditing(false)}><X />取消编辑</button><button disabled={busy || !text.trim()}>保存修改</button></div></form>
   if (confirming) return <div className="live-withdraw-confirm"><p>撤回这条消息？正文和附件会移除，后续记录保留。</p><button disabled={busy} onClick={() => setConfirming(false)}>取消</button><button disabled={busy} onClick={() => void withdraw()}>确认撤回</button></div>
-  return <div className="live-message-actions"><button onClick={() => { setText(message.text); setRevision(message.revision); setEditing(true) }}><Pencil />编辑</button><button onClick={() => setConfirming(true)}>撤回</button>{message.revision !== "1" && <small>已编辑</small>}</div>
+  return <div className="live-message-actions"><button onClick={() => { setText(message.text); setRevision(message.revision); setEditing(true) }}><Pencil />编辑</button><button onClick={() => setConfirming(true)}>撤回</button>{message.revision !== "1" && !message.contextReference?.stale && <small>已编辑</small>}</div>
 }

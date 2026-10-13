@@ -32,6 +32,10 @@ pub enum SourceRef {
         summary_id: SummaryId,
         revision: Revision,
     },
+    Reference {
+        message_id: MessageId,
+        revision: Revision,
+    },
     Manual {
         author_id: ActorId,
         revision: Revision,
@@ -61,10 +65,19 @@ pub struct ContextBudget {
     pub reserved_output_tokens: crate::Counter,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextReference {
     pub target: ContextScope,
     pub initiated_by: ActorId,
     pub attached_to: MessageId,
+    pub selection: ReferenceSelection,
+    pub stale: bool,
+}
+/// An explicitly selected group topic, without a copy of the source text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceSelection {
+    pub conversation_id: ConversationId,
     pub sources: Vec<SourceRef>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

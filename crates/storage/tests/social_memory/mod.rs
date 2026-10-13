@@ -387,7 +387,7 @@ async fn v6_upgrade_keeps_accounts_history_and_creates_backup() {
     let path = f.store.path().to_owned();
     f.store.close().await.unwrap();
     let sql = Connection::open(&path).unwrap();
-    sql.execute_batch("DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6;").unwrap();
+    sql.execute_batch("DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6;").unwrap();
     drop(sql);
     let store =
         SqliteSocialStore::open(DataDirectoryGuard::acquire(f.dir.path()).unwrap(), f.clock)
@@ -403,7 +403,7 @@ async fn v6_upgrade_keeps_accounts_history_and_creates_backup() {
         current
             .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        8
+        9
     );
     let preserved = fs::read_dir(f.dir.path())
         .unwrap()

@@ -13,6 +13,7 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   catch (error) { throw apiError(error) }
 }
 export const socialClient: SocialClient = {
+  referencePreview: input => command("social_reference_preview", { input }),
   summaries: (id, before) => command("social_summaries", { id, before: before ?? null }),
   configureSummaries: (id, input) => command("social_configure_summaries", { id, input }),
   requestSummary: (id, input) => command("social_request_summary", { id, input }),

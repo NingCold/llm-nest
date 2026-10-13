@@ -1,9 +1,9 @@
 import type { Change, LiveEvent } from "./live-types"
 
 import { SocialApiError, type SocialClient } from "./transport"
-import { downloadExport, type ConversationExport } from "./export"
+import { downloadExport, downloadFile, type ConversationExport } from "./export"
 
-async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+async function responseFor(path: string, method = "GET", body?: unknown): Promise<Response> {
   const headers = new Headers({ "X-LLMN-Client": "1" })
   if (body !== undefined) headers.set("Content-Type", "application/json")
   const response = await fetch(`/api/social${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) })
@@ -11,13 +11,28 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
     const error = response.headers.get("content-type")?.includes("application/json") ? await response.json() as { message: string; code?: string } : { code: "http_error", message: `请求失败（${response.status}）` }
     throw new SocialApiError(error.message, error.code ?? "http_error")
   }
+  return response
+}
+async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const response = await responseFor(path, method, body)
   return response.status === 204 ? undefined as T : await response.json() as T
+}
+async function download(response: Response) {
+  const fileName = decodeURIComponent(response.headers.get("content-disposition")!.split("filename*=UTF-8''")[1])
+  return downloadFile(await response.blob(), fileName)
 }
 
 export const socialClient: SocialClient = {
   accountViewImage: (account, id, index, revision) => request(`/ai-accounts/${account}/view/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
   messageImage: (id, index, revision) => request(`/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
-  exportConversation: async (id, format) => downloadExport(await request<ConversationExport>(`/conversations/${id}/export?format=${format}`)),
+  saveImage: async (id, index, revision, account) => download(await responseFor(`${account ? `/ai-accounts/${account}/view` : ""}/messages/${id}/images/${index}/download?revision=${encodeURIComponent(revision)}`)),
+  exportConversation: async (id, format, includeImages = false) => {
+    const path = `/conversations/${id}/export?format=${format}`
+    if (!includeImages) return downloadExport(await request<ConversationExport>(path))
+    const response = await responseFor(`${path}&includeImages=true`)
+    const result = await download(response)
+    return { ...result, messageCount: Number(response.headers.get("X-LLMN-Message-Count")) }
+  },
   updateConversationList: (id, input) => request(`/conversations/${id}/list-state`, "POST", input),
   messageContext: id => request(`/messages/${id}/context`),
   searchMessages: input => { const q = new URLSearchParams({ query: input.query }); if (input.conversationId) q.set("conversationId", input.conversationId); if (input.before) q.set("before", input.before); return request(`/messages/search?${q}`) },

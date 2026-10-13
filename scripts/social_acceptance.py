@@ -203,7 +203,7 @@ def main():
         self_id = initial['selfId']
         if args.only_images:
             from social_image_acceptance import verify_images
-            verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start)
+            verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start, request)
             print('Fixture:', work)
             return
         assert initial['addressBook'] == [] and len(initial['accounts']) == 1 and initial['conversations'] == []
@@ -655,7 +655,7 @@ def main():
         verify_contacts(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
 
         from social_image_acceptance import verify_images
-        verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start)
+        verify_images(api, contact, direct, group, history, wait_for, REQUESTS, stop, start, request)
 
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:

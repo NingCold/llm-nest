@@ -15,7 +15,10 @@
 .image-placeholder svg { width: 24px; height: 24px; }
 .image-draft-hint { margin: 0; padding: 0 14px 10px; color: var(--s-muted); font-size: 11px; }
 .social-dialog.image-preview-dialog { max-width: min(92vw, 1000px); }
-.image-preview-dialog > img { display: block; margin: auto; max-width: 100%; max-height: 72vh; object-fit: contain; }
+.image-preview-dialog > img { display: block; margin: auto; max-width: 100%; max-height: 60vh; object-fit: contain; }
+.image-save-actions { display: grid; gap: 8px; justify-items: start; overflow-wrap: anywhere; }
+.social-form label.export-images-option { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.export-images-option input[type="checkbox"] { width: 16px; height: 16px; margin: 0; }
 .message-list-filters { display: flex; gap: 6px; padding: 0 16px 10px; }
 .message-list-filters button { color: var(--s-muted); border-radius: 7px; padding: 3px 10px; font-size: 12px; }
 .message-list-filters button[aria-pressed="true"] { background: var(--s-soft); color: var(--s-text); }

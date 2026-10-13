@@ -6,7 +6,7 @@
 
 阅读代码时，可以先看 [social/store.rs](src/social/store.rs) 中提供的保存和读取操作，再看 [social/schema.rs](src/social/schema.rs) 中的数据表。历史聊天的导入在 [social/legacy.rs](src/social/legacy.rs)，用户入口位于应用的“设置 → 配置”。
 
-[social/transcript.rs](src/social/transcript.rs) 为聊天导出读取一个窗口的完整记录。
+[social/transcript.rs](src/social/transcript.rs) 为聊天导出读取一个窗口的完整记录，需要时一并读取原图。
 
 备份前关闭应用，再复制完整数据目录即可。目录位置可以在桌面应用的设置里查看；保存方式和历史导入的细节见[存储与迁移](../../docs/social-refactor/06-storage-and-migration.md)。
 

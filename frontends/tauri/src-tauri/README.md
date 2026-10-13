@@ -6,7 +6,7 @@
 
 - [src/lib.rs](src/lib.rs)：应用启动和关闭。
 - [src/social_commands.rs](src/social_commands.rs)：页面调用的聊天操作。
-- [src/conversation_export.rs](src/conversation_export.rs)：选择聊天导出的保存位置并写入文件。
+- [src/conversation_export.rs](src/conversation_export.rs)：选择原图和聊天导出的保存位置并写入文件。
 - [src/social_subscription.rs](src/social_subscription.rs)：向页面传递新消息和回复进展。
 - [src/config_path.rs](src/config_path.rs)：配置和数据的保存位置。
 - [src/window_frame.rs](src/window_frame.rs)：Windows 窗口边框。

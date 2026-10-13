@@ -1,5 +1,5 @@
 //! Images enter through the same send transaction as text. Reads are versioned and scoped.
-use crate::{Result, SocialError, SocialFeature};
+use crate::{DownloadFile, Result, SocialError, SocialFeature};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use social::{MessageBody, MessageId, MessageStatus, Revision, SocialContent};
@@ -93,6 +93,25 @@ pub(crate) fn image_cost(data: &[u8]) -> u32 {
 }
 
 impl SocialFeature {
+    pub async fn image_file(
+        &self,
+        account: Option<social::ActorId>,
+        id: MessageId,
+        index: usize,
+        revision: Revision,
+    ) -> Result<DownloadFile> {
+        let s = self.services()?;
+        let message = match account {
+            Some(account) => {
+                s.resources
+                    .store
+                    .account_view_message(s.human, account, id)
+                    .await?
+            }
+            None => s.resources.store.message(s.human, id).await?,
+        };
+        original(message, index, revision)
+    }
     pub async fn account_view_image(
         &self,
         account: social::ActorId,
@@ -125,20 +144,29 @@ impl SocialFeature {
     }
 }
 fn payload(m: social::SocialMessage, index: usize, revision: Revision) -> Result<ImagePayload> {
+    let file = original(m, index, revision)?;
+    Ok(ImagePayload {
+        mime: file.media_type.into(),
+        data: STANDARD.encode(file.data),
+    })
+}
+
+fn original(m: social::SocialMessage, index: usize, revision: Revision) -> Result<DownloadFile> {
     if m.revision != revision || m.status == MessageStatus::Withdrawn {
         return Err(SocialError::Invalid("消息已修改或撤回，请重新查看".into()));
     }
-    let Some(SocialContent::Image { data, .. }) = m.body.0.get(index) else {
+    let Some(SocialContent::Image { data, .. }) = m.body.0.into_iter().nth(index) else {
         return Err(SocialError::Invalid("这条消息中没有该图片".into()));
     };
-    let mime = reader(data)?
-        .format()
-        .expect("checked format")
-        .to_mime_type()
-        .to_owned();
-    Ok(ImagePayload {
-        mime,
-        data: STANDARD.encode(data),
+    image_file(m.id, index, data)
+}
+
+pub(crate) fn image_file(id: MessageId, index: usize, data: Vec<u8>) -> Result<DownloadFile> {
+    let format = reader(&data)?.format().expect("checked format");
+    Ok(DownloadFile {
+        file_name: format!("{id}-{index}.{}", format.extensions_str()[0]),
+        media_type: format.to_mime_type(),
+        data,
     })
 }
 
@@ -171,6 +199,10 @@ mod tests {
             assert_eq!(STANDARD.encode(data), image.data);
             assert_eq!(mime.as_ref(), Some(&image.mime));
             assert_eq!(image_cost(data), 1025);
+            let file = image_file(MessageId::new(), 0, data.clone()).unwrap();
+            assert_eq!(&file.data, data);
+            assert_eq!(file.media_type, image.mime);
+            assert!(file.file_name.ends_with(format.extensions_str()[0]));
         }
     }
     #[test]

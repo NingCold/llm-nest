@@ -15,7 +15,8 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
 export const socialClient: SocialClient = {
   accountViewImage: (account, id, index, revision) => command("social_account_view_image", { account, id, index, revision }),
   messageImage: (id, index, revision) => command("social_message_image", { id, index, revision }),
-  exportConversation: (id, format) => command("social_export_conversation", { id, format }),
+  saveImage: (id, index, revision, account) => command("social_save_image", { id, index, revision, account: account ?? null }),
+  exportConversation: (id, format, includeImages = false) => command("social_export_conversation", { id, format, includeImages }),
   updateConversationList: (id, input) => command("social_update_conversation_list", { id, input }),
   messageContext: id => command("social_message_context", { id }),
   searchMessages: input => command("social_search_messages", { input }),

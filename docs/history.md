@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [图片消息第二批](social-refactor/image-message-export.md) | 原图另存为、Markdown/JSON 携图 ZIP、版本与权限复核、Web 下载及桌面文件保存 |
 | [图片消息第一批](social-refactor/image-messages.md) | 选图/预览/发送、持久历史、群话题图片接续、四种模型协议与隔离验收 |
 | [单窗口聊天导出](social-refactor/conversation-export.md) | 完整历史的 Markdown / JSON、附件占位、Web 下载与桌面另存为 |
 | [联系人屏蔽](social-refactor/contact-blocking.md) | 私聊停止、共同群正常、双方约定取消、解除不补发，Web/IPC 与 SQLite v13 |

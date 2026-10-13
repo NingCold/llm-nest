@@ -848,8 +848,9 @@ impl SocialStore for SqliteSocialStore {
         &self,
         operator: ActorId,
         id: ConversationId,
+        include_images: bool,
     ) -> Result<super::ConversationTranscript> {
-        self.call(move |w| w.read(|db| db.conversation_transcript(operator, id)))
+        self.call(move |w| w.read(|db| db.conversation_transcript(operator, id, include_images)))
             .await
     }
     async fn reference_preview(

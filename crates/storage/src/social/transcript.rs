@@ -41,6 +41,10 @@ pub enum TranscriptPart {
         mime: Option<String>,
         #[serde(rename = "byteLength")]
         byte_length: usize,
+        #[serde(skip)]
+        data: Option<Vec<u8>>,
+        #[serde(rename = "filePath", skip_serializing_if = "Option::is_none")]
+        file_path: Option<String>,
     },
     File {
         mime: String,
@@ -51,6 +55,11 @@ pub enum TranscriptPart {
 
 impl From<SocialMessage> for TranscriptMessage {
     fn from(m: SocialMessage) -> Self {
+        Self::from_message(m, false)
+    }
+}
+impl TranscriptMessage {
+    fn from_message(m: SocialMessage, include_images: bool) -> Self {
         let parts = if m.status == MessageStatus::Withdrawn {
             vec![]
         } else {
@@ -62,6 +71,8 @@ impl From<SocialMessage> for TranscriptMessage {
                     SocialContent::Image { mime, data } => TranscriptPart::Image {
                         mime,
                         byte_length: data.len(),
+                        data: include_images.then_some(data),
+                        file_path: None,
                     },
                     SocialContent::File { mime, data } => TranscriptPart::File {
                         mime,
@@ -91,6 +102,7 @@ impl Db<'_> {
         &self,
         operator: ActorId,
         id: ConversationId,
+        include_images: bool,
     ) -> Result<ConversationTranscript> {
         self.operator(operator)?;
         self.member(operator, id)?;
@@ -113,13 +125,14 @@ impl Db<'_> {
         let rows = statement
             .query_map([id.to_string()], |r| r.get::<_, String>(0))
             .map_err(|e| schema::sql_error(self.path, e))?;
-        // Project one row at a time, so attachment bytes are never retained in the export.
+        // Retain original image bytes only when explicitly requested, in this same snapshot.
         let messages = rows
             .map(|row| {
                 let json = row.map_err(|e| schema::sql_error(self.path, e))?;
-                Ok(TranscriptMessage::from(serde_json::from_str::<
-                    SocialMessage,
-                >(&json)?))
+                Ok(TranscriptMessage::from_message(
+                    serde_json::from_str::<SocialMessage>(&json)?,
+                    include_images,
+                ))
             })
             .collect::<Result<_>>()?;
         Ok(ConversationTranscript {

@@ -19,18 +19,56 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 #[derive(Deserialize)]
 struct ExportQuery {
     format: social_feature::ExportFormat,
+    #[serde(default, rename = "includeImages")]
+    include_images: bool,
 }
 async fn export_conversation(
     State(s): State<Arc<AppState>>,
     ApiPath(id): ApiPath<ConversationId>,
     ApiQuery(q): ApiQuery<ExportQuery>,
 ) -> std::result::Result<Response, ApiError> {
+    if q.include_images {
+        let archive = s.social.export_conversation_archive(id, q.format).await?;
+        let count = archive.message_count.to_string();
+        let mut response = download_response(archive.file);
+        response.headers_mut().insert(
+            "X-LLMN-Message-Count",
+            count.parse().expect("decimal header"),
+        );
+        return Ok(response);
+    }
     let file = s.social.export_conversation(id, q.format).await?;
     Ok(([("Cache-Control", "no-store")], Json(file)).into_response())
 }
 
+fn download_response(file: social_feature::DownloadFile) -> Response {
+    let name =
+        percent_encoding::utf8_percent_encode(&file.file_name, percent_encoding::NON_ALPHANUMERIC);
+    (
+        [
+            ("Cache-Control", "no-store".to_owned()),
+            ("Content-Type", file.media_type.to_owned()),
+            (
+                "Content-Disposition",
+                format!("attachment; filename*=UTF-8''{name}"),
+            ),
+            ("X-Content-Type-Options", "nosniff".to_owned()),
+        ],
+        file.data,
+    )
+        .into_response()
+}
+
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
+        .route(
+            "/api/social/messages/{id}/images/{index}/download",
+            get(download_image),
+        )
+        .route(
+            "/api/social/ai-accounts/{account}/view/messages/{id}/images/{index}/download",
+            get(download_account_image),
+        )
         .route(
             "/api/social/messages/{id}/images/{index}",
             get(message_image),
@@ -149,6 +187,26 @@ pub fn routes() -> Router<Arc<AppState>> {
 #[derive(Deserialize)]
 struct ImageQuery {
     revision: social::Revision,
+}
+async fn download_image(
+    State(s): State<Arc<AppState>>,
+    ApiPath((id, index)): ApiPath<(MessageId, usize)>,
+    ApiQuery(q): ApiQuery<ImageQuery>,
+) -> std::result::Result<Response, ApiError> {
+    Ok(download_response(
+        s.social.image_file(None, id, index, q.revision).await?,
+    ))
+}
+async fn download_account_image(
+    State(s): State<Arc<AppState>>,
+    ApiPath((account, id, index)): ApiPath<(ActorId, MessageId, usize)>,
+    ApiQuery(q): ApiQuery<ImageQuery>,
+) -> std::result::Result<Response, ApiError> {
+    Ok(download_response(
+        s.social
+            .image_file(Some(account), id, index, q.revision)
+            .await?,
+    ))
 }
 async fn account_view_image(
     State(s): State<Arc<AppState>>,

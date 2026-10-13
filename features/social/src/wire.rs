@@ -551,6 +551,7 @@ impl crate::SocialError {
             Ai(_) | ModelUnavailable(_) => ("model_unavailable", false),
             BudgetExceeded => ("budget_exhausted", false),
             Unavailable => ("unavailable", true),
+            FileExport(_) => ("export_failed", true),
         };
         let message = if code == "storage_failure" {
             "消息存储失败，请检查本地数据目录后重试".into()

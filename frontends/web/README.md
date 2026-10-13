@@ -4,7 +4,7 @@
 
 这里是 LLM Nest 的全部页面：消息、通讯录、聊天窗口、AI 角色管理和设置。桌面应用也使用这套界面。屏蔽与解除可以在联系人资料或私聊详情中操作。
 
-聊天输入框支持选择、拖入和粘贴图片，发送前可预览、移除，历史图片可以点开放大。相关界面在 [ChatComposer.tsx](src/social/ChatComposer.tsx) 和 [MessageImages.tsx](src/social/MessageImages.tsx)。
+聊天输入框支持选择、拖入和粘贴图片，发送前可预览、移除，历史图片可以点开放大并保存原图。聊天详情中可以导出记录，勾选“包含图片”会一起下载原图。相关界面在 [ChatComposer.tsx](src/social/ChatComposer.tsx)、[MessageImages.tsx](src/social/MessageImages.tsx) 和 [ConversationExportPanel.tsx](src/social/ConversationExportPanel.tsx)。
 
 在聊天详情中可以选择 Markdown 或 JSON，下载整个窗口的记录。入口代码在 [ConversationExportPanel.tsx](src/social/ConversationExportPanel.tsx)。
 

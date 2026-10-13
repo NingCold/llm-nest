@@ -39,13 +39,15 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
 | 接话规则 | POST /conversations/{id}/participation | social_update_participation |
 | 分页历史/发送文字与图片 | GET/POST /conversations/{id}/messages | social_messages / social_send |
-| 单窗口导出 | GET /conversations/{id}/export?format=markdown\|json | social_export_conversation |
+| 单窗口导出（可携图） | GET /conversations/{id}/export?format=markdown\|json&includeImages=true\|false | social_export_conversation |
 | 个人已读/未读/置顶 | POST /conversations/{id}/list-state | social_update_conversation_list |
 | 正文搜索 | GET /messages/search | social_search_messages |
 | 原消息与前后记录 | GET /messages/{id}/context | social_message_context |
 | 单条消息 | GET /messages/{id} | social_message |
 | 消息图片 | GET /messages/{id}/images/{index}?revision={revision} | social_message_image |
 | AI 视角消息图片 | GET /ai-accounts/{account}/view/messages/{id}/images/{index}?revision={revision} | social_account_view_image |
+| 保存原图 | GET /messages/{id}/images/{index}/download?revision={revision} | social_save_image（account 为 null） |
+| AI 视角保存原图 | GET /ai-accounts/{account}/view/messages/{id}/images/{index}/download?revision={revision} | social_save_image（account 为目标账号） |
 | 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
 | 编辑记忆 | PATCH /memories/{id} | social_update_memory |
 | 遗忘记忆 | POST /memories/{id}/forget | social_forget_memory |
@@ -69,7 +71,9 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 
 Message.images 返回 `{index,mime,byteLength}` 数组，index 是原消息 body 的 part 索引，撤回后数组为空。图片读取返回 `{mime,data}`，HTTP 设置 `Cache-Control: no-store`。普通接口复核当前操作者的成员身份，AI 视角接口在同一只读事务复核管理员和目标账号成员身份；revision 不符或已撤回拒绝读取。发送 JSON 请求体仅该路由放宽到 12 MiB，以容纳最多 8 MiB 图片的 base64，业务层仍解码校验数量、大小、实际格式和尺寸。接口不接受本地路径或外部图片 URL。
 
-单窗口导出只接受窗口 ID 与 `format`（markdown/json），不接受操作者、文件正文或目标路径。HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包，并设置 `Cache-Control: no-store`；Web 下载对应 Blob。IPC 的[导出适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，传输结果按保存方式区分；不产生持久事件。文件格式与读取范围见[导出记录](conversation-export.md)。
+单窗口导出接受窗口 ID、`format`（markdown/json）和 `includeImages`（HTTP 省略时为 false，IPC 由客户端明确传入），不接受操作者、文件正文或目标路径。不携图时 HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包；携图时返回 ZIP 二进制，`Content-Disposition` 使用 UTF-8 filename*，`X-LLMN-Message-Count` 给出完整消息数。两者均设置 `Cache-Control: no-store`；ZIP 另设 `X-Content-Type-Options: nosniff`。Web 下载对应 Blob。IPC 的[保存适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，不产生持久事件。携图结构见[图片导出记录](image-message-export.md)。
+
+保存原图走独立 download 路由，返回原始二进制、实际图片 MIME、UTF-8 文件名、no-store 和 nosniff；重新复核消息版本和对应读取权限。IPC `social_save_image` 接受 `{id,index,revision,account}`，account 仅指定需复核管理员权限的只读账号视角，不替换实际操作者。保存位置只能来自原生对话框，关闭对话框后重新读取并校验；取消/成功结果分别为 `{outcome:"cancelled"}` / `{outcome:"saved",fileName}`。Web 使用 `{outcome:"downloaded",fileName}`，不声称已写入磁盘。
 
 主要命令输入：
 

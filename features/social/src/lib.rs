@@ -5,7 +5,9 @@ mod contact_intent;
 mod controls;
 mod execution;
 mod export;
-pub use export::{ConversationExport, ExportFormat, export_file_name};
+pub use export::{ConversationArchive, ConversationExport, ExportFormat, export_file_name};
+mod files;
+pub use files::DownloadFile;
 mod feature;
 mod generation;
 mod images;
@@ -34,6 +36,8 @@ pub enum SocialError {
     Invalid(String),
     #[error("{0}")]
     ModelUnavailable(String),
+    #[error("文件导出失败：{0}")]
+    FileExport(String),
     #[error("本次消息、图片、角色设定或引用内容超出上下文预算")]
     BudgetExceeded,
     #[error("社交服务尚未初始化或已关闭")]

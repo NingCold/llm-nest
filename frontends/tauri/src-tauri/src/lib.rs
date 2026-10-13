@@ -155,6 +155,7 @@ pub fn run() {
             commands::delete_provider,
             social_commands::social_init,
             conversation_export::social_export_conversation,
+            conversation_export::social_save_image,
             social_commands::social_preview_legacy,
             social_commands::social_import_legacy,
             social_commands::social_summaries,

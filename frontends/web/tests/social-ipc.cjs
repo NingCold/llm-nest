@@ -39,7 +39,10 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
   const cases = [
     ['messageImage', ['message', 2, '3'], 'social_message_image', { id:'message', index:2, revision:'3' }],
     ['accountViewImage', ['ai', 'message', 2, '3'], 'social_account_view_image', { account:'ai', id:'message', index:2, revision:'3' }],
-    ['exportConversation', ['chat', 'json'], 'social_export_conversation', { id: 'chat', format: 'json' }],
+    ['saveImage', ['message', 2, '3'], 'social_save_image', { id:'message', index:2, revision:'3', account:null }],
+    ['saveImage', ['message', 2, '3', 'ai'], 'social_save_image', { id:'message', index:2, revision:'3', account:'ai' }],
+    ['exportConversation', ['chat', 'json'], 'social_export_conversation', { id: 'chat', format: 'json', includeImages:false }],
+    ['exportConversation', ['chat', 'markdown', true], 'social_export_conversation', { id: 'chat', format: 'markdown', includeImages:true }],
     ['updateConversationList', ['chat', inputs], 'social_update_conversation_list', { id: 'chat', input: inputs }],
     ['searchMessages', [inputs], 'social_search_messages', { input: inputs }],
     ['messageContext', ['id'], 'social_message_context', { id: 'id' }],

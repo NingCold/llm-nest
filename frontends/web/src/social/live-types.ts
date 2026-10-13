@@ -20,6 +20,7 @@ export interface Message {
 }
 export interface Run { id: string; conversationId: string; actorId: string; messageId: string; status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; revision: string }
 export interface Conversation {
+  listState: ConversationListState
   contactSchedule: { settings: ContactSettings; intents: ContactIntent[] }
   participation: ParticipationView
   memoryOwnerIds: string[]
@@ -45,7 +46,7 @@ export interface RunDetails {
 }
 export interface SendInput { reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
 export interface SendReceipt { message: Message; executionNotice: Failure | null }
-export interface MessagePage { messages: Message[]; hasMore: boolean }
+export interface MessagePage { messages: Message[]; hasMore: boolean; readThrough: string | null }
 export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision?: string } }
 export type LiveEvent = { type: "execution.notice"; conversationId: string; error: Failure }
   | { type: "generation.delta" | "generation.reasoning_delta"; conversationId: string; runId: string; messageId: string; actorId: string; deltaSeq: number; text: string }
@@ -77,3 +78,9 @@ export interface ReferenceSelection { conversationId: string; sources: Reference
 export interface ReferenceInput { actorId: string; selection: ReferenceSelection }
 export interface ContextReference { target: { actor_id: string; conversation_id: string }; initiatedBy: string; attachedTo: string; selection: ReferenceSelection; stale: boolean }
 export interface ReferencePreview { conversationId: string; title: string; messages: Message[]; summary: Summary | null }
+
+export interface ConversationListState { readThrough: string; latestDelivery: string; unreadCount: number; markedUnread: boolean; pinned: boolean; revision: string }
+export type ConversationListAction = { kind: "read"; through: string } | { kind: "unread" } | { kind: "pin"; pinned: boolean }
+export interface SearchMessages { query: string; conversationId?: string | null; before?: string | null }
+export interface MessageSearchPage { messages: Message[]; nextBefore: string | null }
+export interface MessageContext { messages: Message[]; hasMore: boolean; hasNewer: boolean }

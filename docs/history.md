@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [消息列表与正文搜索](social-refactor/message-list.md) | 个人已读/未读与置顶、完整正文分页搜索、原消息定位、Web/IPC 与 SQLite v12 |
 | [README 与旧版残余整理](social-refactor/readme-cleanup.md) | 面向读者的模块入口、设计与历史分离、闲置前端清理 |
 | [M1 私聊实现与验证](social-refactor/m1-private-chat.md) | 首条真实 Web/HTTP 链路、模型模拟、SQLite v2 与恢复 |
 | [M1 群聊实现与验证](social-refactor/m1-group-chat.md) | 共享群历史、结构化 @ / 回复、持久 FIFO、多 AI 上下文与 v3/v4 迁移 |

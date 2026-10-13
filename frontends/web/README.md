@@ -28,7 +28,7 @@ pnpm --dir frontends/web dev
 
 ## 找到要改的页面
 
-消息和通讯录从 [src/social/App.tsx](src/social/App.tsx) 开始；聊天窗口在 [LiveChat.tsx](src/social/LiveChat.tsx)，账号页面在 [AccountPages.tsx](src/social/AccountPages.tsx)。设置页面在 [components/settings](src/components/settings/SettingsPage.tsx)。
+消息和通讯录从 [src/social/App.tsx](src/social/App.tsx) 开始；未读、置顶和搜索在 [ConversationList.tsx](src/social/ConversationList.tsx)；聊天窗口在 [LiveChat.tsx](src/social/LiveChat.tsx)，账号页面在 [AccountPages.tsx](src/social/AccountPages.tsx)。设置页面在 [components/settings](src/components/settings/SettingsPage.tsx)。
 
 检查和构建也在仓库根目录执行：
 

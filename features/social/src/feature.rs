@@ -237,8 +237,10 @@ impl SocialFeature {
         before: Option<Sequence>,
     ) -> Result<wire::MessagePage> {
         let s = self.services()?;
-        let (messages, has_more) = s.resources.store.message_page(s.human, id, before).await?;
+        let (messages, has_more, read_through) =
+            s.resources.store.message_page(s.human, id, before).await?;
         Ok(wire::MessagePage {
+            read_through: before.is_none().then_some(read_through),
             messages: messages.into_iter().map(Into::into).collect(),
             has_more,
         })

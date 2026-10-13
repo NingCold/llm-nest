@@ -36,6 +36,9 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
 | 接话规则 | POST /conversations/{id}/participation | social_update_participation |
 | 分页历史/发送文本 | GET/POST /conversations/{id}/messages | social_messages / social_send |
+| 个人已读/未读/置顶 | POST /conversations/{id}/list-state | social_update_conversation_list |
+| 正文搜索 | GET /messages/search | social_search_messages |
+| 原消息与前后记录 | GET /messages/{id}/context | social_message_context |
 | 单条消息 | GET /messages/{id} | social_message |
 | 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
 | 编辑记忆 | PATCH /memories/{id} | social_update_memory |
@@ -71,6 +74,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 创建群 | requestId、title、memberIds |
 | 成员加入/移出 | requestId、actorId、action(add/remove)、空间 expectedRevision；没有历史范围选项 |
 | 发送文本 | requestId、text、replyTo；mentions 可省略，按顺序选择接话 AI；reference 可省略/null，或 ReferenceSelection |
+| 个人列表状态 | requestId、列表 expectedRevision、action：{kind:read,through} / {kind:unread} / {kind:pin,pinned}；初始 revision="1"，操作者由后端固定 |
 | 编辑/撤回 | requestId、消息 expectedRevision；编辑另带 text |
 | 窗口控制 | requestId、空间 expectedRevision、action(pause/resume/end/archive/restore) |
 | 成员暂停/恢复 | requestId、actorId、成员 expectedRevision、paused |
@@ -94,7 +98,11 @@ binding.temperature 与 maxTokens 可省略或为 null；前者使用模型服�
 
 AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被查看 AI，操作者仍为真实管理员。每次读取快照与分页历史复核管理授权，窗口按该 AI 的当前成员身份筛选；查看停用 AI 仍可行，退出群后不能读取该群。它是可手动刷新的只读快照，不使用实际操作者的全局事件订阅，不提供代发消息或远程登录令牌。
 
-消息分页使用 before=sequence，每页最多 200 条，返回 messages/hasMore。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun、currentBout 与 participation（policy/state/budgetDay/autoTurnsToday/reservedTokensToday）；运行详情返回独立 RunDetails，旧运行可为 null。
+消息分页使用 before=sequence，每页最多 200 条，返回 messages/hasMore/readThrough。最新页的 readThrough 为同一读事务获得的可确认完成位置（十进制字符串）；向前分页和管理员只读视角为 null。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun、currentBout 与 participation（policy/state/budgetDay/autoTurnsToday/reservedTokensToday）；运行详情返回独立 RunDetails，旧运行可为 null。
+
+Conversation.listState 返回 readThrough/latestDelivery/unreadCount/markedUnread/pinned/revision；三个位置/版本字段为十进制字符串，unreadCount 为数字，个人状态变更不提升空间 revision。
+
+正文搜索 HTTP query 为 query/conversationId/before，IPC 为同名 input 对象；后两项可省略/null。返回 messages/nextBefore；每页最多 50 条，nextBefore 是排除边界的完成位置，末页为 null。搜索范围按实际操作者当前成员关系决定。消息定位返回 messages/hasMore/hasNewer，包含目标及前后各最多 50 条；hasMore/hasNewer 表示两侧还有记录，无已读确认位置。
 
 接话规则输入为 requestId/policy；policy 包含 revision（预期规则版本）、mergeDelayMs、idleSeconds、limitedAuto、maxConsecutive、maxAutoPerBout、maxAutoPerDay、dailyTokenBudget。默认规则 revision="1"；规则更新提升自己的版本，恢复旧回执返回当前窗口。范围由路径限定，操作者由后端固定。Plan DTO 包含 automatic/inputIds/notBefore/expiresAt，新增 contactIntentId（普通计划为 null）与可空 triggerId，两种触发恰有一个，计时为 UTC 字符串，自动额度失败用 participation_limit 表达，不影响真人消息保存。
 
@@ -125,7 +133,7 @@ Conversation.contactSchedule 返回 settings 与 intents（全部活动及最近
 
 ## 4. 持久事件
 
-SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、summaries_changed、run_changed、bout_changed、plan_changed、participation_changed、contact_schedule_changed。summaries_changed、participation_changed 与 contact_schedule_changed 只带 conversationId，分别重读摘要、窗口接话或约定状态；其余变更带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
+SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、summaries_changed、run_changed、bout_changed、plan_changed、participation_changed、contact_schedule_changed、conversation_list_changed。conversation_list_changed 带 conversationId/actorId/revision，客户端重读自己的列表状态；它不触发历史或意识重读。summaries_changed、participation_changed 与 contact_schedule_changed 只带 conversationId，分别重读摘要、窗口接话或约定状态；其余变更带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
 
 ```json
 {

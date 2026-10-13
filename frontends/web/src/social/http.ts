@@ -14,6 +14,9 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient: SocialClient = {
+  updateConversationList: (id, input) => request(`/conversations/${id}/list-state`, "POST", input),
+  messageContext: id => request(`/messages/${id}/context`),
+  searchMessages: input => { const q = new URLSearchParams({ query: input.query }); if (input.conversationId) q.set("conversationId", input.conversationId); if (input.before) q.set("before", input.before); return request(`/messages/search?${q}`) },
   previewLegacy: () => request("/history-import"),
   importLegacy: preview => request("/history-import", "POST", preview),
   referencePreview: input => request("/references/preview", "POST", input),

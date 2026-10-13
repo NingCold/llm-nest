@@ -13,16 +13,33 @@ import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { ContinuePrivately, ReferenceCard } from "./LiveReference"
 import { ContactSchedulePanel } from "./LiveContactSchedule"
 import { ParticipationPanel } from "./LiveParticipation"
+import { useConversationRead } from "./useConversationRead"
 import { MemoryPanel, RememberMessage } from "./LiveMemory"
 
 export function ConsciousnessInfo({ conversation }: { conversation?: Conversation }) {
   return conversation ? <MemoryPanel key={conversation.id} conversation={conversation} /> : <section className="live-consciousness"><Brain /><h2>意识与记忆</h2><p>先点击“发消息”打开这个 AI 的唯一私聊，再管理你们之间的记忆。</p></section>
 }
 
-export function Chat({ conversation, contact, details, memories }: { conversation: Conversation; contact?: Account; details: boolean; memories: boolean }) {
+export function Chat({ conversation, contact, details, memories, messageId }: { conversation: Conversation; contact?: Account; details: boolean; memories: boolean; messageId: string | null }) {
   const state = useLiveSocialStore()
   const snapshot = state.snapshot!
-  const messages = state.histories[conversation.id]
+  const [contextRead, setContext] = useState<{ cursor: string; page: import("./live-types").MessageContext } | null>(null)
+  const context = contextRead?.cursor === snapshot.cursor ? contextRead.page : null
+  const [contextError, setContextError] = useState<string | null>(null)
+  const [contextRetry, setContextRetry] = useState(0)
+  const [atBottom, setAtBottom] = useState(true)
+  const messages = messageId ? context?.messages : state.histories[conversation.id]
+  useConversationRead(conversation, atBottom && !messageId)
+  useEffect(() => {
+    if (!messageId) { setContext(null); setContextError(null); return }
+    let active = true
+    setContext(null); setContextError(null)
+    socialClient.messageContext(messageId).then(page => {
+      if (page.messages.some(m => m.conversationId !== conversation.id)) throw new Error("这条消息不在当前聊天窗口中")
+      if (active) setContext({ cursor: snapshot.cursor, page })
+    }).catch(error => { if (active) setContextError(String(error)) })
+    return () => { active = false }
+  }, [messageId, conversation.id, snapshot.cursor, contextRetry])
   const draft = state.drafts[conversation.id]
   const text = draft?.text ?? ""
   const group = conversation.kind === "group"
@@ -33,7 +50,10 @@ export function Chat({ conversation, contact, details, memories }: { conversatio
   const [plans, setPlans] = useState<ParticipationPlan[]>([])
   const contactArchived = contact?.status === "archived"
   const readOnly = conversation.status === "archived" || conversation.legacy
-  useEffect(() => { stick.current = true; void state.action(() => state.loadHistory(conversation.id)) }, [conversation.id, state.action, state.loadHistory])
+  useEffect(() => { stick.current = !messageId; setAtBottom(!messageId); if (!messageId) void state.action(() => state.loadHistory(conversation.id)) }, [conversation.id, messageId, state.action, state.loadHistory])
+  useEffect(() => {
+    if (messageId && context) timeline.current?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`)?.scrollIntoView({ block: "center" })
+  }, [messageId, context])
   useEffect(() => { if (stick.current && timeline.current) timeline.current.scrollTop = timeline.current.scrollHeight }, [messages, state.generations])
   useEffect(() => {
     if (!run) return
@@ -53,19 +73,20 @@ export function Chat({ conversation, contact, details, memories }: { conversatio
   const name = (id: string) => snapshot.accounts.find(c => c.id === id)?.name ?? "AI"
   return <><section className="conversation-view" aria-label={`${title}聊天`}>
     <header className="conversation-header" data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined}><IconButton label="返回消息列表" className="mobile-back" onClick={() => navigate("messages")}><ArrowLeft /></IconButton><button className="conversation-heading" onClick={() => group ? navigate("messages", conversation.id, true) : contact && navigate("contacts", contact.id)}><Avatar contact={avatar(contact)} group={group} /><span><strong>{title}{!group && <span className="ai-badge">AI</span>}</strong><small>{readOnly ? "历史记录 · 只读" : group ? `${conversation.memberIds.length} 位成员 · ${conversation.participation.policy.limitedAuto ? "有限自动接话" : "@ 选择接话对象"}` : contactArchived ? "账号已停用 · 聊天记录保留" : "长期私聊 · 聊天记录持续保存"}</small></span></button><IconButton label="聊天详情" aria-pressed={details} onClick={() => navigate("messages", conversation.id, !details)}><Info /></IconButton></header>
-    <div className="chat-timeline" ref={timeline} onScroll={() => { const el = timeline.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100 }}>
-      {state.hasMore[conversation.id] && <button className="social-button secondary live-load-history" disabled={state.loadingHistory[conversation.id]} onClick={() => { stick.current = false; void state.action(() => state.loadHistory(conversation.id, true)) }}>{state.loadingHistory[conversation.id] ? "加载中…" : "加载更早的消息"}</button>}
-      {!messages ? <div className="list-empty"><button disabled={state.loadingHistory[conversation.id]} onClick={() => void state.action(() => state.loadHistory(conversation.id))}>{state.loadingHistory[conversation.id] ? "正在读取聊天记录…" : "加载聊天记录"}</button></div> : !messages.length ? <div className="conversation-start"><span><MessageCircle />{group ? "在这里一起聊聊" : "每次相遇，都在同一个窗口"}</span><p>{group ? conversation.participation.policy.limitedAuto ? "AI 会在本群额度内轮流接话，@ 可指定回应对象。" : "普通消息会保存；@ 选择的 AI 会依次回复。" : "从第一条消息开始你们的日常。"}</p></div> : messages.map(message => {
+    {messageId && <div className="message-location-bar" role="status"><span>{contextError ?? (context ? "正在查看搜索到的消息及前后记录" : "正在定位原消息…")}</span>{contextError && <button onClick={() => setContextRetry(n => n + 1)}>重试</button>}<button onClick={() => navigate("messages", conversation.id)}>返回最新消息</button></div>}
+    <div className="chat-timeline" ref={timeline} onScroll={() => { const el = timeline.current!; stick.current = !messageId && el.scrollHeight - el.scrollTop - el.clientHeight < 60; setAtBottom(stick.current) }}>
+      {!messageId && state.hasMore[conversation.id] && <button className="social-button secondary live-load-history" disabled={state.loadingHistory[conversation.id]} onClick={() => { stick.current = false; setAtBottom(false); void state.action(() => state.loadHistory(conversation.id, true)) }}>{state.loadingHistory[conversation.id] ? "加载中…" : "加载更早的消息"}</button>}
+      {messageId && context?.hasMore && <p className="list-empty">前面还有更早的记录</p>}{!messages && messageId ? null : !messages ? <div className="list-empty"><button disabled={state.loadingHistory[conversation.id]} onClick={() => void state.action(() => state.loadHistory(conversation.id))}>{state.loadingHistory[conversation.id] ? "正在读取聊天记录…" : "加载聊天记录"}</button></div> : !messages.length ? <div className="conversation-start"><span><MessageCircle />{group ? "在这里一起聊聊" : "每次相遇，都在同一个窗口"}</span><p>{group ? conversation.participation.policy.limitedAuto ? "AI 会在本群额度内轮流接话，@ 可指定回应对象。" : "普通消息会保存；@ 选择的 AI 会依次回复。" : "从第一条消息开始你们的日常。"}</p></div> : messages.map(message => {
         const own = message.senderId === snapshot.selfId
         const actor = snapshot.accounts.find(c => c.id === message.senderId)
         const generation = message.status === "generating" ? state.generations[message.id] : undefined
         const body = generation?.text ?? message.text
         const execution = message.runId ? state.details[message.runId] : undefined
         const quoted = message.replyTo ? messages.find(m => m.id === message.replyTo) : undefined
-        return <article key={message.id} className={`live-message ${own ? "own" : ""}`}><Avatar self={own} contact={avatar(actor)} size="small" /><div className="live-message-content"><div className="live-message-label"><span>{message.senderName}{!own && <span className="ai-badge">AI</span>}</span><time>{shortTime(message.createdAt)}</time></div>{message.replyTo && <div className="live-quote">回复 {quoted?.senderName ?? "早前的消息"}{quoted && (quoted.status === "withdrawn" ? "：消息已撤回" : `：${quoted.text.slice(0, 80)}`)}</div>}{message.contextReference && message.status !== "withdrawn" && <ReferenceCard input={{ actorId: message.contextReference.target.actor_id, selection: message.contextReference.selection }} stale={message.contextReference.stale} />}{!!message.mentions.length && <div className="live-message-mentions">{message.mentions.map(id => `@${name(id)}`).join(" · ")}</div>}<div className="live-bubble">{message.status === "withdrawn" ? "消息已撤回" : body ? <MarkdownView content={body} /> : message.status === "generating" ? <span className="live-thinking">正在回复…</span> : "本次回复没有正文"}</div>{message.status === "generating" && <p className="live-generation-status" role="status"><span className="typing-dot" />{message.senderName} 正在回复</p>}{message.status === "interrupted" && <p className="live-interruption">{execution?.error?.message ?? "本次回复已中断，片段保留在记录中。"}</p>}{message.runId && <details className="live-run-details"><summary onClick={() => void state.action(() => state.loadDetails(message.runId!))}>回复详情</summary>{execution && <p>{execution.provider} / {execution.model}{execution.usage && ` · ${execution.usage.total_tokens} tokens`}</p>}{(generation?.reasoning || execution?.reasoning) && <pre>{generation?.reasoning ?? execution?.reasoning}</pre>}</details>}{own && !readOnly && message.status === "committed" && <OwnMessageControls message={message} />}{group && !readOnly && message.status === "committed" && <ContinuePrivately conversation={conversation} message={message} />}{!readOnly && message.status === "committed" && <RememberMessage conversation={conversation} message={message} />}{!readOnly && message.status !== "withdrawn" && <button className="live-reply" aria-label={`回复 ${message.senderName} 的消息`} onClick={() => state.targetDraft(conversation.id, draft?.mentions ?? [], message.id)}><Reply />回复</button>}</div></article>
-      })}
+        return <article key={message.id} data-message-id={message.id} className={`live-message ${own ? "own" : ""} ${messageId === message.id ? "located-message" : ""}`}><Avatar self={own} contact={avatar(actor)} size="small" /><div className="live-message-content"><div className="live-message-label"><span>{message.senderName}{!own && <span className="ai-badge">AI</span>}</span><time>{shortTime(message.createdAt)}</time></div>{message.replyTo && <div className="live-quote">回复 {quoted?.senderName ?? "早前的消息"}{quoted && (quoted.status === "withdrawn" ? "：消息已撤回" : `：${quoted.text.slice(0, 80)}`)}</div>}{message.contextReference && message.status !== "withdrawn" && <ReferenceCard input={{ actorId: message.contextReference.target.actor_id, selection: message.contextReference.selection }} stale={message.contextReference.stale} />}{!!message.mentions.length && <div className="live-message-mentions">{message.mentions.map(id => `@${name(id)}`).join(" · ")}</div>}<div className="live-bubble">{message.status === "withdrawn" ? "消息已撤回" : body ? <MarkdownView content={body} /> : message.status === "generating" ? <span className="live-thinking">正在回复…</span> : "本次回复没有正文"}</div>{message.status === "generating" && <p className="live-generation-status" role="status"><span className="typing-dot" />{message.senderName} 正在回复</p>}{message.status === "interrupted" && <p className="live-interruption">{execution?.error?.message ?? "本次回复已中断，片段保留在记录中。"}</p>}{message.runId && <details className="live-run-details"><summary onClick={() => void state.action(() => state.loadDetails(message.runId!))}>回复详情</summary>{execution && <p>{execution.provider} / {execution.model}{execution.usage && ` · ${execution.usage.total_tokens} tokens`}</p>}{(generation?.reasoning || execution?.reasoning) && <pre>{generation?.reasoning ?? execution?.reasoning}</pre>}</details>}{own && !readOnly && message.status === "committed" && <OwnMessageControls message={message} />}{group && !readOnly && message.status === "committed" && <ContinuePrivately conversation={conversation} message={message} />}{!readOnly && message.status === "committed" && <RememberMessage conversation={conversation} message={message} />}{!readOnly && message.status !== "withdrawn" && <button className="live-reply" aria-label={`回复 ${message.senderName} 的消息`} onClick={() => state.targetDraft(conversation.id, draft?.mentions ?? [], message.id)}><Reply />回复</button>}</div></article>
+      })}{messageId && context?.hasNewer && <p className="list-empty">后面还有更新的记录</p>}
     </div>
-    {readOnly ? <div className="archive-footer"><p>聊天记录保留在这个窗口中。</p></div> : <div className="composer-area">
+    {messageId ? <div className="archive-footer"><p>返回最新消息后继续聊天</p></div> : readOnly ? <div className="archive-footer"><p>聊天记录保留在这个窗口中。</p></div> : <div className="composer-area">
       {(conversation.paused || (!group && (contactArchived || conversation.members.some(m => m.actorId === contact?.id && m.paused)))) && <div className="chat-status-notice">{contactArchived ? "账号已停用，消息仍会保存；管理员恢复账号后，只有新消息才会触发回复。" : conversation.paused || conversation.members.some(m => m.actorId === contact?.id && m.paused) ? "AI 已暂停接话，仍可以发送和保存消息。" : "AI 已暂停接话，仍可以发送和保存消息。"}</div>}
       {!!conversation.pendingPlans.length && <div className="live-queue" role="status">接话队列：{conversation.pendingPlans.map(p => `${name(p.actorId)}${p.status === "running" ? "（回复中）" : p.automatic ? "（自动接话）" : p.inputIds.length > 1 ? `（合并 ${p.inputIds.length} 条）` : "（等待接话）"}`).join(" → ")}</div>}
       {draft?.replyTo && <div className="live-reply-target"><span>回复 {reply?.senderName ?? "早前的消息"}{reply && (reply.status === "withdrawn" ? "：消息已撤回" : `：${reply.text.slice(0, 60)}`)}</span><IconButton label="取消回复" onClick={() => state.targetDraft(conversation.id, draft.mentions ?? [], null)}><X /></IconButton></div>}

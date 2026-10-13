@@ -15,6 +15,8 @@ use storage::{DataDirectoryGuard, legacy::SessionRecord};
 mod contact_tests;
 #[path = "social_memory/mod.rs"]
 mod memory_tests;
+#[path = "social_message_list/mod.rs"]
+mod message_list_tests;
 #[path = "social_participation/mod.rs"]
 mod participation_tests;
 #[path = "social_reference/mod.rs"]
@@ -28,7 +30,11 @@ struct Fixture {
     human: Actor,
     clock: Arc<ManualClock>,
 }
+fn downgrade_list_schema(sql: &Connection) {
+    sql.execute_batch("DROP TRIGGER message_delivered_insert; DROP TRIGGER message_delivered_update; DROP TABLE message_deliveries; DROP TABLE conversation_list_state; CREATE TABLE read_positions(conversation_id TEXT NOT NULL REFERENCES conversations(id),actor_id TEXT NOT NULL REFERENCES actors(id),sequence INTEGER NOT NULL CHECK(sequence>=0),PRIMARY KEY(conversation_id,actor_id)); DELETE FROM schema_migrations WHERE version=12; PRAGMA user_version=11;").unwrap();
+}
 fn downgrade_contact_schema(sql: &Connection) {
+    downgrade_list_schema(sql);
     sql.execute_batch("DROP TRIGGER plan_same_space; DROP INDEX pending_participation; DROP INDEX one_running_plan; DROP INDEX message_plan_order; ALTER TABLE participation_plans RENAME TO plans_v11;").unwrap();
     sql.execute_batch(include_str!("../src/social/schema-v3.sql"))
         .unwrap();
@@ -392,6 +398,8 @@ impl Fixture {
             "conversations",
             "memberships",
             "messages",
+            "message_deliveries",
+            "conversation_list_state",
             "message_revisions",
             "bouts",
             "ai_runs",
@@ -2984,12 +2992,26 @@ async fn legacy_preserves_sources_ids_metadata_tools_and_checkpoint_without_repl
     );
     assert_eq!(
         sql.query_row::<i64, _, _>(
-            "SELECT sequence FROM read_positions WHERE conversation_id=?1",
+            "SELECT read_through FROM conversation_list_state WHERE conversation_id=?1",
             [c.to_string()],
             |r| r.get(0)
         )
         .unwrap(),
-        3
+        sql.query_row::<i64, _, _>(
+            "SELECT MAX(position) FROM message_deliveries WHERE conversation_id=?1",
+            [c.to_string()],
+            |r| r.get(0)
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        f.store
+            .conversation_record(f.human.id, c)
+            .await
+            .unwrap()
+            .list_state
+            .unread_count,
+        0
     );
     let mapped_before: String = sql
         .query_row(

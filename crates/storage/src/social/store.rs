@@ -188,6 +188,7 @@ pub struct ContactRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationRecord {
+    pub list_state: ConversationListState,
     pub contact_schedule: ContactScheduleView,
     pub participation: ParticipationView,
     pub memory_owner_ids: Vec<ActorId>,
@@ -642,12 +643,27 @@ pub trait SocialStore: Send + Sync {
         after: Sequence,
         limit: u32,
     ) -> SocialStorageResult<Vec<SocialMessage>>;
+    async fn update_conversation_list(
+        &self,
+        ctx: CommandContext,
+        input: UpdateConversationList,
+    ) -> SocialStorageResult<ConversationListState>;
+    async fn search_messages(
+        &self,
+        operator: ActorId,
+        input: SearchMessages,
+    ) -> SocialStorageResult<MessageSearchPage>;
+    async fn message_context(
+        &self,
+        operator: ActorId,
+        id: MessageId,
+    ) -> SocialStorageResult<MessageContext>;
     async fn message_page(
         &self,
         operator: ActorId,
         id: ConversationId,
         before: Option<Sequence>,
-    ) -> SocialStorageResult<(Vec<SocialMessage>, bool)>;
+    ) -> SocialStorageResult<(Vec<SocialMessage>, bool, Counter)>;
     async fn begin_run(&self, ctx: CommandContext, input: BeginRun) -> SocialStorageResult<AiRun>;
     async fn checkpoint_run(
         &self,
@@ -679,4 +695,51 @@ pub trait SocialStore: Send + Sync {
     ) -> SocialStorageResult<LegacyImportResult>;
     /// Drain the writer after all feature tasks have stopped.
     async fn shutdown(&self) -> SocialStorageResult<()>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationListState {
+    pub read_through: Counter,
+    pub latest_delivery: Counter,
+    pub unread_count: u32,
+    pub marked_unread: bool,
+    pub pinned: bool,
+    pub revision: Revision,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConversationListAction {
+    Read { through: Counter },
+    Unread,
+    Pin { pinned: bool },
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConversationList {
+    pub conversation_id: ConversationId,
+    pub expected_revision: Revision,
+    pub action: ConversationListAction,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMessages {
+    pub query: String,
+    pub conversation_id: Option<ConversationId>,
+    pub before: Option<Counter>,
+}
+#[derive(Debug, Clone)]
+pub struct MessageSearchHit {
+    pub message: SocialMessage,
+    pub position: Counter,
+}
+#[derive(Debug, Clone)]
+pub struct MessageSearchPage {
+    pub hits: Vec<MessageSearchHit>,
+    pub next_before: Option<Counter>,
+}
+#[derive(Debug, Clone)]
+pub struct MessageContext {
+    pub messages: Vec<SocialMessage>,
+    pub has_more: bool,
+    pub has_newer: bool,
 }

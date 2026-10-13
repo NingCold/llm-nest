@@ -201,7 +201,7 @@ export function AccountViewer({ id }: { id: string }) {
     try {
       const result = await socialClient.accountViewMessages(id, selected, page.messages[0].sequence)
       if (currentView.current.selected === version.selected && currentView.current.view === version.view)
-        setPage(previous => previous ? { messages: [...result.messages, ...previous.messages], hasMore: result.hasMore } : result)
+        setPage(previous => previous ? { ...result, messages: [...result.messages, ...previous.messages] } : result)
     } finally { setPaging(false) }
   }
   const snapshot = view?.snapshot

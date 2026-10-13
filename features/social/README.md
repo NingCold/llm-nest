@@ -10,6 +10,7 @@
 | --- | --- |
 | 账号、联系人和管理权限 | [accounts.rs](src/accounts.rs)、[account_control.rs](src/account_control.rs) |
 | 发送消息、创建群聊和安排回复 | [feature.rs](src/feature.rs) |
+| 已读、置顶和查找聊天记录 | [message_list.rs](src/message_list.rs) |
 | 编辑消息、暂停和结束交谈 | [controls.rs](src/controls.rs) |
 | 为 AI 准备对话背景 | [consciousness.rs](src/consciousness.rs) |
 | 保存记忆、整理摘要、接续群话题 | [memory.rs](src/memory.rs)、[summary.rs](src/summary.rs)、[reference.rs](src/reference.rs) |

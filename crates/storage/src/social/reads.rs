@@ -100,6 +100,7 @@ impl Db<'_> {
             .into_iter()
             .next();
         Ok(ConversationRecord {
+            list_state: self.list_state(operator, conversation.id)?,
             contact_schedule: self.contact_view(conversation.id)?,
             participation: self.participation(conversation.id)?,
             memory_owner_ids: self.query_json("SELECT DISTINCT json_quote(owner_actor_id) FROM memories WHERE conversation_id=?1 AND status!='forgotten' ORDER BY owner_actor_id", [conversation.id.to_string()])?,

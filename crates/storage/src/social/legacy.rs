@@ -407,11 +407,11 @@ pub(super) fn import(
             }
         }
         db.execute(
-            "INSERT INTO read_positions VALUES(?1,?2,?3)",
+            "INSERT INTO conversation_list_state(conversation_id,actor_id,read_through) VALUES(?1,?2,?3)",
             params![
                 c.id.to_string(),
                 human.id.to_string(),
-                c.last_sequence.get() as i64
+                db.latest_delivery(c.id)?.get() as i64
             ],
         )?;
         result.imported += 1;

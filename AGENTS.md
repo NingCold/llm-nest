@@ -10,7 +10,7 @@ LLM Nest 是本地人与 AI 的社交空间，共用 Rust 运行时与一套 Rea
 
 首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
 
-ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。通讯录 ContactEntry 是按 owner 的有向列出状态，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，v9 增加跨窗口引用依赖索引，v10 增加接话规则/状态/每日额度，v11 增加约定联系设置与意图、计划的独立触发来源，不改写旧迁移。
+ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。通讯录 ContactEntry 是按 owner 的有向列出状态，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，v9 增加跨窗口引用依赖索引，v10 增加接话规则/状态/每日额度，v11 增加约定联系设置与意图、计划的独立触发来源，v12 增加消息完成顺序和个人已读/未读/置顶状态并替换闲置 read_positions，不改写旧迁移。
 
 当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；测试使用独立临时数据和模拟 provider 驱动同一真实界面。本文维护修改约束，不重复维护各批测试数量。
 
@@ -115,6 +115,12 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 - Windows 使用 Job Object：最多 1 个进程、256 MiB committed memory、10 秒用户态 CPU，Job 关闭时杀子进程。配置/附加失败须停止，不得回退到进程内。
 - Linux 当前依赖子进程终止/kill_on_drop，没有等价的完整资源配额或通用沙盒。打包后须实际验证 worker 的动态库加载和退出行为。
 - `register_trusted_tool` / `register_trusted_in_process` 是显式的信任边界，不用于模型指定的任意插件。
+
+### 消息列表与搜索
+
+- 列表状态按实际操作者与窗口保存，不改变 Conversation/context/participation 版本，不向模型注入已读状态。读取位置使用终态消息的 delivery position，不能用消息 sequence 代替，避免较早开始、较晚完成的 AI 回复漏计。自己的消息、生成中和已撤回消息不计未读；中断片段计一次。v12 升级与显式导入的已有历史默认已读。
+- 已读/手动未读/置顶共用版本化命令、事务事件和回执。只确认服务端返回且属于该窗口的位置，读位置单调；自动确认来自同事务读取的最新页，前台聚焦且滚动在底部才提交。搜索定位、翻历史、后台窗口和管理员只读查看不自动改已读。
+- 正文搜索覆盖当前成员有权访问的全部已保存正文，中文和符号按字面子串、ASCII 英文不区分大小写，按 delivery position 倒序分页；不查 generating/withdrawn、思考或角色内部设定。直接读当前原文，修订/撤回立即生效。定位重查权限并读取目标前后记录，迟到结果不能覆盖新查询或重新显示失效来源。
 
 ### GUI 与平台
 

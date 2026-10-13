@@ -221,6 +221,7 @@ impl From<AiRun> for Run {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
+    pub list_state: storage::social::ConversationListState,
     pub contact_schedule: storage::social::ContactScheduleView,
     pub participation: storage::social::ParticipationView,
     pub memory_owner_ids: Vec<ActorId>,
@@ -242,6 +243,7 @@ pub struct Conversation {
 impl From<ConversationRecord> for Conversation {
     fn from(c: ConversationRecord) -> Self {
         Self {
+            list_state: c.list_state,
             contact_schedule: c.contact_schedule,
             participation: c.participation,
             memory_owner_ids: c.memory_owner_ids,
@@ -482,6 +484,7 @@ pub struct SendReceipt {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessagePage {
+    pub read_through: Option<Counter>,
     pub messages: Vec<Message>,
     pub has_more: bool,
 }
@@ -581,4 +584,25 @@ pub struct ReferencePreview {
     pub title: String,
     pub messages: Vec<Message>,
     pub summary: Option<ConversationSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationListInput {
+    pub request_id: CommandId,
+    pub expected_revision: Revision,
+    pub action: storage::social::ConversationListAction,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSearchPage {
+    pub messages: Vec<Message>,
+    pub next_before: Option<Counter>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageContext {
+    pub messages: Vec<Message>,
+    pub has_more: bool,
+    pub has_newer: bool,
 }

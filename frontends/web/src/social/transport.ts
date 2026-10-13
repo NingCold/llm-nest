@@ -2,6 +2,9 @@ import type { Account, AccountView, AiInput, ContactEntry, ContactInput, Managed
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
+  updateConversationList(id: string, input: VersionedCommand & { action: import("./live-types").ConversationListAction }): Promise<import("./live-types").ConversationListState>
+  searchMessages(input: import("./live-types").SearchMessages): Promise<import("./live-types").MessageSearchPage>
+  messageContext(id: string): Promise<import("./live-types").MessageContext>
   previewLegacy(): Promise<import("./live-types").LegacyPreview>
   importLegacy(preview: import("./live-types").LegacyPreview): Promise<{ imported: number; already_imported: number; conversations: string[] }>
   updateContactSettings(id: string, input: { requestId: string; settings: import("./live-types").ContactSettings }): Promise<Conversation["contactSchedule"]>

@@ -15,9 +15,19 @@
 | SocialMessage | id、conversation_id、sender_id、sender_name、sequence、body、reply_to、mentions、run_id、status、revision、created_at |
 | Bout | id、conversation_id、status(open/ended)、revision |
 
-消息修订按 message_id + revision 保存原内容版本；撤回清空其正文。read_positions 已有存储结构，尚无正式已读/未读用例。成员角色/参与模式、Bout 等待状态和详细时间/结束原因随对应用例扩展；不预先要求空字段。
+消息修订按 message_id + revision 保存原内容版本；撤回清空其正文。个人列表状态与消息完成顺序已持久保存，具体见下节。成员角色/参与模式、Bout 等待状态和详细时间/结束原因随对应用例扩展；不预先要求空字段。
 
 所有 ID 为 UUID；sequence 由数据库在空间内单调分配，排序不依赖时间戳。revision、sequence、epoch 和 cursor 经 wire 转换为十进制字符串。
+
+## 个人列表与正文查找
+
+已读、手动未读与置顶按账号 + 窗口保存，不修改聊天本身或 AI 意识。未读数量统计尚未确认的他人 committed/interrupted 消息；generating、withdrawn 和自己的消息不计数。手动未读独立显示一个提醒点，不伪造消息数量。置顶窗口排在前面，同组按最近消息完成顺序排列。
+
+聊天顺序 sequence 在 AI 开始回复时就分配，而已读位置依据消息首次进入 committed/interrupted 的 delivery position。后发的真人消息读完后，先前尚未完成的 AI 回复仍会成为新未读；修订不会制造新的到达。最新页同时返回可确认位置，服务端保存时检查所属窗口、版本和单调性。已读不是对方回执，不参与模型上下文。
+
+正文搜索读取完整的当前文本记录，可搜全部可访问窗口或当前窗口，按完成顺序倒序，每页 50 条。输入 1–200 个字符，中文、emoji 和百分号等符号按字面匹配，ASCII 英文不区分大小写；不做语义检索。搜索不读取旧修订、撤回正文、生成草稿、思考详情或账号内部设定。选中结果重新检查成员权限，读取目标与前后各最多 50 条；查看结果不会自动标记窗口已读。
+
+界面和验证见[消息列表记录](message-list.md)。
 
 ## 2. 空间与成员
 

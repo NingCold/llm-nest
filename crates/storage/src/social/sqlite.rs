@@ -1144,16 +1144,37 @@ impl SocialStore for SqliteSocialStore {
         })
         .await
     }
+    async fn update_conversation_list(
+        &self,
+        ctx: CommandContext,
+        input: UpdateConversationList,
+    ) -> Result<ConversationListState> {
+        self.call(move |w| w.transact(|db| db.update_list_state(&ctx, &input)))
+            .await
+    }
+    async fn search_messages(
+        &self,
+        operator: ActorId,
+        input: SearchMessages,
+    ) -> Result<MessageSearchPage> {
+        self.call(move |w| w.read(|db| db.search_messages(operator, &input)))
+            .await
+    }
+    async fn message_context(&self, operator: ActorId, id: MessageId) -> Result<MessageContext> {
+        self.call(move |w| w.read(|db| db.message_context(operator, id)))
+            .await
+    }
     async fn message_page(
         &self,
         operator: ActorId,
         id: ConversationId,
         before: Option<Sequence>,
-    ) -> Result<(Vec<SocialMessage>, bool)> {
+    ) -> Result<(Vec<SocialMessage>, bool, Counter)> {
         self.call(move |w| {
             w.read(|db| {
                 db.operator(operator)?;
-                db.message_page_for(operator, id, before)
+                let (messages, more) = db.message_page_for(operator, id, before)?;
+                Ok((messages, more, db.latest_delivery(id)?))
             })
         })
         .await

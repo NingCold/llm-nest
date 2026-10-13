@@ -19,6 +19,12 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
+        .route("/api/social/messages/search", get(search_messages))
+        .route("/api/social/messages/{id}/context", get(message_context))
+        .route(
+            "/api/social/conversations/{id}/list-state",
+            post(update_conversation_list),
+        )
         .route(
             "/api/social/history-import",
             get(preview_legacy).post(import_legacy),
@@ -531,4 +537,24 @@ async fn account_view_messages(
             .account_view_messages(id, conversation, q.before)
             .await?,
     ))
+}
+
+async fn search_messages(
+    State(s): State<Arc<AppState>>,
+    ApiQuery(input): ApiQuery<storage::social::SearchMessages>,
+) -> Result<wire::MessageSearchPage> {
+    Ok(Json(s.social.search_messages(input).await?))
+}
+async fn message_context(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<MessageId>,
+) -> Result<wire::MessageContext> {
+    Ok(Json(s.social.message_context(id).await?))
+}
+async fn update_conversation_list(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::ConversationListInput>,
+) -> Result<storage::social::ConversationListState> {
+    Ok(Json(s.social.update_conversation_list(id, input).await?))
 }

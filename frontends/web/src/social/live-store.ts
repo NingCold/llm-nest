@@ -14,6 +14,8 @@ function readDrafts(): Record<string, Draft> {
 }
 
 interface SocialState {
+  historyReadThrough: Record<string, string>
+  updateList(id: string, action: import("./live-types").ConversationListAction): Promise<void>
   summaries: Record<string, SummaryState | null>; summaryErrors: Record<string, string | null>; loadingSummaries: Record<string, boolean>
   loadSummaries(conversation: string, older?: boolean): Promise<void>
   memories: Record<string, Memory[]>; loadingMemories: Record<string, boolean>; memoryErrors: Record<string, string | null>
@@ -41,10 +43,22 @@ let connection: AbortController | null = null
 let cursor = "0"
 let historyGeneration = 0
 let active = false
+const listWrites = new Map<string, Promise<void>>()
 const memoryReads = new Map<string, Promise<void>>()
 const summaryReads = new Map<string, Promise<void>>()
 
 export const useLiveSocialStore = create<SocialState>((set, get) => ({
+  historyReadThrough: {},
+  async updateList(id, action) {
+    const write = (listWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      const conversation = get().snapshot!.conversations.find(c => c.id === id)!
+      try {
+        await socialClient.updateConversationList(id, { requestId: crypto.randomUUID(), expectedRevision: conversation.listState.revision, action })
+      } finally { await get().refresh() }
+    })
+    listWrites.set(id, write)
+    try { await write } finally { if (listWrites.get(id) === write) listWrites.delete(id) }
+  },
   summaries: {}, summaryErrors: {}, loadingSummaries: {},
   async loadSummaries(id, older = false) {
     const read = (summaryReads.get(id) ?? Promise.resolve()).catch(() => {}).then(async () => {
@@ -128,6 +142,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     const generations = { ...get().generations }
     for (const message of history) if (message.status !== "generating") delete generations[message.id]
     set({ histories: { ...get().histories, [id]: history }, generations,
+      historyReadThrough: page.readThrough != null && BigInt(page.readThrough) >= BigInt(get().historyReadThrough[id] ?? "0") ? { ...get().historyReadThrough, [id]: page.readThrough } : get().historyReadThrough,
       hasMore: { ...get().hasMore, [id]: older || get().hasMore[id] === undefined ? page.hasMore : get().hasMore[id] } })
     } finally { set({ loadingHistory: { ...get().loadingHistory, [id]: false } }) }
   },
@@ -205,9 +220,11 @@ async function applyChange(event: Change, signal: AbortSignal) {
   const store = useLiveSocialStore.getState()
   await store.refresh()
   if (signal.aborted) return
-  if (event.change.conversationId && store.histories[event.change.conversationId]) {
+  if (event.change.kind !== "conversation_list_changed" && event.change.conversationId && store.histories[event.change.conversationId]) {
     if (event.change.messageId) await store.loadMessage(event.change.messageId)
-    else await store.loadHistory(event.change.conversationId)
+    const current = useLiveSocialStore.getState()
+    const latest = current.snapshot?.conversations.find(c => c.id === event.change.conversationId)?.listState.latestDelivery
+    if (!event.change.messageId || (latest && BigInt(latest) > BigInt(current.historyReadThrough[event.change.conversationId] ?? "0"))) await store.loadHistory(event.change.conversationId)
   }
   if (event.change.runId && !signal.aborted) await store.loadDetails(event.change.runId)
   if (event.change.kind === "memory_changed" && !signal.aborted) {
@@ -260,7 +277,7 @@ function startSubscription() {
           const memoryScopes = Object.keys(store.memories)
           const summaryIds = Object.keys(store.summaries)
           historyGeneration++
-          useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {}, memories: {}, memoryErrors: {}, summaries: {}, summaryErrors: {} })
+          useLiveSocialStore.setState({ generations: {}, histories: {}, historyReadThrough: {}, hasMore: {}, details: {}, memories: {}, memoryErrors: {}, summaries: {}, summaryErrors: {} })
           await store.refresh()
           for (const id of ids) { if (attemptSignal.aborted) return; await store.loadHistory(id) }
           for (const id of summaryIds) { if (attemptSignal.aborted) return; await store.loadSummaries(id) }

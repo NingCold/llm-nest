@@ -8,6 +8,7 @@ mod feature;
 mod generation;
 mod legacy;
 mod memory;
+mod message_list;
 mod reference;
 mod subscription;
 mod summary;

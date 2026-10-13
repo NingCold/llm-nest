@@ -129,6 +129,7 @@ impl SocialFeature {
             .account_view_messages(s.human, id, conversation, before)
             .await?;
         Ok(wire::MessagePage {
+            read_through: None,
             messages: messages.into_iter().map(Into::into).collect(),
             has_more,
         })

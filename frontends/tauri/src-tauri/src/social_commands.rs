@@ -548,3 +548,38 @@ pub async fn social_reference_preview(
         .await
         .map_err(|e| e.wire())
 }
+
+#[tauri::command]
+pub async fn social_search_messages(
+    state: tauri::State<'_, BackendState>,
+    input: storage::social::SearchMessages,
+) -> Result<wire::MessageSearchPage> {
+    feature(state)
+        .await?
+        .search_messages(input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_message_context(
+    state: tauri::State<'_, BackendState>,
+    id: MessageId,
+) -> Result<wire::MessageContext> {
+    feature(state)
+        .await?
+        .message_context(id)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_update_conversation_list(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::ConversationListInput,
+) -> Result<storage::social::ConversationListState> {
+    feature(state)
+        .await?
+        .update_conversation_list(id, input)
+        .await
+        .map_err(|e| e.wire())
+}

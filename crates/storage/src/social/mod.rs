@@ -6,6 +6,7 @@ mod controls;
 mod error;
 mod legacy;
 mod memory;
+mod message_list;
 mod participation;
 mod reads;
 mod reference;

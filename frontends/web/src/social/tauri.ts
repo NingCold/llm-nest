@@ -13,6 +13,9 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   catch (error) { throw apiError(error) }
 }
 export const socialClient: SocialClient = {
+  updateConversationList: (id, input) => command("social_update_conversation_list", { id, input }),
+  messageContext: id => command("social_message_context", { id }),
+  searchMessages: input => command("social_search_messages", { input }),
   previewLegacy: () => command("social_preview_legacy"),
   importLegacy: preview => command("social_import_legacy", { preview }),
   referencePreview: input => command("social_reference_preview", { input }),

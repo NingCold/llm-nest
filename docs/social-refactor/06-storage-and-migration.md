@@ -16,12 +16,12 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 ## 2. 当前 Schema 与目标关系
 
-当前 schema 版本为 11；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引、v10 接话规则/状态/每日额度，v11 联系设置、意图与计划触发来源。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+当前 schema 版本为 12；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引、v10 接话规则/状态/每日额度，v11 联系设置、意图与计划触发来源，v12 消息完成顺序及个人列表状态。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
 | 身份 | actors、ai_profiles、execution_bindings、relationships、address_book、account_admins | 关系设置与工具策略 |
-| 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 正式已读用例 |
+| 聊天 | conversations、memberships、messages、message_revisions、message_deliveries、conversation_list_state、bouts | 导出、附件等独立用例 |
 | 参与/执行 | participation_plans、participation_policies、participation_state、participation_daily_budget、contact_settings、contact_intents、ai_runs、run_details | 工具/协议审计 |
 | 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
 | 迁移 | schema_migrations、legacy_imports、legacy_id_map、legacy_entries、legacy_session_data | 按后续 schema 变更迁移 |
@@ -37,6 +37,10 @@ ContextReference 保存在 messages/message_revisions 的可选 context_referenc
 
 SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。显式记忆提供 memories/memory/create_memory/update_memory/forget_memory；摘要提供 summaries/configure_summaries/queue_summary/begin_summary/finish_summary/interrupt_summary_tasks；reference_preview 复核双方源群成员及选中原文/摘要，send_message 原子保存引用；参与节奏提供 update_participation/participation_tick，计划在同事务合并或续接；约定联系提供 update_contact_settings/create_contact_intent/cancel_contact_intent，participation_tick 负责到期领取，plan_material 按消息或意图构造输入。v11 重建计划表，使 trigger_id 可空并加入 contact_intent_id，CHECK 保证两者恰有一个，意图索引唯一；旧计划 ID、来源、状态和 payload 保留。前端和 Feature 不直接拼 SQL。
 
+message_deliveries 在消息初次保存为 committed/interrupted 或从 generating 结束时通过 SQLite trigger 同事务分配完成顺序；唯一 message_id 防止重复计数。conversation_list_state 按 conversation_id/actor_id 保存 read_through、marked_unread、pinned、revision。v12 将迁移时已有历史初始化为已读并移除 read_positions；启动恢复生成中断发生在迁移之后，因此仍会提示新中断。显式导入的只读历史同样初始化为已读，原文件保持不变。
+
+搜索直接读取 messages 的当前文本部分，不另存正文索引或过期副本。按当前成员身份过滤，再按完成顺序分页；当前是字面子串检索，大规模索引优化另行安排。列表命令返回当前状态，旧回执不重放旧标记；消息分页与可确认的完成位置在同一读事务中获得。
+
 ## 3. 关键事务
 
 | 操作 | 同一次提交的内容 |
@@ -46,6 +50,7 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 修改 AI 设定/绑定 | 管理权限检查、Actor/档案/绑定版本、事件、回执；已开始运行仍使用原快照 |
 | 添加/移除联系人 | address_book 的 owner/account/listed/revision、contact_changed 事件、回执；不改变账号、空间、运行或队列 |
 | 授予/撤销管理员 | 初始管理员权限检查、account_admins、Actor.revision、事件、回执 |
+| 已读/未读/置顶 | 实际账号权限、个人列表版本、状态、conversation_list_changed 事件和回执；不改变 AI 运行 |
 | 发送真人消息 | 消息、空间顺序/版本、接话计划、事件、回执、可选 ContextReference 与来源索引 |
 | 更新接话规则 | policy.revision、取消现有自动计划/运行、参与状态、引用事件及回执；不补发旧输入 |
 | 创建/取消约定及修改联系设置 | 意图/设置、撤销对应计划和运行、引用事件、回执 |

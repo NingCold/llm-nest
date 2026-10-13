@@ -35,41 +35,8 @@ html.desktop-starting, .desktop-starting body { background: transparent !importa
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
 
-  --animate-caret-blink: caret-blink 1s step-end infinite;
-  --animate-fade-up: fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-  --animate-breathe: breathe 2.4s ease-in-out infinite;
-  --animate-spin-slow: spin 2.4s linear infinite;
   --animate-pulse-dot: pulse-dot 1.3s ease-in-out infinite;
-  --animate-shimmer: shimmer 1.8s linear infinite;
 
-  @keyframes caret-blink {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0;
-    }
-  }
-  @keyframes fade-up {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  @keyframes breathe {
-    0%,
-    100% {
-      opacity: 0.45;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
   @keyframes pulse-dot {
     0%,
     100% {
@@ -79,14 +46,6 @@ html.desktop-starting, .desktop-starting body { background: transparent !importa
     50% {
       transform: scale(1.35);
       opacity: 1;
-    }
-  }
-  @keyframes shimmer {
-    from {
-      background-position: -200% 0;
-    }
-    to {
-      background-position: 200% 0;
     }
   }
 }
@@ -217,14 +176,6 @@ html.desktop-starting, .desktop-starting body { background: transparent !importa
 }
 
 @layer components {
-  /* ---------- Chat feed ---------- */
-  /* 虚拟化消息流禁用浏览器滚动锚定：流式期间思考卡片展开/收起、markdown 渲染
-     等"视口上方内容高度变化"不应触发浏览器自动滚屏——否则浏览器补偿性上滚会
-     被"吸底跟随"误判为用户上翻而停止跟随（08-24 实测定位） */
-  .overflow-anchor-none {
-    overflow-anchor: none;
-  }
-
   /* ---------- Markdown typography (rendered by react-markdown) ---------- */
   .md {
     font-size: 0.9375rem;

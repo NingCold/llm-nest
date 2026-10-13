@@ -1,6 +1,6 @@
 # 09 运行时与配置
 
-[总纲](README.md) · [AI 执行](05-ai-execution.md) · [存储与迁移](06-storage-and-migration.md)
+[总纲](overview.md) · [AI 执行](05-ai-execution.md) · [存储与迁移](06-storage-and-migration.md)
 
 本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
@@ -10,7 +10,7 @@ Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命�
 
 FeatureContext 必需注入 AiClient 与 SocialResources（SocialStore/Clock）。参与队列、并发限制和临时生成广播由 SocialFeature 自己维护，持久事件来自 SocialStore。SessionManager、旧 RuntimeEvent 与工具注册不再属于 Runtime 业务上下文；底层工具库保留，但社交尚未启用。
 
-共享 Runtime 遵守 [新架构优先与兼容边界](README.md#新架构优先与兼容边界)。生产宿主统一 `Runtime::open(config_path, data_dir)`，直接持有 SQLite 与模型快照；确定性测试通过 `Runtime::with_resources` 注入独立资源，不建立旧会话运行时。
+共享 Runtime 遵守 [新架构优先与兼容边界](overview.md#新架构优先与兼容边界)。生产宿主统一 `Runtime::open(config_path, data_dir)`，直接持有 SQLite 与模型快照；确定性测试通过 `Runtime::with_resources` 注入独立资源，不建立旧会话运行时。
 
 Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai、send_message、forget_memory 等作为具体方法暴露。Runtime 注册 Feature 时只依赖 trait，不能反向依赖 `social-feature` Cargo 包。
 

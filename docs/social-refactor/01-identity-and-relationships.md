@@ -1,6 +1,6 @@
 # 01 身份与关系
 
-[总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [运行时与配置](09-runtime-and-configuration.md)
+[总纲](overview.md) · [聊天与消息](02-conversations-and-messages.md) · [运行时与配置](09-runtime-and-configuration.md)
 
 本文维护当前身份、账号权限和关系规则。状态见 [已完成](completed.md) / [尚未完成](pending.md)，调用契约见 [API 与事件](07-api-and-events.md)，本批证据见 [账号管理记录](m1-account-management.md)。
 

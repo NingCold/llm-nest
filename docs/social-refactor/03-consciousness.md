@@ -1,6 +1,6 @@
 # 03 意识系统（Consciousness）
 
-[总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
+[总纲](overview.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
 本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 
@@ -31,7 +31,7 @@
 
 M3 的合并计划通过 required_message_ids 要求完整读取所有合并输入；任何一条无法容纳就明确失败，不用摘要替代。自动群接话仅接受持久计划授权的已提交 AI 消息作为触发，不伪造真人消息。一次性约定使用独立 ContextTrigger::Contact：完整预留约定内容，读取当前窗口的近期原文、confirmed 记忆与 ready 摘要，暂不沿用私聊里最近的跨窗口引用。快照记录 SourceRef::ContactIntent；约定正文不可变，开始与提交检查其状态、创建者、窗口、目标、授权和有效期。模型中的约定提示不写入聊天历史。
 
-ParticipationService 决定谁发言、何时等待和结束，Execution 负责模型与工具调用，Runtime 注入资源并托管生命周期。意识系统为已选定的运行准备材料；摘要和未来后台巩固不会自行创建社交发言、联系意图或工具授权。
+参与服务决定谁发言、何时等待和结束，Execution 负责模型调用与运行收尾，Runtime 注入资源并托管生命周期。工具调用待后续授权链路接入。意识系统为已选定的运行准备材料；摘要和未来后台巩固不会自行创建社交发言、联系意图或工具授权。
 
 ### 1.2 分阶段范围
 

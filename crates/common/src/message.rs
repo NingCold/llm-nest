@@ -37,8 +37,7 @@ pub struct ToolResult {
     pub content: String,
     #[serde(default)]
     pub is_error: bool,
-    /// Tool execution duration in milliseconds (measured by the chat feature
-    /// around `ToolRegistry::run`). `None` for legacy records / demo paths.
+    /// Tool execution duration in milliseconds, when recorded by the caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
 }

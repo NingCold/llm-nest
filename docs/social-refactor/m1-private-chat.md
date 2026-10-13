@@ -1,6 +1,6 @@
 # M1 首批：真实长期私聊
 
-[总纲](README.md) · [实施 TODO](TODO.md) · [交付与验证](10-delivery-and-validation.md)
+[总纲](overview.md) · [实施 TODO](TODO.md) · [交付与验证](10-delivery-and-validation.md)
 
 日期：2026-10-09。完成 M1 的第一条业务链路：创建 AI 联系人与模型绑定 → 打开唯一私聊 → 保存真人消息 → 意识系统准备近期上下文 → 模型流式执行 → 原子收尾 → Web 展示与重连读取。本批没有调用付费 provider；执行验收通过本机模拟服务完成。
 

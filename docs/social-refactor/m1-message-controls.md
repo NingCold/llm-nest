@@ -1,6 +1,6 @@
 # M1 第三批：消息修订与交谈控制
 
-[总纲](README.md) · [已完成](completed.md) · [实施 TODO](TODO.md)
+[总纲](overview.md) · [已完成](completed.md) · [实施 TODO](TODO.md)
 
 日期：2026-10-09。真人消息修订/撤回、单次生成取消、成员/窗口暂停、结束交谈与归档/恢复已接通 SQLite、SocialFeature、HTTP、基础 IPC 命令及真实 Web。所有当前群成员共享本群完整历史；暂停与发言资格不改变群记录可见范围。
 

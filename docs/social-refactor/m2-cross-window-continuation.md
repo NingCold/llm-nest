@@ -1,6 +1,6 @@
 # M2 第三批：群话题接续唯一私聊
 
-[总纲](README.md) · [意识系统规则](03-consciousness.md) · [当前进度](in-progress.md)
+[总纲](overview.md) · [意识系统规则](03-consciousness.md) · [当前进度](in-progress.md)
 
 日期：2026-10-13。本批打通群消息选择 → 引用草稿 → 唯一私聊发送 → 实际上下文读取 → 来源变化与权限撤销 → Web/IPC 更新。M2 三批至此完成，下一批进入 M3 参与节奏。
 

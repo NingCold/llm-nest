@@ -6,7 +6,7 @@ use crate::{DataDirectoryGuard, Result};
 /// Default directory for persisted sessions.
 ///
 /// Resolution order:
-/// 1. `LLMN_DATA_DIR` environment variable (useful for demos and tests),
+/// 1. `LLMN_DATA_DIR` environment variable (for a custom data location),
 /// 2. the user's home directory + `.llmn`,
 /// 3. fallback to `./.llmn` when no home directory is available.
 pub fn default_data_dir() -> PathBuf {

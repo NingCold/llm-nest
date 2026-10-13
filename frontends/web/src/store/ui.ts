@@ -2,7 +2,7 @@ import { create } from "zustand"
 import { IS_DESKTOP } from "@/lib/desktop"
 
 export type Theme = "dark" | "light"
-export type ApiMode = "tauri" | "http" | null
+export type ApiMode = "tauri" | "http"
 export type SettingsSection = "models" | "appearance" | "config" | "about"
 
 function routeFromHash() {
@@ -33,7 +33,6 @@ interface UiStore {
   page: "messages" | "settings"
   settingsSection: SettingsSection
   showSettings: (section?: SettingsSection) => void
-  showMessages: () => void
   syncRoute: () => void
   theme: Theme
   desktopReady: boolean
@@ -42,7 +41,6 @@ interface UiStore {
 
   toggleTheme: () => void
   setTheme: (t: Theme) => void
-  setApiMode: (m: ApiMode) => void
 }
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -50,10 +48,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   showSettings: (section = get().settingsSection) => {
     set({ page: "settings", settingsSection: section })
     location.hash = `/settings/${section}`
-  },
-  showMessages: () => {
-    set({ page: "messages" })
-    location.hash = "/messages"
   },
   syncRoute: () => {
     const route = routeFromHash()
@@ -84,5 +78,4 @@ export const useUiStore = create<UiStore>((set, get) => ({
     }
   },
 
-  setApiMode: (m) => set({ apiMode: m }),
 }))

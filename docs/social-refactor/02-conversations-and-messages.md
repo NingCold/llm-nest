@@ -1,6 +1,6 @@
 # 02 聊天与消息
 
-[总纲](README.md) · [身份与关系](01-identity-and-relationships.md) · [API 与事件](07-api-and-events.md)
+[总纲](overview.md) · [身份与关系](01-identity-and-relationships.md) · [API 与事件](07-api-and-events.md)
 
 本文维护空间、消息和交谈的领域约定；当前传输字段见 [API 契约](07-api-and-events.md)，实施进度见状态文件。
 

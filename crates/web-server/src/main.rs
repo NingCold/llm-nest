@@ -4,7 +4,7 @@
 //! Environment overrides:
 //! - `LLMN_CONFIG` – path to `llmn.toml` (default: `config/llmn.toml` next to
 //!   the working directory or the executable)
-//! - `LLMN_DATA_DIR` – session storage dir (default: ~/.llmn)
+//! - `LLMN_DATA_DIR` – social data directory (default: ~/.llmn)
 //! - `LLMN_WEB_DIST` – directory with the built web frontend (default:
 //!   `frontends/web/dist`)
 //! - `LLMN_PORT` – listen port (default: 8787)

@@ -1,6 +1,6 @@
 # M3 第二批：一次性约定联系与免打扰
 
-[总纲](README.md) · [当前规则](04-participation-and-scheduling.md) · [当前进度](in-progress.md)
+[总纲](overview.md) · [当前规则](04-participation-and-scheduling.md) · [当前进度](in-progress.md)
 
 日期：2026-10-13。本批完成 M3 既定第二批，接通独立窗口授权、一次性约定、免打扰、有效期、取消与崩溃恢复。当前 M3 两批首版范围完成；下一批进入兼容收尾，先解耦社交宿主与旧 Harness 的会话运行依赖。
 

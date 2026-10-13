@@ -1,6 +1,6 @@
 # M0 领域与存储基础
 
-[重构总纲](README.md) · [实施 TODO](TODO.md) · [存储设计](06-storage-and-migration.md)
+[重构总纲](overview.md) · [实施 TODO](TODO.md) · [存储设计](06-storage-and-migration.md)
 
 日期：2026-10-09。本记录说明 M0 完成时的范围：当时 Runtime 仍使用 JSON，社交 Web 使用独立模拟适配器，应用启动不创建社交库或导入个人历史。M1 后续已将 GUI 宿主接入 SQLite，并增加 v2–v5 迁移；旧 JSON 仍不自动导入。以下只保存 M0 当时的实现与验证，当前 schema 见 [存储设计](06-storage-and-migration.md#2-当前-schema-与目标关系)，能力见 [已完成](completed.md)。
 

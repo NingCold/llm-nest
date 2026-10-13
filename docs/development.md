@@ -30,7 +30,7 @@ Ubuntu 24.04 的构建依赖可参考 [构建 Dockerfile](../scripts/linux/Docke
 
 ## 运行入口
 
-当前产品仅有 Web 与 Tauri；配置模型服务后，在 AI 角色管理页维护独立执行绑定。旧 CLI/TUI 与 Harness 入口已删除。
+Web 和桌面共用聊天功能。配置模型服务后，在 AI 角色管理页选择每位 AI 使用的模型。Web 首次运行需按[配置说明](../config/README.md)准备 `config/llmn.toml`；桌面会自动创建初始配置。
 
 桌面：
 
@@ -48,7 +48,7 @@ cargo run -p web-server
 pnpm --dir frontends/web dev
 ```
 
-打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；Tauri 使用相同界面与真实 IPC，不再提供旧界面或独立模拟产品。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。隔离桌面模拟模型验收见 [实时 IPC 记录](social-refactor/m1-desktop-ipc.md#复现桌面验收)。
+打开 `http://localhost:1420`，进入消息和通讯录。Tauri 使用相同界面，通过 IPC 与本地服务通信。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。隔离桌面模拟模型验收见 [实时 IPC 记录](social-refactor/m1-desktop-ipc.md#复现桌面验收)。
 
 真实社交私聊、群聊与消息控制的隔离离线验收：
 
@@ -60,7 +60,7 @@ python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist
 
 添加 `--serve` 可检查脚本打印的临时数据页面；结束时在打印的 Fixture 目录创建 `STOP` 文件或中断脚本。Windows MSVC 指定 target 后通过 `--binary target/x86_64-pc-windows-msvc/debug/web-server.exe` 选择产物。脚本使用本机模拟 provider，不读取个人配置；各批验证范围见 [已完成](social-refactor/completed.md)。
 
-使用上述隔离脚本的 `--serve` 验证真实界面；早期 `dev:social` / `build:social` 与 localStorage 模拟产品已退役。类型与组件回归仍使用 `pnpm --dir frontends/web typecheck` 和 `pnpm --dir frontends/web test`。
+类型与组件回归使用 `pnpm --dir frontends/web typecheck` 和 `pnpm --dir frontends/web test`。
 
 若本机 pnpm 与 packageManager 锁定版本不同，优先安装固定版本；仅做本地验证时可使用 `pnpm --pm-on-fail=ignore --dir frontends/web <命令>`，不因该提示改动依赖或锁文件。
 
@@ -80,7 +80,7 @@ python scripts/acceptance.py
 
 `acceptance.py` 验证空配置启动、旧接口 404、本地访问限制、模型服务配置原子更新、所选旧 JSON 导入/来源校验/只读历史/重启以及底层 worker。`social_acceptance.py` 验证实际 HTTP、SocialFeature、SQLite、私聊/群聊、意识系统与 M3 调度。全部使用独立临时数据，后者使用本机模拟 provider；两项都应执行。
 
-旧 Harness 的付费验收脚本已退役。[真实接口报告](live-acceptance-2026-09-13.md) 仅保留当时证据；新版付费模型验收需另获明确授权。
+真实模型验收会产生调用费用，按单独安排执行；既有报告见[历史记录](history.md)。
 
 桌面视觉验收应检查实际安装包，并注明 OS、显示缩放、桌面环境和产物哈希。Xvfb 启动、编译成功或截取完成后的窗口图像，都不能替代完整的用户交互验收。
 
@@ -90,7 +90,7 @@ python scripts/acceptance.py
 
 修改边界和数据不变量见 [AGENTS.md](../AGENTS.md)。提交应说明具体问题、最终行为、验证方式和未覆盖范围；当协议、持久化字段或 GUI DTO 改变时，同步修改两个 GUI backend。
 
-`frontends/web/dist`、`frontends/web/.social-runtime-dist` 与 `frontends/tauri/dist` 均为被忽略的生成产物。旧已跟踪 Web bundle 已删除，必须从同一 React 源码构建。
+`frontends/web/dist`、`frontends/web/.social-runtime-dist` 与 `frontends/tauri/dist` 均为被忽略的生成产物。两种入口都从 `frontends/web` 的源码构建。
 
 `frontends/tauri/src-tauri/gen/schemas` 下的 `windows-schema.json`、`linux-schema.json`、`desktop-schema.json` 和权限 manifest 由 Tauri 构建脚本生成，已从 Git 排除。构建时出现或更新这些文件是正常行为，无需提交；需要修改权限时编辑 `capabilities/*.json`。首次克隆后运行桌面构建或 `cargo check -p tauri-frontend` 即可生成当前平台的文件。
 

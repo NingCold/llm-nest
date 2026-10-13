@@ -1,6 +1,6 @@
 # 06 存储与迁移
 
-[总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [API 与事件](07-api-and-events.md)
+[总纲](overview.md) · [聊天与消息](02-conversations-and-messages.md) · [API 与事件](07-api-and-events.md)
 
 本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 

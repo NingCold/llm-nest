@@ -1,6 +1,6 @@
 # 08 界面与桌面
 
-[总纲](README.md) · [API 与事件](07-api-and-events.md) · [运行时与配置](09-runtime-and-configuration.md)
+[总纲](overview.md) · [API 与事件](07-api-and-events.md) · [运行时与配置](09-runtime-and-configuration.md)
 
 以下编号章节描述完整目标；前面的 Web 与桌面章节说明当前行为。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
 

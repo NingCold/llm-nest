@@ -1,6 +1,6 @@
 # M1 阶段异常、安装包与平台验收（2026-10-09）
 
-[总纲](README.md) · [当前状态](in-progress.md) · [交付条件](10-delivery-and-validation.md#3-m1身份与私聊群聊)
+[总纲](overview.md) · [当前状态](in-progress.md) · [交付条件](10-delivery-and-validation.md#3-m1身份与私聊群聊)
 
 ## 结论与范围
 

@@ -1,6 +1,6 @@
 # 04 参与与调度
 
-[总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
+[总纲](overview.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
 M3 两批首版范围已实现；证据见 [参与节奏](m3-participation-rhythm.md) 与 [约定联系](m3-contact-intents.md)。本文描述当前规则，扩展范围独立列出。
 

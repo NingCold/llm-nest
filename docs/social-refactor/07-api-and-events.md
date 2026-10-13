@@ -1,6 +1,6 @@
 # 07 API 与事件
 
-[总纲](README.md) · [存储与迁移](06-storage-and-migration.md) · [界面与桌面](08-frontend-and-desktop.md)
+[总纲](overview.md) · [存储与迁移](06-storage-and-migration.md) · [界面与桌面](08-frontend-and-desktop.md)
 
 本文集中维护当前传输契约，后续能力单独列出，不预先固定尚未实现的路由。源码入口为 [HTTP](../../crates/web-server/src/social_api.rs)、[IPC](../../frontends/tauri/src-tauri/src/social_commands.rs)、[共享 DTO](../../features/social/src/wire.rs) 与 [持久事件](../../crates/events/src/social_event.rs)。
 
@@ -100,7 +100,7 @@ AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被�
 
 Conversation.contactSchedule 返回 settings 与 intents（全部活动及最近 50 条记录）。ContactIntent 的 camelCase 字段为 id/conversationId/actorId/createdBy/authorizationId/text/dueAt/expiresAt/utcOffsetMinutes/status/planId/revision/reason/createdAt/updatedAt。创建/取消返回当前 ContactIntent，设置返回 ContactScheduleView。内容和原始授权不可就地修改，重试旧命令返回当前状态，不复活已取消意图。
 
-原模型、配置与目录同步接口保留；旧 `/api/sessions` 和 chat-event 服务迁移期 Harness，不与社交契约混用。原 contacts 创建/修改/全局归档路由已由上述账号接口替换，不维持含糊的双语义兼容入口；数据迁移保留历史。
+模型服务与目录同步接口继续使用；设置快照由 `/api/settings` 和 `settings_snapshot` 提供。旧 `/api/sessions`、旧聊天 IPC 与 chat-event 已删除。联系人关系和 AI 账号管理分别使用上表的专用接口，历史记录通过显式导入进入新版。
 
 摘要分页返回 settings/segments/hasMore，每页 50 段、按 throughSequence 降序，before 排除该边界。SummarySettings 返回 id（窗口 ID）、enabled、binding、revision；未配置时 revision="0"、enabled=false。保存参数为 requestId/expectedRevision/enabled/binding，binding 包含 providerId/modelId/reasoningEffort/maxTokens，不包含密钥、温度或 AI 人格。
 
@@ -141,7 +141,7 @@ SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_
 
 cursor 在本地库全局单调递增，与业务事务同提交。事件只保存引用，不保存消息、记忆或修订原文；客户端读取当前可见版本，旧事件不能恢复撤回正文。数据库状态是权威数据，不按事件重建历史正文。
 
-回放至少一次，客户端按 cursor 去重，并在状态应用成功后推进游标。消息变更按 MessageId 读取，已加载的早期消息也能更新。RuntimeEvent 仍只负责运行时通知，社交持久事件与生成事件独立。
+回放至少一次，客户端按 cursor 去重，并在状态应用成功后推进游标。消息变更按 MessageId 读取，已加载的早期消息也能更新。持久事件由 SocialStore 提供，临时生成事件由 SocialFeature 发布；两者不依赖旧运行时事件总线。
 
 ## 5. 临时生成事件
 

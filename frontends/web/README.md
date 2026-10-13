@@ -1,0 +1,41 @@
+# Web 界面
+
+[应用界面](../README.md) · [开发指南](../../docs/development.md)
+
+这里是 LLM Nest 的全部页面：消息、通讯录、聊天窗口、AI 角色管理和设置。桌面应用也使用这套界面。
+
+## 开发时运行
+
+先按[配置说明](../../config/README.md)准备 `config/llmn.toml`。下面的命令都在仓库根目录执行。
+
+安装依赖：
+
+```bash
+pnpm --dir frontends/web install --frozen-lockfile
+```
+
+打开两个终端，分别运行：
+
+```bash
+# 终端一：本地服务
+cargo run -p web-server
+
+# 终端二：页面开发服务器
+pnpm --dir frontends/web dev
+```
+
+打开 `http://localhost:1420`。修改页面后，浏览器会自动更新。
+
+## 找到要改的页面
+
+消息和通讯录从 [src/social/App.tsx](src/social/App.tsx) 开始；聊天窗口在 [LiveChat.tsx](src/social/LiveChat.tsx)，账号页面在 [AccountPages.tsx](src/social/AccountPages.tsx)。设置页面在 [components/settings](src/components/settings/SettingsPage.tsx)。
+
+检查和构建也在仓库根目录执行：
+
+```bash
+pnpm --dir frontends/web typecheck
+pnpm --dir frontends/web test
+pnpm --dir frontends/web build
+```
+
+构建结果保存在本目录的 `dist`，由 [web-server](../../crates/web-server/README.md) 提供给浏览器。使用临时聊天数据检查界面的方法见[开发指南](../../docs/development.md#运行入口)。

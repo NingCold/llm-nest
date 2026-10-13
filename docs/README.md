@@ -13,7 +13,7 @@
 | 找到某项功能对应的代码 | [界面](../frontends/README.md) · [聊天功能](../features/README.md) · [共用模块](../crates/README.md) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |
 | 理解账号、聊天和意识系统的设计 | [设计与计划](social-refactor/README.md) |
-| 了解接下来准备做什么 | [正在推进](social-refactor/in-progress.md) · [后续工作](social-refactor/pending.md) |
+| 了解接下来准备做什么 | [近期路线](social-refactor/TODO.md) · [当前任务](social-refactor/in-progress.md) · [候选扩展](social-refactor/pending.md) |
 | 查阅某次修改和测试结果 | [历史记录](history.md) |
 
 参与代码修改时，也请阅读 [AGENTS.md](../AGENTS.md) 中的项目约定。

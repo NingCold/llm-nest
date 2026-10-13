@@ -12,4 +12,4 @@
 cargo test -p tools --locked
 ```
 
-后续安排见[工具功能计划](../../docs/social-refactor/pending.md#明确工具授权独立链路)。
+工具授权列在[候选扩展](../../docs/social-refactor/pending.md#候选扩展)中，后续根据具体使用需求安排。

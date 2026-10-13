@@ -1,25 +1,17 @@
 import { create } from "zustand"
-import { IS_SOCIAL_PREVIEW } from "@/lib/social-preview"
+import { IS_DESKTOP } from "@/lib/desktop"
 
 export type Theme = "dark" | "light"
-export type ApiMode = "tauri" | "http" | "demo" | null
-export type ReasoningEffort = "off" | "low" | "medium" | "high" | "max"
-export type SettingsSection = "models" | "generation" | "appearance" | "config" | "about"
+export type ApiMode = "tauri" | "http" | null
+export type SettingsSection = "models" | "appearance" | "config" | "about"
 
 function routeFromHash() {
   const [, page, section] = location.hash.replace(/^#/, "").split("/")
   return {
-    page: page === "settings" ? "settings" as const : "chat" as const,
-    settingsSection: (["models", "generation", "appearance", "config", "about"].includes(section)
+    page: page === "settings" ? "settings" as const : "messages" as const,
+    settingsSection: (["models", "appearance", "config", "about"].includes(section)
       ? section : "models") as SettingsSection,
   }
-}
-
-/** 把选中的思考强度钳制到模型实际支持的级别内（模型切换后 effort 可能失效） */
-export function clampEffort(effort: string, levels?: string[]): string {
-  if (!levels || levels.length === 0) return "off"
-  if (levels.includes(effort)) return effort
-  return levels.find((l) => l !== "off") ?? "off"
 }
 
 const THEME_KEY = "llm-nest-theme"
@@ -34,32 +26,22 @@ function initialTheme(): Theme {
   } catch {
     /* ignore */
   }
-  return IS_SOCIAL_PREVIEW ? "light" : "dark"
+  return "dark"
 }
 
 interface UiStore {
-  page: "chat" | "settings"
+  page: "messages" | "settings"
   settingsSection: SettingsSection
   showSettings: (section?: SettingsSection) => void
-  showChat: () => void
+  showMessages: () => void
   syncRoute: () => void
   theme: Theme
   desktopReady: boolean
   setDesktopReady: () => void
-  sidebarCollapsed: boolean
-  /** 当前选中的思考强度（off/low/medium/high/max） */
-  reasoningEffort: string
-  webSearchEnabled: boolean
-  searchQuery: string
-  /** 当前适配器模式：桌面壳 / 真实 HTTP 后端 / 演示（localStorage） */
   apiMode: ApiMode
 
   toggleTheme: () => void
   setTheme: (t: Theme) => void
-  toggleSidebar: () => void
-  setReasoningEffort: (e: string) => void
-  toggleWebSearch: () => void
-  setSearchQuery: (q: string) => void
   setApiMode: (m: ApiMode) => void
 }
 
@@ -69,24 +51,19 @@ export const useUiStore = create<UiStore>((set, get) => ({
     set({ page: "settings", settingsSection: section })
     location.hash = `/settings/${section}`
   },
-  showChat: () => {
-    set({ page: "chat" })
-    location.hash = "/chat"
+  showMessages: () => {
+    set({ page: "messages" })
+    location.hash = "/messages"
   },
   syncRoute: () => {
     const route = routeFromHash()
     // Going back to chat should remember the last settings category.
-    set(route.page === "settings" ? route : { page: "chat" })
+    set(route.page === "settings" ? route : { page: "messages" })
   },
   theme: initialTheme(),
   desktopReady: false,
   setDesktopReady: () => set({ desktopReady: true }),
-  sidebarCollapsed:
-    new URLSearchParams(location.search).get("sidebar") === "collapsed",
-  reasoningEffort: "high",
-  webSearchEnabled: false,
-  searchQuery: "",
-  apiMode: null,
+  apiMode: IS_DESKTOP ? "tauri" : "http",
 
   toggleTheme: () => {
     const next: Theme = get().theme === "dark" ? "light" : "dark"
@@ -107,9 +84,5 @@ export const useUiStore = create<UiStore>((set, get) => ({
     }
   },
 
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setReasoningEffort: (e) => set({ reasoningEffort: e }),
-  toggleWebSearch: () => set((s) => ({ webSearchEnabled: !s.webSearchEnabled })),
-  setSearchQuery: (q) => set({ searchQuery: q }),
   setApiMode: (m) => set({ apiMode: m }),
 }))

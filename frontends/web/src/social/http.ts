@@ -14,6 +14,8 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient: SocialClient = {
+  previewLegacy: () => request("/history-import"),
+  importLegacy: preview => request("/history-import", "POST", preview),
   referencePreview: input => request("/references/preview", "POST", input),
   summaries: (id, before) => request(`/conversations/${id}/summaries${before ? `?before=${before}` : ""}`),
   configureSummaries: (id, input) => request(`/conversations/${id}/summary-settings`, "POST", input),

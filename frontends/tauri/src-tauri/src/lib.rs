@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -7,7 +6,6 @@ use std::sync::{
 use runtime::runtime::Runtime;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
 
 pub mod commands;
 mod config_path;
@@ -18,9 +16,7 @@ mod window_frame;
 
 pub struct AppState {
     pub runtime: Runtime,
-    pub chat: Arc<chat::ChatFeature>,
     pub social: Arc<social_feature::SocialFeature>,
-    pub cancel_map: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 /// A failed startup is not cached. The GUI can show the actual error and retry.
@@ -45,13 +41,13 @@ impl BackendState {
         paths.prepare()?;
         let config_path = paths.config_file.clone();
         let runtime = Arc::new(
-            Runtime::from_config_social_persistent(&config_path, &paths.data_dir)
+            Runtime::open(&config_path, &paths.data_dir)
                 .await
                 .map_err(|e| e.to_string())?,
         );
-        let chat = Arc::new(chat::ChatFeature::new());
+
         let social = Arc::new(social_feature::SocialFeature::new());
-        runtime.register_feature(chat.clone()).await;
+
         runtime.register_feature(social.clone()).await;
         runtime
             .initialize_features()
@@ -69,9 +65,8 @@ impl BackendState {
         });
         let state = Arc::new(AppState {
             runtime: (*runtime).clone(),
-            chat,
+
             social,
-            cancel_map: Arc::new(Mutex::new(HashMap::new())),
         });
         *inner = Some(state.clone());
         Ok(state)
@@ -150,22 +145,15 @@ pub fn run() {
             window_frame::set_window_appearance,
             directories::get_app_paths,
             directories::open_app_directory,
-            commands::init_app,
-            commands::chat,
-            commands::cancel_chat,
-            commands::get_messages,
-            commands::set_message_feedback,
-            commands::new_session,
-            commands::delete_session,
-            commands::rename_session,
-            commands::list_sessions,
-            commands::set_config,
+            commands::settings_snapshot,
             commands::provider_templates,
             commands::catalog_status,
             commands::sync_catalog,
             commands::upsert_provider,
             commands::delete_provider,
             social_commands::social_init,
+            social_commands::social_preview_legacy,
+            social_commands::social_import_legacy,
             social_commands::social_summaries,
             social_commands::social_reference_preview,
             social_commands::social_configure_summaries,

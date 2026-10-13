@@ -9,10 +9,7 @@ members = [
     "crates/tools",
     "crates/storage",
     "crates/web-server",
-    "features/chat",
     "features/social",
-    "frontends/cli",
-    "frontends/tui",
     "frontends/tauri/src-tauri",
 ]
 
@@ -27,9 +24,7 @@ base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
-indicatif = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "native-tls"] }
-rustyline = "18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

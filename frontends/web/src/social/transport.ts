@@ -2,6 +2,8 @@ import type { Account, AccountView, AiInput, ContactEntry, ContactInput, Managed
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
+  previewLegacy(): Promise<import("./live-types").LegacyPreview>
+  importLegacy(preview: import("./live-types").LegacyPreview): Promise<{ imported: number; already_imported: number; conversations: string[] }>
   updateContactSettings(id: string, input: { requestId: string; settings: import("./live-types").ContactSettings }): Promise<Conversation["contactSchedule"]>
   createContactIntent(id: string, input: import("./live-types").ContactIntentInput): Promise<import("./live-types").ContactIntent>
   cancelContactIntent(id: string, intent: string, input: VersionedCommand): Promise<import("./live-types").ContactIntent>

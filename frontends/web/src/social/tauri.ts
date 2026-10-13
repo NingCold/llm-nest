@@ -13,6 +13,8 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   catch (error) { throw apiError(error) }
 }
 export const socialClient: SocialClient = {
+  previewLegacy: () => command("social_preview_legacy"),
+  importLegacy: preview => command("social_import_legacy", { preview }),
   referencePreview: input => command("social_reference_preview", { input }),
   summaries: (id, before) => command("social_summaries", { id, before: before ?? null }),
   configureSummaries: (id, input) => command("social_configure_summaries", { id, input }),

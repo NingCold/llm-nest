@@ -4,13 +4,13 @@ import { BrandMark } from "@/components/BrandMark"
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { useUiStore } from "@/store/ui"
 import { Avatar, IconButton } from "./common"
-import type { AiContact } from "../types"
+import type { AvatarStyle } from "../live-types"
 
 export function SocialSidebar({ page, navigate, onAccount, self, name, unread, children }: {
   page: string
   navigate(page: "messages" | "contacts"): void
   onAccount?(): void
-  self?: Pick<AiContact, "avatar" | "color">
+  self?: AvatarStyle
   name?: string
   unread?: boolean
   children: ReactNode

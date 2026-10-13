@@ -227,10 +227,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let config = directory.path().join("llmn.toml");
         std::fs::write(&config, "[providers]\n").unwrap();
-        let runtime =
-            Runtime::from_config_social_persistent(&config, directory.path().join("data"))
-                .await
-                .unwrap();
+        let runtime = Runtime::open(&config, directory.path().join("data"))
+            .await
+            .unwrap();
         let feature = Arc::new(SocialFeature::new());
         runtime.register_feature(feature.clone()).await;
         runtime.initialize_features().await.unwrap();
@@ -305,10 +304,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let config = directory.path().join("llmn.toml");
         std::fs::write(&config, "[providers]\n").unwrap();
-        let runtime =
-            Runtime::from_config_social_persistent(&config, directory.path().join("data"))
-                .await
-                .unwrap();
+        let runtime = Runtime::open(&config, directory.path().join("data"))
+            .await
+            .unwrap();
         let feature = Arc::new(SocialFeature::new());
         runtime.register_feature(feature.clone()).await;
         runtime.initialize_features().await.unwrap();

@@ -1,8 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react"
-import { ArrowLeft, Check, FolderCog, Info, Moon, Palette, SlidersHorizontal, Sun, Cpu } from "lucide-react"
+import { ArrowLeft, Check, FolderCog, Info, Moon, Palette, Sun, Cpu } from "lucide-react"
 import { BrandMark } from "@/components/BrandMark"
 import { ProviderManager } from "@/components/settings/ProviderManager"
-import { GenerationSettings } from "@/components/settings/GenerationSettings"
 import { StorageSettings } from "@/components/settings/StorageSettings"
 import { useConfigStore } from "@/store/config"
 import { useUiStore, type SettingsSection } from "@/store/ui"
@@ -12,26 +11,23 @@ import { cn } from "@/lib/utils"
 
 const sections = [
   { id: "models", label: "模型服务", icon: Cpu, description: "连接模型供应商，管理可用模型与访问密钥。" },
-  { id: "generation", label: "生成参数", icon: SlidersHorizontal, description: "调整回答的随机性和最大输出长度。" },
   { id: "appearance", label: "外观", icon: Palette, description: "选择适合当前环境的界面主题。" },
   { id: "config", label: "配置", icon: FolderCog, description: "查看配置文件与会话数据的保存位置，并打开所在目录。" },
   { id: "about", label: "关于", icon: Info, description: "查看应用版本与当前运行状态。" },
 ] as const
 
-export function SettingsPage({ notices, onBack, availableSections }: { notices?: ReactNode; onBack?: () => void; availableSections?: SettingsSection[] }) {
+export function SettingsPage({ onBack }: { onBack: () => void }) {
   const page = useUiStore(s => s.page)
   const section = useUiStore(s => s.settingsSection)
   const showSettings = useUiStore(s => s.showSettings)
-  const showChat = useUiStore(s => s.showChat)
   const theme = useUiStore(s => s.theme)
   const setTheme = useUiStore(s => s.setTheme)
   const apiMode = useUiStore(s => s.apiMode)
   const version = useConfigStore(s => s.version)
-  const model = useConfigStore(s => s.config?.currentModel)
+  const providers = useConfigStore(s => s.providers)
   const heading = useRef<HTMLHeadingElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
-  const visibleSections = availableSections ? sections.filter(item => availableSections.includes(item.id)) : sections
-  const current = visibleSections.find(item => item.id === section) ?? visibleSections[0]
+  const current = sections.find(item => item.id === section)!
 
   useEffect(() => {
     if (page !== "settings") return
@@ -51,13 +47,13 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
           <BrandMark className="pointer-events-none" /><span className="pointer-events-none text-[15px] font-semibold">LLM Nest</span>
         </div>
         <div className="settings-back px-3 py-4">
-          <button type="button" onClick={onBack ?? showChat} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <button type="button" onClick={onBack} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowLeft className="h-4 w-4" />返回聊天
           </button>
         </div>
         <p className="settings-label px-6 pb-2 text-xs font-medium text-sidebar-muted">设置</p>
         <nav aria-label="设置分类" className="settings-nav space-y-1 px-3">
-          {visibleSections.map(({ id, label, icon: Icon }) => (
+          {sections.map(({ id, label, icon: Icon }) => (
             <button key={id} type="button" aria-current={current.id === id ? "page" : undefined} onClick={() => showSettings(id)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", current.id === id ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
               <Icon className="h-4 w-4 shrink-0" />{label}
             </button>
@@ -69,14 +65,12 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
         <header data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined} className={cn("flex h-14 shrink-0 select-none items-center gap-2 border-b border-border px-6 text-sm", CUSTOM_WINDOW_CHROME && "pr-[140px]")}>
           <span className="pointer-events-none text-muted-foreground">设置</span><span className="pointer-events-none text-muted-foreground/50">/</span><span className="pointer-events-none font-medium">{current.label}</span>
         </header>
-        {notices}
         <div ref={scroll} className="min-h-0 flex-1 overflow-y-auto">
           <div className="settings-content mx-auto max-w-4xl px-6 py-8 lg:px-10">
             <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">{current.label}</h1>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{current.description}</p>
             <div className="settings-panel mt-7 rounded-xl border border-border bg-card p-5 sm:p-6">
               {panel("models", <ProviderManager />)}
-              {panel("generation", <GenerationSettings />)}
               {panel("appearance", <div className="space-y-4">
                 <h2 className="text-sm font-medium">界面主题</h2>
                 <div className="grid grid-cols-2 gap-4">
@@ -96,8 +90,8 @@ export function SettingsPage({ notices, onBack, availableSections }: { notices?:
               {panel("about", <div className="space-y-6">
                 <div className="flex items-center gap-4"><BrandMark className="h-16 w-16" /><div><h2 className="text-xl font-semibold">LLM Nest</h2><p className="mt-1 text-sm text-muted-foreground">版本 {version || APP_VERSION}</p></div></div>
                 <dl className="space-y-3 text-sm">
-                  <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">运行模式</dt><dd>{apiMode === "tauri" ? "桌面应用" : apiMode === "http" ? "Web 应用" : "本地演示"}</dd></div>
-                  <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">当前模型</dt><dd className="break-all">{model?.model ? `${model.provider} / ${model.model}` : "尚未配置"}</dd></div>
+                  <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">运行模式</dt><dd>{apiMode === "tauri" ? "桌面应用" : "Web 应用"}</dd></div>
+                  <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-3"><dt className="text-muted-foreground">模型服务</dt><dd className="break-all">{providers.length ? `${providers.length} 个供应商` : "尚未配置"}</dd></div>
                 </dl>
               </div>)}
             </div>

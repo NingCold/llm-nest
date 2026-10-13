@@ -438,7 +438,7 @@ pub fn atomic_write(path: &Path, text: &str) -> Result<()> {
         .file_name()
         .ok_or_else(|| RuntimeError::ConfigError("invalid config path".into()))?
         .to_string_lossy();
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", common::SessionId::new()));
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::OpenOptions::new()
             .write(true)

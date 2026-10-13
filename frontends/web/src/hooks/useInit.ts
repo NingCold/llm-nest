@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useState } from "react"
 import { useConfigStore } from "@/store/config"
-import { useSessionStore } from "@/store/session"
 
 let startup: Promise<void> | null = null
 function initialize() {
-  if (!startup) startup = (async () => {
-    const init = await useConfigStore.getState().init()
-    const sessions = useSessionStore.getState()
-    sessions.setSessions(init.sessions)
-    if (init.sessions.length) sessions.setCurrentSession(init.sessions[0].id)
-  })().finally(() => { startup = null })
+  if (!startup) startup = useConfigStore.getState().init().finally(() => { startup = null })
   return startup
 }
 export function useInit() {

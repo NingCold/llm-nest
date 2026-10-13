@@ -23,7 +23,7 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     // 开发时把 /api 转发到真实后端（web-server，默认 127.0.0.1:8787），
-    // 浏览器同源直连真实 ChatFeature
+    // 浏览器同源直连真实 SocialFeature
     proxy: {
       "/api": {
         target: process.env.LLMN_API ?? "http://127.0.0.1:8787",

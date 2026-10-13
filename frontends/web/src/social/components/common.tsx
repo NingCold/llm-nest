@@ -1,9 +1,9 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react"
 import { MessageSquare, Users } from "lucide-react"
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
-import type { AiContact } from "../types"
+import type { AvatarStyle } from "../live-types"
 
-export function Avatar({ contact, group = false, self = false, size = "normal" }: { contact?: Pick<AiContact,"avatar"|"color">; group?: boolean; self?: boolean; size?: "small" | "normal" | "large" }) {
+export function Avatar({ contact, group = false, self = false, size = "normal" }: { contact?: AvatarStyle; group?: boolean; self?: boolean; size?: "small" | "normal" | "large" }) {
   return <span aria-hidden="true" className={`social-avatar avatar-${group ? "group" : self ? "self" : contact?.color ?? "sage"} avatar-${size}`}>
     {group ? <Users /> : self ? "我" : contact?.avatar ?? <MessageSquare />}
   </span>

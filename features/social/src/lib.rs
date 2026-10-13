@@ -6,6 +6,7 @@ mod controls;
 mod execution;
 mod feature;
 mod generation;
+mod legacy;
 mod memory;
 mod reference;
 mod subscription;

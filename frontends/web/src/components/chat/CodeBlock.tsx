@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import hljs from "highlight.js"
 import { Check, Copy } from "lucide-react"
-import { copyText } from "@/lib/format"
+import { copyText } from "@/lib/clipboard"
 
 /** 常见别名 → highlight.js 语言名 */
 const ALIASES: Record<string, string> = {

@@ -5,22 +5,20 @@ edition.workspace = true
 
 [dependencies]
 tokio.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-async-trait.workspace = true
-futures-util.workspace = true
 toml.workspace = true
 toml_edit = "0.22"
 notify = "7"
-common.workspace = true
+uuid.workspace = true
 ai-client.workspace = true
 storage.workspace = true
 social.workspace = true
 tools = { path = "../tools" }
 
 [dev-dependencies]
+tempfile = "3"
 temp-env = "0.3"
 serial_test = "3"

@@ -1,5 +1,3 @@
-pub mod gui;
-pub use gui::GuiConfig;
 pub mod env;
 pub mod loader;
 pub mod persist;

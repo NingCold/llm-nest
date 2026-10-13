@@ -48,7 +48,7 @@ linuxdeploy 仅设置 `GIO_EXTRA_MODULES`，GLib 仍扫描其默认宿主模块�
 
 ## 自动检查结果
 
-复用新增的 [gui_acceptance.py](../scripts/linux/gui_acceptance.py)，通过真实桌面包和本地 SSE provider 操作界面，读取隔离磁盘记录进行断言，不用 Web 页面或 mock IPC 代替 Tauri。
+复用新增的 [gui_acceptance.py](https://github.com/NingCold/llm-nest/blob/b4105fb33222d7716533870b6b130c78b450e7eb/scripts/linux/gui_acceptance.py)，通过真实桌面包和本地 SSE provider 操作界面，读取隔离磁盘记录进行断言，不用 Web 页面或 mock IPC 代替 Tauri。
 
 | 运行对象 | 完整自动流程 | 证据目录（均在 `target/linux-acceptance-2026-09-16/`） |
 | --- | --- | --- |

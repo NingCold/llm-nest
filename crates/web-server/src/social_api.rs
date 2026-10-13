@@ -20,6 +20,10 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
         .route(
+            "/api/social/history-import",
+            get(preview_legacy).post(import_legacy),
+        )
+        .route(
             "/api/social/conversations/{id}/contact-settings",
             post(update_contact_settings),
         )
@@ -106,6 +110,19 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/social/runs/{id}/cancel", post(cancel))
         .route("/api/social/events", get(events))
         .route("/api/social/subscribe", get(subscribe))
+}
+
+async fn preview_legacy(
+    State(state): State<Arc<AppState>>,
+) -> Result<storage::social::LegacyPreview> {
+    Ok(Json(state.social.preview_legacy().await?))
+}
+
+async fn import_legacy(
+    State(state): State<Arc<AppState>>,
+    ApiJson(preview): ApiJson<storage::social::LegacyPreview>,
+) -> Result<storage::social::LegacyImportResult> {
+    Ok(Json(state.social.import_legacy(preview).await?))
 }
 
 struct ApiError {

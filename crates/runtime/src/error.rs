@@ -1,5 +1,3 @@
-use ai_client::config::ProviderId;
-use common::SessionId;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -13,12 +11,6 @@ pub enum RuntimeError {
     #[error(transparent)]
     TOMLParseError(#[from] toml::de::Error),
 
-    #[error("Session not found: {0}")]
-    SessionNotFound(SessionId),
-
-    #[error("Provider not found: {0}")]
-    ProviderNotFound(ProviderId),
-
     #[error("Config error: {0}")]
     ConfigError(String),
 
@@ -27,12 +19,6 @@ pub enum RuntimeError {
 
     #[error("Social storage error: {0}")]
     SocialStorage(#[from] storage::social::SocialStorageError),
-
-    #[error("Feature not found: {0}")]
-    FeatureNotFound(String),
-
-    #[error("Request cancelled")]
-    Cancelled,
 
     #[error("File watcher error: {0}")]
     WatcherError(#[from] notify::Error),

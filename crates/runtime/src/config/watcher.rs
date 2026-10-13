@@ -2,8 +2,7 @@
 //!
 //! Watches the parent directory (robust against editor rename-replace saves),
 //! debounces bursts, and re-applies the document through
-//! [`Runtime::reload_config`]. Reload semantics mirror DeepSeek Harness's
-//! settings hot-publish:
+//! [`Runtime::reload_config`]:
 //!
 //! - the whole next configuration is parsed and validated **before** anything
 //!   swaps, so a refused document leaves the running configuration serving;
@@ -216,7 +215,11 @@ model = "deepseek-chat"
         )
         .unwrap();
 
-        let runtime = Arc::new(Runtime::from_config(&file).expect("runtime builds"));
+        let runtime = Arc::new(
+            Runtime::open(&file, dir.join("data"))
+                .await
+                .expect("runtime builds"),
+        );
         assert_eq!(
             runtime.default_model().await.unwrap().model,
             "deepseek-chat"

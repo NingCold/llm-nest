@@ -4,15 +4,15 @@
 
 ## 项目定位与当前范围
 
-LLM-Nest 正从本地 Harness 转向人与 AI 的社交空间，共用 Rust 运行时。应用显示名称为 `LLM Nest`，桌面二进制名仍为 `LLM-Nest`，CLI 为 `llmn`，TUI 为 `llmnt`；内部 Tauri Cargo 包名为 `tauri-frontend`。
+LLM Nest 是本地人与 AI 的社交空间，共用 Rust 运行时与一套 React 界面。Web 和 Tauri 是仅有的产品入口；旧 Harness、CLI/TUI、旧 HTTP/IPC、demo 与早期独立社交预览已经退役。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
 
-已实现聊天、协议路由、会话持久化、运行中断/恢复、内置工具循环，以及桌面/Web 设置。MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留 trait 或界面按钮声称功能已经可用。
+已实现独立账号、私聊/群聊、意识系统、参与节奏与一次性约定联系、协议路由、SQLite 持久化及桌面/Web 设置。工具 worker 是保留的底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或界面按钮声称功能已经可用。
 
 首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
 
 ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。通讯录 ContactEntry 是按 owner 的有向列出状态，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，v9 增加跨窗口引用依赖索引，v10 增加接话规则/状态/每日额度，v11 增加约定联系设置与意图、计划的独立触发来源，不改写旧迁移。
 
-当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；浏览器模拟预览必须显式启用。本文维护修改约束，不重复维护各批测试数量。
+当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；测试使用独立临时数据和模拟 provider 驱动同一真实界面。本文维护修改约束，不重复维护各批测试数量。
 
 ## 工作前先确认
 
@@ -39,40 +39,38 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | `crates/common` | Message、ContentPart、ID、Usage、计时、中断与运行检查点等公共类型 |
 | `crates/social` | 中立身份/空间/消息/运行类型、意识系统范围与来源快照、可控时钟 |
 | `crates/ai-client` | AiProvider/AiClient、ModelRouter、内置目录、配置类型、协议工厂、协议适配、SSE 分帧 |
-| `crates/events` | ChatEvent、持久 SocialEvent 引用与临时 SocialGenerationEvent |
-| `crates/storage` | SessionStore/JSON、SocialStore/SQLite、目录共享锁、事务/备份与旧记录导入 |
+| `crates/events` | 持久 SocialEvent 引用与临时 SocialGenerationEvent |
+| `crates/storage` | SocialStore/SQLite、目录锁、事务/备份与独立旧格式导入边界 |
 | `crates/tools` | Tool、ToolRegistry、固定白名单子进程和内置 echo/add |
-| `crates/runtime` | 配置/热更新、SessionManager、Feature 生命周期、事件总线、工具注册 |
-| `features/chat` | 聊天与工具循环、取消、检查点、结束收尾、消息计时 |
+| `crates/runtime` | 配置/目录缓存/热更新、Feature 生命周期与必需的 SocialResources 注入 |
 | `features/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、意识上下文/显式记忆/窗口摘要任务/群话题接续、独立模型运行、共享业务 DTO |
 | `crates/web-server` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
-| `frontends/cli` / `frontends/tui` | 命令解析与终端展示 |
 | `frontends/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
-| `frontends/web/src/social` | 真实社交 Web/HTTP 状态与视图；独立 SocialApi 模拟预览 |
+| `frontends/web/src/social` | 唯一真实社交状态与视图，HTTP/IPC 适配 |
 | `frontends/tauri/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
 | `scripts` / `docs` | 可执行验收/构建流程与证据 |
 
-`sdk/app-sdk`、PluginManager 等预留部分不代表已经支持动态第三方插件。不存在旧文档提到的 `crates/provider` / `crates/llm` 分层。
+旧 SessionManager、ChatFeature、JSON 写入存储、RuntimeEvent、PluginManager 和 app-sdk 空壳已移除。历史 JSON DTO 仅位于 `storage::legacy`，导入实现位于 `storage::social::legacy`；协议适配与当前社交模型不依赖旧运行生命周期。
 
 ## 架构边界
 
 社交重构遵守总纲中的 [新架构优先与兼容边界](docs/social-refactor/README.md#新架构优先与兼容边界)：旧代码、配置格式与已完成的 M0 接口都不能成为新领域设计的限制。可以重写 Runtime 资源注入、聊天用例、存储接口和 HTTP/IPC；保护历史与迁移路径，兼容只在边界提供，不要求永久保留旧实现或全部旧接口。不得把 Session 直接当作 Conversation、用全局模型配置承载 AI 身份，或用旧的一问一答生命周期约束群聊与独立 AI 运行。
 
-现有入口切换前维持其当前行为；切换时同步更新调用链、文档与业务断言。数据完整性、凭据边界、协议校验、事务收尾和平台基线仍须验证。以下调用图描述现有 Harness，不限定 SocialFeature 的目标结构。
+旧产品入口已完全退役，不再为旧会话接口保留双轨运行。兼容只用于历史数据的读取/导入和 SQLite 顺序迁移；不改写旧迁移、不删除用户数据。
 
 ```text
-CLI / TUI / Tauri IPC / Web HTTP
-               ↓
-        ChatFeature → Stream<ChatEvent>
-               ↓
-Runtime / SessionManager / AiClient / ToolRegistry
-               ↓
-   协议适配器 / SessionStore / 工具子进程
+React GUI → Web HTTP/SSE / Tauri IPC/Channel
+                    ↓
+               SocialFeature
+      身份 / 聊天 / 意识 / 参与与执行
+                    ↓
+       Runtime / AiClient / SocialStore
+                    ↓
+           协议适配器 / SQLite
 ```
 
 - 前端调用 Feature 的具体业务方法，消费事件，不构造供应商协议 JSON。
-- `Feature` 负责 id、initialize、shutdown 和 Arc downcast；`FeatureContext` 注入 sessions、llm、events、tools 及可选 SocialResources（store/clock）。Runtime 不依赖具体 SocialFeature；新业务 API 不必塞进统一 Feature trait。
-- `RuntimeEvent` 只包含会话与运行时层面的通知；聊天增量、思考、工具结果和终止事件走 `ChatEvent`。不要使用不存在的 `RuntimeEvent::Feature`。
+- `Feature` 负责 id、initialize、shutdown 和 Arc downcast；`FeatureContext` 只注入 llm 与必需的 SocialResources（store/clock）。Runtime 不依赖具体 SocialFeature；新业务 API 不必塞进统一 Feature trait。
 - `AiClient` 按 `(provider, effective protocol)` 选择适配器；同一 provider 的模型可以覆盖默认协议。
 - 模型解析/调用使用一致的配置快照。配置更新不能让在飞请求的目录和 provider 路由来自不同版本。
 - 协议差异集中在 `ai-client/src/protocols`，共享 SSE 分帧。业务层和 GUI 不应随供应商名称堆条件分支。
@@ -82,26 +80,24 @@ Runtime / SessionManager / AiClient / ToolRegistry
 ### 模型、配置与凭据
 
 - 模型名、provider、reasoning effort 严格校验，错误返回可用候选。不要把不存在的模型静默换成另一个。
-- 内置目录允许省略协议、地址和模型列表；自定义 provider 需要声明这些内容。空文件、仅注释或空 providers 都是有效首次启动配置；错误 TOML 或字段类型仍报错。旧 Harness 禁止无模型发送；社交允许先保存真人消息，未配置/失效模型返回执行提示，不生成模拟回答、不替换模型。
+- 内置目录允许省略协议、地址和模型列表；自定义 provider 需要声明这些内容。空文件、仅注释或空 providers 都是有效首次启动配置；错误 TOML 或字段类型仍报错。社交允许先保存真人消息，未配置/失效模型返回执行提示，不生成模拟回答、不替换模型。
 - 热更新先整体校验，成功才替换；失败保留旧配置。在飞请求继续使用原快照。
-- `/refresh` 通过 `toml_edit` 定点补充模型，保留注释和其他配置；不可悄悄重写整份 TOML。
+- 模型目录增补通过 `toml_edit` 定点补充模型，保留注释和其他配置；不可悄悄重写整份 TOML。
 - GUI“同步模型目录”由 `ai-client/catalog_sync` 适配 Pi 公共数据，Runtime 校验后原子保存到实际数据目录的 `cache/catalog.json`（不能放会话根目录）。优先级为用户显式字段 > 同步缓存 > 内置目录；不重写配置/源码、不导入远端凭据或端点、不改变默认模型。失败保留旧数据；所有配置重建路径必须合并缓存，在飞请求仍使用原快照。
 - `.env` 层级为进程环境 > 配置目录 > 默认数据目录，只填缺失变量。密钥解析只发生在需要凭据的边界。
-- GUI 生成设置通过 Runtime 校验并原子持久化。会话模型恢复不得覆盖用户保存的全局默认值。
-- 社交 AI 的 temperature/max_tokens 保存于管理员维护的 ExecutionBinding，不继承全局 Harness 参数。留空分别使用模型服务默认温度与意识系统自动输出预算；显式输出上限按原值预留，按协议/思考模式、模型容量和必要输入校验，不静默丢弃或裁减。运行使用同一配置快照。旧绑定缺失字段按 None 读取，存储候选序列化省略 None，保留旧命令摘要兼容。
+- 社交 AI 的 temperature/max_tokens 保存于管理员维护的 ExecutionBinding，不读取旧 TOML `[gui]` 参数；旧字段保留但不再提供读写接口。留空分别使用模型服务默认温度与意识系统自动输出预算；显式输出上限按原值预留，按协议/思考模式、模型容量和必要输入校验，不静默丢弃或裁减。运行使用同一配置快照。旧绑定缺失字段按 None 读取，存储候选序列化省略 None，保留旧命令摘要兼容。
 - OpenAI 兼容返回同时允许 `reasoning_content` 和 `reasoning`：优先非空前者，否则后者，不重复拼接。
 
 ### 会话与恢复
 
 - 采用写穿透：先成功落盘，再替换内存；失败上抛，不能让 UI 展示“已保存”。
-- FileSessionStore 持有 `.llmn.lock` 的 OS 排他锁。同目录只允许一个独立 Runtime；不要删除运行中的锁文件或退回 PID 文件锁。
-- JSON/SQLite 并用时先取得一次 `Arc<DataDirectoryGuard>`，两种 store 共享该 guard，不能重复加锁。SocialStore 在单写线程操作 SQLite，原子提交实体、事件引用和命令回执；不跨模型请求持有事务。GUI 宿主显式调用 `Runtime::from_config_social_persistent` 打开社交库；CLI/TUI 仍用原构造路径，不自动导入 JSON。Runtime 关闭等待 Feature 中断收尾和 SocialStore writer 排空。AI 绑定由获授权管理员经 SocialFeature 和共享 AiClient 严格校验；启动前复核档案/绑定版本，普通配置修改不使已开始运行失效，最终提交仍复核消息来源与参与状态。
-- JSON 写入使用同目录临时文件和原子替换。坏文件错误须带路径，不可静默丢弃。
-- 新消息创建真实 UUID；旧记录加载时补齐并持久化，重复 ID 报错。编辑按 userId、反馈按 messageId + revision 定位，不能恢复旧索引 API。
-- 旧 ChatFeature 的 run 开始和用户消息同事务。社交用例先提交真人消息，生成另行开始；成功回答、运行终态、用量/思考详情与持久事件同事务。流式每 500ms 保存有变化的 draft；旧工具调用/结果仍写穿透。
-- 旧 ChatFeature 的取消、EOF、provider 错误、消费端断开先完成中断持久化，再发送终止事件并补齐未回答工具的失败 ToolResult。社交订阅断开不取消生成；EOF/取消/失败保留片段和终态，下一次请求只读 committed 原文。当前社交执行不开放工具。
+- DataDirectoryGuard 持有 `.llmn.lock` 的 OS 排他锁。同目录只允许一个独立 Runtime；不要删除运行中的锁文件或退回 PID 文件锁。
+- `Runtime::open(config_path, data_dir)` 取得一次目录锁并直接打开 SQLite，不启动旧会话加载器。SocialStore 在单写线程原子提交实体、事件引用和命令回执，不跨模型请求持有事务。Runtime 关闭等待 Feature 中断收尾和 writer 排空。AI 绑定由获授权管理员经 SocialFeature 和共享 AiClient 严格校验；启动前复核档案/绑定版本，普通配置修改不使已开始运行失效，最终提交仍复核消息来源与参与状态。
+- 新消息创建真实 UUID。历史 JSON 仅由设置中的显式导入读取：校验完整目录的重复 ID，所选来源与预览一致，事务中补齐缺失 ID 并保存映射，原 JSON 不改写。导入为只读历史窗口，不自动执行或合并为账号私聊；checksum 重复导入幂等，源变化返回明确错误。Web/IPC 共用当前操作者，不接受任意路径或 operatorId。
+- 社交用例先提交真人消息，生成另行开始；成功回答、运行终态、用量/思考详情与持久事件同事务。流式每 500ms 保存有变化的 draft。
+- 社交订阅断开不取消生成；EOF/取消/失败保留片段和终态，下一次请求只读 committed 原文。当前社交执行不开放工具。
 - 启动遇到 Running 检查点时，幂等恢复片段并标为 Interrupted。不自动重放工具，不声称能恢复 provider 的 token 游标或回滚副作用。
-- 旧会话只保存最近一次 RunCheckpoint；社交库保留独立 AiRun 和运行详情，尚不是完整协议/工具审计日志。
+- 社交库保留独立 AiRun 和运行详情，尚不是完整协议/工具审计日志。旧检查点仅在历史导入时转成中断记录，不自动重放。
 - 显式记忆归属稳定 AI 账号及当前关系/群范围。仅读取 confirmed；来源消息修改/撤回同事务标 stale，编辑/遗忘提升窗口上下文版本并中断在飞回复，提交时复核记忆版本。新增记忆仅影响新运行。遗忘清空记忆及修订正文，保留来源 tombstone，不删除原聊天或备份。范围由服务端推导，管理员身份不扩大窗口访问；HTTP/IPC 共用用例。
 - 窗口摘要由成员显式启用专用模型和输出预算，任务归属窗口，不是 AI 发言或 ParticipationPlan。仅概括 committed 原文；queued/running/ready/failed/interrupted/stale 与来源版本持久化。源编辑/撤回同事务清空依赖摘要及修订正文并标 stale，迟到结果不能覆盖；配置/窗口参与变化停止未完成任务。后台全局并发 1、每次唤醒最多 4 段、120 秒超时，关闭/崩溃后不重放。ContextSnapshot 只记录实际读取的 ready 分段，最终提交复核。HTTP/IPC 共用用例和 summaries_changed 引用事件；摘要不依赖显式记忆，不将遗忘条目等同撤回原文。
 - 群话题接续沿用唯一私聊。ContextReference 随真人消息原子保存，仅包含 ID/版本；引用 1–8 条共同群原文，可明确附带覆盖所选原文的一个 ready 摘要。预览/发送/运行开始/提交均复核双方当前成员和来源版本，管理员不扩大访问。普通追问只读取最近 12 条私聊记录的最新引用；显式附带或回复的引用必须完整容纳。源编辑/撤回或相关成员退出同事务标 stale、失效关联消息派生材料并中断运行，重新入群不恢复旧引用；来源预览不持久缓存正文、不接受迟到旧读取。HTTP/IPC 共用用例。
@@ -122,15 +118,14 @@ Runtime / SessionManager / AiClient / ToolRegistry
 
 ### GUI 与平台
 
-- React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`；不要用桌面打包改写已跟踪的 Web dist。
-- 社交预览仅通过 Web 的 `dev:social`/`build:social` 或 `?social-preview=1` 显式启用，Tauri 保持真实 IPC。模拟数据/草稿使用独立 key，不读写真实会话，不将后端连接失败回退为模拟回答；预览不验证社交 HTTP/IPC 或真实意识系统，SQLite 基础通过独立 M0 测试验证。`build:social` 输出到忽略的 `.social-preview-dist`。
-- Web 与 Tauri 默认共用真实社交界面；`?legacy=1`/`?demo=1` 保留迁移期旧入口。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存草稿与重试 ID；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
+- React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`，Web 输出 `frontends/web/dist`；两者均忽略，不提交派生 bundle。
+- Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存草稿与重试 ID；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
 - IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先拒绝新命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
-- 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。旧 Harness 历史未加载或无模型时禁止发送；社交保存与 AI 执行可用性分开。
+- 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。社交保存与 AI 执行可用性分开。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
-- 设置路由为 `#/settings/models|generation|appearance|config|about`，旧聊天为 `#/chat`。真实社交 Web 和模拟预览采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单；隐藏聊天 Header 时卸载其菜单 portal。
+- 设置路由为 `#/settings/models|appearance|config|about`。Web/Tauri 采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
 - 无标题栏界面在侧栏空白与页面头部使用 Tauri 原生拖动区域；`deep` 区域排除交互元素，搜索容器显式禁用。空页面只拖动自身空白，聊天/账号正文保留选字；不要用覆盖内容的拖动层扩大命中范围。双击最大化不能替代连续拖动验收。
 - Windows 保留 `shadow=false`、透明 WebView 合成表面；启动阶段为空白透明 HTML，露出原生 Acrylic，初始化成功或失败后显示不透明界面。其他平台不声称具有 Windows 原生玻璃效果。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
@@ -160,8 +155,8 @@ python scripts/social_acceptance.py
 
 - 全量跨平台检查：`cargo test --workspace --locked`。Linux 需要先安装 GTK/WebKitGTK/OpenSSL 开发依赖，见开发指南。
 - Windows 发布使用 MSVC，不能把 GNU 本地构建当作发布包。桌面必须通过 Tauri CLI 构建，确保嵌入前端；裸 cargo release 可能仍访问开发地址。
-- `scripts/acceptance.py` 使用模拟 provider 和独立临时目录，验证真实 HTTP、工具子进程、持久化及错误收尾。
-- `scripts/live_acceptance.py` 是真实 API 付费测试，不放入默认 CI；不得从个人配置生成 CI 密钥或发布资源。
+- `scripts/acceptance.py` 使用独立临时配置与旧格式夹具，验证空配置、旧接口退役、本地访问边界、显式部分导入/重启与底层 worker；`social_acceptance.py` 使用模拟 provider 验证完整社交链路。
+- 旧 Harness 的真实 API 脚本已退役；新付费验收须另获明确授权，不放入默认 CI，不得从个人配置生成 CI 密钥或发布资源。
 - Windows 图标检查用 `scripts/verify-windows-icons.ps1`。安装退出码 0 不足以证明覆盖正确，核对安装 EXE 和包内容。
 - Linux 构建脚本、容器和发布流程见 `scripts/linux`、`.github/workflows` 与 [发布指南](docs/releases.md)。
 

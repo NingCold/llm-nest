@@ -138,7 +138,7 @@ python3 scripts/linux/social_gui_acceptance.py --binary /usr/bin/LLM-Nest \
 python3 scripts/linux/social_gui_acceptance.py --binary /usr/bin/LLM-Nest --manual --backend wayland
 ```
 
-该脚本覆盖私聊 / 三 AI 群聊、公开与内部设定隔离、实际 IPC 错误、写入失败保留草稿、最小窗口和崩溃恢复；输出截图与报告。`scripts/linux/gui_acceptance.py` 显式进入 `?legacy=1` 验证旧 Harness。Xvfb / WebDriver 不代替 GNOME 输入法、分数缩放或启动器人工检查。
+该脚本覆盖私聊 / 三 AI 群聊、公开与内部设定隔离、实际 IPC 错误、写入失败保留草稿、最小窗口和崩溃恢复；输出截图与报告。旧 Harness GUI 脚本已退役，共用 WebDriver 位于 `scripts/linux/webdriver.py`。Xvfb / WebDriver 不代替 GNOME 输入法、分数缩放或启动器人工检查。
 
 干净系统依赖检查使用一个仅包含包和脚本的构建目录：
 

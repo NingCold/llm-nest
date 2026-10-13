@@ -5,12 +5,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use ai_client::AiClient;
-use tokio::sync::RwLock;
 
 use crate::error::Result;
-use crate::event::RuntimeEvent;
-use crate::event_bus::EventBus;
-use crate::session_manager::SessionManager;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -21,12 +17,8 @@ pub struct SocialResources {
 
 #[derive(Clone)]
 pub struct FeatureContext {
-    pub sessions: Arc<RwLock<SessionManager>>,
     pub llm: Arc<AiClient>,
-    pub events: EventBus<RuntimeEvent>,
-    /// Tools the chat feature may call during its agent loop.
-    pub tools: Arc<tools::ToolRegistry>,
-    pub social: Option<Arc<SocialResources>>,
+    pub social: Arc<SocialResources>,
 }
 
 pub trait Feature: Send + Sync {

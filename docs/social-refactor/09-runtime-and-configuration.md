@@ -8,9 +8,9 @@
 
 Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命周期和关闭。SocialFeature 实现身份、聊天、意识系统（Consciousness）、参与与调度用例；Runtime 不堆积前端专用的业务条件。ConsciousnessService 由 SocialFeature 创建和持有，使用注入的同一 SocialStore、AiClient、Clock 与预算资源，不成为独立 Runtime 或 Feature。
 
-扩展 FeatureContext 注入 SocialStore、业务变更广播、临时生成广播、Clock 与运行资源限额；保留 AiClient、ToolRegistry 和迁移期 SessionManager。具体类型以实施时最小可用接口为准，不为预留功能增加空框架。
+FeatureContext 必需注入 AiClient 与 SocialResources（SocialStore/Clock）。参与队列、并发限制和临时生成广播由 SocialFeature 自己维护，持久事件来自 SocialStore。SessionManager、旧 RuntimeEvent 与工具注册不再属于 Runtime 业务上下文；底层工具库保留，但社交尚未启用。
 
-共享 Runtime 遵守 [新架构优先与兼容边界](README.md#新架构优先与兼容边界)。可以重写 FeatureContext、Runtime 构造与运行管理，不要求沿用以 SessionManager 为中心的聊天生命周期。SessionManager 只服务尚未切换的旧入口，不成为社交空间、身份、上下文或运行状态的权威来源。
+共享 Runtime 遵守 [新架构优先与兼容边界](README.md#新架构优先与兼容边界)。生产宿主统一 `Runtime::open(config_path, data_dir)`，直接持有 SQLite 与模型快照；确定性测试通过 `Runtime::with_resources` 注入独立资源，不建立旧会话运行时。
 
 Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai、send_message、forget_memory 等作为具体方法暴露。Runtime 注册 Feature 时只依赖 trait，不能反向依赖 `social-feature` Cargo 包。
 
@@ -19,12 +19,12 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 1. 所有宿主先处理 `--llmn-tool-worker`，在配置、Key、日志、UI 和存储初始化前退出 worker 路径。
 2. 准备实际数据目录，按原规则处理旧默认目录复制，解析并冻结 config/data 路径。
 3. 按进程环境 > 配置目录 > 默认数据目录加载缺失环境变量；读取配置与目录缓存，整体校验。
-4. 取得统一 DataDirectoryGuard，打开 SocialStore；检查 schema 与旧 JSON 导入状态。
+4. 取得统一 DataDirectoryGuard，打开 SocialStore；检查 schema，不加载或改写旧 JSON。
 5. 恢复 running 检查点为 interrupted，保留已扣减的自动额度，不重放已开始请求；对应 executing 联系恢复为 uncertain，已过期则 expired，均不重发。
 6. 构造 Runtime 资源，初始化 SocialFeature；重新检查 queued 计划、open Bout 与 pending/claimed 约定。每窗口维护一个可唤醒的调度任务，Clock.wait_until 与退出取消并列等待；全局社交并发 4，摘要独立并发 1。一次性约定到期仍复用参与/执行队列，系统时钟等待最多每 30 秒复核 UTC，ManualClock 直接通知；应用退出不留下系统定时任务或后台模型调用。
 7. 暴露 init 快照与业务入口。存储和历史恢复未成功时不能发送或启动自动任务。
 
-空文件、仅注释或空 providers 都是有效首次启动状态：可以配置联系人和设置，无法执行 AI。省略 providers 反序列化为空集合，非法语法或类型仍报错，不在解析失败时伪造配置。当前社交私聊已经把真人消息保存与模型可用性分开；旧 Harness 入口保持原发送约束。
+空文件、仅注释或空 providers 都是有效首次启动状态：可以配置联系人和设置，无法执行 AI。省略 providers 反序列化为空集合，非法语法或类型仍报错，不在解析失败时伪造配置。当前社交私聊已经把真人消息保存与模型可用性分开。
 
 桌面 Runtime 嵌入应用进程，由首次 IPC 初始化请求启动，无需单独启动 Web Server。窗口先展示空白启动层，初始化成功或报错后显示界面；启动失败与订阅重连分别提示，保留具体错误、重试与设置入口。实现与本机验证见 [桌面启动记录](m1-desktop-surface.md)。
 
@@ -38,12 +38,11 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 | 接话节奏与自动额度 | SocialStore 的 ParticipationPolicy/State 和每日额度账本；默认群聊自动接话关闭 | 成员经共享用例显式配置；自动运行同事务预留，重启不返还 |
 | 窗口摘要的模型与预算 | SocialStore 的 SummarySettings；默认关闭，成员显式选择独立模型/思考强度/输出上限 | SocialFeature 复用 AiClient 校验，任务使用配置快照；未来提取/巩固配置另行细化 |
 | ExecutionBinding | SocialStore，引用 provider/model，保存思考强度、temperature/max_tokens | 获授权管理员经 AI 角色管理用例保存，复用 AiClient 协议约束与模型容量校验 |
-| 后续默认新 AI 执行配置 | GUI 设置，沿用可迁移的全局默认语义 | 不覆盖已存在 AI 的绑定；不据此宣称当前已有独立默认设置 |
 | 主题与本地布局 | 现有前端外观设置 | 不影响后端权限 |
 
 GUI 的实际操作者固定为后端的本地真人。账号查看只传被查看的 AI ID；SocialFeature 每次检查管理员授权，存储按该 AI 自身成员关系读取，不替换全局操作者、不连接全局事件流到账号视角。账号查看当前是可手动刷新的只读快照，远程认证与多人联网未实现。
 
-不把人设、记忆或群成员放进 TOML，不把 Key 放进身份数据库。现有全局生成设置服务旧 Harness，社交绑定不读取它，参数留空也不隐式继承；后续若增加新 AI 默认值，由明确创建用例复制。切换联系人、加载历史不能覆盖用户保存的全局默认值。
+不把人设、记忆或群成员放进 TOML，不把 Key 放进身份数据库。全局生成设置已删除，旧 `[gui]` 只在原配置中保留，不提供运行读写接口；每个 AI 的参数只来自独立 ExecutionBinding。后续若需要新账号默认值，再由明确的创建用例复制，不设隐式全局继承。
 
 思考强度、模型名和 provider 继续严格校验。ExecutionBinding 是中立描述，运行时转换为 ai-client::ModelSelection 与 GenerationOptions；协议差异不进入社交业务层。
 
@@ -61,7 +60,7 @@ GUI 的实际操作者固定为后端的本地真人。账号查看只传被查�
 
 ## 5. 生命周期与关闭
 
-当前 SocialFeature.initialize 恢复运行并继续持久 queued 计划；M3 若加入事件消费者，再恢复其消费位置并启动调度；重复初始化不能产生多个调度器。Clock 与 mock provider 可注入，业务代码不自行创建真实凭据或新的独立 Runtime。
+当前 SocialFeature.initialize 恢复运行并继续持久 queued 计划、Bout 与有效约定调度；重复初始化不能产生多个调度器。Clock 与 mock provider 可注入，业务代码不自行创建真实凭据或新的独立 Runtime。
 
 M1 初始化意识系统基本上下文服务；M2 第二批已接入按窗口显式启用的摘要任务，后续提取/巩固不因初始化自动启用。后台任务使用明确模型绑定与独立调用预算，摘要并发为 1，每次唤醒最多 4 段、单次 120 秒；没有配置或输入预算不足时显示可恢复状态，不隐式调用另一个付费模型。
 
@@ -73,13 +72,11 @@ shutdown 顺序：停止接受新执行 → 停止参与调度和意识后台任
 
 当前 Tauri 主窗口关闭实现上述收尾：停止接收新命令、释放并等待 IPC 订阅任务、等待已经开始的初始化、调用 Runtime::shutdown_features（含 writer 排空），成功才退出。20 秒超时或保存失败通过 backend-shutdown-failed 提示并保留窗口，允许再次关闭重试；不创建后台常驻服务。
 
-## 6. CLI/TUI 与兼容
+## 6. 旧版退役与历史边界
 
-M0-M1 旧 CLI/TUI 仍可使用旧接口，但它们与新 Runtime 不能同时打开同一目录。兼容读取器与新存储在同一 Runtime 中共享目录锁，不建立第二个 writer。
+旧 CLI/TUI、ChatFeature、SessionManager、JSON 写存储、旧 HTTP/chat-event 和全局生成设置已移除。Web 与桌面只走 SocialFeature。
 
-新 GUI 切换后，需要保留的旧 chat 输入通过明确的默认 AI/私聊映射调用社交用例；不长期保留两套记忆与发送逻辑。无法表达的群聊或主动联系功能不伪装为旧终端能力；无法合理适配的接口提供替代入口与退役说明。
-
-兼容层只在边界转换 DTO。历史查询和导入使用独立旧格式读取器；M0 导入器已不依赖 SessionManager。清理旧 SessionManager 前核对终端、脚本、HTTP 和 IPC 调用链，完成相应用例迁移、有限适配或明确退役，并保留可验证的数据访问路径。
+历史 JSON DTO 独立在 `storage::legacy`，导入通过 SocialFeature → SocialStore 执行；复用数据目录锁和 writer，不接受任意路径或客户端操作者。设置页提供显式所选导入，重复导入幂等，失败不改原文件，导入结果在新版只读查看。
 
 ## 7. 可观测性
 
@@ -94,4 +91,4 @@ M0-M1 旧 CLI/TUI 仍可使用旧接口，但它们与新 Runtime 不能同时�
 3. 热更新与 run 并发时模型路由一致，撤销状态仍及时生效。
 4. 空配置、失效绑定、目录缓存失败与 provider 移除有明确状态。
 5. 正常关闭、强制终止、磁盘失败后的恢复行为可复现。
-6. CLI/TUI 兼容通过相同业务逻辑，平台 IPC 不回退到 HTTP 或 demo。
+6. 旧 HTTP 返回 404、旧 IPC 未注册，旧查询参数仍进入新版；桌面不回退到 HTTP 或模拟模式。

@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 use storage::social::*;
-use storage::{DataDirectoryGuard, FileSessionStore, SessionRecord, SessionStore};
+use storage::{DataDirectoryGuard, legacy::SessionRecord};
 #[path = "social_contact/mod.rs"]
 mod contact_tests;
 #[path = "social_memory/mod.rs"]
@@ -2799,6 +2799,45 @@ fn save_legacy(root: &Path, r: &SessionRecord) -> (std::path::PathBuf, Vec<u8>) 
 }
 
 #[tokio::test]
+async fn legacy_import_selection_keeps_unselected_sources_and_rejects_forged_previews() {
+    let f = Fixture::new().await;
+    let first = record(vec![Message::user("selected")]);
+    let second = record(vec![Message::user("unselected")]);
+    let (first_path, first_bytes) = save_legacy(f.dir.path(), &first);
+    let (second_path, second_bytes) = save_legacy(f.dir.path(), &second);
+    let all = f.store.preview_legacy().await.unwrap();
+    let mut selected = all.clone();
+    selected
+        .sessions
+        .retain(|p| p.session_id == first.id.to_string());
+    let mut forged = selected.clone();
+    forged.sessions[0].title = Some("forged".into());
+    assert!(f.store.import_legacy(f.human.id, forged).await.is_err());
+    let mut repeated = selected.clone();
+    repeated.sessions.push(selected.sessions[0].clone());
+    assert!(f.store.import_legacy(f.human.id, repeated).await.is_err());
+    let imported = f
+        .store
+        .import_legacy(f.human.id, selected.clone())
+        .await
+        .unwrap();
+    assert_eq!(imported.imported, 1);
+    assert_eq!(
+        f.store
+            .import_legacy(f.human.id, selected)
+            .await
+            .unwrap()
+            .already_imported,
+        1
+    );
+    let rest = f.store.import_legacy(f.human.id, all).await.unwrap();
+    assert_eq!((rest.imported, rest.already_imported), (1, 1));
+    assert_eq!(fs::read(first_path).unwrap(), first_bytes);
+    assert_eq!(fs::read(second_path).unwrap(), second_bytes);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn legacy_preserves_sources_ids_metadata_tools_and_checkpoint_without_replay() {
     let f = Fixture::new().await;
     let mut user = Message::new(
@@ -3041,15 +3080,12 @@ async fn legacy_corruption_duplicates_source_changes_and_transaction_failure() {
 async fn shared_directory_guard_and_newer_schema_do_not_mutate() {
     let dir = tempfile::tempdir().unwrap();
     let guard = DataDirectoryGuard::acquire(dir.path()).unwrap();
-    let json = FileSessionStore::from_guard(guard.clone());
-    json.save_session(&record(vec![])).unwrap();
     let store = SqliteSocialStore::open(guard.clone(), Arc::new(SystemClock))
         .await
         .unwrap();
     assert!(DataDirectoryGuard::acquire(dir.path()).is_err());
     drop(guard);
-    drop(json);
-    assert!(FileSessionStore::new(dir.path()).is_err());
+    assert!(DataDirectoryGuard::acquire(dir.path()).is_err());
     store.close().await.unwrap();
     let guard = DataDirectoryGuard::acquire(dir.path()).unwrap();
     let db = dir.path().join("social.sqlite3");

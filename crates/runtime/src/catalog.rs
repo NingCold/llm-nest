@@ -237,12 +237,12 @@ mod tests {
 
     #[tokio::test]
     async fn sync_persists_outside_config_survives_reload_and_restart() {
-        let dir = std::env::temp_dir().join(format!("llmn-catalog-{}", common::SessionId::new()));
+        let dir = std::env::temp_dir().join(format!("llmn-catalog-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("llmn.toml");
         let source = "# unchanged\n[providers.deepseek]\napi_key = 'test'\ndefault_model = 'deepseek-chat'\n";
         std::fs::write(&path, source).unwrap();
-        let runtime = Runtime::from_config_persistent(&path, &dir).unwrap();
+        let runtime = Runtime::open(&path, &dir).await.unwrap();
         let before = runtime.default_model().await.unwrap();
         let frozen = runtime.llm_client().snapshot().await;
         let report = runtime.install_catalog(download_fixture()).await.unwrap();
@@ -286,16 +286,9 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
 
-        // Selecting a cache-only model in GUI settings remains valid after restart.
-        let mut gui = runtime.gui_config().await.unwrap();
-        gui.current_model.model = "sync-test-model".into();
-        runtime.set_gui_config(&gui).await.unwrap();
+        runtime.shutdown_features().await.unwrap();
         drop(runtime);
-        let runtime = Runtime::from_config_persistent(&path, &dir).unwrap();
-        assert_eq!(
-            runtime.gui_config().await.unwrap().current_model.model,
-            "sync-test-model"
-        );
+        let runtime = Runtime::open(&path, &dir).await.unwrap();
         assert!(
             runtime
                 .list_models()
@@ -310,14 +303,14 @@ mod tests {
         std::fs::create_dir(&cache).unwrap();
         assert!(runtime.install_catalog(download_fixture()).await.is_err());
         assert_eq!(runtime.catalog_status().await.updated_at, old.updated_at);
+        runtime.shutdown_features().await.unwrap();
         drop(runtime);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn corrupt_cache_falls_back_with_visible_warning() {
-        let dir =
-            std::env::temp_dir().join(format!("llmn-catalog-bad-{}", common::SessionId::new()));
+        let dir = std::env::temp_dir().join(format!("llmn-catalog-bad-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("catalog.json");
         std::fs::write(&path, "broken").unwrap();

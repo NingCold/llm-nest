@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use runtime::runtime::Runtime;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 fn find_config_path() -> Result<PathBuf, String> {
@@ -47,15 +46,13 @@ fn find_config_path() -> Result<PathBuf, String> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime::worker_entry();
     let config_path = find_config_path()?;
-    let runtime =
-        Runtime::from_config_social_persistent(&config_path, storage::prepare_default_data_dir()?)
-            .await
-            .map_err(|e| format!("failed to load config: {e}"))?;
+    let runtime = Runtime::open(&config_path, storage::prepare_default_data_dir()?)
+        .await
+        .map_err(|e| format!("failed to load config: {e}"))?;
     let runtime = Arc::new(runtime);
 
-    let chat = Arc::new(chat::ChatFeature::new());
     let social = Arc::new(social_feature::SocialFeature::new());
-    runtime.register_feature(chat.clone()).await;
+
     runtime.register_feature(social.clone()).await;
     runtime.initialize_features().await?;
     let (watch_tx, mut watch_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -75,13 +72,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = CancellationToken::new();
     let state = Arc::new(web_server::AppState {
         runtime: (*runtime).clone(),
-        chat,
+
         social,
         shutdown: shutdown.clone(),
-        cancel_map: Arc::new(Mutex::new(std::collections::HashMap::<
-            String,
-            CancellationToken,
-        >::new())),
     });
 
     let app = web_server::router(state);

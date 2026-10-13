@@ -20,7 +20,8 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from social_acceptance import Provider, REQUESTS
-from gui_acceptance import Driver, wait_for, fixture
+from webdriver import Driver, wait_for
+import http.server
 
 
 class SocialDriver(Driver):
@@ -244,12 +245,14 @@ def main():
         parser.error("--driver is required unless --manual is used")
     binary = args.binary.resolve(strict=True)
     executable = args.driver.resolve(strict=True) if args.driver else None
-    provider = fixture.http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     config = work / "llmn.toml"
     config.write_text(f'[providers.test]\nprotocol="openai"\nbase_url="http://127.0.0.1:{provider.server_port}/v1"\n'
         'api_key="fixture-only"\n[providers.test.models.chat]\nmodel="chat-wire"\ncontext_window=8192\nmax_tokens=1024\n', encoding="utf-8")
-    port = fixture.free_port()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
     env = dict(os.environ, LLMN_CONFIG=str(config), LLMN_DATA_DIR=str(work / "sessions"),
         XDG_CONFIG_HOME=str(work / "config"), XDG_DATA_HOME=str(work / "data"),
         XDG_CACHE_HOME=str(work / "cache"), TAURI_WEBVIEW_AUTOMATION="true",

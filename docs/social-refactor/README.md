@@ -37,7 +37,7 @@ M1 的新消息发送先覆盖文本。历史附件的数据保留与展示继�
 
 ## 2. Harness 基础与重构原因
 
-重构复用已有协议路由、配置、工具进程与平台能力。下表说明保留的 Harness 结构为何需要替换；真实社交链路已经在对应模块分批实现，不表示这些问题仍存在于新 Web。
+重构复用已有协议路由、配置、工具进程与平台能力。旧 Harness 已于 2026-10-13 退役，下表记录原结构为何被替换；真实社交链路已经在对应模块分批实现，不表示这些问题仍存在于新 Web。
 
 | Harness 结构 | 对新产品的影响 | 社交结构 |
 | --- | --- | --- |
@@ -49,7 +49,7 @@ M1 的新消息发送先覆盖文本。历史附件的数据保留与展示继�
 | 每个会话保存整份 JSON | 跨身份、记忆、意图的事务难以管理 | SQLite 业务存储与可重复执行的迁移 |
 | 请求内 SSE 负责一次回答 | 订阅断开与业务取消耦合 | 独立命令接口与可补齐事件订阅 |
 
-源码入口：[Session](../../crates/runtime/src/session.rs)、[Message](../../crates/common/src/message.rs)、[ChatFeature](../../features/chat/src/feature.rs)、[useChat](../../frontends/web/src/hooks/useChat.ts)、[HTTP API](../../crates/web-server/src/api.rs)。
+源码入口：[SocialFeature](../../features/social/src/feature.rs)、[领域](../../crates/social/src/lib.rs)、[Runtime](../../crates/runtime/src/runtime.rs)、[HTTP](../../crates/web-server/src/social_api.rs) 与 [真实 GUI](../../frontends/web/src/social/App.tsx)。退役范围与验证见 [旧架构退役记录](legacy-retirement.md)。
 
 ## 3. 统一术语与核心不变量
 
@@ -95,7 +95,7 @@ M1 的新消息发送先覆盖文本。历史附件的数据保留与展示继�
 
 ```mermaid
 flowchart TD
-    UI[React GUI / CLI 调试入口] --> Adapter[Tauri IPC / 本地 HTTP]
+    UI[React GUI] --> Adapter[Tauri IPC / 本地 HTTP]
     Adapter --> App[SocialFeature 业务方法]
     App --> Domain[social 身份与聊天规则]
     App --> Consciousness[Consciousness 意识系统]
@@ -106,7 +106,7 @@ flowchart TD
     Resources --> Workers[固定白名单工具子进程]
 ```
 
-`crates/social` 已在 M0 实现，`features/social` 已在 M1 接通真实私聊和群聊队列。下面列出完整目标的职责拆分；当前只有 feature、accounts、account_control、consciousness、controls、execution、wire 等实际所需模块。新 Feature 与旧 ChatFeature 在迁移期间服务各自入口；每条旧调用链随后接入同一社交用例或明确退役，避免长期维护两套聊天规则。
+`crates/social` 已在 M0 实现，`features/social` 已在 M1 接通真实私聊和群聊队列。下面列出完整目标的职责拆分；当前模块按账号、窗口、参与调度、意识上下文、记忆/摘要、执行与共享 DTO 拆分，不提前建立未使用的框架。当前仅保留 SocialFeature 产品用例；旧 ChatFeature、SessionManager、CLI/TUI 与旧 HTTP/IPC 已删除。
 
 ```text
 crates/social/src/
@@ -147,8 +147,8 @@ SocialStore 的接口放在 `crates/storage`，供用例调用类型化的原子
 - 保留：协议适配、共享 SSE 分帧、严格模型校验、配置快照、目录同步缓存、凭据解析边界、工具子进程限制。
 - 改写：聊天领域、持久化结构、运行与空间的关联、GUI 业务状态、HTTP/IPC 社交契约。
 - 保留平台基线：共用 React 源码、Windows 边框与退出保存、Linux 桌面 IPC、安装标识、路径覆盖、打包资源与发布检查。当前 Windows/Linux 采用内容内窗口控制，布局与待复验范围见 [界面与桌面](08-frontend-and-desktop.md#当前真实桌面)。
-- 逐步退出：旧 Session 作为新 GUI 的中心对象；旧请求内回答接口。切换前提供数据迁移，以及对应调用链的适配、替代入口或明确退役方案。
-- 不扩大：未实现的 PluginManager、SDK、MCP 和知识库等预留模块。
+- 已退役：旧 Session 产品对象、旧请求内回答接口、CLI/TUI、独立模拟产品及旧 HTTP/IPC。历史格式只在显式导入边界读取。
+- 不扩大：MCP、知识库和通用插件系统；无调用的 PluginManager / SDK 空壳已移除。
 
 ### 新架构优先与兼容边界
 

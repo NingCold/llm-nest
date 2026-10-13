@@ -12,7 +12,7 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 ## 2. 当前接口
 
-HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 34 个 HTTP 路径与 42 个 IPC 命令。
+HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 35 个 HTTP 路径与 44 个 IPC 命令。历史导入 DTO 沿用存储边界的 snake_case 字段，其余业务 DTO 为 camelCase。
 
 | 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 管理员停用/恢复账号 | POST /ai-accounts/{id}/control | social_control_account |
 | AI 只读账号快照 | GET /ai-accounts/{id}/view | social_account_view |
 | AI 视角分页历史 | GET /ai-accounts/{id}/view/conversations/{conversation}/messages | social_account_view_messages |
+| 检查/导入历史 JSON | GET/POST /history-import | social_preview_legacy / social_import_legacy |
 | 打开唯一私聊 | POST /accounts/{id}/direct | social_open_direct |
 | 创建独立群 | POST /groups | social_create_group |
 | 空间详情 | GET /conversations/{id} | social_conversation |
@@ -52,6 +53,10 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 长期订阅 | GET /subscribe?after={cursor} | social_subscribe |
 | 确认一次桌面推送 | 由 SSE 读取提供传输背压 | social_ack_subscription |
 | 释放桌面订阅 | 关闭 SSE 连接 | social_unsubscribe |
+
+设置独立使用 `GET /api/settings` / `settings_snapshot`，仅返回 providers 与 version。模型服务及目录接口保留；旧 `/api/init`、`/api/config`、`/api/sessions`、`/api/cancel` 与旧聊天 IPC 已删除。
+
+历史导入正文为预览中的所选 `sessions`，保留原导入 DTO 的 snake_case 字段（source_id/session_id/checksum 等），不接受路径或 operatorId。全目录检查重复 ID，再逐个复核所选预览；幂等性由来源 checksum 和稳定映射保证，不启动 AI。
 
 主要命令输入：
 

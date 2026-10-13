@@ -4,7 +4,6 @@ import { SettingsPage } from "@/components/settings/SettingsPage"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { useInit } from "@/hooks/useInit"
 import { useUiStore } from "@/store/ui"
-import { useConfigStore } from "@/store/config"
 import { IS_DESKTOP, CUSTOM_WINDOW_CHROME } from "@/lib/desktop"
 import { StartupSurface } from "@/components/StartupSurface"
 import { useDesktopReady } from "@/hooks/useDesktopReady"
@@ -20,8 +19,7 @@ import "./social.css"
 
 function SocialSettings({ onBack }: { onBack(): void }) {
   const { ready, error, retry } = useInit()
-  const saveError = useConfigStore(s => s.saveError), saving = useConfigStore(s => s.saving), retrySave = useConfigStore(s => s.retrySave)
-  return <div className="social-settings">{error ? <div className="social-startup"><p role="alert">{error}</p><button className="social-button secondary" onClick={retry}>重试</button></div> : ready ? <SettingsPage onBack={onBack} availableSections={["models", "appearance", "config", "about"]} notices={saveError ? <div role="alert" className="social-error"><span>{saveError}</span><button disabled={saving} onClick={retrySave}>重试保存</button></div> : undefined} /> : <div className="social-startup">正在加载设置…</div>}</div>
+  return <div className="social-settings">{error ? <div className="social-startup"><p role="alert">{error}</p><button className="social-button secondary" onClick={retry}>重试</button></div> : ready ? <SettingsPage onBack={onBack} /> : <div className="social-startup">正在加载设置…</div>}</div>
 }
 
 export default function SocialApp() {

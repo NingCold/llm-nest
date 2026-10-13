@@ -30,12 +30,7 @@ Ubuntu 24.04 的构建依赖可参考 [构建 Dockerfile](../scripts/linux/Docke
 
 ## 运行入口
 
-CLI/TUI 从仓库根目录运行，并读取 `config/llmn.toml`：
-
-```bash
-cargo run -p cli
-cargo run -p tui
-```
+当前产品仅有 Web 与 Tauri；配置模型服务后，在 AI 角色管理页维护独立执行绑定。旧 CLI/TUI 与 Harness 入口已删除。
 
 桌面：
 
@@ -53,7 +48,7 @@ cargo run -p web-server
 pnpm --dir frontends/web dev
 ```
 
-打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；Tauri 使用相同界面与真实 IPC，`?legacy=1` 保留旧入口。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。隔离桌面模拟模型验收见 [实时 IPC 记录](social-refactor/m1-desktop-ipc.md#复现桌面验收)。
+打开 `http://localhost:1420`，普通 Web 默认进入真实消息/通讯录；Tauri 使用相同界面与真实 IPC，不再提供旧界面或独立模拟产品。Web 生产静态构建使用 `pnpm --dir frontends/web build`；开发服务器代理不是公开部署的认证方案。隔离桌面模拟模型验收见 [实时 IPC 记录](social-refactor/m1-desktop-ipc.md#复现桌面验收)。
 
 真实社交私聊、群聊与消息控制的隔离离线验收：
 
@@ -65,16 +60,7 @@ python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist
 
 添加 `--serve` 可检查脚本打印的临时数据页面；结束时在打印的 Fixture 目录创建 `STOP` 文件或中断脚本。Windows MSVC 指定 target 后通过 `--binary target/x86_64-pc-windows-msvc/debug/web-server.exe` 选择产物。脚本使用本机模拟 provider，不读取个人配置；各批验证范围见 [已完成](social-refactor/completed.md)。
 
-社交界面可以先独立开发和验证，无需启动 Runtime：
-
-```bash
-pnpm --dir frontends/web dev:social --host 127.0.0.1
-pnpm --dir frontends/web typecheck
-pnpm --dir frontends/web test
-pnpm --dir frontends/web build:social
-```
-
-预览仍使用 1420 端口，不能和普通 Vite 开发服务器同时占用该端口。`build:social` 输出到忽略的 `frontends/web/.social-preview-dist`。这是浏览器模拟界面：无模型请求、无 Rust 社交存储和事件同步；见 [当前预览范围](social-refactor/08-frontend-and-desktop.md#当前-web-交互预览)。普通开发页也可添加 `?social-preview=1`，Tauri 不启用该模式。
+使用上述隔离脚本的 `--serve` 验证真实界面；早期 `dev:social` / `build:social` 与 localStorage 模拟产品已退役。类型与组件回归仍使用 `pnpm --dir frontends/web typecheck` 和 `pnpm --dir frontends/web test`。
 
 若本机 pnpm 与 packageManager 锁定版本不同，优先安装固定版本；仅做本地验证时可使用 `pnpm --pm-on-fail=ignore --dir frontends/web <命令>`，不因该提示改动依赖或锁文件。
 
@@ -92,19 +78,19 @@ cargo build -p web-server --locked
 python scripts/acceptance.py
 ```
 
-`acceptance.py` 验证保留的 Harness：HTTP、ChatFeature、工具子进程与 JSON 存储。`social_acceptance.py` 验证新社交用例：HTTP、SocialFeature、SQLite、私聊/群聊队列与消息控制。两者都使用临时数据和本地模拟 provider；社交验收的构建命令见上面的运行入口。
+`acceptance.py` 验证空配置启动、旧接口 404、本地访问限制、模型服务配置原子更新、所选旧 JSON 导入/来源校验/只读历史/重启以及底层 worker。`social_acceptance.py` 验证实际 HTTP、SocialFeature、SQLite、私聊/群聊、意识系统与 M3 调度。全部使用独立临时数据，后者使用本机模拟 provider；两项都应执行。
 
-真实模型验收另用 `scripts/live_acceptance.py`，会发送请求并消耗 API 额度，不属于默认 CI。详见 [真实接口报告](live-acceptance-2026-09-13.md)。
+旧 Harness 的付费验收脚本已退役。[真实接口报告](live-acceptance-2026-09-13.md) 仅保留当时证据；新版付费模型验收需另获明确授权。
 
 桌面视觉验收应检查实际安装包，并注明 OS、显示缩放、桌面环境和产物哈希。Xvfb 启动、编译成功或截取完成后的窗口图像，都不能替代完整的用户交互验收。
 
-安装版社交 GUI/IPC 使用 `scripts/linux/social_gui_acceptance.py`，旧 Harness 使用显式旧入口的 `scripts/linux/gui_acceptance.py`。前者支持原生 Wayland、GTK 整数缩放及 `--manual` 隔离人工环境；Windows 包内 EXE 与空环境 worker 使用 `scripts/windows_package_acceptance.py`。参数和包检查步骤见 [发布指南](releases.md#本地-linux-打包)，实际范围见 [M1 阶段记录](social-refactor/m1-stage-validation.md)。
+安装版社交 GUI/IPC 使用 `scripts/linux/social_gui_acceptance.py`，共用驱动位于 `scripts/linux/webdriver.py`，支持原生 Wayland、GTK 整数缩放及 `--manual` 隔离人工环境；Windows 包内 EXE 与空环境 worker 使用 `scripts/windows_package_acceptance.py`。参数和包检查步骤见 [发布指南](releases.md#本地-linux-打包)，实际范围见 [M1 阶段记录](social-refactor/m1-stage-validation.md)。
 
 ## 架构与贡献
 
 修改边界和数据不变量见 [AGENTS.md](../AGENTS.md)。提交应说明具体问题、最终行为、验证方式和未覆盖范围；当协议、持久化字段或 GUI DTO 改变时，同步修改两个 GUI backend。
 
-`frontends/web/dist` 是已跟踪的 Web 产物；桌面构建单独输出到 `frontends/tauri/dist`。除非任务要求更新 Web 部署产物，不要把桌面构建的输出提交进去。
+`frontends/web/dist`、`frontends/web/.social-runtime-dist` 与 `frontends/tauri/dist` 均为被忽略的生成产物。旧已跟踪 Web bundle 已删除，必须从同一 React 源码构建。
 
 `frontends/tauri/src-tauri/gen/schemas` 下的 `windows-schema.json`、`linux-schema.json`、`desktop-schema.json` 和权限 manifest 由 Tauri 构建脚本生成，已从 Git 排除。构建时出现或更新这些文件是正常行为，无需提交；需要修改权限时编辑 `capabilities/*.json`。首次克隆后运行桌面构建或 `cargo check -p tauri-frontend` 即可生成当前平台的文件。
 

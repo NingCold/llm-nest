@@ -7,7 +7,7 @@
 | 文档 | 解决什么问题 |
 | --- | --- |
 | [配置与模型路由](configuration.md) | 配置在哪里、如何放置密钥、接入模型和调整思考强度 |
-| [开发指南](development.md) | 准备环境、运行四个入口、执行验证 |
+| [开发指南](development.md) | 准备环境、运行 Web 与桌面、执行验证 |
 | [构建与 GitHub 发布](releases.md) | 生成 Windows/Linux 安装包，运行 CI，创建版本草稿 |
 
 ## 社交转型设计与实现
@@ -26,7 +26,7 @@
 | [存储与迁移](social-refactor/06-storage-and-migration.md) | SQLite、事务、目录锁、备份与旧 JSON 导入 |
 | [API 与事件](social-refactor/07-api-and-events.md) | HTTP/IPC、命令幂等、持久事件、订阅和补齐 |
 | [界面与桌面](social-refactor/08-frontend-and-desktop.md) | 导航、状态、交互、共用前端与平台基线 |
-| [运行时与配置](social-refactor/09-runtime-and-configuration.md) | 初始化、资源注入、快照、关闭与旧入口兼容 |
+| [运行时与配置](social-refactor/09-runtime-and-configuration.md) | 初始化、资源注入、快照、关闭与历史导入 |
 | [交付与验证](social-refactor/10-delivery-and-validation.md) | M0–M3、端到端验收、兼容收尾与待细化决策 |
 
 ## 实现与验收记录
@@ -43,6 +43,7 @@
 | [M2 显式记忆](social-refactor/m2-explicit-memory.md) | 接手核对、按 AI/空间保存与读取、来源失效、遗忘、Web/IPC 及 v7 迁移 |
 | [M2 窗口分段摘要](social-refactor/m2-window-summaries.md) | 专用模型与预算、后台任务、来源失效、上下文读取、详情管理及 v8 迁移 |
 | [M2 群话题接续](social-refactor/m2-cross-window-continuation.md) | 唯一私聊引用草稿、原文/摘要来源、共同成员权限、运行失效、Web/IPC 及 v9 迁移 |
+| [旧架构退役与历史导入](social-refactor/legacy-retirement.md) | 新版唯一运行链路、旧产品移除、所选历史导入及完整回归 |
 | [M3 约定联系](social-refactor/m3-contact-intents.md) | 独立授权、一次性联系、免打扰、到期/过期、共享额度、取消与崩溃恢复、Web/IPC 及 v11 迁移 |
 | [M3 参与节奏](social-refactor/m3-participation-rhythm.md) | 私聊合并、有限自动群接话、空闲结束、持久额度、可控等待、Web/IPC 及 v10 迁移 |
 | [M1 独立生成参数](social-refactor/m1-generation-parameters.md) | 管理员按 AI 保存温度与输出上限、协议约束、意识预算与双适配验证 |

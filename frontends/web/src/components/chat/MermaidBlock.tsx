@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import mermaid from "mermaid"
 import { Check, Copy } from "lucide-react"
 import { useUiStore } from "@/store/ui"
-import { copyText } from "@/lib/format"
+import { copyText } from "@/lib/clipboard"
 
 let uid = 0
 

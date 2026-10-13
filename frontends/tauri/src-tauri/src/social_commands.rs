@@ -7,6 +7,27 @@ use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
 #[tauri::command]
+pub async fn social_preview_legacy(
+    state: tauri::State<'_, BackendState>,
+) -> Result<storage::social::LegacyPreview> {
+    feature(state)
+        .await?
+        .preview_legacy()
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_import_legacy(
+    state: tauri::State<'_, BackendState>,
+    preview: storage::social::LegacyPreview,
+) -> Result<storage::social::LegacyImportResult> {
+    feature(state)
+        .await?
+        .import_legacy(preview)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
 pub async fn social_update_contact_settings(
     state: tauri::State<'_, BackendState>,
     id: ConversationId,

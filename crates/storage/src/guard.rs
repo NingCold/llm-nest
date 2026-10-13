@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-/// One OS lock per Runtime/data directory, shared by JSON and SQLite stores.
+/// One OS lock per Runtime/data directory, owned by the SQLite store and its import operations.
 /// The lock file remains in place; the OS releases ownership on process death.
 pub struct DataDirectoryGuard {
     dir: PathBuf,

@@ -118,7 +118,7 @@ fn create_private_dir(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FileSessionStore;
+    use crate::DataDirectoryGuard;
 
     #[test]
     fn env_var_wins() {
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn locked_source_does_not_create_destination_and_retry_succeeds() {
         let fixture = Fixture::new();
-        let source = FileSessionStore::new(fixture.old()).unwrap();
+        let source = DataDirectoryGuard::acquire(fixture.old()).unwrap();
         assert!(prepare_data_dir(&fixture.new_dir(), Some(&fixture.old())).is_err());
         assert!(!fixture.new_dir().exists());
         drop(source);

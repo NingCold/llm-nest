@@ -6,7 +6,6 @@
 
 | 入口 | 配置文件 |
 | --- | --- |
-| CLI / TUI | 当前工作目录的 `config/llmn.toml` |
 | Web Server | `LLMN_CONFIG` 指定文件，未设置时查找项目配置 |
 | Tauri 开发版 | `LLMN_CONFIG` 优先，其次项目配置，再回退用户配置 |
 | Tauri 安装版 | `LLMN_CONFIG` 优先，否则使用默认数据目录内的 `llmn.toml`；首次创建空 providers |
@@ -67,8 +66,6 @@ GUI 也支持直接保存 API Key，目前写入的是本地配置文件，并�
 - 新目录只应用于已配置的对应供应商，并补充“添加供应商”的模板。模型列表不代表账号权限；同步也不检查余额或试用每个模型。
 - 协议与思考能力仍受本项目适配器约束，不下载或执行远程代码，不导入远程地址、密钥和自定义请求头。目录出现新模型不等于已支持它的全部能力。
 - 全部下载失败或本地保存失败时保留旧目录；部分来源失败时保留对应旧条目，更新成功部分并显示提示。在飞请求继续使用原快照。当前只在点击时同步，没有后台定时联网。
-
-此按钮与终端的 `/refresh <provider>` 不同：后者访问已配置厂商自己的模型接口，并把新条目补入配置文件。
 
 来源接口为 `https://pi.dev/api/models/providers/<provider>`；结构参考 Pi 提交 `e4c75a73222ae2c72abb5f5314fa35ee8effc508`。Pi 项目由 Mario Zechner 等维护，许可见 [上游 MIT License](https://github.com/earendil-works/pi/blob/e4c75a73222ae2c72abb5f5314fa35ee8effc508/LICENSE)；目录是第三方汇总数据，并非各厂商的可用性承诺。
 
@@ -131,19 +128,10 @@ format = "deepseek-effort"
 
 支持的 format：`openai-effort`、`deepseek-thinking`、`deepseek-effort`、`anthropic-thinking`、`gemini-thinking`。部分格式支持 `budget_tokens`。具体 wire 映射以 [reasoning 类型](../crates/ai-client/src/reasoning.rs) 和 [协议转换实现](../crates/ai-client/src/protocols) 为准，不能将 UI 的“高”理解成各供应商相同的计算预算。
 
-## 会话、热更新和常用命令
+## AI 账号配置与热更新
 
-模型与思考强度绑定到当前会话。没有会话选择时使用全局默认值；GUI 的全局生成设置保存在 `[gui]`。
+模型、思考强度、温度和输出上限由获授权管理员在“我的账号 → AI 角色管理”保存到该账号的 ExecutionBinding。它们不读取旧 TOML `[gui]`，不在切换聊天时更换，不覆盖其他 AI。修改只影响新运行；未配置模型仍可保存真人消息。
 
-| 命令 | 用途 |
-| --- | --- |
-| `/new` / `/list` / `/switch <id或标题>` | 新建、列出、切换会话 |
-| `/rename <标题>` / `/delete <id>` | 修改或删除会话 |
-| `/models` / `/current` | 查看可选模型或当前选择 |
-| `/model <provider/model>` | 为当前会话选模型 |
-| `/effort <级别>` | 调整当前会话的思考强度 |
-| `/reload` | 校验并重新加载配置 |
-| `/refresh <provider>` | 拉取模型目录，将新条目定点补入配置 |
-| `/help` / `/quit` | 帮助与退出 |
+旧 `[gui]` 字段留在原配置中但不再提供读写接口，不因升级自动清除。供应商配置、环境变量引用、注释与目录缓存继续保留。供应商级 `default_model` 仍用于协议目录解析，不代表 AI 自动采用全局模型。
 
-配置文件变化会自动触发重载。新配置非法时保留旧配置；在飞请求继续使用原来的快照。`/refresh` 不会凭空创建一个未配置凭据的供应商。
+配置文件变化自动触发整体校验与热更新；非法新配置保留旧快照，在飞请求继续原快照。设置中的模型服务管理和目录同步仍通过 Runtime 原子保存。旧斜杠命令随 CLI/TUI 退役，不再作为产品接口。

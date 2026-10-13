@@ -1,3 +1,7 @@
+export interface AvatarStyle { avatar: string; color: "sage" | "clay" | "blue" | "lavender" }
+export interface LegacyPreview {
+  sessions: { source_id: string; session_id: string; checksum: string; title: string | null; message_count: number; missing_ids: number; interrupted_checkpoint: boolean }[]
+}
 // Business DTOs from features/social/src/wire.rs; counters stay decimal strings.
 export interface Binding { providerId: string; modelId: string; reasoningEffort: string | null; temperature: number | null; maxTokens: number | null }
 export interface Account { id: string; kind: "human" | "ai"; name: string; avatarRef: string | null; bio: string; revision: string; status: "active" | "archived" }

@@ -3,7 +3,7 @@ use super::{
     sqlite::{Db, NewMessage},
     store::BindingCandidate,
 };
-use crate::SessionRecord;
+use crate::legacy::SessionRecord;
 use ::social::*;
 use common::{ContentPart, Interruption, Message, Role, ToolResult};
 use rusqlite::{OptionalExtension, params};
@@ -190,10 +190,15 @@ pub(super) fn preview(root: &Path) -> Result<LegacyPreview> {
 }
 
 pub(super) fn prepare_import(root: &Path, expected: &LegacyPreview) -> Result<Vec<Source>> {
-    // Re-read the full set immediately before the transaction. Changed preview,
-    // hidden duplicate IDs or caller-supplied metadata cannot bypass validation.
+    // Inspect the entire directory for hidden duplicate IDs, but import only
+    // the selected records. Each selection must still match its fresh preview.
     let current = preview(root)?;
-    if &current != expected {
+    let mut selected = HashSet::new();
+    if expected
+        .sessions
+        .iter()
+        .any(|session| !selected.insert(&session.source_id) || !current.sessions.contains(session))
+    {
         return Err(legacy_error(
             root,
             "sources changed since preview; preview again",

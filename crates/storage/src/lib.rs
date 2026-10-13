@@ -1,18 +1,11 @@
-//! Session persistence: a storage-format-agnostic [`SessionStore`] trait, a
-//! JSON-file backed implementation ([`FileSessionStore`]), and the persisted
-//! session DTO ([`SessionRecord`]).
+//! SQLite social persistence, directory ownership, and explicit historical import.
 
 pub mod data_dir;
 pub mod error;
-pub mod file;
 pub mod guard;
-pub mod record;
+pub mod legacy;
 pub mod social;
-pub mod store;
 
 pub use data_dir::{default_data_dir, legacy_data_dir, prepare_data_dir, prepare_default_data_dir};
 pub use error::{Result, StorageError};
-pub use file::FileSessionStore;
 pub use guard::DataDirectoryGuard;
-pub use record::SessionRecord;
-pub use store::SessionStore;

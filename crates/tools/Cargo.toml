@@ -2,7 +2,7 @@
 name = "tools"
 version.workspace = true
 edition.workspace = true
-description = "Tool execution layer: Tool trait, ToolRegistry, and built-in tools (called by ChatFeature's agent loop)"
+description = "Tool execution layer: Tool trait, ToolRegistry, and built-in tools (not enabled in social execution)"
 
 [dependencies]
 common = { path = "../../crates/common" }

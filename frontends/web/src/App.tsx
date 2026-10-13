@@ -3,14 +3,10 @@ import { listen } from "@tauri-apps/api/event"
 import ErrorBoundary from "@/components/ErrorBoundary"
 import { useUiStore } from "@/store/ui"
 import { WindowControls } from "@/components/layout/WindowControls"
-import { IS_SOCIAL_PREVIEW } from "@/lib/social-preview"
 import { IS_DESKTOP } from "@/lib/desktop"
 import { StartupSurface } from "@/components/StartupSurface"
 
-const LegacyApp = lazy(() => import("./LegacyApp"))
-const PreviewApp = lazy(() => import("./social/PreviewApp").then(module => ({ default: module.PreviewApp })))
 const SocialApp = lazy(() => import("./social/App"))
-const legacy = new URLSearchParams(location.search).get("legacy") === "1" || new URLSearchParams(location.search).get("demo") === "1"
 
 function ShutdownError() {
   const [error, setError] = useState<string | null>(null)
@@ -52,8 +48,6 @@ function NavigationSync() {
 
 export default function App() {
   return <><ThemeSync /><NavigationSync /><WindowControls /><ShutdownError /><ErrorBoundary>
-    <Suspense fallback={<StartupSurface />}>
-      {IS_SOCIAL_PREVIEW ? <PreviewApp /> : legacy ? <LegacyApp /> : <SocialApp />}
-    </Suspense>
+    <Suspense fallback={<StartupSurface />}><SocialApp /></Suspense>
   </ErrorBoundary></>
 }

@@ -5,17 +5,10 @@ use ai_client::AiClient;
 use ai_client::ModelInfo;
 use ai_client::ModelSelection;
 use ai_client::ResolvedSelection;
-use common::{Message, SessionId};
 use tokio::sync::RwLock;
-use tokio::sync::broadcast;
 
-use crate::command::Command;
 use crate::error::{Result, RuntimeError};
-use crate::event::RuntimeEvent;
-use crate::event_bus::EventBus;
 use crate::feature::{Feature, FeatureContext, FeatureRegistry};
-use crate::session::Session;
-use crate::session_manager::SessionManager;
 
 #[derive(Clone)]
 pub struct Runtime {
@@ -23,48 +16,55 @@ pub struct Runtime {
     pub(crate) catalog_sync: Arc<tokio::sync::Mutex<()>>,
     pub(crate) catalog_state: Arc<RwLock<crate::catalog::CatalogState>>,
     pub(crate) catalog_path: Option<PathBuf>,
-    sessions: Arc<RwLock<SessionManager>>,
     pub(crate) llm: Arc<AiClient>,
-    event_bus: EventBus<RuntimeEvent>,
     features: Arc<RwLock<FeatureRegistry>>,
-    /// Tools available to features (chat agent loop). Pre-registered with
-    /// built-ins; call [`Runtime::register_trusted_tool`] to add more.
-    tools: Arc<tools::ToolRegistry>,
-    /// Config document path, when the runtime was created via
-    /// [`Runtime::from_config`]; used to auto-reload before a `/refresh` of a
-    /// provider that is not yet in the in-memory snapshot.
     pub(crate) config_path: Option<PathBuf>,
-    pub(crate) directory_guard: Option<Arc<storage::DataDirectoryGuard>>,
-    pub(crate) social: Option<Arc<crate::feature::SocialResources>>,
+    pub(crate) social: Arc<crate::feature::SocialResources>,
 }
 
 impl Runtime {
-    pub fn new(
-        sessions: SessionManager,
-        event_bus: EventBus<RuntimeEvent>,
-        llm: Arc<AiClient>,
-    ) -> Self {
-        let sessions = Arc::new(RwLock::new(sessions));
-
-        Self {
+    /// Construct the runtime with explicit social resources (also used by deterministic tests).
+    pub fn with_resources(
+        config: &crate::config::RuntimeConfig,
+        resources: crate::feature::SocialResources,
+    ) -> Result<Self> {
+        Ok(Self {
             config_updates: Arc::new(tokio::sync::Mutex::new(())),
             catalog_sync: Arc::new(tokio::sync::Mutex::new(())),
             catalog_state: Arc::new(RwLock::new(crate::catalog::CatalogState::default())),
             catalog_path: None,
-            sessions,
-            llm,
-            event_bus,
+            llm: Arc::new(AiClient::from_config(config.providers())?),
             features: Arc::new(RwLock::new(FeatureRegistry::new())),
-            tools: Arc::new(tools::ToolRegistry::with_builtins()),
             config_path: None,
-            directory_guard: None,
-            social: None,
-        }
+            social: Arc::new(resources),
+        })
     }
 
-    /// Explicitly trust an in-process extension. Built-in tools use isolated workers.
-    pub fn register_trusted_tool(&self, tool: Arc<dyn tools::Tool>) {
-        self.tools.register_trusted_in_process(tool);
+    /// Open the social database. Old JSON is only read by explicit import.
+    pub async fn open(
+        config_path: impl AsRef<std::path::Path>,
+        data_dir: impl Into<PathBuf>,
+    ) -> Result<Self> {
+        let config = crate::config::ConfigLoader::load(&config_path)?;
+        let guard = storage::DataDirectoryGuard::acquire(data_dir)?;
+        let catalog_path = crate::catalog::cache_path(guard.dir());
+        let catalog = crate::catalog::CatalogState::load(Some(&catalog_path));
+        let llm = Arc::new(catalog.client(&config)?);
+        let clock: Arc<dyn social::Clock> = Arc::new(social::SystemClock);
+        let store = storage::social::SqliteSocialStore::open(guard, clock.clone()).await?;
+        Ok(Self {
+            config_updates: Arc::new(tokio::sync::Mutex::new(())),
+            catalog_sync: Arc::new(tokio::sync::Mutex::new(())),
+            catalog_state: Arc::new(RwLock::new(catalog)),
+            catalog_path: Some(catalog_path),
+            llm,
+            features: Arc::new(RwLock::new(FeatureRegistry::new())),
+            config_path: Some(config_path.as_ref().to_path_buf()),
+            social: Arc::new(crate::feature::SocialResources {
+                store: Arc::new(store),
+                clock,
+            }),
+        })
     }
 
     pub fn llm_client(&self) -> Arc<AiClient> {
@@ -75,42 +75,6 @@ impl Runtime {
     /// model router (config `default_model` > builtin default > first model).
     pub async fn default_model(&self) -> Option<ModelSelection> {
         self.llm.default_selection().await
-    }
-
-    /// Settings are read from the shared config document; stale model selections
-    /// fall back to the current catalog after a provider is removed.
-    pub async fn gui_config(&self) -> Result<crate::config::GuiConfig> {
-        let _update = self.config_updates.lock().await;
-        let saved = match &self.config_path {
-            Some(path) => crate::config::gui::read_gui(&crate::config::gui::read_document(path)?)?,
-            None => None,
-        };
-        let default = self.default_model().await.unwrap_or(ModelSelection {
-            provider: String::new(),
-            model: String::new(),
-            reasoning_effort: None,
-        });
-        let mut config = saved.unwrap_or(crate::config::GuiConfig {
-            current_model: default.clone(),
-            temperature: 0.7,
-            max_tokens: None,
-        });
-        if self.resolve_model(&config.current_model).await.is_err() {
-            config.current_model = default;
-        }
-        Ok(config)
-    }
-
-    pub async fn set_gui_config(&self, config: &crate::config::GuiConfig) -> Result<()> {
-        let _update = self.config_updates.lock().await;
-        config.validate()?;
-        self.resolve_model(&config.current_model).await?;
-        let path = self.config_path.as_ref().ok_or_else(|| {
-            RuntimeError::ConfigError("当前 Runtime 未绑定配置文件，无法保存 GUI 设置".into())
-        })?;
-        let text =
-            crate::config::gui::render_gui(&crate::config::gui::read_document(path)?, config)?;
-        crate::config::persist::atomic_write(path, &text)
     }
 
     /// Every effective model across providers, with capabilities and display
@@ -205,103 +169,15 @@ impl Runtime {
     pub async fn resolve_model(&self, selection: &ModelSelection) -> Result<ResolvedSelection> {
         match self.llm.resolve(selection).await? {
             Some(resolved) => Ok(resolved),
-            None => Err(RuntimeError::ConfigError(
-                "no model catalog mounted; use Runtime::from_config".into(),
-            )),
+            None => Err(RuntimeError::ConfigError("no model catalog mounted".into())),
         }
-    }
-
-    /// Build and validate a selection from a frontend command target:
-    /// `provider/model`, or a bare model name resolved across providers (a
-    /// unique match only). Returns the validated selection, or an error naming
-    /// the ambiguity or the candidate list.
-    pub async fn select_model(&self, target: &str) -> Result<ModelSelection> {
-        let selection = if let Some((provider, model)) = target.split_once('/') {
-            if provider.trim().is_empty() || model.trim().is_empty() {
-                return Err(RuntimeError::ConfigError(
-                    "usage: /model <provider>/<model>".into(),
-                ));
-            }
-            ModelSelection {
-                provider: provider.trim().into(),
-                model: model.trim().into(),
-                reasoning_effort: None,
-            }
-        } else {
-            let models = self.list_models().await;
-            let matches: Vec<&ModelInfo> = models
-                .iter()
-                .filter(|mi| mi.spec.wire == target.trim())
-                .collect();
-            match matches.as_slice() {
-                [single] => ModelSelection {
-                    provider: single.provider.clone(),
-                    model: single.spec.wire.clone(),
-                    reasoning_effort: None,
-                },
-                [] => {
-                    return Err(RuntimeError::ConfigError(format!(
-                        "no model named '{target}'; use /models to list"
-                    )));
-                }
-                _ => {
-                    return Err(RuntimeError::ConfigError(format!(
-                        "'{target}' is ambiguous across providers ({}); use /model <provider>/<model>",
-                        matches
-                            .iter()
-                            .map(|m| m.provider.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                }
-            }
-        };
-        self.resolve_model(&selection).await?;
-        Ok(selection)
-    }
-
-    /// The effective model selection for a session: the session's remembered
-    /// selection when it has one, otherwise the global default.
-    pub async fn session_model(&self, session_id: &SessionId) -> Option<ModelSelection> {
-        let remembered = {
-            let sessions = self.sessions.read().await;
-            sessions.get_model(session_id)
-        };
-        match remembered {
-            Some(model) => Some(model),
-            None => self.default_model().await,
-        }
-    }
-
-    /// Remember a model selection on a session.
-    pub async fn set_session_model(
-        &self,
-        session_id: &SessionId,
-        selection: ModelSelection,
-    ) -> Result<()> {
-        self.sessions
-            .write()
-            .await
-            .set_model(session_id, selection)?;
-        Ok(())
     }
 
     pub fn context(&self) -> FeatureContext {
         FeatureContext {
-            sessions: self.sessions.clone(),
             llm: self.llm.clone(),
-            events: self.event_bus.clone(),
-            tools: self.tools.clone(),
             social: self.social.clone(),
         }
-    }
-
-    pub fn subscribe(&self) -> broadcast::Receiver<RuntimeEvent> {
-        self.event_bus.subscribe()
-    }
-
-    pub fn emit(&self, event: RuntimeEvent) {
-        self.event_bus.publish(event);
     }
 
     pub async fn register_feature(&self, feature: Arc<dyn Feature>) {
@@ -318,96 +194,17 @@ impl Runtime {
     pub async fn shutdown_features(&self) -> Result<()> {
         let features = self.features.read().await;
         let features_result = features.shutdown_all().await;
-        let storage_result = match &self.social {
-            Some(resources) => resources.store.shutdown().await.map_err(RuntimeError::from),
-            None => Ok(()),
-        };
+        let storage_result = self
+            .social
+            .store
+            .shutdown()
+            .await
+            .map_err(RuntimeError::from);
         features_result.and(storage_result)
     }
 
     pub async fn get_feature<T: Feature + 'static>(&self, id: &str) -> Option<Arc<T>> {
         self.features.read().await.get_by_id(id)
-    }
-
-    // --- Session management ---
-
-    pub async fn create_session(&self, title: Option<String>) -> Result<SessionId> {
-        let id = self.sessions.write().await.create(title)?;
-        self.event_bus
-            .publish(RuntimeEvent::SessionCreated { session_id: id });
-        Ok(id)
-    }
-
-    pub async fn delete_session(&self, session_id: SessionId) -> Result<()> {
-        self.sessions.write().await.remove(&session_id)?;
-        self.event_bus
-            .publish(RuntimeEvent::SessionDeleted { session_id });
-        Ok(())
-    }
-
-    pub async fn rename_session(&self, session_id: SessionId, title: String) -> Result<()> {
-        self.sessions.write().await.set_title(&session_id, title)?;
-        self.event_bus
-            .publish(RuntimeEvent::SessionChanged { session_id });
-        Ok(())
-    }
-
-    /// Version-checked feedback mutation by persistent message ID.
-    pub async fn feedback_by_id(
-        &self,
-        session_id: common::SessionId,
-        message_id: &str,
-        revision: &str,
-        feedback: Option<common::Feedback>,
-    ) -> Result<()> {
-        self.sessions
-            .write()
-            .await
-            .feedback_by_id(&session_id, message_id, revision, feedback)
-    }
-
-    pub async fn get_session(&self, session_id: &SessionId) -> Option<Session> {
-        self.sessions.read().await.get(session_id).cloned()
-    }
-
-    /// All session ids, most recently updated first.
-    pub async fn list_sessions(&self) -> Vec<SessionId> {
-        let sessions = self.sessions.read().await;
-        let mut ids: Vec<(SessionId, chrono::DateTime<chrono::Utc>)> = sessions
-            .iter()
-            .map(|(id, s)| (*id, s.updated_at()))
-            .collect();
-        ids.sort_by_key(|(_, updated_at)| std::cmp::Reverse(*updated_at));
-        ids.into_iter().map(|(id, _)| id).collect()
-    }
-
-    pub async fn push_message(&self, session_id: &SessionId, message: Message) -> Result<()> {
-        self.sessions
-            .write()
-            .await
-            .push_message(session_id, message)
-    }
-
-    pub async fn get_messages(&self, session_id: &SessionId) -> Vec<Message> {
-        self.sessions.read().await.get_messages(session_id)
-    }
-
-    // --- Command execution ---
-
-    pub async fn execute(&self, command: Command) -> Result<()> {
-        match command {
-            Command::CreateSession { title } => {
-                self.create_session(title).await?;
-            }
-            Command::DeleteSession { session_id } => {
-                self.delete_session(session_id).await?;
-            }
-            Command::RenameSession { session_id, title } => {
-                self.rename_session(session_id, title).await?;
-            }
-            _ => {}
-        }
-        Ok(())
     }
 }
 
@@ -424,7 +221,6 @@ mod tests {
     use ai_client::config::{ApiKey, ModelConfig, ModelId, Protocol, ProviderConfig, ProviderId};
 
     use super::*;
-    use crate::builder::RuntimeBuilder;
     use crate::config::RuntimeConfig;
 
     fn deepseek_config() -> RuntimeConfig {
@@ -468,11 +264,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builder_routes_default_model_and_catalog() {
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .build()
-            .expect("runtime builds");
+    async fn runtime_routes_default_model_and_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("llmn.toml");
+        std::fs::write(&path, toml::to_string(&deepseek_config()).unwrap()).unwrap();
+        let runtime = Runtime::open(&path, directory.path()).await.unwrap();
 
         // default model comes from the provider's default_model, not iteration order
         let default = runtime.default_model().await.expect("default model");
@@ -497,28 +293,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn select_model_accepts_provider_prefixed_and_bare_names() {
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .build()
-            .expect("runtime builds");
-
-        let prefixed = runtime
-            .select_model("deepseek/deepseek-reasoner")
-            .await
-            .unwrap();
-        assert_eq!(prefixed.model, "deepseek-reasoner");
-
-        // bare name resolves when unique across providers
-        let bare = runtime.select_model("deepseek-chat").await.unwrap();
-        assert_eq!(bare.model, "deepseek-chat");
-
-        // unknown name errors instead of silently switching
-        let err = runtime.select_model("ghost").await.unwrap_err();
-        assert!(err.to_string().contains("ghost"));
-    }
-
-    #[tokio::test]
     async fn reload_config_swaps_and_keeps_old_on_failure() {
         let dir = std::env::temp_dir().join(format!("llmn-reload-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -537,7 +311,9 @@ default_model = "chat"
 model = "deepseek-chat"
 "#,
         );
-        let runtime = Runtime::from_config(&path).expect("runtime builds");
+        let runtime = Runtime::open(&path, path.with_extension("data"))
+            .await
+            .expect("runtime builds");
         assert_eq!(
             runtime.default_model().await.unwrap().model,
             "deepseek-chat"
@@ -604,7 +380,9 @@ base_url = "https://example.invalid/v1"
 model = "m"
 "#,
         );
-        let runtime = Runtime::from_config(&path).expect("runtime builds");
+        let runtime = Runtime::open(&path, path.with_extension("data"))
+            .await
+            .expect("runtime builds");
 
         // a brand-new provider lands in the config file while the runtime is
         // running (no watcher in this test): refresh of a provider that is
@@ -638,364 +416,13 @@ model = "m"
     }
 
     #[tokio::test]
-    async fn session_remembers_model_and_falls_back_to_default() {
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .build()
-            .expect("runtime builds");
-
-        let sid_a = runtime.create_session(None).await.unwrap();
-        let sid_b = runtime.create_session(None).await.unwrap();
-
-        // no remembered selection yet → global default
-        assert_eq!(
-            runtime.session_model(&sid_a).await.unwrap().model,
-            "deepseek-chat"
-        );
-
-        // remember a per-session selection; the other session is unaffected
-        let selected = ModelSelection {
-            provider: "deepseek".into(),
-            model: "deepseek-reasoner".into(),
-            reasoning_effort: None,
-        };
-        runtime
-            .set_session_model(&sid_a, selected.clone())
-            .await
-            .expect("set_session_model");
-        assert_eq!(
-            runtime.session_model(&sid_a).await.unwrap().model,
-            "deepseek-reasoner"
-        );
-        assert_eq!(
-            runtime.session_model(&sid_b).await.unwrap().model,
-            "deepseek-chat"
-        );
-
-        // unknown session errors
-        let ghost = common::SessionId::new();
-        assert!(
-            runtime
-                .set_session_model(&ghost, selected.clone())
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn persistence_survives_runtime_restart() {
-        let dir = std::env::temp_dir().join(format!("llmn-persist-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        // "first process": create, chat, rename, remember a model
-        {
-            let runtime = RuntimeBuilder::new()
-                .config(deepseek_config())
-                .storage_dir(&dir)
-                .build()
-                .expect("runtime builds");
-            let sid = runtime
-                .create_session(Some("persisted".into()))
-                .await
-                .expect("create");
-            runtime
-                .push_message(&sid, common::Message::user("hello"))
-                .await
-                .expect("push user");
-            runtime
-                .push_message(&sid, common::Message::assistant("hi there"))
-                .await
-                .expect("push assistant");
-            let selected = ModelSelection {
-                provider: "deepseek".into(),
-                model: "deepseek-reasoner".into(),
-                reasoning_effort: None,
-            };
-            runtime
-                .set_session_model(&sid, selected)
-                .await
-                .expect("set model");
-            runtime
-                .rename_session(sid, "renamed".into())
-                .await
-                .expect("rename");
-        } // runtime dropped, like a process exit
-
-        // "second process": everything is reloaded from the store
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .storage_dir(&dir)
-            .build()
-            .expect("runtime rebuilds");
-        let sessions = runtime.list_sessions().await;
-        assert_eq!(sessions.len(), 1);
-        let s = runtime.get_session(&sessions[0]).await.expect("session");
-        assert_eq!(s.title(), Some("renamed"));
-        assert_eq!(s.messages().len(), 2);
-        assert_eq!(s.messages()[0].text(), "hello");
-        assert_eq!(s.messages()[1].text(), "hi there");
-        assert_eq!(
-            runtime.session_model(&sessions[0]).await.unwrap().model,
-            "deepseek-reasoner"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn persistence_keeps_reasoning_and_tool_parts() {
-        use common::{ContentPart, Role, ToolCall};
-
-        let dir = std::env::temp_dir().join(format!("llmn-persist-rt-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        {
-            let runtime = RuntimeBuilder::new()
-                .config(deepseek_config())
-                .storage_dir(&dir)
-                .build()
-                .expect("runtime builds");
-            let sid = runtime.create_session(None).await.expect("create");
-            // reasoning persists as part of the assistant message
-            runtime
-                .push_message(
-                    &sid,
-                    common::Message::assistant_with_reasoning("answer", "think think"),
-                )
-                .await
-                .expect("push with reasoning");
-            // tool call/result parts persist as part of the content
-            runtime
-                .push_message(
-                    &sid,
-                    common::Message {
-                        role: Role::Assistant,
-                        content: vec![
-                            ContentPart::Text("calling".into()),
-                            ContentPart::ToolCall(ToolCall {
-                                id: "call_1".into(),
-                                name: "web_search".into(),
-                                arguments: r#"{"query":"rust"}"#.into(),
-                                thought_signature: None,
-                            }),
-                        ],
-                        reasoning: None,
-                        created_at: None,
-                        thinking_ms: None,
-                        usage: None,
-                        timings: None,
-                        feedback: None,
-                        interruption: None,
-                        id: Some(common::MessageId::new()),
-                    },
-                )
-                .await
-                .expect("push with tool call");
-        }
-
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .storage_dir(&dir)
-            .build()
-            .expect("runtime rebuilds");
-        let s = runtime
-            .get_session(&runtime.list_sessions().await[0])
-            .await
-            .expect("session");
-        assert_eq!(s.messages().len(), 2);
-        assert_eq!(s.messages()[0].reasoning(), Some("think think"));
-        assert_eq!(s.messages()[0].text(), "answer");
-        assert!(matches!(
-            s.messages()[1].content[1],
-            ContentPart::ToolCall(ref tc) if tc.name == "web_search"
-        ));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn feedback_persists_across_restart_and_clears() {
-        let dir =
-            std::env::temp_dir().join(format!("llmn-persist-feedback-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        {
-            let runtime = RuntimeBuilder::new()
-                .config(deepseek_config())
-                .storage_dir(&dir)
-                .build()
-                .expect("runtime builds");
-            let sid = runtime.create_session(None).await.expect("create session");
-            runtime
-                .push_message(&sid, common::Message::user("hi"))
-                .await
-                .expect("push user");
-            runtime
-                .push_message(&sid, common::Message::assistant("yo"))
-                .await
-                .expect("push assistant");
-            let s = runtime.get_session(&sid).await.unwrap();
-            runtime
-                .feedback_by_id(
-                    sid,
-                    &s.messages()[1].id.unwrap().to_string(),
-                    &s.updated_at().to_rfc3339(),
-                    Some(common::Feedback::Up),
-                )
-                .await
-                .expect("set feedback");
-            let s = runtime.get_session(&sid).await.expect("session");
-            assert_eq!(s.messages()[1].feedback, Some(common::Feedback::Up));
-        };
-
-        // restart: feedback survives
-        {
-            let runtime = RuntimeBuilder::new()
-                .config(deepseek_config())
-                .storage_dir(&dir)
-                .build()
-                .expect("runtime builds");
-            let sid = runtime.list_sessions().await[0];
-            let s = runtime.get_session(&sid).await.expect("session");
-            assert_eq!(s.messages()[1].feedback, Some(common::Feedback::Up));
-
-            // clear it
-            runtime
-                .feedback_by_id(
-                    sid,
-                    &s.messages()[1].id.unwrap().to_string(),
-                    &s.updated_at().to_rfc3339(),
-                    None,
-                )
-                .await
-                .expect("clear feedback");
-            let s = runtime.get_session(&sid).await.expect("session");
-            assert_eq!(s.messages()[1].feedback, None);
-
-            // out-of-range index errors
-            let err = runtime
-                .feedback_by_id(
-                    sid,
-                    "deleted-id",
-                    &s.updated_at().to_rfc3339(),
-                    Some(common::Feedback::Down),
-                )
-                .await
-                .unwrap_err();
-            assert!(err.to_string().contains("no longer exists"));
-        }
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn persistence_delete_removes_session_from_store() {
-        let dir = std::env::temp_dir().join(format!("llmn-persist-delete-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        {
-            let runtime = RuntimeBuilder::new()
-                .config(deepseek_config())
-                .storage_dir(&dir)
-                .build()
-                .expect("runtime builds");
-            let sid = runtime.create_session(None).await.expect("create");
-            runtime
-                .push_message(&sid, common::Message::user("a"))
-                .await
-                .expect("push");
-            runtime.delete_session(sid).await.expect("delete");
-        }
-
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .storage_dir(&dir)
-            .build()
-            .expect("runtime rebuilds");
-        assert!(runtime.list_sessions().await.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn persistence_failure_fails_create_and_leaves_memory_unchanged() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        // Real store whose saves fail after the first one (create ok, then disk full).
-        struct FlakyStore {
-            inner: storage::FileSessionStore,
-            saves: AtomicUsize,
-        }
-        impl storage::SessionStore for FlakyStore {
-            fn save_session(&self, record: &storage::SessionRecord) -> storage::Result<()> {
-                if self
-                    .saves
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                        (n > 0).then(|| n - 1)
-                    })
-                    .is_err()
-                {
-                    return Err(storage::StorageError::Io(std::io::Error::other(
-                        "disk full",
-                    )));
-                }
-                self.inner.save_session(record)
-            }
-            fn load_sessions(&self) -> storage::Result<Vec<storage::SessionRecord>> {
-                self.inner.load_sessions()
-            }
-            fn delete_session(&self, id: &common::SessionId) -> storage::Result<()> {
-                self.inner.delete_session(id)
-            }
-        }
-
-        let dir = std::env::temp_dir().join(format!("llmn-persist-fail-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let store = std::sync::Arc::new(FlakyStore {
-            inner: storage::FileSessionStore::new(&dir).expect("store"),
-            saves: AtomicUsize::new(1),
-        });
-
-        let mut manager = SessionManager::from_store(store).expect("load");
-        let sid = manager.create(Some("t".into())).expect("first save ok");
-        assert_eq!(manager.get_messages(&sid).len(), 0);
-
-        // A failed write surfaces the error and leaves the session unchanged.
-        let err = manager
-            .push_message(&sid, common::Message::user("boom"))
-            .expect_err("second save fails");
-        assert!(err.to_string().contains("disk full"));
-        assert_eq!(manager.get_messages(&sid).len(), 0);
-        assert_eq!(manager.get(&sid).unwrap().title(), Some("t"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn list_sessions_orders_most_recent_first() {
-        let runtime = RuntimeBuilder::new()
-            .config(deepseek_config())
-            .build()
-            .expect("runtime builds");
-
-        let a = runtime.create_session(None).await.unwrap();
-        let b = runtime.create_session(None).await.unwrap();
-        assert_eq!(runtime.list_sessions().await, vec![b, a]);
-
-        // touching the older session moves it to the front
-        runtime
-            .push_message(&a, common::Message::user("x"))
-            .await
-            .unwrap();
-        assert_eq!(runtime.list_sessions().await, vec![a, b]);
-    }
-    #[tokio::test]
     async fn invalid_provider_edit_preserves_disk_and_runtime() {
-        let path =
-            std::env::temp_dir().join(format!("llmn-config-{}.toml", common::SessionId::new()));
+        let path = std::env::temp_dir().join(format!("llmn-config-{}.toml", uuid::Uuid::new_v4()));
         let original = "[providers.deepseek]\napi_key = 'fixture'\n";
         std::fs::write(&path, original).unwrap();
-        let rt = Runtime::from_config(&path).unwrap();
+        let rt = Runtime::open(&path, path.with_extension("data"))
+            .await
+            .unwrap();
         let before = rt.default_model().await.unwrap();
         let draft = crate::config::persist::ProviderDraft {
             id: "deepseek".into(),
@@ -1012,67 +439,34 @@ model = "m"
 
     #[tokio::test]
     async fn removing_last_implicit_provider_leaves_loadable_config() {
-        let path = std::env::temp_dir().join(format!(
-            "llmn-remove-last-{}.toml",
-            common::SessionId::new()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("llmn-remove-last-{}.toml", uuid::Uuid::new_v4()));
         std::fs::write(
             &path,
             "# hand-written config\n[gui]\ntemperature = 0.4\ncurrentModel = { provider = 'deepseek', model = 'deepseek-chat' }\n[providers.deepseek]\napi_key = 'fixture'\n",
         )
         .unwrap();
-        let rt = Runtime::from_config(&path).unwrap();
+        let rt = Runtime::open(&path, path.with_extension("data"))
+            .await
+            .unwrap();
         rt.remove_provider("deepseek").await.unwrap();
         assert!(rt.list_models().await.is_empty());
-        let restarted = Runtime::from_config(&path).unwrap();
+        rt.shutdown_features().await.unwrap();
+        drop(rt);
+        let restarted = Runtime::open(&path, path.with_extension("data"))
+            .await
+            .unwrap();
         assert!(restarted.default_model().await.is_none());
-        assert_eq!(restarted.gui_config().await.unwrap().temperature, 0.4);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("temperature = 0.4")
+        );
         assert!(
             std::fs::read_to_string(&path)
                 .unwrap()
                 .contains("# hand-written config")
         );
         std::fs::remove_file(path).unwrap();
-    }
-
-    #[tokio::test]
-    async fn empty_catalog_can_add_remove_and_restart_without_losing_history() {
-        let dir =
-            std::env::temp_dir().join(format!("llmn-onboarding-{}", common::SessionId::new()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("llmn.toml");
-        std::fs::write(&path, "[providers]\n").unwrap();
-        let session_id;
-        {
-            let rt = Runtime::from_config_persistent(&path, &dir).unwrap();
-            assert!(rt.default_model().await.is_none());
-            assert!(
-                rt.gui_config()
-                    .await
-                    .unwrap()
-                    .current_model
-                    .model
-                    .is_empty()
-            );
-            session_id = rt.create_session(Some("first run".into())).await.unwrap();
-            let draft = crate::config::persist::ProviderDraft {
-                id: "deepseek".into(),
-                protocol: None,
-                base_url: None,
-                api_key: Some("fixture".into()),
-                models: None,
-            };
-            rt.upsert_provider(&draft).await.unwrap();
-            let selection = rt.default_model().await.unwrap();
-            rt.remove_provider("deepseek").await.unwrap();
-            assert!(rt.list_models().await.is_empty());
-            assert!(rt.resolve_model(&selection).await.is_err());
-        }
-        {
-            let rt = Runtime::from_config_persistent(&path, &dir).unwrap();
-            assert!(rt.default_model().await.is_none());
-            assert_eq!(rt.list_sessions().await, vec![session_id]);
-        }
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

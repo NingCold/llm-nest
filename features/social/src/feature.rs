@@ -454,11 +454,7 @@ impl Feature for SocialFeature {
         ctx: FeatureContext,
     ) -> BoxFuture<'static, runtime::error::Result<()>> {
         Box::pin(async move {
-            let resources = ctx.social.ok_or_else(|| {
-                runtime::error::RuntimeError::ConfigError(
-                    "SocialFeature requires social resources".into(),
-                )
-            })?;
+            let resources = ctx.social;
             let human = resources.store.local_human("我".into()).await?;
             self.services
                 .set(Services {
@@ -523,13 +519,14 @@ mod rhythm_tests {
             .await
             .unwrap(),
         );
-        let runtime = runtime::builder::RuntimeBuilder::new()
-            .social_resources(SocialResources {
+        let runtime = runtime::runtime::Runtime::with_resources(
+            &runtime::config::RuntimeConfig::default(),
+            SocialResources {
                 store: store.clone(),
                 clock: clock.clone(),
-            })
-            .build()
-            .unwrap();
+            },
+        )
+        .unwrap();
         let feature = Arc::new(SocialFeature::new());
         runtime.register_feature(feature.clone()).await;
         runtime.initialize_features().await.unwrap();

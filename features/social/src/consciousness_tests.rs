@@ -85,7 +85,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         summaries: vec![],
         memories: vec![],
         participant_names: vec!["Human".into(), "A".into()],
-        trigger_id,
+        trigger: storage::social::ContextTrigger::Message(trigger_id),
         contact,
         conversation,
         members,
@@ -102,6 +102,48 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         reasoning: None,
     };
     (material, model)
+}
+
+#[test]
+fn scheduled_contact_has_its_own_required_instruction_and_proof_without_fake_history() {
+    let (mut m, mut model) = fixture();
+    model.context_window = Some(8192);
+    m.messages.clear();
+    let i = ContactIntent {
+        id: IntentId::new(),
+        conversation_id: m.conversation.id,
+        actor_id: m.contact.actor.id,
+        created_by: m.members[0].actor_id,
+        authorization_id: CommandId::new(),
+        text: "ask about reading".into(),
+        due_at: m.contact.actor.created_at,
+        expires_at: m.contact.actor.created_at,
+        utc_offset_minutes: 480,
+        status: ContactIntentStatus::Claimed,
+        plan_id: Some(PlanId::new()),
+        revision: Revision::ONE,
+        reason: None,
+        created_at: m.contact.actor.created_at,
+        updated_at: m.contact.actor.created_at,
+    };
+    m.trigger = storage::social::ContextTrigger::Contact(i.clone());
+    let prepared = ConsciousnessService::prepare(m.clone(), &model, 128).unwrap();
+    assert_eq!(
+        prepared.snapshot.sources,
+        vec![SourceRef::ContactIntent { intent_id: i.id }]
+    );
+    assert_eq!(prepared.messages.len(), 2);
+    let wire = serde_json::to_string(&prepared.messages).unwrap();
+    assert!(wire.contains("不是新的聊天消息"));
+    assert!(wire.contains("ask about reading"));
+    assert!(!wire.contains("Human ·"));
+    if let storage::social::ContextTrigger::Contact(i) = &mut m.trigger {
+        i.text = "x".repeat(9000);
+    }
+    assert!(matches!(
+        ConsciousnessService::prepare(m, &model, 128),
+        Err(SocialError::BudgetExceeded)
+    ));
 }
 
 fn segment(material: &ContextMaterial) -> ConversationSummary {
@@ -173,7 +215,7 @@ fn summaries_compress_old_originals_but_preserve_trigger_and_explicit_reply() {
         |s| matches!(s,SourceRef::Message{message_id,..} if *message_id==material.messages[0].id)
     ));
     assert!(prepared.snapshot.sources.iter().any(
-        |s| matches!(s,SourceRef::Message{message_id,..} if *message_id==material.trigger_id)
+        |s| matches!(s,SourceRef::Message{message_id,..} if *message_id==material.trigger.message_id().unwrap())
     ));
     assert!(
         prepared
@@ -361,7 +403,7 @@ fn group_context_keeps_trigger_and_distinguishes_other_ai_from_self() {
     assert_eq!(other.role, common::Role::User);
     assert!(other.text().contains("Other AI"));
     assert!(prepared.snapshot.sources.iter().any(
-        |s| matches!(s,SourceRef::Message {message_id,..} if *message_id==material.trigger_id)
+        |s| matches!(s,SourceRef::Message {message_id,..} if *message_id==material.trigger.message_id().unwrap())
     ));
     material.messages.last_mut().unwrap().body = MessageBody::text("huge".repeat(1000));
     let prepared = ConsciousnessService::prepare(material, &model, 128).unwrap();
@@ -437,7 +479,7 @@ fn cross_window_material_is_labeled_bounded_and_snapshot_records_only_actual_rea
         context_epoch: group.context_epoch,
     };
     material.reference = Some(storage::social::ReferenceMaterial {
-        message_id: material.trigger_id,
+        message_id: material.trigger.message_id().unwrap(),
         revision: Revision::ONE,
         required: true,
         preview: storage::social::ReferencePreview {
@@ -453,7 +495,7 @@ fn cross_window_material_is_labeled_bounded_and_snapshot_records_only_actual_rea
     assert_eq!(prepared.messages[1].role, common::Role::User);
     assert!(prepared.snapshot.dependencies.contains(&dependency));
     assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Message { message_id, conversation_id, .. } if *message_id == original.id && *conversation_id == group.id)));
-    assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Reference { message_id, .. } if *message_id == material.trigger_id)));
+    assert!(prepared.snapshot.sources.iter().any(|s|matches!(s, SourceRef::Reference { message_id, .. } if *message_id == material.trigger.message_id().unwrap())));
     material.reference.as_mut().unwrap().preview.messages[0].body =
         MessageBody::text("oversized group source".repeat(1000));
     assert!(matches!(

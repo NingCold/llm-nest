@@ -7,6 +7,43 @@ use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
 #[tauri::command]
+pub async fn social_update_contact_settings(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::ContactSettingsInput,
+) -> Result<storage::social::ContactScheduleView> {
+    feature(state)
+        .await?
+        .update_contact_settings(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_create_contact_intent(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::ContactIntentInput,
+) -> Result<social::ContactIntent> {
+    feature(state)
+        .await?
+        .create_contact_intent(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_cancel_contact_intent(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    intent: social::IntentId,
+    input: wire::VersionedCommand,
+) -> Result<social::ContactIntent> {
+    feature(state)
+        .await?
+        .cancel_contact_intent(id, intent, input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
 pub async fn social_summaries(
     state: tauri::State<'_, BackendState>,
     id: ConversationId,

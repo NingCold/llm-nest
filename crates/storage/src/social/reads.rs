@@ -3,6 +3,41 @@ use ::social::*;
 use rusqlite::params;
 
 impl Db<'_> {
+    pub(super) fn plan_material(&self, operator: ActorId, id: PlanId) -> Result<ContextMaterial> {
+        self.operator(operator)?;
+        let p: ParticipationPlan = self.get("participation_plans", id)?;
+        let scope = ContextScope {
+            actor_id: p.actor_id,
+            conversation_id: p.conversation_id,
+        };
+        if p.status != PlanStatus::Queued {
+            return Err(Error::Conflict("接话计划已变化".into()));
+        }
+        if let Some(trigger) = p.trigger_id {
+            return self.context_material(operator, scope, trigger);
+        }
+        let intent = self.validate_contact_source(
+            operator,
+            scope,
+            p.contact_intent_id.expect("plan has one trigger"),
+        )?;
+        let conversation: Conversation = self.get("conversations", scope.conversation_id)?;
+        let members = vec![
+            self.member(operator, conversation.id)?,
+            self.member(scope.actor_id, conversation.id)?,
+        ];
+        let mut messages:Vec<SocialMessage>=self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND status='committed' ORDER BY sequence DESC LIMIT 200",[conversation.id.to_string()])?;
+        messages.reverse();
+        Ok(ContextMaterial {
+            required_message_ids:vec![], reference:None,
+            summaries:self.query_json("SELECT payload FROM conversation_summaries WHERE conversation_id=?1 AND status='ready' ORDER BY through_sequence DESC LIMIT 64",[conversation.id.to_string()])?,
+            memories:self.memories(operator,scope)?.into_iter().filter(|m|m.status==MaterialStatus::Confirmed).collect(),
+            contact:self.contact_record(scope.actor_id)?,
+            relationship_revision:conversation.relationship_id.map(|id|self.get::<Relationship>("relationships",id).map(|r|r.revision)).transpose()?,
+            participant_names:self.query_json::<Actor>("SELECT a.payload FROM actors a JOIN memberships m ON m.actor_id=a.id WHERE m.conversation_id=?1 AND m.status='active' ORDER BY a.id",[conversation.id.to_string()])?.into_iter().map(|a|a.display_name).collect(),
+            conversation,members,messages,trigger:ContextTrigger::Contact(intent)
+        })
+    }
     pub(super) fn message_page_for(
         &self,
         viewer: ActorId,
@@ -65,6 +100,7 @@ impl Db<'_> {
             .into_iter()
             .next();
         Ok(ConversationRecord {
+            contact_schedule: self.contact_view(conversation.id)?,
             participation: self.participation(conversation.id)?,
             memory_owner_ids: self.query_json("SELECT DISTINCT json_quote(owner_actor_id) FROM memories WHERE conversation_id=?1 AND status!='forgotten' ORDER BY owner_actor_id", [conversation.id.to_string()])?,
             conversation,
@@ -161,7 +197,7 @@ impl Db<'_> {
             members: vec![human, ai],
             relationship_revision,
             messages,
-            trigger_id: trigger.id,
+            trigger: ContextTrigger::Message(trigger.id),
         })
     }
 

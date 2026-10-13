@@ -387,6 +387,7 @@ async fn v6_upgrade_keeps_accounts_history_and_creates_backup() {
     let path = f.store.path().to_owned();
     f.store.close().await.unwrap();
     let sql = Connection::open(&path).unwrap();
+    downgrade_contact_schema(&sql);
     sql.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6;").unwrap();
     drop(sql);
     let store =
@@ -403,7 +404,7 @@ async fn v6_upgrade_keeps_accounts_history_and_creates_backup() {
         current
             .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        10
+        11
     );
     let preserved = fs::read_dir(f.dir.path())
         .unwrap()

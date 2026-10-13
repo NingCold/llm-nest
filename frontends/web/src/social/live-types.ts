@@ -16,6 +16,7 @@ export interface Message {
 }
 export interface Run { id: string; conversationId: string; actorId: string; messageId: string; status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; revision: string }
 export interface Conversation {
+  contactSchedule: { settings: ContactSettings; intents: ContactIntent[] }
   participation: ParticipationView
   memoryOwnerIds: string[]
   id: string; kind: "direct" | "group"; title: string; memberIds: string[]; status: "active" | "archived"
@@ -23,7 +24,11 @@ export interface Conversation {
   members: Membership[]; pendingPlans: ParticipationPlan[]; currentBout: { id: string; status: "open" | "ended"; revision: string } | null
 }
 export interface Membership { actorId: string; paused: boolean; revision: string }
-export interface ParticipationPlan { automatic: boolean; inputIds: string[]; notBefore: string | null; expiresAt: string | null; id: string; actorId: string; triggerId: string; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
+export interface ParticipationPlan { contactIntentId: string | null; automatic: boolean; inputIds: string[]; notBefore: string | null; expiresAt: string | null; id: string; actorId: string; triggerId: string | null; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
+export interface ContactSettings { revision: string; enabled: boolean; quietUntil: string | null; quietAction: "defer" | "skip" }
+export interface ContactIntentInput { requestId: string; actorId: string; text: string; dueAt: string; expiresAt: string }
+export type ContactIntentStatus = "pending" | "claimed" | "executing" | "delivered" | "failed" | "cancelled" | "expired" | "skipped" | "uncertain"
+export interface ContactIntent { id: string; conversationId: string; actorId: string; createdBy: string; authorizationId: string; text: string; dueAt: string; expiresAt: string; utcOffsetMinutes: number; status: ContactIntentStatus; planId: string | null; revision: string; reason: string | null; createdAt: string; updatedAt: string }
 export interface ParticipationPolicy { revision: string; mergeDelayMs: number; idleSeconds: number; limitedAuto: boolean; maxConsecutive: number; maxAutoPerBout: number; maxAutoPerDay: number; dailyTokenBudget: number }
 export type ParticipationReason = "waiting" | "input_pending" | "turn_limit" | "daily_limit" | "token_limit" | "no_candidate" | "expired" | "idle" | "user_ended" | "policy_changed"
 export interface ParticipationView { policy: ParticipationPolicy; state: { lastActivity: string | null; consecutiveAi: number; boutAutoTurns: number; reason: ParticipationReason | null }; budgetDay: string; autoTurnsToday: number; reservedTokensToday: number }

@@ -19,6 +19,18 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
+        .route(
+            "/api/social/conversations/{id}/contact-settings",
+            post(update_contact_settings),
+        )
+        .route(
+            "/api/social/conversations/{id}/contact-intents",
+            post(create_contact_intent),
+        )
+        .route(
+            "/api/social/conversations/{id}/contact-intents/{intent}/cancel",
+            post(cancel_contact_intent),
+        )
         .route("/api/social/references/preview", post(reference_preview))
         .route(
             "/api/social/conversations/{id}/summaries",
@@ -267,6 +279,29 @@ async fn update_participation(
     ApiJson(input): ApiJson<wire::ParticipationInput>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.update_participation(id, input).await?))
+}
+async fn update_contact_settings(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::ContactSettingsInput>,
+) -> Result<storage::social::ContactScheduleView> {
+    Ok(Json(s.social.update_contact_settings(id, input).await?))
+}
+async fn create_contact_intent(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::ContactIntentInput>,
+) -> Result<social::ContactIntent> {
+    Ok(Json(s.social.create_contact_intent(id, input).await?))
+}
+async fn cancel_contact_intent(
+    State(s): State<Arc<AppState>>,
+    ApiPath((id, intent)): ApiPath<(ConversationId, social::IntentId)>,
+    ApiJson(input): ApiJson<wire::VersionedCommand>,
+) -> Result<social::ContactIntent> {
+    Ok(Json(
+        s.social.cancel_contact_intent(id, intent, input).await?,
+    ))
 }
 async fn pause_member(
     State(s): State<Arc<AppState>>,

@@ -16,13 +16,13 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 ## 2. 当前 Schema 与目标关系
 
-当前 schema 版本为 10；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引、v10 接话规则/状态/每日额度。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+当前 schema 版本为 11；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引、v10 接话规则/状态/每日额度，v11 联系设置、意图与计划触发来源。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |
 | 身份 | actors、ai_profiles、execution_bindings、relationships、address_book、account_admins | 关系设置与工具策略 |
 | 聊天 | conversations、memberships、messages、message_revisions、read_positions、bouts | 正式已读用例 |
-| 参与/执行 | participation_plans、participation_policies、participation_state、participation_daily_budget、ai_runs、run_details | 联系意图、消费进度、工具/协议审计 |
+| 参与/执行 | participation_plans、participation_policies、participation_state、participation_daily_budget、contact_settings、contact_intents、ai_runs、run_details | 工具/协议审计 |
 | 契约 | committed_events、command_receipts | M2/M3 新事件种类 |
 | 迁移 | schema_migrations、legacy_imports、legacy_id_map、legacy_entries、legacy_session_data | 按后续 schema 变更迁移 |
 | 意识派生数据 | memories、memory_revisions、memory_message_sources；summary_settings、conversation_summaries、summary_revisions、summary_message_sources；context_references、context_reference_sources；保留来源 tombstone | 自动提取与巩固 |
@@ -35,7 +35,7 @@ ContextReference 保存在 messages/message_revisions 的可选 context_referenc
 
 上述来源引用、摘要、记忆与 AiRun 中保存的 ContextSnapshot 共同支撑意识系统，存储仍统一使用 SocialStore。原消息由聊天用例写入，意识系统只持久化自身派生材料和必要依赖，不另建独立 consciousness 数据库或完整请求副本。M1 使用消息来源快照；M2 启用摘要、显式记忆与跨窗口引用。
 
-SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。显式记忆提供 memories/memory/create_memory/update_memory/forget_memory；摘要提供 summaries/configure_summaries/queue_summary/begin_summary/finish_summary/interrupt_summary_tasks；reference_preview 复核双方源群成员及选中原文/摘要，send_message 原子保存引用；参与节奏提供 update_participation/participation_tick，计划在同事务合并或续接；联系意图操作后续加入。前端和 Feature 不直接拼 SQL。
+SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_message、withdraw_message、begin_plan、checkpoint_run、finish_run 和显式控制等原子操作。显式记忆提供 memories/memory/create_memory/update_memory/forget_memory；摘要提供 summaries/configure_summaries/queue_summary/begin_summary/finish_summary/interrupt_summary_tasks；reference_preview 复核双方源群成员及选中原文/摘要，send_message 原子保存引用；参与节奏提供 update_participation/participation_tick，计划在同事务合并或续接；约定联系提供 update_contact_settings/create_contact_intent/cancel_contact_intent，participation_tick 负责到期领取，plan_material 按消息或意图构造输入。v11 重建计划表，使 trigger_id 可空并加入 contact_intent_id，CHECK 保证两者恰有一个，意图索引唯一；旧计划 ID、来源、状态和 payload 保留。前端和 Feature 不直接拼 SQL。
 
 ## 3. 关键事务
 
@@ -48,9 +48,11 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 授予/撤销管理员 | 初始管理员权限检查、account_admins、Actor.revision、事件、回执 |
 | 发送真人消息 | 消息、空间顺序/版本、接话计划、事件、回执、可选 ContextReference 与来源索引 |
 | 更新接话规则 | policy.revision、取消现有自动计划/运行、参与状态、引用事件及回执；不补发旧输入 |
+| 创建/取消约定及修改联系设置 | 意图/设置、撤销对应计划和运行、引用事件、回执 |
+| 领取到期意图 | pending→claimed、唯一 ParticipationPlan、引用事件，无模型调用 |
 | 开始 AI 运行 | 计划转 running、取得/创建 Bout、AiRun、generating 消息、开始事件、自动调用每日次数/容量预留 |
-| 完成 AI 运行 | 最终消息、run/计划终态、参与计数、合格的后继自动计划、事件；意图终态为下一批 |
-| 中断 AI 运行 | 草稿、run/计划终态、活动时间、事件；工具/意图尚未接入 |
+| 完成 AI 运行 | 最终消息、run/计划终态、参与计数、合格的后继自动计划、事件与对应意图终态；一次性联系不产生后继自动计划 |
+| 中断 AI 运行 | 草稿、run/计划终态、活动时间、意图终态、事件；工具未接入 |
 | 暂停成员 | 该成员 paused/revision、它的运行/队列终态、事件、回执；不提高全群 epoch |
 | 加入/移除成员 | 成员版本、空间 context/participation epoch、运行/计划撤销、事件、回执 |
 | 归档空间 | 空间 archived 状态、活动运行取消标记、未执行计划/意图终态、事件 |
@@ -59,11 +61,11 @@ SocialStore 接口放在 `crates/storage`，当前提供 send_message、revise_m
 | 编辑/遗忘 | 修订或遗忘记录、派生内容失效、上下文版本、撤销标记、事件 |
 | 保存/失效摘要 | 来源与权限版本复核、分段摘要版本/状态、派生依赖、变更事件 |
 
-上表为完整目标事务；总费用预算账本、联系意图与工具轨迹当前尚未接入。窗口摘要的配置/任务/修订、原消息依赖、事件及命令回执已同事务提交；开始与保存分别复核来源，事务不跨模型调用。显式记忆的实体、修订、来源索引、上下文版本、运行中断、事件和回执同事务提交；原消息修订/撤回在原事务中将对应记忆标 stale。当前发送事务创建计划，Bout 在开始运行事务创建；不通过事件消费重复安排。上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
+上表为完整目标事务；货币费用账本与工具轨迹当前尚未接入；联系意图已按上述事务落地。窗口摘要的配置/任务/修订、原消息依赖、事件及命令回执已同事务提交；开始与保存分别复核来源，事务不跨模型调用。显式记忆的实体、修订、来源索引、上下文版本、运行中断、事件和回执同事务提交；原消息修订/撤回在原事务中将对应记忆标 stale。当前发送事务创建计划，Bout 在开始运行事务创建；不通过事件消费重复安排。上表中的事件为持久变更引用，不含完整 provider 请求或私密原文。数据库提交后更新内存派生状态并通知订阅者，继续维持写穿透。广播失败不撤销已提交业务状态，订阅者通过事件补齐恢复。
 
 command_receipts 保存稳定实体引用、请求摘要和结果分类，不保存撤回后仍可取出的原响应正文。重复请求返回同一实体的当前可见状态；幂等检查先于已经成功请求的 revision 冲突判断。
 
-预算预留在开始事务创建，终态事务结算或释放；崩溃恢复要处理悬挂预留。提交最终消息须检查 participation_epoch、Bout 状态和可撤销来源版本，停止与完成竞争由事务顺序决定。摘要任务保存同样执行来源版本校验，不能让迟到结果覆盖有效新版本。
+主动调用预算在开始事务按模型输入/输出容量扣减；终态不退款，重启保留账本，不按 provider usage 结算或释放。提交最终消息须检查 participation_epoch、Bout 状态和可撤销来源版本，停止与完成竞争由事务顺序决定。摘要任务保存同样执行来源版本校验，不能让迟到结果覆盖有效新版本。
 
 ## 4. 并发、性能与检查点
 
@@ -125,7 +127,7 @@ v6 为既有 AI 补入本地真人的初始管理权与各自的通讯录条目�
 
 1. 同目录第二个 Runtime 失败，退出后锁可重新获取。
 2. 每项关键事务注入失败，内存、消息、终态和事件无部分成功。
-3. 杀进程后草稿可恢复，计划和预算不会重复结算。
+3. 杀进程后草稿可恢复，计划不重放，额度不重复扣减。
 4. 同一批 JSON 重复导入，身份、消息和计数不增加。
 5. 缺失 ID、重复 ID、坏 JSON、源变化、较新 schema 都有明确处理。
 6. 导入不改写源文件或用户配置，不自动提取私密记忆或重放工具。

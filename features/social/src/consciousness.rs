@@ -30,43 +30,60 @@ impl ConsciousnessService {
         } else {
             "你正在一个长期私聊中与用户交流。".into()
         };
-        let trigger = material
-            .messages
-            .iter()
-            .find(|m| m.id == material.trigger_id)
-            .expect("store supplies the visible trigger");
+        let trigger = material.trigger.message_id().map(|id| {
+            material
+                .messages
+                .iter()
+                .find(|m| m.id == id)
+                .expect("store supplies visible trigger")
+        });
+        let instruction = match &material.trigger {
+            storage::social::ContextTrigger::Message(_) => {
+                let t = trigger.expect("message trigger");
+                format!(
+                    "本次请回应 {} 在 {} 发送的第 {} 条消息。",
+                    t.sender_name,
+                    t.created_at.to_rfc3339(),
+                    t.sequence
+                )
+            }
+            storage::social::ContextTrigger::Contact(i) => format!(
+                "本次是用户明确授权的一次性约定联系。约定时间 {}，有效至 {}。请根据约定主动发一条消息；用户此刻没有发送新消息，不要捏造回应或已完成的外部行动。",
+                i.due_at.to_rfc3339(),
+                i.expires_at.to_rfc3339()
+            ),
+        };
         let system = Message::system(format!(
-            "你是 AI 联系人「{}」。用户知道你的 AI 身份。以下是你的角色设定：\n{}\n{space}本次请回应 {} 在 {} 发送的第 {} 条消息。只依据本次提供的记录回答；未提供的历史不要假装记得。",
-            material.contact.actor.display_name,
-            material.contact.profile.persona,
-            trigger.sender_name,
-            trigger.created_at.to_rfc3339(),
-            trigger.sequence
+            "你是 AI 联系人「{}」。用户知道你的 AI 身份。以下是你的角色设定：\n{}\n{space}{instruction}只依据本次提供的记录回答；未提供的历史不要假装记得。",
+            material.contact.actor.display_name, material.contact.profile.persona
         ));
-        let mut used = estimate(&system);
+        let contact_message = match &material.trigger {
+            storage::social::ContextTrigger::Contact(i) => Some(Message::user(format!(
+                "[用户明确授权的一次性约定；不是新的聊天消息]\n{}",
+                i.text
+            ))),
+            _ => None,
+        };
+        let mut used = estimate(&system) + contact_message.as_ref().map_or(0, estimate);
         if output_tokens == 0 || used >= input_limit {
             return Err(SocialError::BudgetExceeded);
         }
         let quoted = trigger
-            .reply_to
+            .and_then(|t| t.reply_to)
             .and_then(|id| material.messages.iter().find(|m| m.id == id));
-        let trigger_wire = render(
-            trigger,
-            material.contact.actor.id,
-            quoted.map(|m| m.sequence),
-        );
-        used += estimate(&trigger_wire);
+        let mut selected = Vec::new();
+        if let Some(t) = trigger {
+            selected.push((
+                t,
+                render(t, material.contact.actor.id, quoted.map(|m| m.sequence)),
+            ));
+        }
+        if let Some(q) = quoted {
+            selected.push((q, render(q, material.contact.actor.id, None)));
+        }
+        used += selected.iter().map(|(_, w)| estimate(w)).sum::<u32>();
         if used > input_limit {
             return Err(SocialError::BudgetExceeded);
-        }
-        let mut selected = vec![(trigger, trigger_wire)];
-        if let Some(quoted) = quoted {
-            let wire = render(quoted, material.contact.actor.id, None);
-            used += estimate(&wire);
-            if used > input_limit {
-                return Err(SocialError::BudgetExceeded);
-            }
-            selected.push((quoted, wire));
         }
         for id in &material.required_message_ids {
             if selected.iter().any(|(m, _)| m.id == *id) {
@@ -158,7 +175,7 @@ impl ConsciousnessService {
             .messages
             .iter()
             .filter(|m| {
-                m.id != trigger.id
+                Some(m.id) != trigger.map(|t| t.id)
                     && Some(m.id) != quoted.map(|m| m.id)
                     && !material.required_message_ids.contains(&m.id)
             })
@@ -169,7 +186,7 @@ impl ConsciousnessService {
             .iter()
             .map(|m| m.sequence)
             .min()
-            .expect("trigger exists");
+            .unwrap_or(Sequence::ZERO);
         let needs_summary = used.saturating_add(all_original_cost) > input_limit
             || material
                 .summaries
@@ -182,7 +199,7 @@ impl ConsciousnessService {
             let limit = (input_limit - used) / 3;
             for summary in &material.summaries {
                 if summary.status != SummaryStatus::Ready
-                    || summary.through_sequence >= trigger.sequence
+                    || trigger.is_some_and(|t| summary.through_sequence >= t.sequence)
                 {
                     continue;
                 }
@@ -205,7 +222,7 @@ impl ConsciousnessService {
             used += summary_cost;
         }
         for message in material.messages.iter().rev().filter(|m| {
-            m.id != trigger.id
+            Some(m.id) != trigger.map(|t| t.id)
                 && Some(m.id) != quoted.map(|m| m.id)
                 && !material.required_message_ids.contains(&m.id)
         }) {
@@ -234,6 +251,9 @@ impl ConsciousnessService {
                 revision: m.revision,
             })
             .collect();
+        if let storage::social::ContextTrigger::Contact(i) = &material.trigger {
+            sources.push(SourceRef::ContactIntent { intent_id: i.id });
+        }
         sources.extend(memory_sources);
         sources.extend(reference_sources);
         let mut messages = vec![system];
@@ -242,6 +262,7 @@ impl ConsciousnessService {
         summary_messages.sort_by_key(|(sequence, _)| *sequence);
         messages.extend(summary_messages.into_iter().map(|(_, message)| message));
         messages.extend(selected.into_iter().map(|(_, wire)| wire));
+        messages.extend(contact_message);
         let binding = material
             .contact
             .binding

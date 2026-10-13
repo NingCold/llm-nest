@@ -721,6 +721,10 @@ impl Db<'_> {
             }
         }
         for source in &snapshot.sources {
+            if let SourceRef::ContactIntent { intent_id } = source {
+                self.validate_contact_source(operator, scope, *intent_id)?;
+                continue;
+            }
             if matches!(source, SourceRef::Reference { .. }) {
                 continue;
             }
@@ -1051,9 +1055,37 @@ impl SocialStore for SqliteSocialStore {
     async fn queued_conversations(&self, operator: ActorId) -> Result<Vec<ConversationId>> {
         self.call(move |w| w.read(|db| {
             db.operator(operator)?;
-            let rows:Vec<Conversation> = db.query_json("SELECT c.payload FROM conversations c WHERE (EXISTS(SELECT 1 FROM participation_plans p WHERE p.conversation_id=c.id AND p.status='queued') OR EXISTS(SELECT 1 FROM bouts b WHERE b.conversation_id=c.id AND b.status='open')) AND EXISTS(SELECT 1 FROM memberships m WHERE m.conversation_id=c.id AND m.actor_id=?1 AND m.status='active')", [operator.to_string()])?;
+            let rows:Vec<Conversation> = db.query_json("SELECT c.payload FROM conversations c WHERE (EXISTS(SELECT 1 FROM participation_plans p WHERE p.conversation_id=c.id AND p.status='queued') OR EXISTS(SELECT 1 FROM contact_intents i WHERE i.conversation_id=c.id AND i.status IN ('pending','claimed')) OR EXISTS(SELECT 1 FROM bouts b WHERE b.conversation_id=c.id AND b.status='open')) AND EXISTS(SELECT 1 FROM memberships m WHERE m.conversation_id=c.id AND m.actor_id=?1 AND m.status='active')", [operator.to_string()])?;
             Ok(rows.into_iter().map(|c| c.id).collect())
         })).await
+    }
+    async fn update_contact_settings(
+        &self,
+        ctx: CommandContext,
+        input: UpdateContactSettings,
+    ) -> Result<ContactScheduleView> {
+        self.call(move |w| w.transact(|db| db.update_contact_settings(&ctx, &input)))
+            .await
+    }
+    async fn create_contact_intent(
+        &self,
+        ctx: CommandContext,
+        input: CreateContactIntent,
+    ) -> Result<ContactIntent> {
+        self.call(move |w| w.transact(|db| db.create_contact_intent(&ctx, &input)))
+            .await
+    }
+    async fn cancel_contact_intent(
+        &self,
+        ctx: CommandContext,
+        input: CancelContactIntent,
+    ) -> Result<ContactIntent> {
+        self.call(move |w| w.transact(|db| db.cancel_contact_intent(&ctx, &input)))
+            .await
+    }
+    async fn plan_material(&self, operator: ActorId, id: PlanId) -> Result<ContextMaterial> {
+        self.call(move |w| w.read(|db| db.plan_material(operator, id)))
+            .await
     }
     async fn begin_plan(&self, operator: ActorId, plan: PlanId, input: BeginRun) -> Result<AiRun> {
         self.call(move |w| w.transact(|db| db.begin_plan(operator, plan, input)))
@@ -1471,9 +1503,13 @@ impl SocialStore for SqliteSocialStore {
                     }
                     ConversationAction::Resume => {
                         db.writable(&c)?;
+                        db.contact_tick(c.id)?;
                         c.paused = false;
                     }
-                    ConversationAction::Archive => c.status = EntityStatus::Archived,
+                    ConversationAction::Archive => {
+                        c.status = EntityStatus::Archived;
+                        db.cancel_contacts(c.id, None, "聊天已归档")?;
+                    }
                     ConversationAction::Restore => c.status = EntityStatus::Active,
                 }
                 c.revision = c.revision.next()?;

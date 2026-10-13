@@ -146,7 +146,7 @@ impl Db<'_> {
             m.reply_to.is_none() && m.context_reference.is_none() && m.mentions.is_empty()
         };
         let previous = if delay > 0 && plain(message) {
-            self.query_json::<ParticipationPlan>("SELECT payload FROM participation_plans WHERE conversation_id=?1 AND actor_id=?2 AND status='queued' ORDER BY trigger_sequence DESC LIMIT 1",params![c.id.to_string(),membership.actor_id.to_string()])?.into_iter().next()
+            self.query_json::<ParticipationPlan>("SELECT payload FROM participation_plans WHERE conversation_id=?1 AND actor_id=?2 AND status='queued' AND contact_intent_id IS NULL ORDER BY trigger_sequence DESC LIMIT 1",params![c.id.to_string(),membership.actor_id.to_string()])?.into_iter().next()
         } else {
             None
         };
@@ -159,7 +159,8 @@ impl Db<'_> {
             id: PlanId::new(),
             conversation_id: c.id,
             actor_id: membership.actor_id,
-            trigger_id: message.id,
+            trigger_id: Some(message.id),
+            contact_intent_id: None,
             trigger_sequence: message.sequence,
             ordinal,
             membership_revision: membership.revision,
@@ -170,7 +171,8 @@ impl Db<'_> {
             created_at: self.now,
         };
         if let Some(old) = previous {
-            let old_message: SocialMessage = self.get("messages", old.trigger_id)?;
+            let old_message: SocialMessage =
+                self.get("messages", old.trigger_id.expect("message plan"))?;
             if !old.automatic
                 && old.membership_revision == membership.revision
                 && old.input_ids.len() < 20
@@ -183,7 +185,7 @@ impl Db<'_> {
                 p.revision = old.revision.next()?;
                 p.input_ids = old.input_ids;
                 if p.input_ids.is_empty() {
-                    p.input_ids.push(old.trigger_id);
+                    p.input_ids.push(old.trigger_id.expect("message plan"));
                 }
                 p.input_ids.push(message.id);
             }
@@ -242,7 +244,8 @@ impl Db<'_> {
                 id: PlanId::new(),
                 conversation_id: c.id,
                 actor_id: member.actor_id,
-                trigger_id: message.id,
+                trigger_id: Some(message.id),
+                contact_intent_id: None,
                 trigger_sequence: message.sequence,
                 ordinal: 0,
                 membership_revision: member.revision,
@@ -261,7 +264,9 @@ impl Db<'_> {
         snapshot: &ContextSnapshot,
     ) -> Result<()> {
         let mut view = self.participation(p.conversation_id)?;
-        if !view.policy.limited_auto || p.policy_revision != Some(view.policy.revision) {
+        if p.automatic
+            && (!view.policy.limited_auto || p.policy_revision != Some(view.policy.revision))
+        {
             return Err(Error::Conflict("自动接话授权已变化".into()));
         }
         // Reserve the entire allowed input plus output capacity, not unverified provider usage.
@@ -275,9 +280,9 @@ impl Db<'_> {
             return Err(Error::ParticipationLimit {
                 reason,
                 message: match reason {
-                    ParticipationReason::TokenLimit => "自动接话的每日 token 预留额度不足",
-                    ParticipationReason::DailyLimit => "自动接话已达到每日次数上限",
-                    _ => "自动接话已达到本轮次数上限",
+                    ParticipationReason::TokenLimit => "主动调用的每日 token 预留额度不足",
+                    ParticipationReason::DailyLimit => "主动调用已达到每日次数上限",
+                    _ => "主动调用已达到本轮次数上限",
                 },
             });
         }
@@ -293,7 +298,7 @@ impl Db<'_> {
             state.consecutive_ai += 1;
         }
         self.save_participation_state(p.conversation_id, &state)?;
-        if run.status == RunStatus::Succeeded {
+        if run.status == RunStatus::Succeeded && p.contact_intent_id.is_none() {
             let newer_human:i64 = self.connection.query_row("SELECT count(*) FROM messages m JOIN actors a ON a.id=m.sender_id WHERE m.conversation_id=?1 AND m.sequence>?2 AND m.status='committed' AND a.kind='human'",params![p.conversation_id.to_string(),p.trigger_sequence.get() as i64],|r|r.get(0)).map_err(|e|super::schema::sql_error(self.path,e))?;
             if newer_human == 0 {
                 self.enqueue_automatic(&self.get("messages", run.message_id)?)?;
@@ -302,6 +307,22 @@ impl Db<'_> {
         Ok(())
     }
     pub(super) fn participation_tick(&self, id: ConversationId) -> Result<ParticipationTick> {
+        // After downtime, close an idle old bout before a newly due contact is claimed.
+        let old = self.participation(id)?;
+        if old
+            .state
+            .last_activity
+            .is_some_and(|t| t + Duration::seconds(old.policy.idle_seconds.into()) <= self.now)
+        {
+            let idle:Option<Bout>=self.query_json("SELECT payload FROM bouts WHERE conversation_id=?1 AND status='open' AND NOT EXISTS(SELECT 1 FROM participation_plans WHERE conversation_id=?1 AND status IN ('queued','running')) AND NOT EXISTS(SELECT 1 FROM ai_runs WHERE conversation_id=?1 AND status='running')",[id.to_string()])?.into_iter().next();
+            if let Some(b) = idle {
+                self.close_bout(b)?;
+                let mut state = old.state;
+                state.reason = Some(ParticipationReason::Idle);
+                self.save_participation_state(id, &state)?;
+            }
+        }
+        let contact_wake = self.contact_tick(id)?;
         let mut view = self.participation(id)?;
         while let Some(mut p) = self.next_plan(id)? {
             if p.expires_at.is_some_and(|t| t <= self.now) {
@@ -316,7 +337,7 @@ impl Db<'_> {
             let wake_at = p.not_before.filter(|t| *t > self.now);
             return Ok(ParticipationTick {
                 plan: if wake_at.is_none() { Some(p) } else { None },
-                wake_at,
+                wake_at: earliest(wake_at, contact_wake),
             });
         }
         let bout: Option<Bout> = self
@@ -357,7 +378,17 @@ impl Db<'_> {
         }
         Ok(ParticipationTick {
             plan: None,
-            wake_at,
+            wake_at: earliest(wake_at, contact_wake),
         })
+    }
+}
+
+fn earliest(
+    a: Option<chrono::DateTime<chrono::Utc>>,
+    b: Option<chrono::DateTime<chrono::Utc>>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }

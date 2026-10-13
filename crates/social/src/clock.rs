@@ -4,8 +4,13 @@ use std::{future::Future, pin::Pin, sync::RwLock};
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
     fn wait_until(&self, deadline: DateTime<Utc>) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        let delay = (deadline - self.now()).to_std().unwrap_or_default();
-        Box::pin(tokio::time::sleep(delay))
+        Box::pin(async move {
+            while self.now() < deadline {
+                let delay = (deadline - self.now()).to_std().unwrap_or_default();
+                // Recheck UTC after sleep/resume or a system-clock adjustment.
+                tokio::time::sleep(delay.min(std::time::Duration::from_secs(30))).await;
+            }
+        })
     }
 }
 pub struct SystemClock;

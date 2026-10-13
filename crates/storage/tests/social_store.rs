@@ -11,6 +11,8 @@ use std::{
 };
 use storage::social::*;
 use storage::{DataDirectoryGuard, FileSessionStore, SessionRecord, SessionStore};
+#[path = "social_contact/mod.rs"]
+mod contact_tests;
 #[path = "social_memory/mod.rs"]
 mod memory_tests;
 #[path = "social_participation/mod.rs"]
@@ -25,6 +27,12 @@ struct Fixture {
     store: SqliteSocialStore,
     human: Actor,
     clock: Arc<ManualClock>,
+}
+fn downgrade_contact_schema(sql: &Connection) {
+    sql.execute_batch("DROP TRIGGER plan_same_space; DROP INDEX pending_participation; DROP INDEX one_running_plan; DROP INDEX message_plan_order; ALTER TABLE participation_plans RENAME TO plans_v11;").unwrap();
+    sql.execute_batch(include_str!("../src/social/schema-v3.sql"))
+        .unwrap();
+    sql.execute_batch("INSERT INTO participation_plans SELECT id,conversation_id,actor_id,trigger_id,trigger_sequence,ordinal,status,run_id,payload FROM plans_v11; DROP TABLE plans_v11; DROP TABLE contact_intents; DROP TABLE contact_settings; DELETE FROM schema_migrations WHERE version=11; PRAGMA user_version=10;").unwrap();
 }
 
 #[tokio::test]
@@ -175,18 +183,8 @@ impl Fixture {
         {
             self.clock.set(t);
         }
-        let material = self
-            .store
-            .context_material(
-                self.human.id,
-                ContextScope {
-                    actor_id: p.actor_id,
-                    conversation_id: p.conversation_id,
-                },
-                p.trigger_id,
-            )
-            .await?;
-        let snapshot = ContextSnapshot {
+        let material = self.store.plan_material(self.human.id, p.id).await?;
+        let mut snapshot = ContextSnapshot {
             scope: ContextScope {
                 actor_id: p.actor_id,
                 conversation_id: p.conversation_id,
@@ -219,6 +217,11 @@ impl Fixture {
                 })
                 .collect(),
         };
+        if let Some(intent_id) = p.contact_intent_id {
+            snapshot
+                .sources
+                .push(SourceRef::ContactIntent { intent_id });
+        }
         self.store
             .begin_plan(
                 self.human.id,
@@ -378,6 +381,8 @@ impl Fixture {
         let sql = self.sql();
         [
             "actors",
+            "contact_settings",
+            "contact_intents",
             "participation_policies",
             "participation_state",
             "participation_daily_budget",
@@ -449,6 +454,7 @@ async fn v5_account_migration_preserves_history_private_settings_and_old_disable
     let operator = f.human.id;
     f.store.close().await.unwrap();
     let old = Connection::open(&path).unwrap();
+    downgrade_contact_schema(&old);
     old.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
     drop(old);
     let store = SqliteSocialStore::open(

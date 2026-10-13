@@ -2,6 +2,9 @@ import type { Account, AccountView, AiInput, ContactEntry, ContactInput, Managed
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
+  updateContactSettings(id: string, input: { requestId: string; settings: import("./live-types").ContactSettings }): Promise<Conversation["contactSchedule"]>
+  createContactIntent(id: string, input: import("./live-types").ContactIntentInput): Promise<import("./live-types").ContactIntent>
+  cancelContactIntent(id: string, intent: string, input: VersionedCommand): Promise<import("./live-types").ContactIntent>
   referencePreview(input: import("./live-types").ReferenceInput): Promise<import("./live-types").ReferencePreview>
   summaries(id: string, before?: string): Promise<import("./live-types").SummaryState>
   configureSummaries(id: string, input: import("./live-types").SummarySettingsInput): Promise<import("./live-types").SummarySettings>

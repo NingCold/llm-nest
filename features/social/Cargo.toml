@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 ai-client.workspace = true
 common.workspace = true
+chrono.workspace = true
 social.workspace = true
 storage.workspace = true
 runtime = { path = "../../crates/runtime" }

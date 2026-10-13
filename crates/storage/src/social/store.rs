@@ -188,6 +188,7 @@ pub struct ContactRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationRecord {
+    pub contact_schedule: ContactScheduleView,
     pub participation: ParticipationView,
     pub memory_owner_ids: Vec<ActorId>,
     pub conversation: Conversation,
@@ -221,7 +222,47 @@ pub struct ContextMaterial {
     pub participant_names: Vec<String>,
     /// Recent committed history through the trigger, followed by completed answers to it.
     pub messages: Vec<SocialMessage>,
-    pub trigger_id: MessageId,
+    pub trigger: ContextTrigger,
+}
+
+#[derive(Debug, Clone)]
+pub enum ContextTrigger {
+    Message(MessageId),
+    Contact(ContactIntent),
+}
+impl ContextTrigger {
+    pub fn message_id(&self) -> Option<MessageId> {
+        match self {
+            Self::Message(id) => Some(*id),
+            Self::Contact(_) => None,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactScheduleView {
+    pub settings: ContactSettings,
+    pub intents: Vec<ContactIntent>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateContactIntent {
+    pub conversation_id: ConversationId,
+    pub actor_id: ActorId,
+    pub text: String,
+    pub due_at: chrono::DateTime<chrono::FixedOffset>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateContactSettings {
+    pub conversation_id: ConversationId,
+    pub settings: ContactSettings,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelContactIntent {
+    pub conversation_id: ConversationId,
+    pub intent_id: IntentId,
+    pub expected_revision: Revision,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,6 +524,26 @@ pub trait SocialStore: Send + Sync {
         operator: ActorId,
         id: ConversationId,
     ) -> SocialStorageResult<ParticipationTick>;
+    async fn update_contact_settings(
+        &self,
+        ctx: CommandContext,
+        input: UpdateContactSettings,
+    ) -> SocialStorageResult<ContactScheduleView>;
+    async fn create_contact_intent(
+        &self,
+        ctx: CommandContext,
+        input: CreateContactIntent,
+    ) -> SocialStorageResult<ContactIntent>;
+    async fn cancel_contact_intent(
+        &self,
+        ctx: CommandContext,
+        input: CancelContactIntent,
+    ) -> SocialStorageResult<ContactIntent>;
+    async fn plan_material(
+        &self,
+        operator: ActorId,
+        id: PlanId,
+    ) -> SocialStorageResult<ContextMaterial>;
     async fn update_participation(
         &self,
         ctx: CommandContext,

@@ -31,7 +31,8 @@ impl Db<'_> {
         Ok(targets)
     }
     pub(super) fn save_plan(&self, p: &ParticipationPlan) -> Result<()> {
-        self.execute("INSERT INTO participation_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET trigger_id=excluded.trigger_id,trigger_sequence=excluded.trigger_sequence,ordinal=excluded.ordinal,status=excluded.status,run_id=excluded.run_id,payload=excluded.payload", params![p.id.to_string(), p.conversation_id.to_string(), p.actor_id.to_string(), p.trigger_id.to_string(), p.trigger_sequence.get() as i64, p.ordinal, label(&p.status)?, p.run_id.map(|id| id.to_string()), serde_json::to_string(p)?])?;
+        self.execute("INSERT INTO participation_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(id) DO UPDATE SET trigger_id=excluded.trigger_id,trigger_sequence=excluded.trigger_sequence,ordinal=excluded.ordinal,status=excluded.status,run_id=excluded.run_id,payload=excluded.payload", params![p.id.to_string(), p.conversation_id.to_string(), p.actor_id.to_string(), p.trigger_id.map(|id| id.to_string()), p.trigger_sequence.get() as i64, p.ordinal, label(&p.status)?, p.run_id.map(|id| id.to_string()), serde_json::to_string(p)?, p.contact_intent_id.map(|id|id.to_string())])?;
+        self.contact_plan_changed(p)?;
         self.event(SocialChange::PlanChanged {
             conversation_id: p.conversation_id,
             plan_id: p.id,
@@ -39,7 +40,7 @@ impl Db<'_> {
         })
     }
     pub(super) fn next_plan(&self, id: ConversationId) -> Result<Option<ParticipationPlan>> {
-        let head = self.query_json::<ParticipationPlan>("SELECT payload FROM participation_plans WHERE conversation_id=?1 AND status IN ('queued','running') ORDER BY trigger_sequence,ordinal LIMIT 1", [id.to_string()])?.into_iter().next();
+        let head = self.query_json::<ParticipationPlan>("SELECT payload FROM participation_plans WHERE conversation_id=?1 AND status IN ('queued','running') AND (status='running' OR contact_intent_id IS NULL OR julianday(json_extract(payload,'$.not_before'))<=julianday(?2)) ORDER BY (status='running') DESC,trigger_sequence,ordinal,rowid LIMIT 1", params![id.to_string(),self.now.to_rfc3339()])?.into_iter().next();
         Ok(head.filter(|p| p.status == PlanStatus::Queued))
     }
     pub(super) fn send_message(
@@ -167,7 +168,7 @@ impl Db<'_> {
                 conversation_id: p.conversation_id,
             })
             || !input.snapshot.sources.iter().any(
-                |s| matches!(s,SourceRef::Message {message_id,..} if *message_id==p.trigger_id),
+                |s| matches!(s,SourceRef::Message {message_id,..} if Some(*message_id)==p.trigger_id) || matches!(s,SourceRef::ContactIntent {intent_id} if Some(*intent_id)==p.contact_intent_id),
             )
         {
             return Err(Error::Invalid(
@@ -184,8 +185,8 @@ impl Db<'_> {
                 return Err(Error::Invalid("合并接话必须包含所有原始消息".into()));
             }
         }
-        let run = self.start_run(operator, input, Some(p.trigger_id))?;
-        if p.automatic {
+        let run = self.start_run(operator, input, p.trigger_id)?;
+        if p.automatic || p.contact_intent_id.is_some() {
             self.reserve_automatic(&p, &run.snapshot)?;
         }
         p.status = PlanStatus::Running;
@@ -295,6 +296,7 @@ impl Db<'_> {
         self.cancel_runs(c.id, RunStatus::Cancelled)?;
         if status == MembershipStatus::Left {
             self.cancel_queued(c.id, Some(actor.id))?;
+            self.cancel_contacts(c.id, Some(actor.id), "成员已退出")?;
             self.stale_references_for_member(c.id, actor.id)?;
         }
         self.invalidate_context(c.id)?;

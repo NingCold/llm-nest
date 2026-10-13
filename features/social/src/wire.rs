@@ -221,6 +221,7 @@ impl From<AiRun> for Run {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
+    pub contact_schedule: storage::social::ContactScheduleView,
     pub participation: storage::social::ParticipationView,
     pub memory_owner_ids: Vec<ActorId>,
     pub id: ConversationId,
@@ -241,6 +242,7 @@ pub struct Conversation {
 impl From<ConversationRecord> for Conversation {
     fn from(c: ConversationRecord) -> Self {
         Self {
+            contact_schedule: c.contact_schedule,
             participation: c.participation,
             memory_owner_ids: c.memory_owner_ids,
             id: c.conversation.id,
@@ -340,7 +342,8 @@ pub struct Plan {
     pub expires_at: Option<String>,
     pub id: PlanId,
     pub actor_id: ActorId,
-    pub trigger_id: MessageId,
+    pub trigger_id: Option<MessageId>,
+    pub contact_intent_id: Option<IntentId>,
     pub trigger_sequence: Sequence,
     pub ordinal: u32,
     pub status: PlanStatus,
@@ -358,6 +361,7 @@ impl From<ParticipationPlan> for Plan {
             id: p.id,
             actor_id: p.actor_id,
             trigger_id: p.trigger_id,
+            contact_intent_id: p.contact_intent_id,
             trigger_sequence: p.trigger_sequence,
             ordinal: p.ordinal,
             status: p.status,
@@ -373,6 +377,21 @@ impl From<ParticipationPlan> for Plan {
 pub struct ParticipationInput {
     pub request_id: CommandId,
     pub policy: ParticipationPolicy,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactSettingsInput {
+    pub request_id: CommandId,
+    pub settings: ContactSettings,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactIntentInput {
+    pub request_id: CommandId,
+    pub actor_id: ActorId,
+    pub text: String,
+    pub due_at: chrono::DateTime<chrono::FixedOffset>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]

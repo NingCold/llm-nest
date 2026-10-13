@@ -29,7 +29,9 @@ pub struct ParticipationPlan {
     pub id: PlanId,
     pub conversation_id: ConversationId,
     pub actor_id: ActorId,
-    pub trigger_id: MessageId,
+    pub trigger_id: Option<MessageId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_intent_id: Option<crate::IntentId>,
     pub trigger_sequence: Sequence,
     pub ordinal: u32,
     pub membership_revision: Revision,

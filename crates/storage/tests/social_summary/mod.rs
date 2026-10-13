@@ -450,6 +450,7 @@ async fn v7_upgrade_preserves_explicit_memory_and_backup() {
     let path = f.store.path().to_owned();
     f.store.close().await.unwrap();
     let sql = Connection::open(&path).unwrap();
+    downgrade_contact_schema(&sql);
     sql.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;").unwrap();
     drop(sql);
     let store =

@@ -20,8 +20,8 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 2. 准备实际数据目录，按原规则处理旧默认目录复制，解析并冻结 config/data 路径。
 3. 按进程环境 > 配置目录 > 默认数据目录加载缺失环境变量；读取配置与目录缓存，整体校验。
 4. 取得统一 DataDirectoryGuard，打开 SocialStore；检查 schema 与旧 JSON 导入状态。
-5. 恢复 running 检查点为 interrupted，保留已扣减的自动额度，不重放已开始请求；意图恢复为下一批。
-6. 构造 Runtime 资源，初始化 SocialFeature；重新检查 queued 计划和 open Bout。每窗口维护一个可唤醒的调度任务，Clock.wait_until 与退出取消并列等待；全局社交并发 4，摘要独立并发 1。
+5. 恢复 running 检查点为 interrupted，保留已扣减的自动额度，不重放已开始请求；对应 executing 联系恢复为 uncertain，已过期则 expired，均不重发。
+6. 构造 Runtime 资源，初始化 SocialFeature；重新检查 queued 计划、open Bout 与 pending/claimed 约定。每窗口维护一个可唤醒的调度任务，Clock.wait_until 与退出取消并列等待；全局社交并发 4，摘要独立并发 1。一次性约定到期仍复用参与/执行队列，系统时钟等待最多每 30 秒复核 UTC，ManualClock 直接通知；应用退出不留下系统定时任务或后台模型调用。
 7. 暴露 init 快照与业务入口。存储和历史恢复未成功时不能发送或启动自动任务。
 
 空文件、仅注释或空 providers 都是有效首次启动状态：可以配置联系人和设置，无法执行 AI。省略 providers 反序列化为空集合，非法语法或类型仍报错，不在解析失败时伪造配置。当前社交私聊已经把真人消息保存与模型可用性分开；旧 Harness 入口保持原发送约束。

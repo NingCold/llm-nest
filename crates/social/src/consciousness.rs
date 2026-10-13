@@ -19,6 +19,9 @@ pub enum MemoryScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SourceRef {
+    ContactIntent {
+        intent_id: crate::IntentId,
+    },
     Message {
         conversation_id: ConversationId,
         message_id: MessageId,

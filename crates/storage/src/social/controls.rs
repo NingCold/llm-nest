@@ -105,6 +105,9 @@ impl Db<'_> {
         }
         let mut member = self.member(actor.id, c.id)?;
         self.expected(member.revision, input.expected_revision)?;
+        if member.paused && !input.paused {
+            self.contact_tick(c.id)?;
+        }
         member.paused = input.paused;
         member.revision = member.revision.next()?;
         self.execute("UPDATE memberships SET paused=?3,revision=?4,payload=?5 WHERE conversation_id=?1 AND actor_id=?2", params![c.id.to_string(), actor.id.to_string(),member.paused,member.revision.get() as i64,serde_json::to_string(&member)?])?;

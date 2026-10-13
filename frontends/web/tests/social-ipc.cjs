@@ -37,6 +37,9 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
   const h = harness();
   const inputs = { requestId: 'command', expectedRevision: '2', text: 'hello', actorId: 'ai', paused: true, action: 'pause' };
   const cases = [
+    ['updateContactSettings', ['chat', inputs], 'social_update_contact_settings', { id: 'chat', input: inputs }],
+    ['createContactIntent', ['chat', inputs], 'social_create_contact_intent', { id: 'chat', input: inputs }],
+    ['cancelContactIntent', ['chat', 'intent', inputs], 'social_cancel_contact_intent', { id: 'chat', intent: 'intent', input: inputs }],
     ['updateParticipation', ['chat', inputs], 'social_update_participation', { id: 'chat', input: inputs }],
     ['referencePreview', [inputs], 'social_reference_preview', { input: inputs }],
     ['summaries', ['chat'], 'social_summaries', { id: 'chat', before: null }],

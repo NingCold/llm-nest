@@ -55,7 +55,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
         REQUESTS.append(request)
         if any(m['content'].startswith('[窗口分段摘要原文]') for m in request['messages'] if m['role'] == 'user'):
             return self.summary_response(request)
-        content = next(m['content'] for m in reversed(request['messages']) if m['role'] == 'user' and m['content'].startswith('[我 ·'))
+        content = next(m['content'] for m in reversed(request['messages']) if m['role'] == 'user' and (m['content'].startswith('[我 ·') or m['content'].startswith('[用户明确授权的一次性约定')))
         text = content.rsplit('\n', 1)[-1]
         if text == 'provider-error':
             self.send_response(429)
@@ -631,6 +631,9 @@ def main():
 
         from social_participation_acceptance import verify_participation
         verify_participation(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
+
+        from social_contact_acceptance import verify_contacts
+        verify_contacts(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
 
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:

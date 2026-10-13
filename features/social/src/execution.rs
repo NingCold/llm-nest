@@ -94,8 +94,6 @@ impl SocialFeature {
         locks: &ConversationLocks,
     ) -> Result<()> {
         let conversation_id = plan.conversation_id;
-        let actor_id = plan.actor_id;
-        let trigger = plan.trigger_id;
         let s = self.services()?;
         let (run, client, request, details, cancel) =
             {
@@ -114,18 +112,7 @@ impl SocialFeature {
                 }) {
                     return Ok(());
                 }
-                let material = s
-                    .resources
-                    .store
-                    .context_material(
-                        s.human,
-                        ContextScope {
-                            actor_id,
-                            conversation_id,
-                        },
-                        trigger,
-                    )
-                    .await?;
+                let material = s.resources.store.plan_material(s.human, plan.id).await?;
                 let binding =
                     material.contact.binding.as_ref().ok_or_else(|| {
                         SocialError::ModelUnavailable("该 AI 尚未配置模型".into())
@@ -181,7 +168,10 @@ impl SocialFeature {
                 };
                 (run, client, request, details, cancel)
             };
-        let outcome = self.consume(&run, &client, request, details, &cancel).await;
+        let deadline = plan.contact_intent_id.and(plan.expires_at);
+        let outcome = self
+            .consume(&run, &client, request, details, &cancel, deadline)
+            .await;
         self.cancellations.lock().await.remove(&run.id);
         outcome
     }
@@ -193,6 +183,7 @@ impl SocialFeature {
         request: ChatRequest,
         mut details: RunDetails,
         cancel: &CancellationToken,
+        deadline: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<()> {
         let s = self.services()?;
         let started = Instant::now();
@@ -203,9 +194,17 @@ impl SocialFeature {
         let mut checkpoint = tokio::time::interval(std::time::Duration::from_millis(500));
         checkpoint.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut dirty = false;
+        let expiry = async {
+            match deadline {
+                Some(t) => s.resources.clock.wait_until(t).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::pin!(expiry);
         let opened = tokio::select! { biased;
             _=self.stop.cancelled()=>return self.finish(run,RunStatus::Interrupted,text,details).await,
             _=cancel.cancelled()=>return self.finish(run,RunStatus::Cancelled,text,details).await,
+            _=&mut expiry=>{ details.error=Some(failure("contact_expired","约定已过期，停止生成")); return self.finish(run,RunStatus::Interrupted,text,details).await; },
             opened=client.complete_stream(request)=>opened,
         };
         let mut stream = match opened {
@@ -222,6 +221,7 @@ impl SocialFeature {
             tokio::select! { biased;
                 _=self.stop.cancelled()=>break RunStatus::Interrupted,
                 _=cancel.cancelled()=>break RunStatus::Cancelled,
+                _=&mut expiry=>{ details.error=Some(failure("contact_expired","约定已过期，停止生成")); break RunStatus::Interrupted; },
                 _=checkpoint.tick(), if dirty => {
                     match s.resources.store.checkpoint_run(s.human,run.id,MessageBody::text(&text),Some(details.clone())).await {
                         Ok(())=>{},

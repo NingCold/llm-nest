@@ -1,6 +1,7 @@
 mod account_control;
 mod accounts;
 mod consciousness;
+mod contact_intent;
 mod controls;
 mod execution;
 mod feature;

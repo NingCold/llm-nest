@@ -43,6 +43,7 @@
 | [M2 显式记忆](social-refactor/m2-explicit-memory.md) | 接手核对、按 AI/空间保存与读取、来源失效、遗忘、Web/IPC 及 v7 迁移 |
 | [M2 窗口分段摘要](social-refactor/m2-window-summaries.md) | 专用模型与预算、后台任务、来源失效、上下文读取、详情管理及 v8 迁移 |
 | [M2 群话题接续](social-refactor/m2-cross-window-continuation.md) | 唯一私聊引用草稿、原文/摘要来源、共同成员权限、运行失效、Web/IPC 及 v9 迁移 |
+| [M3 约定联系](social-refactor/m3-contact-intents.md) | 独立授权、一次性联系、免打扰、到期/过期、共享额度、取消与崩溃恢复、Web/IPC 及 v11 迁移 |
 | [M3 参与节奏](social-refactor/m3-participation-rhythm.md) | 私聊合并、有限自动群接话、空闲结束、持久额度、可控等待、Web/IPC 及 v10 迁移 |
 | [M1 独立生成参数](social-refactor/m1-generation-parameters.md) | 管理员按 AI 保存温度与输出上限、协议约束、意识预算与双适配验证 |
 | [M1 共用界面现代化](social-refactor/m1-ui-modernization.md) | 中性双主题与蓝色、聊天/账号/设置布局、响应式与键盘检查 |

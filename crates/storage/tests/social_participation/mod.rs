@@ -8,7 +8,11 @@ async fn view(f: &Fixture, c: ConversationId) -> ParticipationView {
         .unwrap()
         .participation
 }
-async fn policy(f: &Fixture, c: ConversationId, edit: impl FnOnce(&mut ParticipationPolicy)) {
+pub(super) async fn policy(
+    f: &Fixture,
+    c: ConversationId,
+    edit: impl FnOnce(&mut ParticipationPolicy),
+) {
     let mut p = view(f, c).await.policy;
     edit(&mut p);
     f.store
@@ -155,10 +159,10 @@ async fn human_input_during_automatic_generation_keeps_a_later_authorized_plan()
     let plans = f.store.plans(f.human.id, c.id).await.unwrap();
     assert!(plans.iter().any(|p| p.status == PlanStatus::Queued
         && p.automatic
-        && p.trigger_id == second.message.id));
+        && p.trigger_id == Some(second.message.id)));
     finish(&f, &r).await;
     let following = next(&f, c.id).await;
-    assert_eq!(following.trigger_id, second.message.id);
+    assert_eq!(following.trigger_id, Some(second.message.id));
     let next_run = f.begin_plan(&following).await.unwrap();
     finish(&f, &next_run).await;
     assert_eq!(view(&f, c.id).await.auto_turns_today, 2);
@@ -453,7 +457,8 @@ async fn v9_upgrade_preserves_history_and_backs_up_before_new_participation_tabl
     let path = f.store.path().to_owned();
     f.store.close().await.unwrap();
     let sql = Connection::open(&path).unwrap();
-    sql.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DELETE FROM schema_migrations WHERE version=10; PRAGMA user_version=9;").unwrap();
+    downgrade_contact_schema(&sql);
+    sql.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DELETE FROM schema_migrations WHERE version>=10; PRAGMA user_version=9;").unwrap();
     drop(sql);
     let reopened = SqliteSocialStore::open(
         DataDirectoryGuard::acquire(f.dir.path()).unwrap(),

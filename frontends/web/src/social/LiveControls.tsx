@@ -43,7 +43,7 @@ export function ConversationControls({ conversation }: { conversation: Conversat
       <button className="social-button secondary" disabled={busy || (!conversation.currentBout && !conversation.pendingPlans.length)} onClick={() => void change("end")}>结束当前交谈</button>
       <button className="social-button secondary" disabled={busy} onClick={() => void change("archive")}>归档聊天</button>
     </>}</div>
-    <p className="form-note">结束会停止当前回复和排队接话，保留记录；恢复接话后，新的消息才会触发回应。</p>
+    <p className="form-note">结束会停止当前回复和排队接话，保留记录与未来约定。暂停期间到期的约定会跳过。</p>
   </section>
 }
 

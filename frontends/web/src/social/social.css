@@ -570,4 +570,9 @@
 
 .social-form .summary-toggle { flex-direction: row; justify-content: flex-start; }
 .participation-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.contact-intent { display: grid; gap: 8px; padding: 14px 0; border-top: 1px solid var(--s-line); }
+.contact-intent > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.contact-intent > div > span, .contact-intent > small { font-size: 12px; color: var(--s-muted); }
+.contact-intent > p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.contact-intent > button { justify-self: start; }
 @media (max-width: 420px) { .participation-limits { grid-template-columns: 1fr; } }

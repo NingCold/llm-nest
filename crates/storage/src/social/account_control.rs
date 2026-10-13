@@ -33,6 +33,16 @@ impl Db<'_> {
                 ],
             )?;
             if status == EntityStatus::Archived {
+                for m in self.query_json::<Membership>(
+                    "SELECT payload FROM memberships WHERE actor_id=?1",
+                    [contact.actor.id.to_string()],
+                )? {
+                    self.cancel_contacts(
+                        m.conversation_id,
+                        Some(contact.actor.id),
+                        "AI 账号已停用",
+                    )?;
+                }
                 for run in self
                     .query_json::<AiRun>("SELECT payload FROM ai_runs WHERE status='running'", [])?
                 {

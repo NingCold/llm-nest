@@ -32,7 +32,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 目标 AI 自己的历史完整消息可以映射为 assistant；其他参与者的发言按协议允许的方式保留为带发送者标签的内容。群里其他 AI 的消息不能全部映射成目标 AI 自己的 assistant 历史。
 
-意识系统内部 ContextBuilder 输出中立的 `common::Message` 列表及 ContextSnapshot，ConsciousnessService 以 PreparedContext 返回；执行层与当前工具循环组合后交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。当前已包含近期原文、档案、摘要、显式记忆和显式跨窗口引用；M3 合并计划的全部输入为必要原文。
+意识系统内部 ContextBuilder 输出中立的 `common::Message` 列表及 ContextSnapshot，ConsciousnessService 以 PreparedContext 返回；执行层与当前工具循环组合后交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。当前已包含近期原文、档案、摘要、显式记忆和显式跨窗口引用；M3 合并计划的全部输入为必要原文；约定联系使用独立触发类型和必要的授权内容，不伪造用户新消息，最终提交复核 ContactIntent。
 
 上下文按 (ActorId, ConversationId) 构造，每次 AiRun 固定自己的快照。同一角色默认复用执行绑定，私聊和各群的消息范围与摘要分别选择；可选 provider 会话 ID、续接链或压缩缓存不得跨该范围复用。软件不依赖一个跨全部聊天窗口的常驻模型上下文。
 
@@ -70,7 +70,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 默认 echo/add 继续使用宿主 worker 入口、64 KiB 输入/输出、Registry 超时与 panic 捕获；Windows Job Object 和 Linux 现有边界继续保持。工具循环次数与社交自动发言轮数分开计数。
 
-M3 自动运行启动前预留 token/次数预算，结束后根据实际 usage 结算；usage 缺失采用保守上限记录，不估造精确费用。prompt_tokens 已含缓存输入，缓存命中率仍为 cached / prompt。货币预算需要有效价格来源，首版主要使用次数与 token 限额。
+M3 自动接话与约定联系共用窗口额度，开始事务按整个输入容量与输出上限预留 token/次数，失败、取消或崩溃不返还；usage 只作实际用量展示，不用于退款或估造精确费用。prompt_tokens 已含缓存输入，缓存命中率仍为 cached / prompt。货币预算需要有效价格来源，首版主要使用次数与 token 限额。
 
 ## 8. 验收
 

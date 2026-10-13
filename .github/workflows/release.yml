@@ -75,6 +75,7 @@ jobs:
           python scripts/acceptance.py
           python scripts/social_acceptance.py
           python scripts/social_acceptance.py --only-image-capabilities
+          python scripts/social_acceptance.py --only-files
       - name: Build embedded desktop installers
         working-directory: frontends/tauri
         run: node node_modules/@tauri-apps/cli/tauri.js build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --ci -- --locked

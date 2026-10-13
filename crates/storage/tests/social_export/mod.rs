@@ -291,6 +291,7 @@ async fn snapshots_keep_current_revisions_statuses_and_attachment_placeholders()
                         data: b"image-secret".to_vec(),
                     },
                     SocialContent::File {
+                        name: None,
                         mime: "application/pdf".into(),
                         data: b"file-secret".to_vec(),
                     },

@@ -3,6 +3,7 @@ import { socialClient, subscribe } from "./client"
 import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot, SummaryState } from "./live-types"
 import { acknowledgeDraft, emptyDraft, sendInput, type Draft, type DraftRecord, type PendingDraft } from "./drafts"
 import { draftDatabase } from "./draft-storage"
+import { readFiles, validateFiles } from "./files"
 import { ImageProcessingRequired, readImages } from "./images"
 import { draftImageFile, imageSelectionIssue, inspectImages, releaseImages, type ImageSelection, type ImageSource } from "./image-processing"
 interface Generation { text: string; reasoning: string; sequence: number }
@@ -31,6 +32,9 @@ interface SocialState {
   loadMessage(id: string): Promise<void>
   applyMessage(message: Message): void
   updateDraft(id: string, text: string): void
+  fileDraft(id: string, files: import("./files").DraftFile[]): void
+  addDraftAttachments(id: string, files: File[]): Promise<void>
+  addDraftFiles(id: string, files: File[]): Promise<void>
   imageDraft(id: string, images: import("./images").DraftImage[]): void
   addDraftImages(id: string, files: File[]): Promise<void>
   imageSelection: ImageSelection | null
@@ -63,7 +67,7 @@ function requireDrafts() {
 
 async function trackDraftRead(id: string, operation: () => Promise<void>) {
   requireDrafts()
-  if (draftReads.size) throw new Error("请等待当前图片读取完成")
+  if (draftReads.size) throw new Error("请等待当前附件读取完成")
   const read = operation()
   draftReads.set(id, read)
   try { await read } finally { draftReads.delete(id) }
@@ -247,6 +251,42 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     set({ drafts })
     persistEditedDraft(id)
   },
+  fileDraft(id, files) {
+    requireDrafts()
+    set({ drafts: { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), files, requestId: null } } })
+    persistEditedDraft(id)
+  },
+  async addDraftAttachments(id, files) {
+    selectionAllowed()
+    await trackDraftRead(id, async () => {
+      const attachments = files.filter(file => !file.type.startsWith("image/"))
+      const images = files.filter(file => file.type.startsWith("image/"))
+      const selectedFiles = await readFiles(attachments, get().drafts[id]?.files ?? [])
+      let selectedImages: import("./images").DraftImage[] = []
+      try { selectedImages = await readImages(images, get().drafts[id]?.images ?? []) }
+      catch (error) {
+        if (!(error instanceof ImageProcessingRequired)) throw error
+        const sources = await inspectImages(images)
+        set({ imageSelection: { id: crypto.randomUUID(), conversationId: id, sources, reason: error.message } })
+      }
+      const draft = get().drafts[id] ?? emptyDraft()
+      const combined = [...(draft.files ?? []), ...selectedFiles]
+      validateFiles(combined)
+      set({ drafts: { ...get().drafts, [id]: { ...draft, files: combined, images: [...(draft.images ?? []), ...selectedImages], requestId: null } } })
+      await persistDraft(id)
+    })
+  },
+  async addDraftFiles(id, files) {
+    selectionAllowed()
+    await trackDraftRead(id, async () => {
+      const selected = await readFiles(files, get().drafts[id]?.files ?? [])
+      const draft = get().drafts[id] ?? emptyDraft()
+      const combined = [...(draft.files ?? []), ...selected]
+      validateFiles(combined)
+      set({ drafts: { ...get().drafts, [id]: { ...draft, files: combined, requestId: null } } })
+      await persistDraft(id)
+    })
+  },
   imageDraft(id, images) {
     requireDrafts()
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), images, requestId: null } }
@@ -318,7 +358,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     if (get().sending[id] || draftReads.has(id) || get().imageSelection?.conversationId === id) return
     const pending = get().pendingSends[id]
     const draft = pending ?? get().drafts[id] ?? emptyDraft()
-    if (!draft.text.trim() && !draft.images?.length) return
+    if (!draft.text.trim() && !draft.images?.length && !draft.files?.length) return
     const generation = historyGeneration
     const requestId = draft.requestId ?? crypto.randomUUID()
     const sent: PendingDraft = { ...draft, requestId }

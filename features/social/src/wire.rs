@@ -159,6 +159,7 @@ pub struct Message {
     pub sequence: Sequence,
     pub text: String,
     pub images: Vec<MessageImage>,
+    pub files: Vec<MessageFile>,
     pub status: MessageStatus,
     pub revision: Revision,
     pub mentions: Vec<ActorId>,
@@ -172,6 +173,14 @@ pub struct Message {
 pub struct MessageImage {
     pub index: usize,
     pub mime: Option<String>,
+    pub byte_length: usize,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageFile {
+    pub index: usize,
+    pub name: String,
+    pub mime: String,
     pub byte_length: usize,
 }
 impl From<SocialMessage> for Message {
@@ -192,7 +201,27 @@ impl From<SocialMessage> for Message {
                 _ => None,
             })
             .collect();
+        let files = m
+            .body
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(index, part)| match part {
+                SocialContent::File { name, mime, data }
+                    if m.status != MessageStatus::Withdrawn =>
+                {
+                    Some(MessageFile {
+                        index,
+                        name: crate::files::file_name(name.as_deref()),
+                        mime: mime.clone(),
+                        byte_length: data.len(),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
         Self {
+            files,
             images,
             id: m.id,
             conversation_id: m.conversation_id,
@@ -501,6 +530,8 @@ pub struct SendInput {
     pub text: String,
     #[serde(default)]
     pub images: Vec<crate::ImageInput>,
+    #[serde(default)]
+    pub files: Vec<crate::FileInput>,
     pub reply_to: Option<MessageId>,
 }
 

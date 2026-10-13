@@ -14,6 +14,7 @@
 | 发送消息、创建群聊和安排回复 | [feature.rs](src/feature.rs) |
 | 已读、置顶和查找聊天记录 | [message_list.rs](src/message_list.rs) |
 | 接收、读取与保存聊天原图 | [images.rs](src/images.rs) |
+| 接收普通文件、保存原文件和说明文件信息 | [files.rs](src/files.rs) |
 | 导出一个窗口的聊天记录，可附带原图 | [export.rs](src/export.rs) |
 | 编辑消息、暂停和结束交谈 | [controls.rs](src/controls.rs) |
 | 为 AI 准备对话背景 | [consciousness.rs](src/consciousness.rs) |

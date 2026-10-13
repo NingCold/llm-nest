@@ -25,6 +25,7 @@ async function download(response: Response) {
 export const socialClient: SocialClient = {
   accountViewImage: (account, id, index, revision) => request(`/ai-accounts/${account}/view/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
   messageImage: (id, index, revision) => request(`/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
+  saveFile: async (id, index, revision, account) => download(await responseFor(`${account ? `/ai-accounts/${account}/view` : ""}/messages/${id}/files/${index}/download?revision=${encodeURIComponent(revision)}`)),
   saveImage: async (id, index, revision, account) => download(await responseFor(`${account ? `/ai-accounts/${account}/view` : ""}/messages/${id}/images/${index}/download?revision=${encodeURIComponent(revision)}`)),
   exportConversation: async (id, format, includeImages = false) => {
     const path = `/conversations/${id}/export?format=${format}`

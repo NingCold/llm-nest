@@ -6,9 +6,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SocialContent {
-    Text { text: String },
-    Image { mime: Option<String>, data: Vec<u8> },
-    File { mime: String, data: Vec<u8> },
+    Text {
+        text: String,
+    },
+    Image {
+        mime: Option<String>,
+        data: Vec<u8>,
+    },
+    File {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        mime: String,
+        data: Vec<u8>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct MessageBody(pub Vec<SocialContent>);

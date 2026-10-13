@@ -352,6 +352,7 @@ pub(super) fn import(
                         data: data.clone(),
                     }),
                     ContentPart::File { mime, data } => Some(SocialContent::File {
+                        name: None,
                         mime: mime.clone(),
                         data: data.clone(),
                     }),

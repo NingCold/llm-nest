@@ -21,6 +21,7 @@ function load(name) {
     if (spec==='./GenerationFields') return load('GenerationFields');
     if (spec==='./client') return {socialClient:{},SocialApiError:class extends Error{}};
     if (spec==='./LiveChat') return {ConsciousnessInfo:()=>null};
+    if (spec==='./MessageFiles') return {MessageFiles:()=>null};
     if (spec==='./MessageImages') return {MessageImages:()=>null};
     if (spec==='./live-ui') return {contactAvatar:()=>undefined};
     if (spec==='./router') return {navigate:()=>{}};

@@ -8,7 +8,7 @@
 
 在启动时解析并冻结的实际数据目录中使用唯一运行存储 `social.sqlite3`。默认目录继续为 `~/.llmn`，`LLMN_DATA_DIR`、`LLMN_CONFIG` 的覆盖及原有目录迁移条件继续有效。模型目录缓存仍为实际数据目录的 `cache/catalog.json`。
 
-SQLite 存储身份、聊天、记忆、计划与执行元数据。图片当前随 MessageBody 以原始字节存入 SQLite 的 JSON DTO，沿用已有格式，数据库仍为 v13；存储消息总量按原始字节计（8 MiB 附件加 80000 字节文字），避免把 JSON 数字数组膨胀当作文件大小。未来大文件可独立设计受管理对象存储，不接受任意文件路径。API Key、`.env` 和 provider 凭据不写入业务数据库或导出档案。
+SQLite 存储身份、聊天、记忆、计划与执行元数据。图片和普通文件随 MessageBody 以原始字节存入 SQLite 的 JSON DTO，数据库仍为 v13；SocialContent::File.name 为可省略的可选字段，旧数据不改写。存储消息总量按原始字节计（图片 8 MiB 加文件 20 MiB，加 80000 字节文字），避免把 JSON 数字数组膨胀当作文件大小，业务入口分别检查各自数量/大小限制。未来大文件可独立设计受管理对象存储，不接受任意文件路径。API Key、`.env` 和 provider 凭据不写入业务数据库或导出档案。
 
 保留 `.llmn.lock` 的 OS 排他锁，一个目录只允许一个独立 Runtime。DataDirectoryGuard 由 SQLite 持有，旧 JSON 仅经 writer 的显式导入读取。旧 FileSessionStore 已移除，不再在启动时解析或补写 JSON，也不能用 SQLite 文件锁替代整个目录的应用锁。
 
@@ -18,7 +18,7 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。图片当前�
 
 ### 本机未发送草稿
 
-Web 与桌面 WebView 共用 IndexedDB `llm-nest-social-drafts` v1，`drafts` 表以 `[owner, conversation]` 为键。每条记录包含修订版本、可编辑草稿和待确认发送快照；文字、图片 Blob/名称/MIME/稳定 ID、提及、回复、群话题引用及 requestId 同事务保存。客户端按窗口串行写入，事务比较版本防止多页覆盖；只有 transaction complete 才显示保存成功。图片读取/写入错误保留页面输入，不静默降级到内存草稿。
+Web 与桌面 WebView 共用 IndexedDB `llm-nest-social-drafts` v1，`drafts` 表以 `[owner, conversation]` 为键。每条记录包含修订版本、可编辑草稿和待确认发送快照；文字、图片/文件 Blob、名称/MIME/稳定 ID、提及、回复、群话题引用及 requestId 同事务保存。files 可省略，旧图片草稿无需迁移。客户端按窗口串行写入，事务比较版本防止多页覆盖；只有 transaction complete 才显示保存成功。附件读取/写入错误保留页面输入，不静默降级到内存草稿。
 
 发送前保存不可变命令快照，成功后原子清理或保留发送期间新增内容；失败或未知结果沿用原快照手动重试。清空记录移除二进制，只留空记录和版本，避免迁移中断后旧草稿复活。旧 localStorage 文字草稿只迁移当前账号可见窗口，数据库事务完成后再删除对应旧条目，其他窗口的旧条目保留。
 

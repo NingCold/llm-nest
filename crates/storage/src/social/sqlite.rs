@@ -835,7 +835,7 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
                 SocialContent::Image { data, .. } | SocialContent::File { data, .. } => data.len(),
             })
             .sum::<usize>()
-            > 8 * 1024 * 1024 + 80_000
+            > 28 * 1024 * 1024 + 80_000
     {
         return Err(Error::Invalid("empty or oversized message".into()));
     }

@@ -285,10 +285,11 @@ impl SocialFeature {
         if self.stop.is_cancelled() {
             return Err(SocialError::Unavailable);
         }
-        let body =
-            tokio::task::spawn_blocking(move || crate::images::body(input.text, input.images))
-                .await
-                .map_err(|e| SocialError::Invalid(format!("图片处理失败：{e}")))??;
+        let body = tokio::task::spawn_blocking(move || {
+            crate::files::body(input.text, input.images, input.files)
+        })
+        .await
+        .map_err(|e| SocialError::Invalid(format!("附件处理失败：{e}")))??;
         let saved = s
             .resources
             .store
@@ -578,6 +579,7 @@ mod rhythm_tests {
             .unwrap();
         let input = || wire::SendInput {
             images: vec![],
+            files: vec![],
             request_id: CommandId::new(),
             text: "hello".into(),
             mentions: vec![],

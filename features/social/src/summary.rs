@@ -312,7 +312,7 @@ impl SocialFeature {
 
 fn summary_prompt(messages: &[SocialMessage]) -> Vec<common::Message> {
     let source:Vec<_>=messages.iter().map(|m| {
-        let text:Vec<_>=m.body.0.iter().map(|p|match p {SocialContent::Text{text}=>text.as_str(),_=>"[附件内容未提供，不推测其内容]"}).collect();
+        let text:Vec<_>=m.body.0.iter().map(|p|match p {SocialContent::Text{text}=>text.clone(),SocialContent::File{name,mime,data}=>crate::files::placeholder(name.as_deref(),mime,data.len()),_=>"[附件内容未提供，不推测其内容]".into()}).collect();
         serde_json::json!({"sender":m.sender_name,"time":m.created_at,"sequence":m.sequence,"text":text,"replyTo":m.reply_to})
     }).collect();
     vec![

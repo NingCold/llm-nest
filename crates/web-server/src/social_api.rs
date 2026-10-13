@@ -62,6 +62,14 @@ fn download_response(file: social_feature::DownloadFile) -> Response {
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route(
+            "/api/social/messages/{id}/files/{index}/download",
+            get(download_file),
+        )
+        .route(
+            "/api/social/ai-accounts/{account}/view/messages/{id}/files/{index}/download",
+            get(download_account_file),
+        )
+        .route(
             "/api/social/messages/{id}/images/{index}/download",
             get(download_image),
         )
@@ -176,7 +184,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/social/conversations/{id}/messages",
             get(messages)
                 .post(send)
-                .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
+                .layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)),
         )
         .route("/api/social/runs/{id}", get(run_details))
         .route("/api/social/runs/{id}/cancel", post(cancel))
@@ -185,13 +193,33 @@ pub fn routes() -> Router<Arc<AppState>> {
 }
 
 #[derive(Deserialize)]
-struct ImageQuery {
+struct AttachmentQuery {
     revision: social::Revision,
+}
+async fn download_file(
+    State(s): State<Arc<AppState>>,
+    ApiPath((id, index)): ApiPath<(MessageId, usize)>,
+    ApiQuery(q): ApiQuery<AttachmentQuery>,
+) -> std::result::Result<Response, ApiError> {
+    Ok(download_response(
+        s.social.message_file(None, id, index, q.revision).await?,
+    ))
+}
+async fn download_account_file(
+    State(s): State<Arc<AppState>>,
+    ApiPath((account, id, index)): ApiPath<(ActorId, MessageId, usize)>,
+    ApiQuery(q): ApiQuery<AttachmentQuery>,
+) -> std::result::Result<Response, ApiError> {
+    Ok(download_response(
+        s.social
+            .message_file(Some(account), id, index, q.revision)
+            .await?,
+    ))
 }
 async fn download_image(
     State(s): State<Arc<AppState>>,
     ApiPath((id, index)): ApiPath<(MessageId, usize)>,
-    ApiQuery(q): ApiQuery<ImageQuery>,
+    ApiQuery(q): ApiQuery<AttachmentQuery>,
 ) -> std::result::Result<Response, ApiError> {
     Ok(download_response(
         s.social.image_file(None, id, index, q.revision).await?,
@@ -200,7 +228,7 @@ async fn download_image(
 async fn download_account_image(
     State(s): State<Arc<AppState>>,
     ApiPath((account, id, index)): ApiPath<(ActorId, MessageId, usize)>,
-    ApiQuery(q): ApiQuery<ImageQuery>,
+    ApiQuery(q): ApiQuery<AttachmentQuery>,
 ) -> std::result::Result<Response, ApiError> {
     Ok(download_response(
         s.social
@@ -211,7 +239,7 @@ async fn download_account_image(
 async fn account_view_image(
     State(s): State<Arc<AppState>>,
     ApiPath((account, id, index)): ApiPath<(ActorId, MessageId, usize)>,
-    ApiQuery(q): ApiQuery<ImageQuery>,
+    ApiQuery(q): ApiQuery<AttachmentQuery>,
 ) -> std::result::Result<Response, ApiError> {
     let image = s
         .social
@@ -222,7 +250,7 @@ async fn account_view_image(
 async fn message_image(
     State(s): State<Arc<AppState>>,
     ApiPath((id, index)): ApiPath<(MessageId, usize)>,
-    ApiQuery(q): ApiQuery<ImageQuery>,
+    ApiQuery(q): ApiQuery<AttachmentQuery>,
 ) -> std::result::Result<Response, ApiError> {
     let image = s.social.message_image(id, index, q.revision).await?;
     Ok(([("Cache-Control", "no-store")], Json(image)).into_response())

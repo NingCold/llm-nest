@@ -556,3 +556,27 @@ fn required_images_reserve_budget_and_request_size_is_bounded() {
         Err(SocialError::BudgetExceeded)
     ));
 }
+
+#[test]
+fn files_use_only_metadata_even_when_declared_as_images() {
+    let (mut material, model) = fixture();
+    material.messages.last_mut().unwrap().body = MessageBody(vec![SocialContent::File {
+        name: Some("中文.png".into()),
+        mime: "image/png".into(),
+        data: b"SECRET_FILE_CONTENT".to_vec(),
+    }]);
+    let prepared = ConsciousnessService::prepare(material, &model, 128).unwrap();
+    let wire = serde_json::to_string(&prepared.messages).unwrap();
+    assert!(wire.contains("中文.png"));
+    assert!(wire.contains("image/png"));
+    assert!(wire.contains("19 字节"));
+    assert!(wire.contains("文件内容尚未读取"));
+    assert!(!wire.contains("SECRET_FILE_CONTENT"));
+    assert!(
+        prepared
+            .messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .all(|p| matches!(p, common::ContentPart::Text(_)))
+    );
+}

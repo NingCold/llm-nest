@@ -13,7 +13,9 @@ export interface ContactInput { requestId: string; listed: boolean; expectedRevi
 export interface AccountView { operatorId: string; snapshot: Snapshot }
 export interface GenerationLimits { temperatureMax: number | null; minOutputTokens: number; maxOutputTokens: number | null }
 export interface ModelOption { imageInput: import("@/lib/image-input").ImageInputCapability; providerId: string; modelId: string; displayName: string; reasoningLevels: string[]; generationLimits: Record<string, GenerationLimits> }
+export interface FileInput { name: string; mime: string; data: string }
 export interface Message {
+  files: { index: number; name: string; mime: string; byteLength: number }[]
   images: { index: number; mime: string | null; byteLength: number }[]
   contextReference?: ContextReference | null
   id: string; conversationId: string; senderId: string; senderName: string
@@ -48,7 +50,7 @@ export interface RunDetails {
   timings: { ttft_ms: number | null; reasoning_ms: number | null; total_ms: number | null } | null; error: Failure | null
 }
 export interface ImageInput { mime: string; data: string }
-export interface SendInput { images?: ImageInput[]; reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
+export interface SendInput { files?: FileInput[]; images?: ImageInput[]; reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
 export interface SendReceipt { message: Message; executionNotice: Failure | null }
 export interface MessagePage { messages: Message[]; hasMore: boolean; readThrough: string | null }
 export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision?: string } }

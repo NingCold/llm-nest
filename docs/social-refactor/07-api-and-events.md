@@ -38,7 +38,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 取消一次性约定 | POST /conversations/{id}/contact-intents/{intent}/cancel | social_cancel_contact_intent |
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
 | 接话规则 | POST /conversations/{id}/participation | social_update_participation |
-| 分页历史/发送文字与图片 | GET/POST /conversations/{id}/messages | social_messages / social_send |
+| 分页历史/发送文字与附件 | GET/POST /conversations/{id}/messages | social_messages / social_send |
 | 单窗口导出（可携图） | GET /conversations/{id}/export?format=markdown\|json&includeImages=true\|false | social_export_conversation |
 | 个人已读/未读/置顶 | POST /conversations/{id}/list-state | social_update_conversation_list |
 | 正文搜索 | GET /messages/search | social_search_messages |
@@ -48,6 +48,8 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | AI 视角消息图片 | GET /ai-accounts/{account}/view/messages/{id}/images/{index}?revision={revision} | social_account_view_image |
 | 保存原图 | GET /messages/{id}/images/{index}/download?revision={revision} | social_save_image（account 为 null） |
 | AI 视角保存原图 | GET /ai-accounts/{account}/view/messages/{id}/images/{index}/download?revision={revision} | social_save_image（account 为目标账号） |
+| 保存普通文件 | GET /messages/{id}/files/{index}/download?revision={revision} | social_save_file（account 为 null） |
+| AI 视角保存普通文件 | GET /ai-accounts/{account}/view/messages/{id}/files/{index}/download?revision={revision} | social_save_file（account 为目标账号） |
 | 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
 | 编辑记忆 | PATCH /memories/{id} | social_update_memory |
 | 遗忘记忆 | POST /memories/{id}/forget | social_forget_memory |
@@ -69,7 +71,9 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 
 历史导入正文为预览中的所选 `sessions`，保留原导入 DTO 的 snake_case 字段（source_id/session_id/checksum 等），不接受路径或 operatorId。全目录检查重复 ID，再逐个复核所选预览；幂等性由来源 checksum 和稳定映射保证，不启动 AI。
 
-Message.images 返回 `{index,mime,byteLength}` 数组，index 是原消息 body 的 part 索引，撤回后数组为空。图片读取返回 `{mime,data}`，HTTP 设置 `Cache-Control: no-store`。普通接口复核当前操作者的成员身份，AI 视角接口在同一只读事务复核管理员和目标账号成员身份；revision 不符或已撤回拒绝读取。发送 JSON 请求体仅该路由放宽到 12 MiB，以容纳最多 8 MiB 图片的 base64，业务层仍解码校验数量、大小、实际格式和尺寸。接口不接受本地路径或外部图片 URL。
+Message.images 返回 `{index,mime,byteLength}` 数组，Message.files 返回 `{index,name,mime,byteLength}` 数组；index 是原消息 body 的 part 索引，撤回后数组为空。图片读取返回 `{mime,data}`，HTTP 设置 `Cache-Control: no-store`。普通接口复核当前操作者的成员身份，AI 视角接口在同一只读事务复核管理员和目标账号成员身份；revision 不符或已撤回拒绝读取。仅消息发送 JSON 路由上限为 40 MiB，以容纳最多 8 MiB 图片与 20 MiB 文件的 base64，业务层分别检查限制；图片还校验真实格式和尺寸。接口不接受本地路径或外部 URL。
+
+普通文件下载统一返回 application/octet-stream、Content-Disposition: attachment、UTF-8 文件名、no-store 与 nosniff；不内联页面内容。IPC `social_save_file` 参数与 social_save_image 相同，复用原生对话框后的权限复核与原子文件写入，返回 cancelled 或 saved/fileName；Web 返回 downloaded/fileName。文件输入为 name/mime/data，最多 4 个、单个 10 MiB、合计 20 MiB，允许零字节；名称和 MIME 规则见[文件记录](file-messages.md)。
 
 单窗口导出接受窗口 ID、`format`（markdown/json）和 `includeImages`（HTTP 省略时为 false，IPC 由客户端明确传入），不接受操作者、文件正文或目标路径。不携图时 HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包；携图时返回 ZIP 二进制，`Content-Disposition` 使用 UTF-8 filename*，`X-LLMN-Message-Count` 给出完整消息数。两者均设置 `Cache-Control: no-store`；ZIP 另设 `X-Content-Type-Options: nosniff`。Web 下载对应 Blob。IPC 的[保存适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，不产生持久事件。携图结构见[图片导出记录](image-message-export.md)。
 
@@ -87,7 +91,7 @@ Message.images 返回 `{index,mime,byteLength}` 数组，index 是原消息 body
 | 打开私聊 | requestId；即使联系人未列出仍沿用原窗口；停用 AI 的已有私聊返回原 ID，不自动恢复，也不能为停用 AI 创建新私聊 |
 | 创建群 | requestId、title、memberIds |
 | 成员加入/移出 | requestId、actorId、action(add/remove)、空间 expectedRevision；没有历史范围选项 |
-| 发送文字与图片 | requestId、text、replyTo；images 可省略，数组元素为 mime/data（无 data URL 前缀的 base64）；mentions 可省略，按顺序选择接话 AI；reference 可省略/null，或 ReferenceSelection |
+| 发送文字与附件 | requestId、text、replyTo；images 可省略，元素为 mime/data，files 可省略，元素为 name/mime/data（data 为无 data URL 前缀的 base64）；mentions 可省略，按顺序选择接话 AI；reference 可省略/null，或 ReferenceSelection |
 | 个人列表状态 | requestId、列表 expectedRevision、action：{kind:read,through} / {kind:unread} / {kind:pin,pinned}；初始 revision="1"，操作者由后端固定 |
 | 编辑/撤回 | requestId、消息 expectedRevision；编辑另带 text |
 | 窗口控制 | requestId、空间 expectedRevision、action(pause/resume/end/archive/restore) |
@@ -199,7 +203,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 | --- | --- |
 | desktop_register_draft_guard | 输入 page UUID，注册当前页面；替代旧页面释放旧等待 |
 | desktop_unregister_draft_guard | 输入 page UUID，仅释放匹配页面 |
-| drafts-prepare-close | 宿主向主页面发出本次关闭 request UUID；页面停止编辑，等待图片读取与草稿事务完成 |
+| drafts-prepare-close | 宿主向主页面发出本次关闭 request UUID；页面停止编辑，等待附件读取与草稿事务完成 |
 | desktop_finish_draft_close | 输入 page、request UUID 与 error（成功为 null）；只接受当前页面和当前请求的确认 |
 
 页面在注册前装好监听；主窗口重载/销毁释放旧等待。宿主最多等 10 秒，失败通过 backend-shutdown-failed 保留窗口并恢复编辑；成功才进入既有 Runtime 关闭阶段，未注册的初始页面可以直接关闭。该确认不传输草稿正文或文件路径。

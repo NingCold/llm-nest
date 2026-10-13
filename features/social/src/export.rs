@@ -268,8 +268,13 @@ fn markdown(s: &ConversationTranscript, include_images: bool) -> String {
                     heading(mime.as_deref().unwrap_or("未知类型")),
                     byte_length
                 )),
-                TranscriptPart::File { mime, byte_length } => out.push_str(&format!(
-                    "\n[文件未附带 · {} · {} 字节]\n",
+                TranscriptPart::File {
+                    name,
+                    mime,
+                    byte_length,
+                } => out.push_str(&format!(
+                    "\n[文件未附带 · {} · {} · {} 字节]\n",
+                    heading(name),
                     heading(mime),
                     byte_length
                 )),
@@ -307,6 +312,7 @@ mod tests {
                         text: "中文🙂\n````\n## 另一个发言人\n<script>alert(1)</script>\n".into(),
                     },
                     TranscriptPart::File {
+                        name: "attachment.bin".into(),
                         mime: "application/pdf".into(),
                         byte_length: 5,
                     },

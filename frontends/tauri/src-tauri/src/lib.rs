@@ -174,6 +174,7 @@ pub fn run() {
             social_commands::social_init,
             conversation_export::social_export_conversation,
             conversation_export::social_save_image,
+            conversation_export::social_save_file,
             social_commands::social_preview_legacy,
             social_commands::social_import_legacy,
             social_commands::social_summaries,

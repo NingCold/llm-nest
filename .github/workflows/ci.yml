@@ -65,5 +65,6 @@ jobs:
           python scripts/acceptance.py
           python scripts/social_acceptance.py
           python scripts/social_acceptance.py --only-image-capabilities
+          python scripts/social_acceptance.py --only-files
           python scripts/release.py validate
           python scripts/test_release.py

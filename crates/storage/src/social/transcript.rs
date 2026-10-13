@@ -47,6 +47,7 @@ pub enum TranscriptPart {
         file_path: Option<String>,
     },
     File {
+        name: String,
         mime: String,
         #[serde(rename = "byteLength")]
         byte_length: usize,
@@ -74,7 +75,8 @@ impl TranscriptMessage {
                         data: include_images.then_some(data),
                         file_path: None,
                     },
-                    SocialContent::File { mime, data } => TranscriptPart::File {
+                    SocialContent::File { name, mime, data } => TranscriptPart::File {
+                        name: name.unwrap_or_else(|| "attachment.bin".into()),
                         mime,
                         byte_length: data.len(),
                     },

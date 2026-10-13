@@ -10,7 +10,9 @@
 
 输入区还会提示 AI 是否支持看图。模型设置可以跟随目录或人工修正，相关界面在 [ModelImageInput.tsx](src/components/settings/ModelImageInput.tsx) 和 [ImageCapabilityHint.tsx](src/social/ImageCapabilityHint.tsx)。
 
-未发送的文字、图片和回复对象会自动保存在当前浏览器，刷新或重新打开同一地址后可以继续编辑。保存失败时，输入框下方会提示重试。上次发送结果尚未确认时，可以查看原内容并手动重试。草稿保存代码在 [draft-storage.ts](src/social/draft-storage.ts)。
+“添加文件”可以发送文档、文本和压缩包，聊天中显示名称、类型和大小，点击“保存文件”下载。AI 当前只收到这些信息，尚未读取文件内容。相关界面在 [MessageFiles.tsx](src/social/MessageFiles.tsx)。
+
+未发送的文字、图片、文件和回复对象会自动保存在当前浏览器，刷新或重新打开同一地址后可以继续编辑。保存失败时，输入框下方会提示重试。上次发送结果尚未确认时，可以查看原内容并手动重试。草稿保存代码在 [draft-storage.ts](src/social/draft-storage.ts)。
 
 ## 开发时运行
 

@@ -1,10 +1,12 @@
 import type { DraftImage } from "./images"
+import type { DraftFile } from "./files"
+type DraftAttachment = DraftImage | DraftFile
 import type { Draft, DraftRecord, PendingDraft } from "./drafts"
 
 export const LEGACY_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
 export const DRAFT_DATABASE = "llm-nest-social-drafts"
-interface StoredImage { id: string; name: string; mime: string; byteLength: number; blob: Blob }
-type StoredDraft = Omit<Draft, "images"> & { images?: StoredImage[] }
+interface StoredAttachment { id: string; name: string; mime: string; byteLength: number; blob: Blob }
+type StoredDraft = Omit<Draft, "images" | "files"> & { images?: StoredAttachment[]; files?: StoredAttachment[] }
 interface StoredRecord { owner: string; conversation: string; version: number; draft: StoredDraft; pending: StoredDraft | null }
 
 function completed(transaction: IDBTransaction): Promise<void> {
@@ -15,11 +17,11 @@ function completed(transaction: IDBTransaction): Promise<void> {
   })
 }
 
-// One record contains the editable draft, its images and any unconfirmed send.
+// One record contains the editable draft, its attachments and any unconfirmed send.
 // Successful transactions are the only source of the UI's "saved" status.
 export class DraftDatabase {
   private connection: Promise<IDBDatabase> | null = null
-  private images = new WeakMap<DraftImage, StoredImage>()
+  private attachments = new WeakMap<DraftAttachment, StoredAttachment>()
   private versions = new Map<string, number>()
   constructor(private factory?: IDBFactory, private legacyStorage?: Storage) {}
 
@@ -45,30 +47,31 @@ export class DraftDatabase {
   }
 
   private encode(draft: Draft): StoredDraft {
-    const { images, ...fields } = draft
-    return { ...fields, images: images?.map(image => {
-      let saved = this.images.get(image)
+    const { images, files, ...fields } = draft
+    const encode = (image: DraftAttachment): StoredAttachment => {
+      let saved = this.attachments.get(image)
       if (!saved) {
         const bytes = Uint8Array.from(atob(image.data), c => c.charCodeAt(0))
         saved = { id: image.id, name: image.name, mime: image.mime, byteLength: image.byteLength, blob: new Blob([bytes], { type: image.mime }) }
-        this.images.set(image, saved)
+        this.attachments.set(image, saved)
       }
       return saved
-    }) }
+    }
+    return { ...fields, images: images?.map(encode), files: files?.map(encode) }
   }
 
   private async decode(draft: StoredDraft): Promise<Draft> {
     if (typeof draft?.text !== "string") throw new Error("本地草稿格式无法读取，原数据已保留")
-    const images = await Promise.all((draft.images ?? []).map(async saved => {
+    const decode = async (saved: StoredAttachment): Promise<DraftAttachment> => {
       const bytes = new Uint8Array(await saved.blob.arrayBuffer())
-      if (bytes.length !== saved.byteLength) throw new Error("草稿图片不完整，原数据已保留")
+      if (bytes.length !== saved.byteLength) throw new Error("草稿附件不完整，原数据已保留")
       let binary = ""
       for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768))
-      const image: DraftImage = { id: saved.id, name: saved.name, mime: saved.mime, byteLength: saved.byteLength, data: btoa(binary) }
-      this.images.set(image, saved)
+      const image: DraftAttachment = { id: saved.id, name: saved.name, mime: saved.mime, byteLength: saved.byteLength, data: btoa(binary) }
+      this.attachments.set(image, saved)
       return image
-    }))
-    return { ...draft, images }
+    }
+    return { ...draft, images: await Promise.all((draft.images ?? []).map(decode)), files: await Promise.all((draft.files ?? []).map(decode)) }
   }
 
   async load(owner: string, conversations: string[]): Promise<Record<string, DraftRecord>> {
@@ -86,7 +89,7 @@ export class DraftDatabase {
       for (const id of conversations) {
         const old = legacy[id]
         if (!old || records.some(record => record.conversation === id)) continue
-        if (typeof old.text !== "string" || old.images?.length) { tx.abort(); return }
+        if (typeof old.text !== "string" || old.images?.length || old.files?.length) { tx.abort(); return }
         const converted = this.encode(old)
         const record: StoredRecord = { owner, conversation: id, version: 1, draft: converted, pending: old.requestId ? converted : null }
         store.put(record); records.push(record)

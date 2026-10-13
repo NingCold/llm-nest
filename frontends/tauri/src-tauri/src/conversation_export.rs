@@ -104,7 +104,7 @@ pub async fn social_export_conversation(
 
 #[derive(Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum ImageSaveResult {
+pub enum AttachmentSaveResult {
     Cancelled,
     Saved {
         #[serde(rename = "fileName")]
@@ -120,7 +120,7 @@ pub async fn social_save_image(
     id: MessageId,
     index: usize,
     revision: Revision,
-) -> Result<ImageSaveResult, wire::ErrorBody> {
+) -> Result<AttachmentSaveResult, wire::ErrorBody> {
     let file = feature(state.clone())
         .await?
         .image_file(account, id, index, revision)
@@ -144,7 +144,7 @@ pub async fn social_save_image(
         });
     drop(file);
     let Some(destination) = rx.await.map_err(save_error)? else {
-        return Ok(ImageSaveResult::Cancelled);
+        return Ok(AttachmentSaveResult::Cancelled);
     };
     let path = destination.into_path().map_err(save_error)?;
     // Never save the preview or the pre-dialog bytes: permissions and revision may have changed.
@@ -162,7 +162,54 @@ pub async fn social_save_image(
         .await
         .map_err(save_error)?
         .map_err(save_error)?;
-    Ok(ImageSaveResult::Saved { file_name })
+    Ok(AttachmentSaveResult::Saved { file_name })
+}
+
+#[tauri::command]
+pub async fn social_save_file(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+    account: Option<ActorId>,
+    id: MessageId,
+    index: usize,
+    revision: Revision,
+) -> Result<AttachmentSaveResult, wire::ErrorBody> {
+    let file = feature(state.clone())
+        .await?
+        .message_file(account, id, index, revision)
+        .await
+        .map_err(|e| e.wire())?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("保存文件")
+        .set_file_name(&file.file_name)
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    drop(file);
+    let Some(destination) = rx.await.map_err(save_error)? else {
+        return Ok(AttachmentSaveResult::Cancelled);
+    };
+    let path = destination.into_path().map_err(save_error)?;
+    // Never save the preview or the pre-dialog bytes: permissions and revision may have changed.
+    let file = feature(state)
+        .await?
+        .message_file(account, id, index, revision)
+        .await
+        .map_err(|e| e.wire())?;
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    tokio::task::spawn_blocking(move || write_export(&path, &file.data))
+        .await
+        .map_err(save_error)?
+        .map_err(save_error)?;
+    Ok(AttachmentSaveResult::Saved { file_name })
 }
 
 fn write_export(path: &Path, content: &[u8]) -> std::io::Result<()> {

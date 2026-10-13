@@ -3,13 +3,14 @@ const {webcrypto}=require('node:crypto');
 const {IDBFactory}=require('fake-indexeddb');
 const compile=name=>ts.transpileModule(fs.readFileSync(path.resolve(__dirname,'../src/social',name+'.ts'),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const snapshot=cursor=>({selfId:'human',selfName:'Human',selfAccount:{id:'human',name:'Human',kind:'human',bio:'',avatarRef:null,status:'active',revision:'1'},accounts:[],addressBook:[],conversations:[],models:[],cursor});
-const message=(text,revision='1',status='committed')=>({id:'message',conversationId:'chat',senderId:'human',senderName:'Human',sequence:'1',text,status,revision,replyTo:null,runId:null,createdAt:'2026-10-09T00:00:00Z'});
+const message=(text,revision='1',status='committed')=>({id:'message',conversationId:'chat',senderId:'human',senderName:'Human',sequence:'1',images:[],files:[],mentions:[],text,status,revision,replyTo:null,runId:null,createdAt:'2026-10-09T00:00:00Z'});
 function harness(options={}) {
   const factory=options.factory??new IDBFactory();
   const values=options.values??new Map([['llm-nest-social-preview-drafts-v1',JSON.stringify({chat:{text:'preview-only'}})]]);
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-  const globals={crypto:webcrypto,Blob,File,URL,Uint8Array,atob,btoa,indexedDB:factory,localStorage:storage,AbortController,Map,BigInt,Date,setTimeout};
-  const types={},persistence={},images={},processing={};
+  const globals={crypto:webcrypto,Blob,File,URL,TextEncoder,Uint8Array,atob,btoa,indexedDB:factory,localStorage:storage,AbortController,Map,BigInt,Date,setTimeout};
+  const types={},persistence={},images={},files={},processing={};
+  vm.runInNewContext(compile('files'),{...globals,exports:files});
   vm.runInNewContext(compile('images'),{...globals,exports:images});
   vm.runInNewContext(compile('image-processing'),{...globals,exports:processing});
   vm.runInNewContext(compile('drafts'),{...globals,exports:types});
@@ -21,6 +22,7 @@ function harness(options={}) {
   vm.runInNewContext(compile('live-store'),{...globals,exports,require:spec=>{
     if(spec==='./drafts')return types;
     if(spec==='./draft-storage')return {draftDatabase:database};
+    if(spec==='./files')return {...files,readFiles:options.readFiles??files.readFiles};
     if(spec==='./images')return {...images,readImages:options.readImages??(async()=>{throw new Error('unexpected file read')})};
     if(spec==='./image-processing')return {...processing,...options.processing};
     if(spec==='./client')return {socialClient:api,subscribe:(_,signal,change,live,resync)=>{handlers={signal,change,live,resync};return new Promise(()=>{})}};

@@ -379,10 +379,9 @@ fn render(message: &SocialMessage, actor_id: ActorId, reply_sequence: Option<Seq
             mime: mime.clone(),
             data: data.clone(),
         },
-        SocialContent::File { mime, data } => ContentPart::File {
-            mime: mime.clone(),
-            data: data.clone(),
-        },
+        SocialContent::File { name, mime, data } => {
+            ContentPart::Text(crate::files::placeholder(name.as_deref(), mime, data.len()))
+        }
     }));
     Message::new(role, content)
 }

@@ -1,3 +1,4 @@
+import { MessageFiles } from "./MessageFiles"
 import { MessageImages } from "./MessageImages"
 import { useEffect, useState } from "react"
 import { ArrowUpRight, Link2, X } from "lucide-react"
@@ -23,7 +24,7 @@ function Preview({ input, stale = false }: { input: ReferenceInput; stale?: bool
   if (visible?.error) return <p role="alert">{visible.error}<button className="text-button" onClick={() => setRetry(n => n + 1)}>重新读取</button></p>
   if (!visible?.data) return <p role="status">正在核对群成员与原文版本…</p>
   const data = visible.data
-  return <div className="reference-preview"><strong>来自群聊 · {data.title}</strong>{data.messages.map(m => <blockquote key={m.id}><small>{m.senderName} · {new Date(m.createdAt).toLocaleString()} · #{m.sequence}</small><p>{m.text}</p><MessageImages message={m} /></blockquote>)}{data.summary && <section><strong>附带分段摘要 · #{data.summary.fromSequence}–{data.summary.throughSequence}</strong><p>{data.summary.text}</p><small>摘要有损，需要具体原话时请查看群记录。</small></section>}</div>
+  return <div className="reference-preview"><strong>来自群聊 · {data.title}</strong>{data.messages.map(m => <blockquote key={m.id}><small>{m.senderName} · {new Date(m.createdAt).toLocaleString()} · #{m.sequence}</small><p>{m.text}</p><MessageImages message={m} /><MessageFiles message={m} /></blockquote>)}{data.summary && <section><strong>附带分段摘要 · #{data.summary.fromSequence}–{data.summary.throughSequence}</strong><p>{data.summary.text}</p><small>摘要有损，需要具体原话时请查看群记录。</small></section>}</div>
 }
 
 export function ReferenceCard({ input, stale, remove }: { input: ReferenceInput; stale?: boolean; remove?: () => void }) {

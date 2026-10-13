@@ -7,7 +7,7 @@ mod execution;
 mod export;
 pub use export::{ConversationArchive, ConversationExport, ExportFormat, export_file_name};
 mod files;
-pub use files::DownloadFile;
+pub use files::{DownloadFile, FileInput};
 mod feature;
 mod generation;
 mod images;

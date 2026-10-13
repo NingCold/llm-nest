@@ -4,6 +4,7 @@ export class SocialApiError extends Error { constructor(message: string, public 
 export interface SocialClient {
   accountViewImage(account: string, id: string, index: number, revision: string): Promise<import("./live-types").ImageInput>
   messageImage(id: string, index: number, revision: string): Promise<import("./live-types").ImageInput>
+  saveFile(id: string, index: number, revision: string, account?: string): Promise<import("./export").ImageSaveResult>
   saveImage(id: string, index: number, revision: string, account?: string): Promise<import("./export").ImageSaveResult>
   exportConversation(id: string, format: import("./export").ExportFormat, includeImages?: boolean): Promise<import("./export").ExportResult>
   updateConversationList(id: string, input: VersionedCommand & { action: import("./live-types").ConversationListAction }): Promise<import("./live-types").ConversationListState>

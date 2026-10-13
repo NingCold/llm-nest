@@ -135,8 +135,8 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 ### GUI 与平台
 
 - React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`，Web 输出 `frontends/web/dist`；两者均忽略，不提交派生 bundle。
-- Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，浏览器只在 `llm-nest-social-live-drafts-v1` 保存文字、提及/回复/引用草稿与相应重试 ID；图片草稿仅存当前进程内存，含图草稿的持久重试 ID 清空，防止重载后以无图内容重用同一命令；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
-- IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先拒绝新命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
+- Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，Web/桌面 WebView 在 IndexedDB `llm-nest-social-drafts` 按实际真人账号与窗口保存文字、图片 Blob、提及/回复/引用以及不可变的待确认发送快照；先保存完整命令再发送，恢复后只允许手动重试同一内容与 ID，不自动发送。旧 localStorage `llm-nest-social-live-drafts-v1` 只在边界迁入当前可见窗口，事务完成后清理；图片不写入 localStorage。恢复失败不开放空草稿编辑，写入失败保留输入并提示重试；事务版本阻止多页面互相覆盖。发送成功清理对应草稿与图片，保留期间新增内容；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
+- IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先向已注册页面请求草稿保存确认，等待正在读取的图片及 IndexedDB 写入；确认匹配当前 page/request 后才拒绝新业务命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭。草稿失败或 10 秒超时保持窗口与后端可用，页面重载/销毁释放等待，未注册页面不阻止初始启动失败时退出；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
 - `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。社交保存与 AI 执行可用性分开。

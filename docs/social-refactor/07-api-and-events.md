@@ -189,6 +189,17 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 每个 WebView 只有一个社交订阅。替代订阅、页面开始重载、窗口销毁和应用退出释放旧订阅及 callback；后端至多有一条未确认推送，30 秒未确认则关闭并给出错误。模型不等待订阅者，临时广播溢出用 resync 补齐。前端按状态应用成功后的持久 cursor 重连，失败连接中的迟到读取不推进新连接游标。
 
+草稿持久化属于客户端，无新增社交 HTTP 接口、DTO 或持久事件。桌面宿主另外提供以下关闭协调命令（仅主 WebView 可调用）：
+
+| 命令/事件 | 契约 |
+| --- | --- |
+| desktop_register_draft_guard | 输入 page UUID，注册当前页面；替代旧页面释放旧等待 |
+| desktop_unregister_draft_guard | 输入 page UUID，仅释放匹配页面 |
+| drafts-prepare-close | 宿主向主页面发出本次关闭 request UUID；页面停止编辑，等待图片读取与草稿事务完成 |
+| desktop_finish_draft_close | 输入 page、request UUID 与 error（成功为 null）；只接受当前页面和当前请求的确认 |
+
+页面在注册前装好监听；主窗口重载/销毁释放旧等待。宿主最多等 10 秒，失败通过 backend-shutdown-failed 保留窗口并恢复编辑；成功才进入既有 Runtime 关闭阶段，未注册的初始页面可以直接关闭。该确认不传输草稿正文或文件路径。
+
 持久日志当前不压缩，尚未实现游标过期、空间过滤 watermark 和统一的所有边界错误。HTTP/IPC 在重放、溢出和订阅释放时使用同一业务语义；宿主退出等待运行中断保存和数据库 writer 收尾，见 [运行时](09-runtime-and-configuration.md#5-生命周期与关闭)。
 
 ## 7. 错误与后续能力

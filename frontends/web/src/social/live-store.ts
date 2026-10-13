@@ -1,21 +1,11 @@
 import { create } from "zustand"
 import { socialClient, subscribe } from "./client"
 import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot, SummaryState } from "./live-types"
-
-export const LIVE_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
-interface Draft { images?: import("./images").DraftImage[]; reference?: import("./live-types").ReferenceInput | null; text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
+import { acknowledgeDraft, emptyDraft, sendInput, type Draft, type DraftRecord, type PendingDraft } from "./drafts"
+import { draftDatabase } from "./draft-storage"
+import { readImages } from "./images"
 interface Generation { text: string; reasoning: string; sequence: number }
-const emptyDraft = (): Draft => ({ text: "", requestId: null, mentions: [], replyTo: null })
-function persistDrafts(drafts: Record<string, Draft>) {
-  const saved = Object.fromEntries(Object.entries(drafts).map(([id, { images, ...draft }]) => [id, { ...draft, requestId: images?.length ? null : draft.requestId }]))
-  localStorage.setItem(LIVE_DRAFT_KEY, JSON.stringify(saved))
-}
-function readDrafts(): Record<string, Draft> {
-  try {
-    const saved = JSON.parse(localStorage.getItem(LIVE_DRAFT_KEY) ?? "{}") as Record<string, Draft>
-    return Object.fromEntries(Object.entries(saved).filter(([, draft]) => typeof draft?.text === "string"))
-  } catch { return {} }
-}
+interface DraftSaveState { status: "saving" | "saved" | "error"; error?: string }
 
 interface SocialState {
   historyReadThrough: Record<string, string>
@@ -27,6 +17,11 @@ interface SocialState {
   snapshot: Snapshot | null; loading: boolean; error: string | null; connectionError: string | null; connected: boolean
   histories: Record<string, Message[]>; hasMore: Record<string, boolean>; loadingHistory: Record<string, boolean>
   generations: Record<string, Generation>; details: Record<string, RunDetails>; drafts: Record<string, Draft>; sending: Record<string, boolean>
+  pendingSends: Record<string, PendingDraft | null>
+  draftOwner: string | null; draftsReady: boolean; draftsClosing: boolean; draftLoadError: string | null; draftSaveStates: Record<string, DraftSaveState>
+  loadDrafts(): Promise<void>
+  saveDraft(id: string): Promise<void>
+  discardPending(id: string): void
   initialize(): Promise<void>
   disconnect(): void
   refresh(): Promise<void>
@@ -36,6 +31,7 @@ interface SocialState {
   applyMessage(message: Message): void
   updateDraft(id: string, text: string): void
   imageDraft(id: string, images: import("./images").DraftImage[]): void
+  addDraftImages(id: string, files: File[]): Promise<void>
   referenceDraft(id: string, reference: import("./live-types").ReferenceInput | null): void
   targetDraft(id: string, mentions: string[], replyTo: string | null): void
   send(id: string): Promise<void>
@@ -51,6 +47,41 @@ let active = false
 const listWrites = new Map<string, Promise<void>>()
 const memoryReads = new Map<string, Promise<void>>()
 const summaryReads = new Map<string, Promise<void>>()
+const draftWrites = new Map<string, Promise<void>>()
+const draftReads = new Map<string, Promise<void>>()
+let draftLoading: Promise<void> | null = null
+
+function requireDrafts() {
+  if (!useLiveSocialStore.getState().draftsReady) throw new Error("请先恢复本地草稿再编辑或发送")
+  if (useLiveSocialStore.getState().draftsClosing) throw new Error("应用正在保存并关闭，请稍后编辑")
+}
+
+function persistDraft(id: string): Promise<void> {
+  const store = useLiveSocialStore.getState(), owner = store.draftOwner!
+  const record: DraftRecord = { draft: store.drafts[id] ?? emptyDraft(), pending: store.pendingSends[id] ?? null }
+  const key = `${owner}/${id}`
+  const current = () => {
+    const state = useLiveSocialStore.getState()
+    return state.draftOwner === owner && state.drafts[id] === record.draft && (state.pendingSends[id] ?? null) === record.pending
+  }
+  const status = (value: DraftSaveState) => {
+    if (current()) useLiveSocialStore.setState(state => ({ draftSaveStates: { ...state.draftSaveStates, [id]: value } }))
+  }
+  status({ status: "saving" })
+  // A failed write has its own visible error; later explicit edits can still be saved.
+  const write = (draftWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    try { await draftDatabase.save(owner, id, record); status({ status: "saved" }) }
+    catch (error) { status({ status: "error", error: String(error) }); throw error }
+  })
+  draftWrites.set(key, write)
+  void write.finally(() => { if (draftWrites.get(key) === write) draftWrites.delete(key) }).catch(() => {})
+  return write
+}
+
+function persistEditedDraft(id: string) {
+  // Errors are shown beside the affected draft, and the in-memory input stays editable.
+  void persistDraft(id).catch(() => {})
+}
 
 export const useLiveSocialStore = create<SocialState>((set, get) => ({
   historyReadThrough: {},
@@ -104,7 +135,30 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     try { await read } finally { if (memoryReads.get(key) === read) memoryReads.delete(key) }
   },
   snapshot: null, loading: false, error: null, connectionError: null, connected: false,
-  histories: {}, hasMore: {}, loadingHistory: {}, generations: {}, details: {}, drafts: readDrafts(), sending: {},
+  histories: {}, hasMore: {}, loadingHistory: {}, generations: {}, details: {}, drafts: {}, sending: {},
+  pendingSends: {}, draftOwner: null, draftsReady: false, draftsClosing: false, draftLoadError: null, draftSaveStates: {},
+  loadDrafts() {
+    if (draftLoading) return draftLoading
+    const snapshot = get().snapshot!
+    set({ draftsReady: false, draftLoadError: null })
+    draftLoading = (async () => {
+      try {
+        const records = await draftDatabase.load(snapshot.selfId, snapshot.conversations.map(c => c.id))
+        set({ draftOwner: snapshot.selfId, drafts: Object.fromEntries(Object.entries(records).map(([id, r]) => [id, r.draft])),
+          pendingSends: Object.fromEntries(Object.entries(records).map(([id, r]) => [id, r.pending])),
+          draftsReady: true, draftSaveStates: {} })
+      } catch (error) { set({ draftLoadError: `本地草稿未能恢复：${String(error)}。原数据已保留。` }) }
+      finally { draftLoading = null }
+    })()
+    return draftLoading
+  },
+  async saveDraft(id) { requireDrafts(); await persistDraft(id) },
+  discardPending(id) {
+    requireDrafts()
+    if (get().sending[id]) return
+    set({ pendingSends: { ...get().pendingSends, [id]: null }, drafts: { ...get().drafts, [id]: { ...get().drafts[id], requestId: null } } })
+    persistEditedDraft(id)
+  },
   initialize() {
     active = true
     if (initialization) return initialization
@@ -114,6 +168,7 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
         const snapshot = await socialClient.init()
         if (!get().snapshot) cursor = snapshot.cursor
         set({ snapshot, loading: false })
+        if (!get().draftsReady || get().draftOwner !== snapshot.selfId) await get().loadDrafts()
         if (active) startSubscription()
       } catch (error) { set({ loading: false, error: String(error) }) }
       finally { initialization = null }
@@ -170,48 +225,60 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
     if (details) set({ details: { ...get().details, [id]: details } })
   },
   updateDraft(id, text) {
+    requireDrafts()
     const drafts = { ...get().drafts, [id]: { ...get().drafts[id], text, requestId: null } }
     set({ drafts })
-    try { persistDrafts(drafts) }
-    catch { set({ error: "输入保留在页面中，但浏览器未能保存草稿。" }) }
+    persistEditedDraft(id)
   },
   imageDraft(id, images) {
+    requireDrafts()
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), images, requestId: null } }
     set({ drafts })
-    try { persistDrafts(drafts) } catch { set({ error: "输入保留在页面中，但浏览器未能保存文字草稿。" }) }
+    persistEditedDraft(id)
+  },
+  async addDraftImages(id, files) {
+    requireDrafts()
+    if (draftReads.has(id)) throw new Error("请等待当前图片读取完成")
+    const read = (async () => {
+      const selected = await readImages(files, get().drafts[id]?.images ?? [])
+      const draft = get().drafts[id] ?? emptyDraft()
+      // A selection started before close must finish and persist before the host exits.
+      set({ drafts: { ...get().drafts, [id]: { ...draft, images: [...(draft.images ?? []), ...selected], requestId: null } } })
+      await persistDraft(id)
+    })()
+    draftReads.set(id, read)
+    try { await read } finally { draftReads.delete(id) }
   },
   referenceDraft(id, reference) {
+    requireDrafts()
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), reference, requestId: null } }
     set({ drafts })
-    try { persistDrafts(drafts) }
-    catch { set({ error: "引用保留在页面中，但浏览器未能保存草稿。" }) }
+    persistEditedDraft(id)
   },
   targetDraft(id, mentions, replyTo) {
+    requireDrafts()
     const drafts = { ...get().drafts, [id]: { ...(get().drafts[id] ?? emptyDraft()), mentions, replyTo, requestId: null } }
     set({ drafts })
-    try { persistDrafts(drafts) }
-    catch { set({ error: "接话选择保留在页面中，但浏览器未能保存草稿。" }) }
+    persistEditedDraft(id)
   },
   async send(id) {
-    if (get().sending[id]) return
-    const draft = get().drafts[id] ?? emptyDraft()
+    requireDrafts()
+    if (get().sending[id] || draftReads.has(id)) return
+    const pending = get().pendingSends[id]
+    const draft = pending ?? get().drafts[id] ?? emptyDraft()
     if (!draft.text.trim() && !draft.images?.length) return
     const generation = historyGeneration
     const requestId = draft.requestId ?? crypto.randomUUID()
-    set({ sending: { ...get().sending, [id]: true }, drafts: { ...get().drafts, [id]: { ...draft, requestId } }, error: null })
+    const sent: PendingDraft = { ...draft, requestId }
+    set({ sending: { ...get().sending, [id]: true }, pendingSends: { ...get().pendingSends, [id]: sent },
+      drafts: pending ? get().drafts : { ...get().drafts, [id]: sent }, error: null })
     try {
-      persistDrafts(get().drafts)
-      const receipt = await socialClient.send(id, { requestId, text: draft.text, replyTo: draft.replyTo ?? null, mentions: draft.mentions ?? [], ...(draft.images?.length ? { images: draft.images.map(({ mime, data }) => ({ mime, data })) } : {}), ...(draft.reference ? { reference: draft.reference.selection } : {}) })
-      if (get().drafts[id]?.requestId === requestId) {
-        const drafts = { ...get().drafts, [id]: emptyDraft() }
-        set({ drafts })
-        try { persistDrafts(drafts) }
-        catch { set({ error: "消息已保存，但浏览器未能更新草稿缓存。" }) }
-      }
-      if (draft.images?.length && get().drafts[id]?.requestId !== requestId) {
-        const current = get().drafts[id]
-        if (current?.images?.length) get().imageDraft(id, current.images.filter(image => !draft.images!.some(sent => sent.id === image.id)))
-      }
+      // Persist the exact command before it can reach the backend. Reload never auto-sends it.
+      await persistDraft(id)
+      const receipt = await socialClient.send(id, sendInput(sent))
+      set({ drafts: { ...get().drafts, [id]: acknowledgeDraft(get().drafts[id] ?? emptyDraft(), sent) }, pendingSends: { ...get().pendingSends, [id]: null } })
+      try { await persistDraft(id) }
+      catch { set({ error: "消息已保存，但本地草稿尚未清理，请重试保存草稿。" }) }
       // The acknowledgement is already committed; a subsequent refresh error must not undo it.
       const messages = get().histories[id] ?? []
       if (generation !== historyGeneration) await get().loadMessage(receipt.message.id)
@@ -227,6 +294,20 @@ export const useLiveSocialStore = create<SocialState>((set, get) => ({
   },
   dismissError() { set({ error: null, connectionError: null }) },
 }))
+
+export function hasUnsavedDrafts(): boolean {
+  return draftReads.size > 0 || Object.values(useLiveSocialStore.getState().draftSaveStates).some(value => value.status !== "saved")
+}
+
+export async function flushDrafts(): Promise<void> {
+  while (draftReads.size) await Promise.all(draftReads.values())
+  while (draftWrites.size) await Promise.all(draftWrites.values())
+  // Retry also covers drafts hidden by a later block/archive or a different page.
+  const failed = Object.entries(useLiveSocialStore.getState().draftSaveStates).filter(([, value]) => value.status === "error")
+  try { await Promise.all(failed.map(([id]) => persistDraft(id))) }
+  catch (error) { throw new Error(`草稿尚未保存：${String(error)}`) }
+  if (hasUnsavedDrafts()) throw new Error("草稿尚未保存，请在聊天中重试保存草稿后再关闭")
+}
 
 async function applyChange(event: Change, signal: AbortSignal) {
   if (signal.aborted) return

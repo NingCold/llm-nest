@@ -5,6 +5,7 @@
 这里负责打开桌面窗口、启动本地聊天服务，以及在关闭窗口时保存数据。修改页面内容请到 [Web 界面](../../web/README.md)。
 
 - [src/lib.rs](src/lib.rs)：应用启动和关闭。
+- [src/draft_close.rs](src/draft_close.rs)：关闭前等待页面保存未发送的草稿。
 - [src/social_commands.rs](src/social_commands.rs)：页面调用的聊天操作。
 - [src/conversation_export.rs](src/conversation_export.rs)：选择原图和聊天导出的保存位置并写入文件。
 - [src/social_subscription.rs](src/social_subscription.rs)：向页面传递新消息和回复进展。

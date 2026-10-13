@@ -13,6 +13,7 @@ import { navigate, parseSocialRoute } from "./router"
 import { useLiveSocialStore } from "./live-store"
 import { isUnread } from "./message-list"
 import { ConversationList } from "./ConversationList"
+import { useDraftLifecycle } from "./useDraftLifecycle"
 import { Chat } from "./LiveChat"
 import { CreateGroupForm } from "./GroupControls"
 import { AccountDetails, AccountViewer, AiManagement } from "./AccountPages"
@@ -25,6 +26,7 @@ function SocialSettings({ onBack }: { onBack(): void }) {
 }
 
 export default function SocialApp() {
+  useDraftLifecycle()
   const state = useLiveSocialStore()
   const showSettings = useUiStore(s => s.showSettings)
   const desktopReady = useUiStore(s => s.desktopReady)

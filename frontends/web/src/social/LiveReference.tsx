@@ -64,7 +64,7 @@ function ContinueEditor({ conversation, message, done }: { conversation: Convers
   }
   return <div className="social-form">
     {state.error && <p className="form-error" role="alert">{state.error}</p>}
-    <fieldset className="social-form-fields" disabled={busy}>
+    <fieldset className="social-form-fields" disabled={busy || !state.draftsReady || state.draftsClosing}>
       <label>与谁私聊<select value={actorId} onChange={e => setActorId(e.target.value)}>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
       {!actors.length && <p>当前没有可接续话题的共同 AI 成员。</p>}
       <p>选择需要带入私聊的原文（最多 8 条）。可以先在群聊加载更早记录。</p>

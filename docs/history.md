@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [图片消息第三批](social-refactor/image-drafts.md) | 本机图片草稿持久保存、跨刷新/重开恢复、完整命令重试、失败提示与桌面关闭等待 |
 | [图片消息第二批](social-refactor/image-message-export.md) | 原图另存为、Markdown/JSON 携图 ZIP、版本与权限复核、Web 下载及桌面文件保存 |
 | [图片消息第一批](social-refactor/image-messages.md) | 选图/预览/发送、持久历史、群话题图片接续、四种模型协议与隔离验收 |
 | [单窗口聊天导出](social-refactor/conversation-export.md) | 完整历史的 Markdown / JSON、附件占位、Web 下载与桌面另存为 |

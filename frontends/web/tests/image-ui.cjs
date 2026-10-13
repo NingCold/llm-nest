@@ -23,9 +23,10 @@ const all=n=>!n||typeof n!=='object'?[]:[n,...[n.props?.children].flat(Infinity)
     useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v]},
     useRef(initial){const i=index++;return slots[i]??={current:initial}},
   };
-  const state={drafts:{chat:{text:'',images:[]}},sending:{},error:null,
+  const state={draftsReady:true,draftsClosing:false,pendingSends:{},draftSaveStates:{},drafts:{chat:{text:'',images:[]}},sending:{},error:null,
     action:async fn=>{try{await fn()}catch(e){state.error=String(e)}},
     imageDraft:(id,images)=>{state.drafts[id]={...state.drafts[id],images}},updateDraft:(id,text)=>state.drafts[id].text=text,
+    addDraftImages:async(id,files)=>{state.imageDraft(id,[...state.drafts[id].images,...await images.readImages(files,state.drafts[id].images)])},
     send:async id=>effects.push(id),
   };
   const hook=()=>state;hook.getState=()=>state;

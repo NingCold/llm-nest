@@ -11,6 +11,7 @@ pub mod commands;
 mod config_path;
 mod conversation_export;
 mod directories;
+mod draft_close;
 mod social_commands;
 mod social_subscription;
 mod window_frame;
@@ -28,6 +29,7 @@ pub struct BackendState {
     closing: AtomicBool,
     shutdown_started: AtomicBool,
     exit_ready: AtomicBool,
+    drafts: draft_close::DraftCloseGuard,
 }
 impl BackendState {
     pub async fn get(&self) -> Result<Arc<AppState>, String> {
@@ -90,13 +92,21 @@ impl BackendState {
 
 fn request_shutdown(app: &tauri::AppHandle) {
     let state = app.state::<BackendState>();
-    state.closing.store(true, Ordering::Release);
     if state.shutdown_started.swap(true, Ordering::AcqRel) {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<BackendState>();
+        if let Err(error) = state.drafts.prepare(&app).await {
+            let _ = app.emit(
+                "backend-shutdown-failed",
+                format!("退出保存失败：{error}。应用仍保持打开。"),
+            );
+            state.shutdown_started.store(false, Ordering::Release);
+            return;
+        }
+        state.closing.store(true, Ordering::Release);
         let result =
             tokio::time::timeout(std::time::Duration::from_secs(20), state.shutdown()).await;
         match result {
@@ -133,6 +143,7 @@ pub fn run() {
                 closing: AtomicBool::new(false),
                 shutdown_started: AtomicBool::new(false),
                 exit_ready: AtomicBool::new(false),
+                drafts: draft_close::DraftCloseGuard::default(),
             });
             Ok(())
         })
@@ -141,9 +152,15 @@ pub fn run() {
                 && let Some(state) = webview.app_handle().try_state::<BackendState>()
             {
                 state.subscriptions.release_owner(webview.label());
+                if webview.label() == "main" {
+                    state.drafts.release(None);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
+            draft_close::desktop_register_draft_guard,
+            draft_close::desktop_unregister_draft_guard,
+            draft_close::desktop_finish_draft_close,
             window_frame::set_window_appearance,
             directories::get_app_paths,
             directories::open_app_directory,
@@ -227,6 +244,9 @@ pub fn run() {
                 app.state::<BackendState>()
                     .subscriptions
                     .release_owner(&label);
+                if label == "main" {
+                    app.state::<BackendState>().drafts.release(None);
+                }
             }
             tauri::RunEvent::ExitRequested { api, .. }
                 if !app

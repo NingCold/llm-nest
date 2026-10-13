@@ -11,41 +11,24 @@ const defer = () => { let resolve, reject; const promise = new Promise((a,b) => 
 const snapshot = cursor => ({ selfId:'human',selfName:'Human',selfAccount:{ id:'human',name:'Human',kind:'human',bio:'',avatarRef:null,status:'active',revision:'1' },accounts:[],addressBook:[],conversations:[],models:[],cursor });
 const message = (text, revision='1', status='committed') => ({ id:'message',conversationId:'chat',senderId:'human',senderName:'Human',sequence:'1',text,status,revision,replyTo:null,runId:null,createdAt:'2026-10-09T00:00:00Z' });
 
-function harness() {
-  const values = new Map([['llm-nest-social-preview-drafts-v1', JSON.stringify({ chat:{ text:'preview-only' } })]]);
-  const storage = { getItem:key=>values.get(key)??null, setItem:(key,value)=>values.set(key,value) };
-  let handlers;
-  const api = { init:async()=>snapshot('0'), messages:async()=>({ messages:[],hasMore:false }),message:async()=>message(""),runDetails:async()=>null,send:async(_,input)=>({ message:message(input.text),executionNotice:null }) };
-  const exports={};
-  vm.runInNewContext(compile('live-store'), {
-    exports,require:spec=> {
-      if (spec==='./client') return { socialClient:api,subscribe:(_,signal,change,live,resync)=> { handlers={ signal,change,live,resync }; return new Promise(()=>{}); } };
-      if (spec==='zustand') return { create:initialize=> {
-        let state;
-        const hook=selector=>selector(state);
-        const set=update=> { state={ ...state,...(typeof update==='function'?update(state):update) }; };
-        hook.getState=()=>state; hook.setState=set; state=initialize(set,hook.getState); return hook;
-      } };
-      throw new Error('unexpected dependency: '+spec);
-    },localStorage:storage,crypto:webcrypto,AbortController,Map,BigInt,Date,setTimeout,
-  });
-  return { store:exports.useLiveSocialStore, api,storage,values,handlers:()=>handlers,key:exports.LIVE_DRAFT_KEY };
-}
+const { harness } = require('./draft-harness.cjs');
 
 (async()=> {
   const h=harness();
   const imageHarness=harness();
   const imageStore=imageHarness.store;
   const image={ id:'image-draft', name:'photo.png', mime:'image/png', data:'AQID', byteLength:3 };
+  await imageStore.getState().initialize();
   imageStore.getState().imageDraft('images',[image]);
   const imageCalls=[];
   imageHarness.api.send=async(_,input)=>{imageCalls.push(input);throw new Error('lost image receipt')};
   await imageStore.getState().send('images');
   assert.equal(imageCalls.length,1,'image-only draft sends');
   assert.equal(imageStore.getState().drafts.images.images[0].data,'AQID');
-  const persisted=JSON.parse(imageHarness.values.get(imageHarness.key)).images;
-  assert.equal(persisted.images,undefined,'binary drafts never occupy localStorage');
-  assert.equal(persisted.requestId,null,'reload must not reuse an image command for text-only input');
+  const persisted=await imageHarness.record('images');
+  assert.equal(persisted.draft.images[0].data,image.data);
+  assert.equal(persisted.pending.requestId,imageCalls[0].requestId);
+  assert.equal(imageHarness.values.has('llm-nest-social-live-drafts-v1'),false,'binary drafts never occupy localStorage');
   await imageStore.getState().send('images');
   assert.equal(imageCalls[0].requestId,imageCalls[1].requestId,'in-app retries keep exact image command');
   const imagePending=defer(); imageHarness.api.send=()=>imagePending.promise;
@@ -66,12 +49,13 @@ function harness() {
   h.store.getState().referenceDraft('chat',reference);
   assert.equal(h.store.getState().drafts.chat.text,'first');
   assert.equal(sends.length,0,'adding a reference only prepares a draft');
-  assert.deepEqual(JSON.parse(h.values.get(h.key)).chat.reference,reference);
+  await h.flush();
+  assert.equal(JSON.stringify((await h.record('chat')).draft.reference),JSON.stringify(reference));
 
   await h.store.getState().send('chat');
   const retryId=h.store.getState().drafts.chat.requestId;
   assert.equal(h.store.getState().drafts.chat.text,'first');
-  assert.equal(JSON.parse(h.values.get(h.key)).chat.requestId,retryId);
+  assert.equal((await h.record('chat')).pending.requestId,retryId);
   h.api.send=async(_,input)=> { sends.push(input); return { message:message(input.text),executionNotice:{ code:'model_unavailable',message:'saved without a model' } }; };
   await h.store.getState().send('chat');
   assert.equal(sends[1].requestId,sends[0].requestId);
@@ -95,7 +79,7 @@ function harness() {
   h.api.send=(_,input)=> { count++; return pending.promise; };
   h.store.getState().updateDraft('chat','old draft');
   const send=h.store.getState().send('chat');
-  await h.store.getState().send('chat'); assert.equal(count,1);
+  await h.store.getState().send('chat'); await h.flush(); assert.equal(count,1);
   h.store.getState().updateDraft('chat','new draft while awaiting acknowledgement');
   h.store.getState().targetDraft('chat',['carol'],'new-quote');
   h.api.init=async()=> { throw new Error('refresh disconnected'); };

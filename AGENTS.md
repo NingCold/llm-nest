@@ -10,7 +10,7 @@ LLM-Nest 正从本地 Harness 转向人与 AI 的社交空间，共用 Rust 运�
 
 首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
 
-ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。通讯录 ContactEntry 是按 owner 的有向列出状态，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，不改写旧迁移。
+ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。通讯录 ContactEntry 是按 owner 的有向列出状态，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，不改写旧迁移。
 
 当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；浏览器模拟预览必须显式启用。本文维护修改约束，不重复维护各批测试数量。
 
@@ -44,7 +44,7 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | `crates/tools` | Tool、ToolRegistry、固定白名单子进程和内置 echo/add |
 | `crates/runtime` | 配置/热更新、SessionManager、Feature 生命周期、事件总线、工具注册 |
 | `features/chat` | 聊天与工具循环、取消、检查点、结束收尾、消息计时 |
-| `features/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、基本意识上下文、独立模型运行、共享业务 DTO |
+| `features/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、意识上下文/显式记忆/窗口摘要任务、独立模型运行、共享业务 DTO |
 | `crates/web-server` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
 | `frontends/cli` / `frontends/tui` | 命令解析与终端展示 |
 | `frontends/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
@@ -103,6 +103,7 @@ Runtime / SessionManager / AiClient / ToolRegistry
 - 启动遇到 Running 检查点时，幂等恢复片段并标为 Interrupted。不自动重放工具，不声称能恢复 provider 的 token 游标或回滚副作用。
 - 旧会话只保存最近一次 RunCheckpoint；社交库保留独立 AiRun 和运行详情，尚不是完整协议/工具审计日志。
 - 显式记忆归属稳定 AI 账号及当前关系/群范围。仅读取 confirmed；来源消息修改/撤回同事务标 stale，编辑/遗忘提升窗口上下文版本并中断在飞回复，提交时复核记忆版本。新增记忆仅影响新运行。遗忘清空记忆及修订正文，保留来源 tombstone，不删除原聊天或备份。范围由服务端推导，管理员身份不扩大窗口访问；HTTP/IPC 共用用例。
+- 窗口摘要由成员显式启用专用模型和输出预算，任务归属窗口，不是 AI 发言或 ParticipationPlan。仅概括 committed 原文；queued/running/ready/failed/interrupted/stale 与来源版本持久化。源编辑/撤回同事务清空依赖摘要及修订正文并标 stale，迟到结果不能覆盖；配置/窗口参与变化停止未完成任务。后台全局并发 1、每次唤醒最多 4 段、120 秒超时，关闭/崩溃后不重放。ContextSnapshot 只记录实际读取的 ready 分段，最终提交复核。HTTP/IPC 共用用例和 summaries_changed 引用事件；摘要不依赖显式记忆，不将遗忘条目等同撤回原文。
 - 下一次模型请求过滤中断消息；展示元数据（ID、反馈、思考、计时、用量、中断状态）通过 wire 转换剥离。工具调用与结果按各协议规则成对转换。
 - Usage 的 prompt_tokens 包含缓存输入；cached_tokens 是命中部分，缓存命中率为 cached / prompt，避免再次加到分母。
 - 附件以持久化 DTO 保存二进制；持久化格式与 provider wire 格式分开。

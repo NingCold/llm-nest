@@ -13,6 +13,8 @@ use storage::social::*;
 use storage::{DataDirectoryGuard, FileSessionStore, SessionRecord, SessionStore};
 #[path = "social_memory/mod.rs"]
 mod memory_tests;
+#[path = "social_summary/mod.rs"]
+mod summary_tests;
 
 struct Fixture {
     dir: tempfile::TempDir,
@@ -382,6 +384,10 @@ impl Fixture {
             "legacy_id_map",
             "account_admins",
             "address_book",
+            "summary_settings",
+            "conversation_summaries",
+            "summary_revisions",
+            "summary_message_sources",
             "memories",
             "memory_revisions",
             "memory_message_sources",
@@ -428,7 +434,7 @@ async fn v5_account_migration_preserves_history_private_settings_and_old_disable
     let operator = f.human.id;
     f.store.close().await.unwrap();
     let old = Connection::open(&path).unwrap();
-    old.execute_batch("DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
+    old.execute_batch("DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
     drop(old);
     let store = SqliteSocialStore::open(
         DataDirectoryGuard::acquire(f.dir.path()).unwrap(),

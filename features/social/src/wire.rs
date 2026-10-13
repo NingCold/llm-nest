@@ -508,3 +508,22 @@ pub struct MembershipInput {
     pub expected_revision: Revision,
     pub action: storage::social::MembershipAction,
 }
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummarySettingsInput {
+    pub request_id: social::CommandId,
+    #[serde(flatten)]
+    pub settings: storage::social::ConfigureSummaries,
+}
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryRequest {
+    pub request_id: social::CommandId,
+    pub retry: Option<SummaryRetry>,
+}
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryRetry {
+    pub id: social::SummaryId,
+    pub expected_revision: social::Revision,
+}

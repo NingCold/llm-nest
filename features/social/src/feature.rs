@@ -18,11 +18,13 @@ pub(crate) struct Services {
 }
 #[derive(Clone, Default)]
 pub(crate) struct ConversationLocks {
+    pub summary: Arc<Mutex<()>>,
     pub mutation: Arc<Mutex<()>>,
     pub execution: Arc<Mutex<()>>,
 }
 
 pub struct SocialFeature {
+    pub(crate) summary_slots: tokio::sync::Semaphore,
     services: OnceCell<Services>,
     locks: StdMutex<HashMap<ConversationId, ConversationLocks>>,
     pub(crate) cancellations: Mutex<HashMap<RunId, CancellationToken>>,
@@ -40,6 +42,7 @@ impl SocialFeature {
     pub fn new() -> Self {
         let (live, _) = broadcast::channel(256);
         Self {
+            summary_slots: tokio::sync::Semaphore::new(1),
             services: OnceCell::new(),
             locks: StdMutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
@@ -333,6 +336,7 @@ impl SocialFeature {
                         .push(error);
                 }
             }
+            feature.schedule_summaries(id, None);
         });
     }
     pub async fn create_group(&self, input: wire::CreateGroupInput) -> Result<ConversationId> {
@@ -463,6 +467,12 @@ impl Feature for SocialFeature {
             self.stop.cancel();
             self.tasks.close();
             self.tasks.wait().await;
+            self.services()
+                .expect("initialized")
+                .resources
+                .store
+                .interrupt_summary_tasks()
+                .await?;
             if let Some(error) = self
                 .background_failures
                 .lock()

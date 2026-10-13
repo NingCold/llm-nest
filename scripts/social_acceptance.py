@@ -1,4 +1,4 @@
-"""M1 private/group HTTP acceptance: temporary data and a loopback mock provider.
+"""M1/M2 social HTTP acceptance: temporary data and a loopback mock provider.
 python scripts/social_acceptance.py [--binary PATH] [--dist PATH] [--serve]
 No personal configuration or real provider is used. --serve retains the fixture for GUI QA.
 """
@@ -26,9 +26,35 @@ class Provider(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
+    summary_mode = 'ok'
+
+    def summary_response(self, request):
+        mode = Provider.summary_mode
+        if mode == 'error':
+            self.send_response(429); self.end_headers(); return
+        self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
+        def emit(delta, finish=None):
+            data = {'id':'summary-fixture','model':request['model'],'choices':[{'index':0,'delta':delta,'finish_reason':finish}]}
+            self.wfile.write(('data: ' + json.dumps(data, ensure_ascii=False) + '\n\n').encode()); self.wfile.flush()
+        try:
+            if mode == 'slow':
+                for _ in range(100):
+                    time.sleep(.05); emit({'reasoning_content':'background-thought'})
+            if mode == 'tool':
+                emit({'tool_calls':[{'index':0,'id':'summary-tool','type':'function','function':{'name':'add','arguments':'{}'}}]}, 'tool_calls')
+            else:
+                if mode != 'empty': emit({'content':'窗口摘要：我提出项目采用蓝色界面；仍需确认发布日期。来源为本段原文。'})
+                if mode == 'eof': return
+                emit({}, 'stop')
+            self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         REQUESTS.append(request)
+        if any(m['content'].startswith('[窗口分段摘要原文]') for m in request['messages'] if m['role'] == 'user'):
+            return self.summary_response(request)
         content = next(m['content'] for m in reversed(request['messages']) if m['role'] == 'user' and m['content'].startswith('[我 ·'))
         text = content.rsplit('\n', 1)[-1]
         if text == 'provider-error':
@@ -151,7 +177,7 @@ def main():
         return len(calls_for(text))
 
     def calls_for(text):
-        return [r for r in REQUESTS if next(m['content'] for m in reversed(r['messages']) if m['role'] == 'user' and m['content'].startswith('[我 ·')).endswith('\n' + text)]
+        return [r for r in REQUESTS if next((m['content'] for m in reversed(r['messages']) if m['role'] == 'user' and m['content'].startswith('[我 ·')), '').endswith('\n' + text)]
 
     def group(title, actors):
         return api('/groups', 'POST', {'requestId': str(uuid.uuid4()), 'title': title, 'memberIds': [a['id'] for a in actors]})
@@ -597,6 +623,9 @@ def main():
         complete(private,'parameters-after-restart')
         assert REQUESTS[-1]['temperature']==.5 and REQUESTS[-1]['max_tokens']==4096
         print('PASS: contacts/bindings, unique direct chat, independent persistence, strict models, duplicate request/run, context isolation/reasoning exclusion, continuous input/cancel, provider/EOF/tool failure, source change, save rollback/retry, subscription disconnect, crash recovery/no replay', flush=True)
+        from social_summary_acceptance import verify_summaries
+        verify_summaries(api, contact, group, send, history, wait_for, stop, start, REQUESTS, Provider)
+
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:
             print('Serving fixture until STOP file or interrupt.', flush=True)

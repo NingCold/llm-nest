@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
+import { SummaryPanel } from "./LiveSummary"
 import { Brain, Plus } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { socialClient } from "./client"
@@ -94,8 +95,8 @@ export function MemoryPanel({ conversation }: { conversation: Conversation }) {
   const actors = state.snapshot!.accounts.filter(a => a.kind === "ai" && (conversation.memberIds.includes(a.id) || conversation.memoryOwnerIds.includes(a.id)))
   const [selected, setSelected] = useState("")
   const actor = actors.some(a => a.id === selected) ? selected : actors[0]?.id
-  return <section className="live-consciousness"><h2>意识与记忆</h2><p>记录完整保存在窗口中。每次回复从本窗口的近期记录与这个 AI 的有效记忆组织上下文，私聊记忆不会自动带入群聊。</p>
+  return <section className="live-consciousness"><h2>意识与记忆</h2><p>记录完整保存在窗口中。每次回复从本窗口的近期记录、有效摘要与这个 AI 的记忆组织上下文，私聊记忆不会自动带入群聊。</p>
     {actor ? <><label className="memory-owner">归属 AI<select value={actor} onChange={event => setSelected(event.target.value)}>{actors.map(a => <option key={a.id} value={a.id}>{a.name}{conversation.memberIds.includes(a.id) ? "" : "（已离群）"}</option>)}</select></label><MemoryList key={`${conversation.id}:${actor}`} conversation={conversation} actor={actor} /></> : <p>当前聊天没有 AI 成员。</p>}
-    <p className="memory-note">窗口分段摘要与群聊话题接续私聊将在后续接入。</p>
+    <SummaryPanel key={conversation.id} conversation={conversation} />
   </section>
 }

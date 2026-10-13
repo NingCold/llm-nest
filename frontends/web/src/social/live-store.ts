@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { socialClient, subscribe } from "./client"
-import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot } from "./live-types"
+import type { Change, LiveEvent, Memory, Message, RunDetails, Snapshot, SummaryState } from "./live-types"
 
 export const LIVE_DRAFT_KEY = "llm-nest-social-live-drafts-v1"
 interface Draft { text: string; requestId: string | null; mentions?: string[]; replyTo?: string | null }
@@ -14,6 +14,8 @@ function readDrafts(): Record<string, Draft> {
 }
 
 interface SocialState {
+  summaries: Record<string, SummaryState | null>; summaryErrors: Record<string, string | null>; loadingSummaries: Record<string, boolean>
+  loadSummaries(conversation: string, older?: boolean): Promise<void>
   memories: Record<string, Memory[]>; loadingMemories: Record<string, boolean>; memoryErrors: Record<string, string | null>
   loadMemories(conversation: string, actor: string): Promise<void>
   snapshot: Snapshot | null; loading: boolean; error: string | null; connectionError: string | null; connected: boolean
@@ -39,8 +41,28 @@ let cursor = "0"
 let historyGeneration = 0
 let active = false
 const memoryReads = new Map<string, Promise<void>>()
+const summaryReads = new Map<string, Promise<void>>()
 
 export const useLiveSocialStore = create<SocialState>((set, get) => ({
+  summaries: {}, summaryErrors: {}, loadingSummaries: {},
+  async loadSummaries(id, older = false) {
+    const read = (summaryReads.get(id) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      const generation = historyGeneration
+      const previous = get().summaries[id]
+      set({ summaries: { ...get().summaries, [id]: previous ?? null }, loadingSummaries: { ...get().loadingSummaries, [id]: true } })
+      try {
+        const page = await socialClient.summaries(id, older ? previous?.segments[previous.segments.length - 1]?.throughSequence : undefined)
+        if (generation !== historyGeneration) return
+        const value = older && previous ? { ...page, segments: [...previous.segments, ...page.segments] } : page
+        set({ summaries: { ...get().summaries, [id]: value }, summaryErrors: { ...get().summaryErrors, [id]: null } })
+      } catch (error) {
+        if (generation === historyGeneration) set({ summaries: { ...get().summaries, [id]: null }, summaryErrors: { ...get().summaryErrors, [id]: String(error) } })
+        throw error
+      } finally { set({ loadingSummaries: { ...get().loadingSummaries, [id]: false } }) }
+    })
+    summaryReads.set(id, read)
+    try { await read } finally { if (summaryReads.get(id) === read) summaryReads.delete(id) }
+  },
   memories: {}, loadingMemories: {}, memoryErrors: {},
   async loadMemories(conversation, actor) {
     const key = `${conversation}/${actor}`
@@ -185,6 +207,10 @@ async function applyChange(event: Change, signal: AbortSignal) {
     const { conversationId, actorId } = event.change
     if (conversationId && actorId && `${conversationId}/${actorId}` in useLiveSocialStore.getState().memories) await store.loadMemories(conversationId, actorId)
   }
+  if (event.change.kind === "summaries_changed" && !signal.aborted) {
+    const id = event.change.conversationId
+    if (id && id in useLiveSocialStore.getState().summaries) await store.loadSummaries(id)
+  }
   if (!signal.aborted) cursor = event.cursor
 }
 
@@ -225,10 +251,12 @@ function startSubscription() {
           const store = useLiveSocialStore.getState()
           const ids = Object.keys(store.histories)
           const memoryScopes = Object.keys(store.memories)
+          const summaryIds = Object.keys(store.summaries)
           historyGeneration++
-          useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {}, memories: {}, memoryErrors: {} })
+          useLiveSocialStore.setState({ generations: {}, histories: {}, hasMore: {}, details: {}, memories: {}, memoryErrors: {}, summaries: {}, summaryErrors: {} })
           await store.refresh()
           for (const id of ids) { if (attemptSignal.aborted) return; await store.loadHistory(id) }
+          for (const id of summaryIds) { if (attemptSignal.aborted) return; await store.loadSummaries(id) }
           for (const key of memoryScopes) { if (attemptSignal.aborted) return; const [conversation, actor] = key.split("/"); await store.loadMemories(conversation, actor) }
         }, () => { if (!attemptSignal.aborted) useLiveSocialStore.setState({ connected: true, connectionError: null }) })
       } catch (error) {

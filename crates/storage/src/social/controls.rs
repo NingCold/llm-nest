@@ -70,6 +70,7 @@ impl Db<'_> {
         c.revision = c.revision.next()?;
         self.update_message(&m, ctx.operator)?;
         self.stale_memories(m.id)?;
+        self.stale_summaries(m.id)?;
         // Old revisions must not revive withdrawn text or attachments.
         self.execute("UPDATE message_revisions SET payload=json_set(payload,'$.body',json('[]'),'$.status','withdrawn') WHERE message_id=?1", [m.id.to_string()])?;
         self.invalidate_context(c.id)?;

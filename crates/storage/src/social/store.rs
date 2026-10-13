@@ -192,6 +192,7 @@ pub struct SocialOverview {
 
 #[derive(Debug, Clone)]
 pub struct ContextMaterial {
+    pub summaries: Vec<ConversationSummary>,
     pub memories: Vec<MemoryRecord>,
     pub contact: ContactRecord,
     pub conversation: Conversation,
@@ -269,10 +270,74 @@ pub struct RunDetails {
 
 pub use events::SocialFailure as RunFailure;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryState {
+    pub settings: SummarySettings,
+    pub segments: Vec<ConversationSummary>,
+    pub has_more: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureSummaries {
+    pub enabled: bool,
+    pub binding: Option<SummaryBinding>,
+    pub expected_revision: Revision,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueSummary {
+    pub conversation_id: ConversationId,
+    pub retry: Option<(SummaryId, Revision)>,
+    pub automatic: bool,
+    pub settings_revision: Revision,
+    pub input_budget: u32,
+}
+#[derive(Debug, Clone)]
+pub struct SummaryWork {
+    pub summary: ConversationSummary,
+    pub messages: Vec<SocialMessage>,
+}
+#[derive(Debug, Clone)]
+pub struct FinishSummary {
+    pub id: SummaryId,
+    pub expected_revision: Revision,
+    pub status: SummaryStatus,
+    pub text: String,
+    pub error: Option<String>,
+}
+
 /// Bounded, asynchronous, typed operations. Transactions never span model calls.
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn interrupt_summary_tasks(&self) -> SocialStorageResult<()>;
+    async fn summaries(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+        before: Option<Sequence>,
+    ) -> SocialStorageResult<SummaryState>;
+    async fn configure_summaries(
+        &self,
+        ctx: CommandContext,
+        id: ConversationId,
+        input: ConfigureSummaries,
+    ) -> SocialStorageResult<SummarySettings>;
+    async fn queue_summary(
+        &self,
+        ctx: CommandContext,
+        input: QueueSummary,
+    ) -> SocialStorageResult<Option<ConversationSummary>>;
+    async fn begin_summary(
+        &self,
+        operator: ActorId,
+        id: SummaryId,
+    ) -> SocialStorageResult<Option<SummaryWork>>;
+    async fn finish_summary(
+        &self,
+        operator: ActorId,
+        input: FinishSummary,
+    ) -> SocialStorageResult<ConversationSummary>;
     async fn memories(
         &self,
         operator: ActorId,

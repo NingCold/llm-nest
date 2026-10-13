@@ -7,6 +7,7 @@ mod feature;
 mod generation;
 mod memory;
 mod subscription;
+mod summary;
 pub mod wire;
 
 pub use accounts::{AccountInput, AdministratorInput, ContactInput as SetContactInput};

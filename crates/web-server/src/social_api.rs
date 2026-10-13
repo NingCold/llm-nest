@@ -20,6 +20,14 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
         .route(
+            "/api/social/conversations/{id}/summaries",
+            get(summaries).post(request_summary),
+        )
+        .route(
+            "/api/social/conversations/{id}/summary-settings",
+            post(configure_summaries),
+        )
+        .route(
             "/api/social/conversations/{id}/memories/{actor}",
             get(memories).post(create_memory),
         )
@@ -196,6 +204,31 @@ async fn forget_memory(
     ApiJson(input): ApiJson<wire::VersionedCommand>,
 ) -> Result<wire::Memory> {
     Ok(Json(s.social.forget_memory(id, input).await?))
+}
+async fn summaries(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiQuery(query): ApiQuery<SummaryQuery>,
+) -> Result<storage::social::SummaryState> {
+    Ok(Json(s.social.summaries(id, query.before).await?))
+}
+#[derive(Deserialize)]
+struct SummaryQuery {
+    before: Option<Sequence>,
+}
+async fn configure_summaries(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::SummarySettingsInput>,
+) -> Result<social::SummarySettings> {
+    Ok(Json(s.social.configure_summaries(id, input).await?))
+}
+async fn request_summary(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::SummaryRequest>,
+) -> Result<Option<social::ConversationSummary>> {
+    Ok(Json(s.social.request_summary(id, input).await?))
 }
 async fn create_group(
     State(s): State<Arc<AppState>>,

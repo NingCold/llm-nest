@@ -79,6 +79,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         .collect();
     let trigger_id = messages.last().unwrap().id;
     let material = ContextMaterial {
+        summaries: vec![],
         memories: vec![],
         participant_names: vec!["Human".into(), "A".into()],
         trigger_id,
@@ -98,6 +99,111 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         reasoning: None,
     };
     (material, model)
+}
+
+fn segment(material: &ContextMaterial) -> ConversationSummary {
+    let message = &material.messages[0];
+    ConversationSummary {
+        id: SummaryId::new(),
+        conversation_id: material.conversation.id,
+        from_sequence: message.sequence,
+        through_sequence: message.sequence,
+        text: "earlier shared decision".into(),
+        status: SummaryStatus::Ready,
+        revision: Revision::ONE,
+        sources: vec![SourceRef::Message {
+            conversation_id: message.conversation_id,
+            message_id: message.id,
+            revision: message.revision,
+        }],
+        binding: SummaryBinding {
+            provider_id: "summary-provider".into(),
+            model_id: "summary-model".into(),
+            reasoning_effort: None,
+            max_tokens: 1024,
+        },
+        settings_revision: Revision::ONE,
+        requested_by: message.sender_id,
+        membership_revision: Revision::ONE,
+        participation_epoch: Revision::ONE,
+        attempt: Revision::ONE,
+        error: None,
+        created_at: message.created_at,
+        updated_at: message.created_at,
+    }
+}
+
+#[test]
+fn summaries_compress_old_originals_but_preserve_trigger_and_explicit_reply() {
+    let (mut material, mut model) = fixture();
+    model.context_window = Some(2048);
+    let summary = segment(&material);
+    material.summaries.push(summary.clone());
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert!(prepared.snapshot.sources.contains(&SourceRef::Summary {
+        summary_id: summary.id,
+        revision: summary.revision
+    }));
+    assert!(!prepared.snapshot.sources.iter().any(
+        |s| matches!(s,SourceRef::Message{message_id,..} if *message_id==material.messages[0].id)
+    ));
+    assert!(prepared.snapshot.sources.iter().any(
+        |s| matches!(s,SourceRef::Message{message_id,..} if *message_id==material.trigger_id)
+    ));
+    assert!(
+        prepared
+            .messages
+            .iter()
+            .map(crate::consciousness::estimate)
+            .sum::<u32>()
+            <= 1920
+    );
+    material.messages[1].reply_to = Some(material.messages[0].id);
+    assert!(
+        matches!(
+            ConsciousnessService::prepare(material, &model, 128),
+            Err(SocialError::BudgetExceeded)
+        ),
+        "a summary never substitutes an explicitly quoted original that cannot fit"
+    );
+}
+
+#[test]
+fn short_windows_skip_summaries_and_stale_or_future_segments_are_excluded() {
+    let (mut material, mut model) = fixture();
+    model.context_window = Some(2048);
+    let mut summary = segment(&material);
+    summary.status = SummaryStatus::Stale;
+    material.summaries.push(summary.clone());
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert!(
+        !prepared
+            .snapshot
+            .sources
+            .iter()
+            .any(|s| matches!(s, SourceRef::Summary { .. }))
+    );
+    material.summaries[0].status = SummaryStatus::Ready;
+    material.summaries[0].through_sequence = material.messages[1].sequence;
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    assert!(
+        !prepared
+            .snapshot
+            .sources
+            .iter()
+            .any(|s| matches!(s, SourceRef::Summary { .. }))
+    );
+    material.summaries[0].through_sequence = Sequence::ONE;
+    material.messages[0].body = MessageBody::text("brief old message");
+    let prepared = ConsciousnessService::prepare(material, &model, 128).unwrap();
+    assert!(
+        !prepared
+            .snapshot
+            .sources
+            .iter()
+            .any(|s| matches!(s, SourceRef::Summary { .. }))
+    );
+    assert_eq!(prepared.snapshot.sources.len(), 2);
 }
 
 #[test]

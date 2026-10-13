@@ -6,7 +6,7 @@
 
 ## 1. 共享业务入口
 
-HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。显式记忆管理位于 SocialFeature 内部 memory 模块，ConsciousnessService 读取并构造上下文；摘要后续沿此边界加入，原消息仍由聊天用例维护。
+HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。显式记忆管理位于 SocialFeature 内部 memory 模块，ConsciousnessService 读取并构造上下文；窗口摘要由 summary 模块沿此边界生成与维护，原消息仍由聊天用例维护。
 
 外部业务字段为 camelCase，枚举值按各自 serde 契约；ID 为 UUID 字符串，revision、sequence、cursor 为十进制字符串。请求使用 requestId；expectedRevision 针对被修改对象，不能拿空间 revision 替代消息或成员 revision。
 
@@ -35,6 +35,9 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
 | 编辑记忆 | PATCH /memories/{id} | social_update_memory |
 | 遗忘记忆 | POST /memories/{id}/forget | social_forget_memory |
+| 窗口摘要分页 | GET /conversations/{id}/summaries?before={sequence} | social_summaries |
+| 开始下一段/重试摘要 | POST /conversations/{id}/summaries | social_request_summary |
+| 摘要模型与启用设置 | POST /conversations/{id}/summary-settings | social_configure_summaries |
 | 编辑/撤回真人消息 | POST /messages/{id}/revise；POST /messages/{id}/withdraw | social_revise_message / social_withdraw_message |
 | 窗口控制 | POST /conversations/{id}/control | social_control_conversation |
 | 成员暂停/恢复 | POST /conversations/{id}/members/participation | social_pause_member |
@@ -78,6 +81,10 @@ AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被�
 
 原模型、配置与目录同步接口保留；旧 `/api/sessions` 和 chat-event 服务迁移期 Harness，不与社交契约混用。原 contacts 创建/修改/全局归档路由已由上述账号接口替换，不维持含糊的双语义兼容入口；数据迁移保留历史。
 
+摘要分页返回 settings/segments/hasMore，每页 50 段、按 throughSequence 降序，before 排除该边界。SummarySettings 返回 id（窗口 ID）、enabled、binding、revision；未配置时 revision="0"、enabled=false。保存参数为 requestId/expectedRevision/enabled/binding，binding 包含 providerId/modelId/reasoningEffort/maxTokens，不包含密钥、温度或 AI 人格。
+
+开始摘要参数为 requestId/retry，retry 为 null 表示下一段，或 {id, expectedRevision} 表示重建同一分段。没有较早原文时返回 null，不调用模型。摘要包含范围、text/status/revision、来源、模型绑定、attempt、错误和时间；sources 沿用 SourceRef 的 snake_case 字段（kind/message_id/conversation_id/revision），其余 DTO 为 camelCase。发起人由后端固定，范围由存储推导；调用方不能指定摘要正文、原文集合或任意操作者。配置/请求回执幂等，冲突返回共享错误。
+
 ## 3. 发送与幂等
 
 ```json
@@ -97,7 +104,7 @@ AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被�
 
 ## 4. 持久事件
 
-SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、run_changed、bout_changed、plan_changed；各自带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
+SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、summaries_changed、run_changed、bout_changed、plan_changed。summaries_changed 只带 conversationId，要求重新读取当前摘要设置与分段；其余变更带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
 
 ```json
 {
@@ -147,7 +154,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：阶段完整双适配验收归 M1；窗口摘要与 contextReferences 为 M2 剩余范围；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：阶段完整双适配验收归 M1；群话题接续的 contextReferences 为 M2 剩余范围；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

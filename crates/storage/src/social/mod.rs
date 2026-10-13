@@ -10,6 +10,7 @@ mod reads;
 mod schema;
 mod sqlite;
 mod store;
+mod summary;
 pub use error::{SocialStorageError, SocialStorageResult};
 pub use legacy::{LegacyImportResult, LegacyPreview, LegacySessionPreview};
 pub use sqlite::SqliteSocialStore;

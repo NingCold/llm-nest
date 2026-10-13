@@ -48,7 +48,10 @@ impl SqliteSocialStore {
                     clock,
                 };
                 // No provider/tool replay: persisted generating messages become interrupted.
-                let recovered = worker.transact(|db| db.recover_runs());
+                let recovered = worker.transact(|db| {
+                    db.recover_runs()?;
+                    db.recover_summaries()
+                });
                 if ready.send(recovered).is_err() {
                     return;
                 }
@@ -419,6 +422,11 @@ impl Db<'_> {
         })
     }
     pub fn save_conversation(&self, c: &Conversation) -> Result<()> {
+        if let Some(old) = self.optional::<Conversation>("conversations", c.id)?
+            && (old.participation_epoch != c.participation_epoch || old.status != c.status)
+        {
+            self.interrupt_summaries(c.id, "窗口参与状态已变化，请手动重试")?;
+        }
         self.execute("UPDATE conversations SET status=?2,paused=?3,revision=?4,context_epoch=?5,participation_epoch=?6,last_sequence=?7,payload=?8 WHERE id=?1",params![c.id.to_string(),label(&c.status)?,c.paused,c.revision.get() as i64,c.context_epoch.get() as i64,c.participation_epoch.get() as i64,c.last_sequence.get() as i64,serde_json::to_string(c)?])?;
         self.event(SocialChange::ConversationChanged {
             conversation_id: c.id,
@@ -697,6 +705,14 @@ impl Db<'_> {
         self.require_dependency(snapshot, operator, scope.conversation_id)?;
         self.require_dependency(snapshot, ai.id, scope.conversation_id)?;
         for source in &snapshot.sources {
+            if let SourceRef::Summary {
+                summary_id,
+                revision,
+            } = source
+            {
+                self.validate_summary_source(scope, *summary_id, *revision)?;
+                continue;
+            }
             if let SourceRef::Memory {
                 memory_id,
                 revision,
@@ -712,7 +728,7 @@ impl Db<'_> {
             } = source
             else {
                 return Err(Error::Invalid(
-                    "only committed messages and confirmed explicit memories are supported".into(),
+                    "only committed messages, confirmed memories and valid window summaries are supported".into(),
                 ));
             };
             let m: SocialMessage = self.get("messages", message_id)?;
@@ -768,6 +784,49 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn interrupt_summary_tasks(&self) -> Result<()> {
+        self.call(move |w| w.transact(|db| db.recover_summaries()))
+            .await
+    }
+    async fn summaries(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+        before: Option<Sequence>,
+    ) -> Result<SummaryState> {
+        self.call(move |w| w.read(|db| db.summaries(operator, id, before)))
+            .await
+    }
+    async fn configure_summaries(
+        &self,
+        ctx: CommandContext,
+        id: ConversationId,
+        input: ConfigureSummaries,
+    ) -> Result<SummarySettings> {
+        self.call(move |w| w.transact(|db| db.configure_summaries(&ctx, id, &input)))
+            .await
+    }
+    async fn queue_summary(
+        &self,
+        ctx: CommandContext,
+        input: QueueSummary,
+    ) -> Result<Option<ConversationSummary>> {
+        self.call(move |w| w.transact(|db| db.queue_summary(&ctx, &input)))
+            .await
+    }
+    async fn begin_summary(&self, operator: ActorId, id: SummaryId) -> Result<Option<SummaryWork>> {
+        self.call(move |w| w.transact(|db| db.begin_summary(operator, id)))
+            .await
+    }
+    async fn finish_summary(
+        &self,
+        operator: ActorId,
+        input: FinishSummary,
+    ) -> Result<ConversationSummary> {
+        self.call(move |w| w.transact(|db| db.finish_summary(operator, input)))
+            .await
+    }
+
     async fn memories(&self, operator: ActorId, scope: ContextScope) -> Result<Vec<MemoryRecord>> {
         self.call(move |w| w.read(|db| db.memories(operator, scope)))
             .await
@@ -1288,6 +1347,7 @@ impl SocialStore for SqliteSocialStore {
                 c.revision = c.revision.next()?;
                 db.update_message(&m, ctx.operator)?;
                 db.stale_memories(m.id)?;
+                db.stale_summaries(m.id)?;
                 db.invalidate_context(c.id)?;
                 db.cancel_trigger_plans(m.id)?;
                 db.save_conversation(&c)?;

@@ -44,3 +44,16 @@ export interface Memory extends MemoryContent {
   id: string; actorId: string; conversationId: string; status: "confirmed" | "stale" | "forgotten"; revision: string
   createdBy: string; updatedBy: string; createdAt: string; updatedAt: string
 }
+
+export interface SummaryBinding { providerId: string; modelId: string; reasoningEffort: string | null; maxTokens: number }
+export interface SummarySettings { id: string; enabled: boolean; binding: SummaryBinding | null; revision: string }
+export interface Summary {
+  id: string; conversationId: string; fromSequence: string; throughSequence: string; text: string
+  status: "queued" | "running" | "ready" | "failed" | "interrupted" | "stale"; revision: string
+  sources: { kind: "message"; conversation_id: string; message_id: string; revision: string }[]
+  binding: SummaryBinding; settingsRevision: string; requestedBy: string; membershipRevision: string
+  participationEpoch: string; attempt: string; error: string | null; createdAt: string; updatedAt: string
+}
+export interface SummaryState { settings: SummarySettings; segments: Summary[]; hasMore: boolean }
+export interface SummarySettingsInput extends VersionedCommand { enabled: boolean; binding: SummaryBinding | null }
+export interface SummaryRequest { requestId: string; retry: { id: string; expectedRevision: string } | null }

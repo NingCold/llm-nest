@@ -13,6 +13,9 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   catch (error) { throw apiError(error) }
 }
 export const socialClient: SocialClient = {
+  summaries: (id, before) => command("social_summaries", { id, before: before ?? null }),
+  configureSummaries: (id, input) => command("social_configure_summaries", { id, input }),
+  requestSummary: (id, input) => command("social_request_summary", { id, input }),
   memories: (id, actor) => command("social_memories", { id, actor }),
   createMemory: (id, actor, input) => command("social_create_memory", { id, actor, input }),
   updateMemory: (id, input) => command("social_update_memory", { id, input }),

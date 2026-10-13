@@ -6,6 +6,42 @@ use social::{
 use social_feature::{SocialError, wire};
 
 type Result<T> = std::result::Result<T, wire::ErrorBody>;
+#[tauri::command]
+pub async fn social_summaries(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    before: Option<Sequence>,
+) -> Result<storage::social::SummaryState> {
+    feature(state)
+        .await?
+        .summaries(id, before)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_configure_summaries(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::SummarySettingsInput,
+) -> Result<social::SummarySettings> {
+    feature(state)
+        .await?
+        .configure_summaries(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+#[tauri::command]
+pub async fn social_request_summary(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::SummaryRequest,
+) -> Result<Option<social::ConversationSummary>> {
+    feature(state)
+        .await?
+        .request_summary(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
 
 #[tauri::command]
 pub async fn social_memories(

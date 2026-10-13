@@ -12,6 +12,9 @@ use social::{
     rename_all_fields = "camelCase"
 )]
 pub enum SocialChange {
+    SummariesChanged {
+        conversation_id: ConversationId,
+    },
     MemoryChanged {
         conversation_id: ConversationId,
         actor_id: ActorId,

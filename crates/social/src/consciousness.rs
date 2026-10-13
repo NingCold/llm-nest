@@ -100,13 +100,49 @@ pub enum MemoryKind {
     OpenTopic,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryBinding {
+    pub provider_id: String,
+    pub model_id: String,
+    pub reasoning_effort: Option<String>,
+    pub max_tokens: u32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummarySettings {
+    pub id: ConversationId,
+    pub enabled: bool,
+    pub binding: Option<SummaryBinding>,
+    pub revision: Revision,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryStatus {
+    Queued,
+    Running,
+    Ready,
+    Failed,
+    Interrupted,
+    Stale,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConversationSummary {
     pub id: SummaryId,
     pub conversation_id: ConversationId,
     pub from_sequence: Sequence,
     pub through_sequence: Sequence,
     pub text: String,
-    pub status: MaterialStatus,
+    pub status: SummaryStatus,
     pub revision: Revision,
     pub sources: Vec<SourceRef>,
+    pub binding: SummaryBinding,
+    pub settings_revision: Revision,
+    pub requested_by: ActorId,
+    pub membership_revision: Revision,
+    pub participation_epoch: Epoch,
+    pub attempt: Revision,
+    pub error: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }

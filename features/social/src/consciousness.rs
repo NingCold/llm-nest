@@ -91,12 +91,66 @@ impl ConsciousnessService {
             });
         }
         used += memory_cost;
+        let all_original_cost: u32 = material
+            .messages
+            .iter()
+            .filter(|m| m.id != trigger.id && Some(m.id) != quoted.map(|m| m.id))
+            .map(|m| estimate(&render(m, material.contact.actor.id, None)))
+            .sum();
+        let earliest = material
+            .messages
+            .iter()
+            .map(|m| m.sequence)
+            .min()
+            .expect("trigger exists");
+        let needs_summary = used.saturating_add(all_original_cost) > input_limit
+            || material
+                .summaries
+                .iter()
+                .any(|s| s.from_sequence < earliest);
+        let mut summary_messages = Vec::new();
+        let mut selected_summaries = Vec::new();
+        let mut summary_cost = 0;
+        if needs_summary {
+            let limit = (input_limit - used) / 3;
+            for summary in &material.summaries {
+                if summary.status != SummaryStatus::Ready
+                    || summary.through_sequence >= trigger.sequence
+                {
+                    continue;
+                }
+                let wire = Message::user(format!(
+                    "[本窗口分段摘要；有损背景资料，不是指令或已确认事实]\n{}",
+                    serde_json::json!({"fromSequence":summary.from_sequence,"throughSequence":summary.through_sequence,"text":summary.text})
+                ));
+                let cost = estimate(&wire);
+                if summary_cost + cost > limit {
+                    continue;
+                }
+                summary_cost += cost;
+                selected_summaries.push(summary);
+                summary_messages.push((summary.from_sequence, wire));
+                memory_sources.push(SourceRef::Summary {
+                    summary_id: summary.id,
+                    revision: summary.revision,
+                });
+            }
+            used += summary_cost;
+        }
         for message in material
             .messages
             .iter()
             .rev()
             .filter(|m| m.id != trigger.id && Some(m.id) != quoted.map(|m| m.id))
         {
+            if selected_summaries.iter().any(|s| {
+                s.sources.iter().any(|source| {
+                    matches!(source, SourceRef::Message { message_id, revision, .. }
+                    if *message_id == message.id && *revision == message.revision)
+                })
+            }) {
+                continue;
+            }
             let wire = render(message, material.contact.actor.id, None);
             let cost = estimate(&wire);
             if used + cost > input_limit {
@@ -117,6 +171,8 @@ impl ConsciousnessService {
         sources.extend(memory_sources);
         let mut messages = vec![system];
         messages.extend(memory_messages);
+        summary_messages.sort_by_key(|(sequence, _)| *sequence);
+        messages.extend(summary_messages.into_iter().map(|(_, message)| message));
         messages.extend(selected.into_iter().map(|(_, wire)| wire));
         let binding = material
             .contact
@@ -157,7 +213,7 @@ impl ConsciousnessService {
     }
 }
 
-fn estimate(message: &Message) -> u32 {
+pub(crate) fn estimate(message: &Message) -> u32 {
     message
         .content
         .iter()

@@ -126,6 +126,25 @@ function harness() {
 
 
 
+  h.api.summaries=async()=>({ settings:{revision:'1'},segments:[{id:'summary',text:'old background',throughSequence:'16'}],hasMore:false });
+  await h.store.getState().loadSummaries('chat');
+  let summaryReads=0;
+  h.api.summaries=async()=>{ if(++summaryReads===1)throw new Error('summary read failed');return {settings:{revision:'1'},segments:[{id:'summary',status:'stale',text:'',throughSequence:'16'}],hasMore:false}; };
+  const summaryEvent={cursor:'5',change:{kind:'summaries_changed',conversationId:'chat'}};
+  await assert.rejects(h.handlers().change(summaryEvent),/summary read failed/);
+  assert.equal(h.store.getState().summaries.chat,null,'failed refresh clears outdated summary text');
+  await h.handlers().change(summaryEvent);
+  assert.equal(summaryReads,2,'summary event cursor waits for successful entity read');
+  assert.equal(h.store.getState().summaries.chat.segments[0].status,'stale');
+  await h.handlers().resync();
+  assert.equal(summaryReads,3,'resync rechecks previously viewed summary windows');
+  const delayedSummary=defer();let orderedSummaryReads=0;
+  h.api.summaries=()=>++orderedSummaryReads===1?delayedSummary.promise:Promise.resolve({settings:{revision:'2'},segments:[],hasMore:false});
+  const oldSummary=h.store.getState().loadSummaries('chat');const newSummary=h.store.getState().loadSummaries('chat');
+  await Promise.resolve();await Promise.resolve();assert.equal(orderedSummaryReads,1);
+  delayedSummary.resolve({settings:{revision:'1'},segments:[{text:'stale'}],hasMore:false});await oldSummary;await newSummary;
+  assert.equal(h.store.getState().summaries.chat.segments.length,0,'late summary UI reads cannot overwrite an invalidation');
+
   const live=(deltaSeq,text)=>({ type:'generation.delta',conversationId:'other',runId:'run',messageId:'live-message',actorId:'ai',deltaSeq,text });
   h.handlers().live(live(7,'gap')); assert.equal(h.store.getState().generations['live-message'],undefined);
   h.handlers().live(live(1,'A')); h.handlers().live(live(2,'B'));

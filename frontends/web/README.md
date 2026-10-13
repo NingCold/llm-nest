@@ -4,6 +4,8 @@
 
 这里是 LLM Nest 的全部页面：消息、通讯录、聊天窗口、AI 角色管理和设置。桌面应用也使用这套界面。屏蔽与解除可以在联系人资料或私聊详情中操作。
 
+在聊天详情中可以选择 Markdown 或 JSON，下载整个窗口的记录。入口代码在 [ConversationExportPanel.tsx](src/social/ConversationExportPanel.tsx)。
+
 ## 开发时运行
 
 先按[配置说明](../../config/README.md)准备 `config/llmn.toml`。下面的命令都在仓库根目录执行。

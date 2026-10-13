@@ -15,6 +15,8 @@ use storage::{DataDirectoryGuard, legacy::SessionRecord};
 mod block_tests;
 #[path = "social_contact/mod.rs"]
 mod contact_tests;
+#[path = "social_export/mod.rs"]
+mod export_tests;
 #[path = "social_memory/mod.rs"]
 mod memory_tests;
 #[path = "social_message_list/mod.rs"]
@@ -2971,6 +2973,23 @@ async fn legacy_preserves_sources_ids_metadata_tools_and_checkpoint_without_repl
     assert_eq!(history[1].id.to_string(), answer.id.unwrap().to_string());
     assert_eq!(history[1].created_at.timestamp(), 12345);
     assert_eq!(history[2].status, MessageStatus::Interrupted);
+    let export = f
+        .store
+        .conversation_transcript(f.human.id, c)
+        .await
+        .unwrap();
+    assert!(export.legacy);
+    assert_eq!(export.messages.len(), history.len());
+    assert_eq!(export.messages[1].id, history[1].id);
+    assert!(matches!(
+        export.messages[0].parts[0],
+        TranscriptPart::File { byte_length: 3, .. }
+    ));
+    assert!(
+        !serde_json::to_string(&export)
+            .unwrap()
+            .contains("private old settings")
+    );
     assert!(matches!(&history[0].body.0[0],SocialContent::File{data,..} if data==&vec![0,255,42]));
     let preserved: String = sql
         .query_row(

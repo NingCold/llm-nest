@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [单窗口聊天导出](social-refactor/conversation-export.md) | 完整历史的 Markdown / JSON、附件占位、Web 下载与桌面另存为 |
 | [联系人屏蔽](social-refactor/contact-blocking.md) | 私聊停止、共同群正常、双方约定取消、解除不补发，Web/IPC 与 SQLite v13 |
 | [消息列表与正文搜索](social-refactor/message-list.md) | 个人已读/未读与置顶、完整正文分页搜索、原消息定位、Web/IPC 与 SQLite v12 |
 | [README 与旧版残余整理](social-refactor/readme-cleanup.md) | 面向读者的模块入口、设计与历史分离、闲置前端清理 |

@@ -25,6 +25,7 @@
 | M3 第二批约定联系 | 独立窗口授权、一次性 AI 联系、明确 UTC/固定偏移与有效期、免打扰延后/跳过、队列与共享额度、取消/到期中断/重启不重发、Web/IPC 详情管理及 SQLite v11 | [约定联系实现与验证](m3-contact-intents.md) |
 | 旧架构退役 | 移除旧 Harness、终端、旧接口与重复运行/存储，Web/Tauri 使用必需社交资源；设置仅管理模型服务与外观等，旧 JSON 经选择导入只读窗口 | [退役与迁移验证](legacy-retirement.md) |
 | 消息列表日常使用 | 个人已读/未读和置顶、完成顺序计数、完整正文分页搜索、原消息定位、前台底部自动已读、Web/IPC 与 SQLite v12 | [实现与验证](message-list.md) |
+| 单窗口聊天导出 | 私聊、群聊及只读历史的完整 Markdown / JSON，当前消息版本、撤回/中断/生成状态、附件占位，Web 下载与桌面另存为 | [实现与验证](conversation-export.md) |
 | 联系人屏蔽 | 独立个人关系状态、双向私聊限制、共同群正常互动、双方待完成约定取消、解除不补发，Web/IPC 与 SQLite v13 | [实现与验证](contact-blocking.md) |
 | README 与旧版残余整理 | 重写并补齐 24 份 README；设计和历史记录独立，清理闲置组件、样式、依赖和旧入口注释 | [整理记录](readme-cleanup.md) |
 

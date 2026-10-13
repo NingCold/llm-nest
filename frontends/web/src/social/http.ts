@@ -1,6 +1,7 @@
 import type { Change, LiveEvent } from "./live-types"
 
 import { SocialApiError, type SocialClient } from "./transport"
+import { downloadExport, type ConversationExport } from "./export"
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const headers = new Headers({ "X-LLMN-Client": "1" })
@@ -14,6 +15,7 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const socialClient: SocialClient = {
+  exportConversation: async (id, format) => downloadExport(await request<ConversationExport>(`/conversations/${id}/export?format=${format}`)),
   updateConversationList: (id, input) => request(`/conversations/${id}/list-state`, "POST", input),
   messageContext: id => request(`/messages/${id}/context`),
   searchMessages: input => { const q = new URLSearchParams({ query: input.query }); if (input.conversationId) q.set("conversationId", input.conversationId); if (input.before) q.set("before", input.before); return request(`/messages/search?${q}`) },

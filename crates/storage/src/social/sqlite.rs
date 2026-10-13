@@ -834,6 +834,14 @@ pub(super) fn validate_body(body: &MessageBody) -> Result<()> {
 
 #[async_trait]
 impl SocialStore for SqliteSocialStore {
+    async fn conversation_transcript(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> Result<super::ConversationTranscript> {
+        self.call(move |w| w.read(|db| db.conversation_transcript(operator, id)))
+            .await
+    }
     async fn reference_preview(
         &self,
         operator: ActorId,

@@ -4,6 +4,8 @@ mod consciousness;
 mod contact_intent;
 mod controls;
 mod execution;
+mod export;
+pub use export::{ConversationExport, ExportFormat, export_file_name};
 mod feature;
 mod generation;
 mod legacy;

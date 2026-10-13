@@ -18,6 +18,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tempfile = "3"
 open = { version = "5", features = ["shellexecute-on-windows"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -33,7 +35,6 @@ ai-client.workspace = true
 storage.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(windows)'.dependencies]

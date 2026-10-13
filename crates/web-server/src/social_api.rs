@@ -16,9 +16,26 @@ use social::{
 use social_feature::{SocialError, wire};
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
+#[derive(Deserialize)]
+struct ExportQuery {
+    format: social_feature::ExportFormat,
+}
+async fn export_conversation(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiQuery(q): ApiQuery<ExportQuery>,
+) -> std::result::Result<Response, ApiError> {
+    let file = s.social.export_conversation(id, q.format).await?;
+    Ok(([("Cache-Control", "no-store")], Json(file)).into_response())
+}
+
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/social/init", get(init))
+        .route(
+            "/api/social/conversations/{id}/export",
+            get(export_conversation),
+        )
         .route("/api/social/messages/search", get(search_messages))
         .route("/api/social/messages/{id}/context", get(message_context))
         .route(

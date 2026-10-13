@@ -242,7 +242,7 @@ pub async fn social_plans(
 ) -> Result<Vec<wire::Plan>> {
     feature(state).await?.plans(id).await.map_err(|e| e.wire())
 }
-async fn feature(
+pub(super) async fn feature(
     state: tauri::State<'_, BackendState>,
 ) -> Result<std::sync::Arc<social_feature::SocialFeature>> {
     state

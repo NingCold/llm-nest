@@ -481,3 +481,7 @@
 @media (max-width: 420px) { .participation-limits { grid-template-columns: 1fr; } }
 
 .conversation-menu[data-up="true"] > div { top: auto; bottom: 18px; }
+
+.conversation-export select { width: 100%; margin-top: 6px; }
+.conversation-export .social-form-fields { gap: 12px; }
+.export-status { overflow-wrap: anywhere; }

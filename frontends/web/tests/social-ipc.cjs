@@ -37,6 +37,7 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
   const h = harness();
   const inputs = { requestId: 'command', expectedRevision: '2', text: 'hello', actorId: 'ai', paused: true, action: 'pause' };
   const cases = [
+    ['exportConversation', ['chat', 'json'], 'social_export_conversation', { id: 'chat', format: 'json' }],
     ['updateConversationList', ['chat', inputs], 'social_update_conversation_list', { id: 'chat', input: inputs }],
     ['searchMessages', [inputs], 'social_search_messages', { input: inputs }],
     ['messageContext', ['id'], 'social_message_context', { id: 'id' }],

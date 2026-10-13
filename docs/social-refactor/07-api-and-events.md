@@ -14,7 +14,7 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 ## 2. 当前接口
 
-HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 35 个 HTTP 路径与 44 个 IPC 命令。历史导入 DTO 沿用存储边界的 snake_case 字段，其余业务 DTO 为 camelCase。
+HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前完整接口列于下表。历史导入 DTO 沿用存储边界的 snake_case 字段，其余业务 DTO 为 camelCase。
 
 | 用例 | HTTP（省略前缀） | Tauri command |
 | --- | --- | --- |
@@ -39,6 +39,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
 | 接话规则 | POST /conversations/{id}/participation | social_update_participation |
 | 分页历史/发送文本 | GET/POST /conversations/{id}/messages | social_messages / social_send |
+| 单窗口导出 | GET /conversations/{id}/export?format=markdown\|json | social_export_conversation |
 | 个人已读/未读/置顶 | POST /conversations/{id}/list-state | social_update_conversation_list |
 | 正文搜索 | GET /messages/search | social_search_messages |
 | 原消息与前后记录 | GET /messages/{id}/context | social_message_context |
@@ -63,6 +64,8 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 设置独立使用 `GET /api/settings` / `settings_snapshot`，仅返回 providers 与 version。模型服务及目录接口保留；旧 `/api/init`、`/api/config`、`/api/sessions`、`/api/cancel` 与旧聊天 IPC 已删除。
 
 历史导入正文为预览中的所选 `sessions`，保留原导入 DTO 的 snake_case 字段（source_id/session_id/checksum 等），不接受路径或 operatorId。全目录检查重复 ID，再逐个复核所选预览；幂等性由来源 checksum 和稳定映射保证，不启动 AI。
+
+单窗口导出只接受窗口 ID 与 `format`（markdown/json），不接受操作者、文件正文或目标路径。HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包，并设置 `Cache-Control: no-store`；Web 下载对应 Blob。IPC 的[导出适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，传输结果按保存方式区分；不产生持久事件。文件格式与读取范围见[导出记录](conversation-export.md)。
 
 主要命令输入：
 

@@ -397,6 +397,11 @@ pub struct FinishSummary {
 /// All mutation receipts and persistent references commit with their entities.
 #[async_trait]
 pub trait SocialStore: Send + Sync {
+    async fn conversation_transcript(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> SocialStorageResult<super::ConversationTranscript>;
     async fn reference_preview(
         &self,
         operator: ActorId,

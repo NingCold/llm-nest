@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 
 pub mod commands;
 mod config_path;
+mod conversation_export;
 mod directories;
 mod social_commands;
 mod social_subscription;
@@ -122,6 +123,7 @@ pub fn run() {
     runtime::worker_entry();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             window_frame::setup(app);
             app.manage(BackendState {
@@ -152,6 +154,7 @@ pub fn run() {
             commands::upsert_provider,
             commands::delete_provider,
             social_commands::social_init,
+            conversation_export::social_export_conversation,
             social_commands::social_preview_legacy,
             social_commands::social_import_legacy,
             social_commands::social_summaries,

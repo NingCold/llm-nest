@@ -638,6 +638,9 @@ def main():
         from social_message_list_acceptance import verify_message_list
         verify_message_list(api, contact, direct, group, complete, send, stop, start)
 
+        from social_export_acceptance import verify_exports
+        verify_exports(api, contact, direct, group, send, history, wait_for)
+
         from social_contact_acceptance import verify_contacts
         verify_contacts(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
 

@@ -2,6 +2,7 @@ import type { Account, AccountView, AiInput, ContactEntry, ContactInput, Contact
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
+  exportConversation(id: string, format: import("./export").ExportFormat): Promise<import("./export").ExportResult>
   updateConversationList(id: string, input: VersionedCommand & { action: import("./live-types").ConversationListAction }): Promise<import("./live-types").ConversationListState>
   searchMessages(input: import("./live-types").SearchMessages): Promise<import("./live-types").MessageSearchPage>
   messageContext(id: string): Promise<import("./live-types").MessageContext>

@@ -41,6 +41,7 @@ export const socialClient: SocialClient = {
   init: () => command("social_init"),
   account: id => command("social_account", { id }),
   updateAccount: (id, input) => command("social_update_account", { id, input }),
+  setContactBlock: (id, input) => command("social_set_contact_block", { id, input }),
   setContact: (id, input) => command("social_set_contact", { id, input }),
   managedAccounts: () => command("social_managed_accounts"),
   managedAccount: id => command("social_managed_account", { id }),

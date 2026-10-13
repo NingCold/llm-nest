@@ -24,6 +24,8 @@ SocialFeature 负责唤醒、等待、全局执行限额与关闭；SocialStore 
 
 同空间最多一个 AI 在生成，SocialFeature 全局最多 4 个社交 AI 运行；摘要另有一个独立槽位。取得全局槽位后重新读取计划，防止等待期间已被合并、取消或过期的旧计划开始。
 
+私聊屏蔽会拒绝新消息并停止当前交谈与排队回复；共同群的正常接话保持不变，见[联系人屏蔽](contact-blocking.md)。
+
 ## 4. 首版参与规则
 
 | 规则 | 当前行为 |
@@ -71,7 +73,7 @@ SQLite v10 新增 participation_policies、participation_state、participation_d
 
 ContactIntent 保存创建者、稳定 AI 账号、窗口、不可变约定内容、authorizationId（创建命令 ID）、UTC dueAt/expiresAt、创建日期对应的 utcOffsetMinutes、planId、状态、revision、reason 与时间。创建时间在未来一年内，失效时间晚于到期且最多延后七天；每窗口最多 64 个未完成意图。内容修改通过取消并新建完成，不改写旧授权。界面使用本机时区并显示偏移，首版不解释循环时区规则。
 
-状态流为 pending → claimed → executing → delivered；失败、取消、过期、跳过和结果不确定分别为 failed/cancelled/expired/skipped/uncertain。到期在同一事务复核授权、账号、双方当前成员、暂停、有效期和免打扰，再创建唯一参与计划并标 claimed。取得全局执行槽位后再次复核，运行开始事务预留额度、保存 AiRun/生成占位并标 executing。成功消息、运行/计划和意图终态同事务提交；没有伪造的真人消息，AI 消息 replyTo=null。
+状态流为 pending → claimed → executing → delivered；失败、取消、过期、跳过和结果不确定分别为 failed/cancelled/expired/skipped/uncertain。到期在同一事务复核授权、账号、双方屏蔽状态、当前成员、暂停、有效期和免打扰，再创建唯一参与计划并标 claimed。取得全局执行槽位后再次复核，运行开始事务预留额度、保存 AiRun/生成占位并标 executing。成功消息、运行/计划和意图终态同事务提交；没有伪造的真人消息，AI 消息 replyTo=null。
 
 | 情况 | 行为 |
 | --- | --- |
@@ -81,6 +83,7 @@ ContactIntent 保存创建者、稳定 AI 账号、窗口、不可变约定内�
 | 开启免打扰时已经执行 | 停止本次生成并 cancelled，不重试外部请求 |
 | 窗口或目标暂停 | 到期时 skipped；恢复先清理暂停期间已到期意图，未来尚未到期约定保留 |
 | 账号停用、窗口归档、目标退群 | 取消相关未完成意图；恢复或重新入群不恢复旧授权 |
+| 屏蔽联系人 | 取消双方未完成约定，包括共同群中本人创建的约定；解除不恢复旧约定，其他账号的约定不受影响 |
 | 关闭主动联系或单独取消 | 同事务撤销对应意图、排队和在飞运行；保留记录与已扣额度 |
 | 运行中到达失效时间 | 可取消时钟等待停止生成并保留片段，意图 expired；最终提交也复核有效期 |
 | 模型失效、额度不足、调用失败 | failed，不模拟回答，不自动重试；开始前失败不产生生成占位或额度扣减 |

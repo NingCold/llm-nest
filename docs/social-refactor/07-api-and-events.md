@@ -10,6 +10,8 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 外部业务字段为 camelCase，枚举值按各自 serde 契约；ID 为 UUID 字符串，revision、sequence、cursor 为十进制字符串。请求使用 requestId；expectedRevision 针对被修改对象，不能拿空间 revision 替代消息或成员 revision。
 
+个人屏蔽命令使用 `requestId`、`blocked`、`expectedRevision`（无条目为 null），返回带 `listed`、`blocked`、`revision` 的 ContactEntry；操作者取宿主当前账号。Conversation 的 `directBlocked` 表达任一方屏蔽后的私聊状态，群聊始终为 false。变更沿用 `contact_changed`，相关运行、计划和约定同时发出各自变更事件。详见[屏蔽规则](contact-blocking.md)。
+
 ## 2. 当前接口
 
 HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前为 35 个 HTTP 路径与 44 个 IPC 命令。历史导入 DTO 沿用存储边界的 snake_case 字段，其余业务 DTO 为 camelCase。
@@ -19,6 +21,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 启动快照 | GET /init | social_init |
 | 公开账号/修改资料 | GET/PATCH /accounts/{id} | social_account / social_update_account |
 | 个人通讯录添加/移除 | POST /contacts/{id} | social_set_contact |
+| 个人屏蔽/解除 | POST /contacts/{id}/block | social_set_contact_block |
 | 获授权 AI 列表/创建 AI | GET/POST /ai-accounts | social_managed_accounts / social_create_ai |
 | 管理详情/修改设定与绑定 | GET/PATCH /ai-accounts/{id} | social_managed_account / social_update_ai |
 | 初始管理员授予/撤销 | POST /ai-accounts/{id}/administrators | social_set_administrator |
@@ -183,7 +186,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：阶段完整双适配验收归 M1；有限自动参与及一次性联系意图、免打扰已在 M3 两批接通；重复日程与自然语言约定另行设计。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：阶段完整双适配验收归 M1；有限自动参与及一次性联系意图、免打扰已在 M3 两批接通；重复日程与自然语言约定另行设计。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和联系人屏蔽已接通；其余能力按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

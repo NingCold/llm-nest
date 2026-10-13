@@ -404,7 +404,7 @@ async fn v6_upgrade_keeps_accounts_history_and_creates_backup() {
         current
             .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        12
+        13
     );
     let preserved = fs::read_dir(f.dir.path())
         .unwrap()

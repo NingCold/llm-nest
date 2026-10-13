@@ -65,6 +65,12 @@ impl Db<'_> {
         }
         Ok(())
     }
+    pub(super) fn cancel_blocked_contacts(&self, owner: ActorId, target: ActorId) -> Result<()> {
+        for i in self.query_json::<ContactIntent>("SELECT payload FROM contact_intents WHERE status IN ('pending','claimed','executing') AND ((created_by=?1 AND actor_id=?2) OR (created_by=?2 AND actor_id=?1))",params![owner.to_string(),target.to_string()])? {
+            self.stop_contact(i, ContactIntentStatus::Cancelled, "联系人已屏蔽")?;
+        }
+        Ok(())
+    }
     pub(super) fn cancel_contacts(
         &self,
         cid: ConversationId,
@@ -131,6 +137,9 @@ impl Db<'_> {
         }
         let c: Conversation = self.get("conversations", input.conversation_id)?;
         self.writable(&c)?;
+        if self.blocked_pair(ctx.operator, input.actor_id)? {
+            return Err(Error::Forbidden("已屏蔽的联系人不能新建约定联系".into()));
+        }
         let a: Actor = self.get("actors", input.actor_id)?;
         let m = self.member(a.id, c.id)?;
         if a.kind != ActorKind::Ai || a.status != EntityStatus::Active || m.paused || c.paused {
@@ -235,6 +244,7 @@ impl Db<'_> {
         if i.conversation_id != scope.conversation_id
             || i.actor_id != scope.actor_id
             || i.created_by != operator
+            || self.blocked_pair(i.created_by, i.actor_id)?
             || !matches!(
                 i.status,
                 ContactIntentStatus::Claimed | ContactIntentStatus::Executing
@@ -255,6 +265,10 @@ impl Db<'_> {
         let mut wake: Option<DateTime<Utc>> = None;
         let intents=self.query_json::<ContactIntent>("SELECT payload FROM contact_intents WHERE conversation_id=?1 AND status IN ('pending','claimed') ORDER BY due_at,rowid",[cid.to_string()])?;
         for mut i in intents {
+            if self.blocked_pair(i.created_by, i.actor_id)? {
+                self.stop_contact(i, ContactIntentStatus::Cancelled, "联系人已屏蔽")?;
+                continue;
+            }
             if !settings.enabled {
                 self.stop_contact(i, ContactIntentStatus::Cancelled, "主动联系授权已关闭")?;
                 continue;

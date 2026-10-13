@@ -71,6 +71,7 @@ impl Db<'_> {
         let mut c: Conversation = self.get("conversations", input.conversation_id)?;
         self.member(ctx.operator, c.id)?;
         self.writable(&c)?;
+        self.allow_direct_send(&c)?;
         if input.mentions.len() > 63 {
             return Err(Error::Invalid("too many mentions".into()));
         }

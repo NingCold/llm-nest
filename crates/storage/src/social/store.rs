@@ -188,6 +188,7 @@ pub struct ContactRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationRecord {
+    pub direct_blocked: bool,
     pub list_state: ConversationListState,
     pub contact_schedule: ContactScheduleView,
     pub participation: ParticipationView,
@@ -313,6 +314,12 @@ pub enum AccountAction {
 pub struct SetContact {
     pub account_id: ActorId,
     pub listed: bool,
+    pub expected_revision: Option<Revision>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetContactBlock {
+    pub account_id: ActorId,
+    pub blocked: bool,
     pub expected_revision: Option<Revision>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -459,6 +466,11 @@ pub trait SocialStore: Send + Sync {
         id: ActorId,
         input: SetAdministrator,
     ) -> SocialStorageResult<ManagedAccount>;
+    async fn set_contact_block(
+        &self,
+        ctx: CommandContext,
+        input: SetContactBlock,
+    ) -> SocialStorageResult<ContactEntry>;
     async fn set_contact(
         &self,
         ctx: CommandContext,

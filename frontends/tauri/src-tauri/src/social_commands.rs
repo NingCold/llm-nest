@@ -486,6 +486,19 @@ pub async fn social_set_administrator(
 }
 
 #[tauri::command]
+pub async fn social_set_contact_block(
+    state: tauri::State<'_, BackendState>,
+    id: ActorId,
+    input: social_feature::ContactBlockInput,
+) -> Result<social::ContactEntry> {
+    feature(state)
+        .await?
+        .set_contact_block(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
 pub async fn social_set_contact(
     state: tauri::State<'_, BackendState>,
     id: ActorId,

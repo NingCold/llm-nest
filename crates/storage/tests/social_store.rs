@@ -11,6 +11,8 @@ use std::{
 };
 use storage::social::*;
 use storage::{DataDirectoryGuard, legacy::SessionRecord};
+#[path = "social_block/mod.rs"]
+mod block_tests;
 #[path = "social_contact/mod.rs"]
 mod contact_tests;
 #[path = "social_memory/mod.rs"]
@@ -30,7 +32,11 @@ struct Fixture {
     human: Actor,
     clock: Arc<ManualClock>,
 }
+fn downgrade_block_schema(sql: &Connection) {
+    sql.execute_batch("ALTER TABLE address_book DROP COLUMN blocked; DELETE FROM schema_migrations WHERE version=13; PRAGMA user_version=12;").unwrap();
+}
 fn downgrade_list_schema(sql: &Connection) {
+    downgrade_block_schema(sql);
     sql.execute_batch("DROP TRIGGER message_delivered_insert; DROP TRIGGER message_delivered_update; DROP TABLE message_deliveries; DROP TABLE conversation_list_state; CREATE TABLE read_positions(conversation_id TEXT NOT NULL REFERENCES conversations(id),actor_id TEXT NOT NULL REFERENCES actors(id),sequence INTEGER NOT NULL CHECK(sequence>=0),PRIMARY KEY(conversation_id,actor_id)); DELETE FROM schema_migrations WHERE version=12; PRAGMA user_version=11;").unwrap();
 }
 fn downgrade_contact_schema(sql: &Connection) {

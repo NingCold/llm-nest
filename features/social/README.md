@@ -8,7 +8,7 @@
 
 | 功能 | 阅读入口 |
 | --- | --- |
-| 账号、联系人和管理权限 | [accounts.rs](src/accounts.rs)、[account_control.rs](src/account_control.rs) |
+| 账号、联系人屏蔽和管理权限 | [accounts.rs](src/accounts.rs)、[account_control.rs](src/account_control.rs) |
 | 发送消息、创建群聊和安排回复 | [feature.rs](src/feature.rs) |
 | 已读、置顶和查找聊天记录 | [message_list.rs](src/message_list.rs) |
 | 编辑消息、暂停和结束交谈 | [controls.rs](src/controls.rs) |

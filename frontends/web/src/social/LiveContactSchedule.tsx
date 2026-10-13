@@ -40,7 +40,7 @@ function SettingsForm({ conversation, initial, done }: { conversation: Conversat
 }
 function IntentForm({ conversation, done }: { conversation: Conversation; done(): void }) {
   const state = useLiveSocialStore(), { busy, execute } = useVersionedAction()
-  const accounts = (state.snapshot?.accounts ?? []).filter(a => a.kind === "ai" && a.status === "active" && conversation.members.some(m => m.actorId === a.id && !m.paused))
+  const accounts = (state.snapshot?.accounts ?? []).filter(a => a.kind === "ai" && a.status === "active" && !state.snapshot?.addressBook.some(e => e.accountId === a.id && e.blocked) && !conversation.directBlocked && conversation.members.some(m => m.actorId === a.id && !m.paused))
   const [actorId, setActor] = useState(accounts[0]?.id ?? ""), [text, setText] = useState("")
   const [due, setDue] = useState(localDateTime(new Date(Date.now() + 3600000))), [expires, setExpires] = useState(localDateTime(new Date(Date.now() + 7200000)))
   const save = async (e: FormEvent) => {
@@ -49,12 +49,13 @@ function IntentForm({ conversation, done }: { conversation: Conversation; done()
     if (result) { done(); await state.action(state.refresh) }
   }
   return <form className="social-form" onSubmit={e => void save(e)}>{state.error && <p className="form-error" role="alert">{state.error}</p>}<fieldset className="social-form-fields" disabled={busy}>
+    {!accounts.length && <p className="form-note">当前没有可约定联系的 AI。已屏蔽的联系人需先解除屏蔽。</p>}
     <label>联系你的 AI<select required value={actorId} onChange={e => setActor(e.target.value)}>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
     <label>约定内容<textarea required maxLength={1000} rows={3} value={text} onChange={e => setText(e.target.value)} placeholder="例如：到时来问问我，今天的阅读计划进行得怎么样" /></label>
     <div className="participation-limits"><label>联系时间<input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></label><label>失效时间<input required type="datetime-local" value={expires} onChange={e => setExpires(e.target.value)} /></label></div>
     <p className="form-note">本机时区 {Intl.DateTimeFormat().resolvedOptions().timeZone}，所选时间 {due && Number.isFinite(new Date(due).getTime()) ? offsetLabel(-new Date(due).getTimezoneOffset()) : ""}。仅执行一次，失效后不补发。应用关闭时不会运行；下次打开只处理仍在有效期内、尚未开始的约定。</p>
     <p className="form-note">到期会在本窗口发一条 AI 消息，使用当前模型与意识上下文，并占用本窗口的主动调用额度。</p>
-    <div className="dialog-actions"><button type="button" className="social-button secondary" onClick={done}>取消</button><button className="social-button primary" disabled={!actorId || !text.trim()}>{busy ? "保存中…" : "授权并创建约定"}</button></div>
+    <div className="dialog-actions"><button type="button" className="social-button secondary" onClick={done}>取消</button><button className="social-button primary" disabled={!accounts.some(a => a.id === actorId) || !text.trim()}>{busy ? "保存中…" : "授权并创建约定"}</button></div>
   </fieldset></form>
 }
 function IntentRow({ intent, name }: { intent: ContactIntent; name: string }) {
@@ -73,8 +74,8 @@ export function ContactSchedulePanel({ conversation }: { conversation: Conversat
   const row = (i: ContactIntent) => <IntentRow key={i.id} intent={i} name={state.snapshot?.accounts.find(a => a.id === i.actorId)?.name ?? "AI"} />
   return <section className="live-conversation-controls"><h3>约定联系</h3><p>{settings.enabled ? "已允许你明确创建的一次性约定" : "未授权主动联系"}</p>
     {settings.quietUntil && Date.parse(settings.quietUntil) > Date.now() && <p className="form-note">免打扰至 {new Date(settings.quietUntil).toLocaleString()}（本机时区）· {settings.quietAction === "defer" ? "到期延后" : "到期跳过"}</p>}
-    <div className="live-control-buttons"><button className="social-button secondary" disabled={conversation.status === "archived"} onClick={() => setEditing(settings)}><Settings2 />联系设置</button><button className="social-button secondary" disabled={!settings.enabled || conversation.paused || conversation.status === "archived"} onClick={() => setCreating(true)}><CalendarClock />新建约定</button></div>
-    <p className="form-note">结束当前交谈保留未来约定。到期时暂停会跳过，AI 停用或退出会取消。失败和结果不确定的联系不会自动重试。</p>
+    <div className="live-control-buttons"><button className="social-button secondary" disabled={conversation.status === "archived"} onClick={() => setEditing(settings)}><Settings2 />联系设置</button><button className="social-button secondary" disabled={conversation.directBlocked || !settings.enabled || conversation.paused || conversation.status === "archived"} onClick={() => setCreating(true)}><CalendarClock />新建约定</button></div>
+    <p className="form-note">结束当前交谈保留未来约定。到期时暂停会跳过，AI 停用或退出会取消。屏蔽会取消你与该账号的待完成约定，共同群里的约定也包括在内。失败和结果不确定的联系不会自动重试。</p>
     {running.map(row)}{history.length > 0 && <details className="live-plan-history"><summary>最近的约定记录（{history.length}）</summary>{history.map(row)}</details>}
     <Dialog open={!!editing || creating} onOpenChange={open => { if (!open) { setEditing(null); setCreating(false) } }}><DialogContent className="social-dialog"><DialogTitle>{creating ? "一次性约定联系" : "约定联系与免打扰"}</DialogTitle><DialogDescription>仅适用于这个聊天窗口，所有约定都可以查看和取消。</DialogDescription>{editing && <SettingsForm conversation={conversation} initial={editing} done={() => setEditing(null)} />}{creating && <IntentForm conversation={conversation} done={() => setCreating(false)} />}</DialogContent></Dialog>
   </section>

@@ -41,7 +41,7 @@ impl Db<'_> {
         })
     }
     pub(super) fn address_book(&self, owner: ActorId) -> Result<Vec<ContactEntry>> {
-        self.query_json("SELECT json_object('ownerId',owner_id,'accountId',account_id,'listed',json(CASE listed WHEN 1 THEN 'true' ELSE 'false' END),'revision',CAST(revision AS TEXT)) FROM address_book WHERE owner_id=?1 ORDER BY rowid",[owner.to_string()])
+        self.query_json("SELECT json_object('ownerId',owner_id,'accountId',account_id,'listed',json(CASE listed WHEN 1 THEN 'true' ELSE 'false' END),'blocked',json(CASE blocked WHEN 1 THEN 'true' ELSE 'false' END),'revision',CAST(revision AS TEXT)) FROM address_book WHERE owner_id=?1 ORDER BY rowid",[owner.to_string()])
     }
     pub(super) fn save_actor(&self, actor: &Actor) -> Result<()> {
         self.execute(
@@ -85,13 +85,14 @@ impl Db<'_> {
             owner_id: ctx.operator,
             account_id: input.account_id,
             listed: input.listed,
+            blocked: old.as_ref().is_some_and(|e| e.blocked),
             revision: match old {
                 Some(e) if e.listed == input.listed => e.revision,
                 Some(e) => e.revision.next()?,
                 None => Revision::ONE,
             },
         };
-        self.execute("INSERT INTO address_book VALUES(?1,?2,?3,?4) ON CONFLICT(owner_id,account_id) DO UPDATE SET listed=excluded.listed,revision=excluded.revision",params![ctx.operator.to_string(),input.account_id.to_string(),entry.listed,entry.revision.get() as i64])?;
+        self.execute("INSERT INTO address_book(owner_id,account_id,listed,revision) VALUES(?1,?2,?3,?4) ON CONFLICT(owner_id,account_id) DO UPDATE SET listed=excluded.listed,revision=excluded.revision",params![ctx.operator.to_string(),input.account_id.to_string(),entry.listed,entry.revision.get() as i64])?;
         self.event(SocialChange::ContactChanged {
             owner_id: ctx.operator,
             account_id: input.account_id,

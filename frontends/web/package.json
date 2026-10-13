@@ -10,7 +10,7 @@
     "build:social-runtime": "vite build --outDir .social-runtime-dist",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/live-social.cjs && node tests/social-ipc.cjs && node tests/account-ui.cjs && node tests/memory-ui.cjs && node tests/summary-ui.cjs && node tests/reference-ui.cjs && node tests/participation-ui.cjs && node tests/contact-schedule-ui.cjs && node tests/startup-ui.cjs && node tests/message-list-ui.cjs"
+    "test": "node tests/live-social.cjs && node tests/social-ipc.cjs && node tests/account-ui.cjs && node tests/contact-block-ui.cjs && node tests/memory-ui.cjs && node tests/summary-ui.cjs && node tests/reference-ui.cjs && node tests/participation-ui.cjs && node tests/contact-schedule-ui.cjs && node tests/startup-ui.cjs && node tests/message-list-ui.cjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.21",

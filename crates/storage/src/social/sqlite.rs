@@ -351,7 +351,7 @@ impl Db<'_> {
         )?;
         for (owner, target) in [(creator, actor.id), (actor.id, creator)] {
             self.execute(
-                "INSERT INTO address_book VALUES(?1,?2,1,1)",
+                "INSERT INTO address_book(owner_id,account_id,listed,revision) VALUES(?1,?2,1,1)",
                 params![owner.to_string(), target.to_string()],
             )?;
         }
@@ -688,6 +688,7 @@ impl Db<'_> {
             ));
         }
         self.writable(&c)?;
+        self.allow_direct_send(&c)?;
         self.member(operator, c.id)?;
         let membership = self.member(ai.id, c.id)?;
         if membership.paused || c.paused || c.participation_epoch != snapshot.participation_epoch {
@@ -937,6 +938,14 @@ impl SocialStore for SqliteSocialStore {
         input: SetAdministrator,
     ) -> Result<ManagedAccount> {
         self.call(move |w| w.transact(|db| db.set_administrator(&ctx, id, &input)))
+            .await
+    }
+    async fn set_contact_block(
+        &self,
+        ctx: CommandContext,
+        input: SetContactBlock,
+    ) -> Result<ContactEntry> {
+        self.call(move |w| w.transact(|db| db.set_contact_block(&ctx, &input)))
             .await
     }
     async fn set_contact(&self, ctx: CommandContext, input: SetContact) -> Result<ContactEntry> {
@@ -1429,6 +1438,7 @@ impl SocialStore for SqliteSocialStore {
                 let mut c: Conversation = db.get("conversations", input.conversation_id)?;
                 db.member(ctx.operator, c.id)?;
                 db.writable(&c)?;
+                db.allow_direct_send(&c)?;
                 if let Some(expected) = input.expected_revision {
                     db.expected(c.revision, expected)?;
                 }

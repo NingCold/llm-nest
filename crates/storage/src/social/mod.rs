@@ -1,6 +1,7 @@
 //! Social persistence, independent of runtime and frontend transports.
 mod account_control;
 mod accounts;
+mod contact_block;
 mod contact_intent;
 mod controls;
 mod error;

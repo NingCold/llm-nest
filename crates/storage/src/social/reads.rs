@@ -100,6 +100,7 @@ impl Db<'_> {
             .into_iter()
             .next();
         Ok(ConversationRecord {
+            direct_blocked: self.direct_blocked(&conversation)?,
             list_state: self.list_state(operator, conversation.id)?,
             contact_schedule: self.contact_view(conversation.id)?,
             participation: self.participation(conversation.id)?,

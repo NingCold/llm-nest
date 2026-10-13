@@ -343,7 +343,7 @@ async fn migration_starts_existing_history_read_and_recovers_new_delivery_once()
     assert_eq!(
         sql.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        12
+        13
     );
     assert_eq!(
         sql.query_row::<i64, _, _>("SELECT COUNT(*) FROM message_deliveries", [], |r| r.get(0))

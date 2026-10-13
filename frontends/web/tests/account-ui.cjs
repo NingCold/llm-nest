@@ -45,6 +45,11 @@ assert.match(render(ai),/仍可继续私聊与共同群聊/);
 state.snapshot.addressBook[0].listed=false;
 assert.match(render(ai),/添加到通讯录/);
 assert.doesNotMatch(render(ai),/恢复联系人|恢复 AI 账号/);
+state.snapshot.addressBook[0].blocked=true;
+assert.match(render(ai),/解除屏蔽/);
+assert.match(render(ai),/查看私聊/);
+assert.match(render(ai),/添加到通讯录/);
+assert.doesNotMatch(render(human),/屏蔽联系人/);
 assert.match(render(human),/AI 角色管理/);
 console.log('PASS: shared human/AI public profile fields, private-setting exclusion, own-account management entry, independent remove/re-add controls');
 

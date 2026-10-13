@@ -221,6 +221,7 @@ impl From<AiRun> for Run {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
+    pub direct_blocked: bool,
     pub list_state: storage::social::ConversationListState,
     pub contact_schedule: storage::social::ContactScheduleView,
     pub participation: storage::social::ParticipationView,
@@ -243,6 +244,7 @@ pub struct Conversation {
 impl From<ConversationRecord> for Conversation {
     fn from(c: ConversationRecord) -> Self {
         Self {
+            direct_blocked: c.direct_blocked,
             list_state: c.list_state,
             contact_schedule: c.contact_schedule,
             participation: c.participation,

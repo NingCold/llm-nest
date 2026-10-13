@@ -1,0 +1,1 @@
+ALTER TABLE address_book ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0 CHECK(blocked IN (0,1));

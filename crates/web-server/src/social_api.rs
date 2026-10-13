@@ -77,6 +77,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(account).patch(update_account),
         )
         .route("/api/social/contacts/{id}", post(set_contact))
+        .route("/api/social/contacts/{id}/block", post(set_contact_block))
         .route(
             "/api/social/ai-accounts/{id}/administrators",
             post(set_administrator),
@@ -506,6 +507,13 @@ async fn set_administrator(
     ApiJson(input): ApiJson<social_feature::AdministratorInput>,
 ) -> Result<wire::ManagedAi> {
     Ok(Json(s.social.set_administrator(id, input).await?))
+}
+async fn set_contact_block(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ActorId>,
+    ApiJson(input): ApiJson<social_feature::ContactBlockInput>,
+) -> Result<social::ContactEntry> {
+    Ok(Json(s.social.set_contact_block(id, input).await?))
 }
 async fn set_contact(
     State(s): State<Arc<AppState>>,

@@ -1,13 +1,21 @@
 use crate::{Result, SocialFeature, wire};
 use serde::Deserialize;
 use social::*;
-use storage::social::{SetAdministrator, SetContact, UpdateAccount};
+use std::sync::Arc;
+use storage::social::{SetAdministrator, SetContact, SetContactBlock, UpdateAccount};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactInput {
     pub request_id: CommandId,
     pub listed: bool,
+    pub expected_revision: Option<Revision>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactBlockInput {
+    pub request_id: CommandId,
+    pub blocked: bool,
     pub expected_revision: Option<Revision>,
 }
 #[derive(Debug, Clone, Deserialize)]
@@ -66,6 +74,30 @@ impl SocialFeature {
             )
             .await?
             .into())
+    }
+    pub async fn set_contact_block(
+        self: &Arc<Self>,
+        id: ActorId,
+        input: ContactBlockInput,
+    ) -> Result<ContactEntry> {
+        let s = self.services()?;
+        let entry = s
+            .resources
+            .store
+            .set_contact_block(
+                self.context(input.request_id)?,
+                SetContactBlock {
+                    account_id: id,
+                    blocked: input.blocked,
+                    expected_revision: input.expected_revision,
+                },
+            )
+            .await?;
+        self.stop_terminal_executions().await?;
+        for conversation in s.resources.store.queued_conversations(s.human).await? {
+            self.schedule_queue(conversation);
+        }
+        Ok(entry)
     }
     pub async fn set_contact(&self, id: ActorId, input: ContactInput) -> Result<ContactEntry> {
         self.services()?

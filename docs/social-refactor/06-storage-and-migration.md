@@ -14,9 +14,11 @@ SQLite 存储身份、聊天、记忆、计划与执行元数据。附件可转�
 
 现有旧系统目录到新 home 目录的复制先按既有规则完成；JSON 到 SQLite 是随后独立的一次格式导入，两种迁移不可混为自动合并。
 
+个人屏蔽只更新 address_book.blocked；屏蔽/解除提升对应 Relationship 版本，私聊取消与双方约定取消、事件、回执在同一事务完成，不删除原文或意识材料。添加/移除只更新 listed，不能覆盖 blocked。迁移与失败回滚证据见[屏蔽记录](contact-blocking.md)。
+
 ## 2. 当前 Schema 与目标关系
 
-当前 schema 版本为 12；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引、v10 接话规则/状态/每日额度，v11 联系设置、意图与计划触发来源，v12 消息完成顺序及个人列表状态。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
+当前 schema 版本为 13；v1 基础、v2 run_details、v3 participation_plans、v4 移除成员历史起点、v5 成员 paused、v6 个人通讯录与管理员授权、v7 显式记忆、v8 窗口摘要与后台尝试状态、v9 跨窗口引用依赖索引、v10 接话规则/状态/每日额度，v11 联系设置、意图与计划触发来源，v12 消息完成顺序及个人列表状态，v13 个人屏蔽状态（address_book.blocked，默认 false）。顺序迁移前一致备份，旧 migration 内容与校验值不改写。
 
 | 表组 | 当前表 | 后续按用例扩展 |
 | --- | --- | --- |

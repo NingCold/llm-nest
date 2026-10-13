@@ -15,6 +15,7 @@ const SCHEMA_V6: &str = include_str!("schema-v6.sql");
 const SCHEMA_V7: &str = include_str!("schema-v7.sql");
 const SCHEMA_V9: &str = include_str!("schema-v9.sql");
 const SCHEMA_V8: &str = include_str!("schema-v8.sql");
+const SCHEMA_V13: &str = include_str!("schema-v13.sql");
 const SCHEMA_V12: &str = include_str!("schema-v12.sql");
 const SCHEMA_V11: &str = include_str!("schema-v11.sql");
 const SCHEMA_V10: &str = include_str!("schema-v10.sql");
@@ -83,10 +84,10 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| sql_error(path, e))?;
-    if !(0..=12).contains(&version) {
+    if !(0..=13).contains(&version) {
         return Err(Error::Schema {
             path: path.to_owned(),
-            detail: format!("unsupported version {version}; expected 0..=12"),
+            detail: format!("unsupported version {version}; expected 0..=13"),
         });
     }
     let tables: i64 = connection
@@ -124,6 +125,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
             (10, migration_digest(SCHEMA_V10)),
             (11, migration_digest(SCHEMA_V11)),
             (12, migration_digest(SCHEMA_V12)),
+            (13, migration_digest(SCHEMA_V13)),
         ];
         if ledger != expected[..version as usize] {
             return Err(Error::Schema {
@@ -152,6 +154,7 @@ pub(super) fn open(path: &Path, now: &str) -> Result<Connection> {
         (10, SCHEMA_V10),
         (11, SCHEMA_V11),
         (12, SCHEMA_V12),
+        (13, SCHEMA_V13),
     ] {
         if version >= next {
             continue;
@@ -239,7 +242,7 @@ mod tests {
             current
                 .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            12
+            13
         );
         let migrated: serde_json::Value = serde_json::from_str(
             &current
@@ -256,7 +259,7 @@ mod tests {
             current
                 .query_row::<i64, _, _>("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap(),
-            12
+            13
         );
         let backup_path = std::fs::read_dir(dir.path())
             .unwrap()

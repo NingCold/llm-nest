@@ -632,6 +632,9 @@ def main():
         from social_participation_acceptance import verify_participation
         verify_participation(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
 
+        from social_block_acceptance import verify_blocks
+        verify_blocks(api, contact, direct, group, complete, send, history, wait_for, stop, start)
+
         from social_message_list_acceptance import verify_message_list
         verify_message_list(api, contact, direct, group, complete, send, stop, start)
 

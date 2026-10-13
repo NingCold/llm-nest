@@ -64,6 +64,7 @@ const deliver = (h, sequence, event) => h.channels.at(-1).onmessage({ kind: 'eve
     ['init', [], 'social_init', undefined],
     ['account', ['id'], 'social_account', { id:'id' }],
     ['updateAccount', ['id', inputs], 'social_update_account', { id:'id', input:inputs }],
+    ['setContactBlock', ['id', inputs], 'social_set_contact_block', { id:'id', input:inputs }],
     ['setContact', ['id', inputs], 'social_set_contact', { id:'id', input:inputs }],
     ['managedAccounts', [], 'social_managed_accounts', undefined],
     ['managedAccount', ['id'], 'social_managed_account', { id:'id' }],

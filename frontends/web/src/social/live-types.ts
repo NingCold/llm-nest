@@ -5,9 +5,10 @@ export interface LegacyPreview {
 // Business DTOs from features/social/src/wire.rs; counters stay decimal strings.
 export interface Binding { providerId: string; modelId: string; reasoningEffort: string | null; temperature: number | null; maxTokens: number | null }
 export interface Account { id: string; kind: "human" | "ai"; name: string; avatarRef: string | null; bio: string; revision: string; status: "active" | "archived" }
-export interface ContactEntry { ownerId: string; accountId: string; listed: boolean; revision: string }
+export interface ContactEntry { ownerId: string; accountId: string; listed: boolean; blocked: boolean; revision: string }
 export interface ManagedAi { account: Account; persona: string; binding: Binding | null; administrators: { accountId: string; initial: boolean }[]; isInitialAdministrator: boolean }
 export interface AiInput { requestId: string; name: string; bio: string; persona: string; binding: Binding | null }
+export interface ContactBlockInput { requestId: string; blocked: boolean; expectedRevision: string | null }
 export interface ContactInput { requestId: string; listed: boolean; expectedRevision: string | null }
 export interface AccountView { operatorId: string; snapshot: Snapshot }
 export interface GenerationLimits { temperatureMax: number | null; minOutputTokens: number; maxOutputTokens: number | null }
@@ -20,6 +21,7 @@ export interface Message {
 }
 export interface Run { id: string; conversationId: string; actorId: string; messageId: string; status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; revision: string }
 export interface Conversation {
+  directBlocked: boolean
   listState: ConversationListState
   contactSchedule: { settings: ContactSettings; intents: ContactIntent[] }
   participation: ParticipationView

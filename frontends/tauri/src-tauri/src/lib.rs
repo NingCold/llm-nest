@@ -167,6 +167,7 @@ pub fn run() {
             social_commands::social_managed_account,
             social_commands::social_set_administrator,
             social_commands::social_set_contact,
+            social_commands::social_set_contact_block,
             social_commands::social_update_account,
             social_commands::social_account_view,
             social_commands::social_account_view_messages,

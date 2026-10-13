@@ -37,7 +37,7 @@ export function ConversationControls({ conversation }: { conversation: Conversat
   if (conversation.legacy) return null
   const archived = conversation.status === "archived"
   return <section className="live-conversation-controls"><h3>交谈控制</h3>
-    <p>{archived ? "已归档，聊天记录可继续查看。" : conversation.paused ? "已暂停接话，仍可发送和保存消息。" : conversation.currentBout ? "当前交谈进行中。" : "当前没有进行中的交谈，新消息可以开始下一次交谈。"}</p>
+    <p>{conversation.directBlocked ? "此私聊已屏蔽，解除屏蔽后可发送新消息。" : archived ? "已归档，聊天记录可继续查看。" : conversation.paused ? "已暂停接话，仍可发送和保存消息。" : conversation.currentBout ? "当前交谈进行中。" : "当前没有进行中的交谈，新消息可以开始下一次交谈。"}</p>
     <div className="live-control-buttons">{archived ? <button className="social-button secondary" disabled={busy} onClick={() => void change("restore")}>恢复聊天</button> : <>
       <button className="social-button secondary" disabled={busy} onClick={() => void change(conversation.paused ? "resume" : "pause")}>{conversation.paused ? "恢复接话" : "暂停全部 AI"}</button>
       <button className="social-button secondary" disabled={busy || (!conversation.currentBout && !conversation.pendingPlans.length)} onClick={() => void change("end")}>结束当前交谈</button>
@@ -57,10 +57,27 @@ export function ContactControls({ contact, entry }: { contact: Account; entry?: 
     if (result) { setConfirming(false); await state.action(state.refresh) }
   }
   return <section className="live-conversation-controls"><h2>联系人关系</h2>
-    <p>移除只会从你的通讯录撤下。仍可继续私聊与共同群聊，聊天记录完整保留；重新添加沿用原来的私聊窗口。</p>
+    <p>移除只会从你的通讯录撤下。未屏蔽时仍可继续私聊与共同群聊；重新添加沿用原来的私聊窗口，并保留屏蔽设置。</p>
     {!listed ? <button className="social-button primary" disabled={busy} onClick={() => void change(true)}>{busy ? "添加中…" : "添加到通讯录"}</button>
       : confirming ? <div className="live-control-buttons"><span>从通讯录移除 {contact.name}？</span><button className="social-button secondary" disabled={busy} onClick={() => setConfirming(false)}>取消</button><button className="social-button secondary" disabled={busy} onClick={() => void change(false)}>{busy ? "移除中…" : "确认移除"}</button></div>
         : <button className="social-button secondary" disabled={busy} onClick={() => setConfirming(true)}>移除联系人</button>}
+    <ContactBlockControls contact={contact} entry={entry} />
+  </section>
+}
+
+export function ContactBlockControls({ contact, entry }: { contact: Account; entry?: ContactEntry }) {
+  const state = useLiveSocialStore(), { busy, execute } = useVersionedAction<string | null>()
+  const [confirming, setConfirming] = useState(false)
+  const blocked = entry?.blocked ?? false
+  const change = async () => {
+    const result = await execute(`blocked:${!blocked}`, entry?.revision ?? null, input => socialClient.setContactBlock(contact.id, { ...input, blocked: !blocked }))
+    if (result) { setConfirming(false); await state.action(state.refresh) }
+  }
+  return <section className="live-conversation-controls"><h3>{blocked ? "已屏蔽" : "屏蔽联系人"}</h3>
+    <p>屏蔽后停止私聊发送与回复，取消你与对方尚未完成的约定联系。共同群仍可正常交流，历史与记忆保留。</p>
+    {blocked ? <><p className="form-note">解除后可在原窗口继续私聊，旧回复与约定不会补发。</p><button className="social-button secondary" disabled={busy} onClick={() => void change()}>{busy ? "保存中…" : "解除屏蔽"}</button></>
+      : confirming ? <div className="live-control-buttons"><span>确认屏蔽 {contact.name}？</span><button className="social-button secondary" disabled={busy} onClick={() => setConfirming(false)}>取消</button><button className="social-button secondary" disabled={busy} onClick={() => void change()}>{busy ? "保存中…" : "确认屏蔽"}</button></div>
+      : <button className="social-button secondary" disabled={busy} onClick={() => setConfirming(true)}>屏蔽联系人</button>}
   </section>
 }
 

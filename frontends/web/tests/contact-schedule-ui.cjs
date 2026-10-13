@@ -19,7 +19,7 @@ function harness(form='SettingsForm') {
     }});return exports;
   }
   const initial={revision:'7',enabled:false,quietUntil:null,quietAction:'defer'};
-  state.snapshot={accounts:[{id:'ai',name:'test',kind:'ai',status:'active'}]};
+  state.snapshot={addressBook:[],accounts:[{id:'ai',name:'test',kind:'ai',status:'active'}]};
   client.createContactIntent=async(id,input)=>{calls.push({id,input});if(fail)throw new Error('lost acknowledgement');return{ok:true}};
   const mod=load('LiveContactSchedule');
   const render=()=>{index=0;return mod[form]({conversation:{id:'chat',members:[{actorId:'ai',paused:false}]},initial,done:()=>done++})};
@@ -40,6 +40,9 @@ function harness(form='SettingsForm') {
   c.succeed();c.render().props.onSubmit({preventDefault(){}});await flush();
   assert.equal(JSON.stringify(c.calls[0]),JSON.stringify(c.calls[1]));assert.equal(c.calls[1].input.actorId,'ai');assert.equal(c.calls[1].id,'chat');
   assert.match(c.calls[1].input.dueAt,/[+-]\d{2}:\d{2}$/);assert.equal(c.calls[1].input.text,'reading');assert.equal(c.done(),1);
+  c.state.snapshot.addressBook=[{accountId:'ai',blocked:true}];
+  assert.equal(c.nodes().filter(n=>n.type==='option').length,0);
+  assert.equal(c.nodes().find(n=>n.type==='button'&&n.props.className==='social-button primary').props.disabled,true);
   assert.throws(()=>c.mod.explicitTime('invalid'));
   assert.equal(c.mod.offsetLabel(345),'UTC+05:45');assert.equal(c.mod.offsetLabel(-210),'UTC-03:30');
   const old=process.env.TZ;process.env.TZ='America/New_York';

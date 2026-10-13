@@ -42,6 +42,7 @@ export const socialClient: SocialClient = {
   init: () => request("/init"),
   account: id => request(`/accounts/${id}`),
   updateAccount: (id, input) => request(`/accounts/${id}`, "PATCH", input),
+  setContactBlock: (id, input) => request(`/contacts/${id}/block`, "POST", input),
   setContact: (id, input) => request(`/contacts/${id}`, "POST", input),
   managedAccounts: () => request("/ai-accounts"),
   managedAccount: id => request(`/ai-accounts/${id}`),

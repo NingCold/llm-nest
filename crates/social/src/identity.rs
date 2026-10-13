@@ -62,6 +62,7 @@ pub struct ContactEntry {
     pub owner_id: ActorId,
     pub account_id: ActorId,
     pub listed: bool,
+    pub blocked: bool,
     pub revision: Revision,
 }
 

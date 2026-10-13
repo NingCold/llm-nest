@@ -1,4 +1,4 @@
-import type { Account, AccountView, AiInput, ContactEntry, ContactInput, ManagedAi, Change, ControlAction, Conversation, LiveEvent, Message, VersionedCommand, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
+import type { Account, AccountView, AiInput, ContactEntry, ContactInput, ContactBlockInput, ManagedAi, Change, ControlAction, Conversation, LiveEvent, Message, VersionedCommand, MessagePage, ParticipationPlan, RunDetails, SendInput, SendReceipt, Snapshot } from "./live-types"
 
 export class SocialApiError extends Error { constructor(message: string, public code: string) { super(message) } }
 export interface SocialClient {
@@ -30,6 +30,7 @@ export interface SocialClient {
   init(): Promise<Snapshot>
   account(id: string): Promise<Account>
   updateAccount(id: string, input: VersionedCommand & { name: string; bio: string }): Promise<Account>
+  setContactBlock(id: string, input: ContactBlockInput): Promise<ContactEntry>
   setContact(id: string, input: ContactInput): Promise<ContactEntry>
   managedAccounts(): Promise<ManagedAi[]>
   managedAccount(id: string): Promise<ManagedAi>

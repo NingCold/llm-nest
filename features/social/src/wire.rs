@@ -221,6 +221,7 @@ impl From<AiRun> for Run {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
+    pub participation: storage::social::ParticipationView,
     pub memory_owner_ids: Vec<ActorId>,
     pub id: ConversationId,
     pub kind: ConversationKind,
@@ -240,6 +241,7 @@ pub struct Conversation {
 impl From<ConversationRecord> for Conversation {
     fn from(c: ConversationRecord) -> Self {
         Self {
+            participation: c.participation,
             memory_owner_ids: c.memory_owner_ids,
             id: c.conversation.id,
             kind: c.conversation.kind,
@@ -332,6 +334,10 @@ impl From<Membership> for Member {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
+    pub automatic: bool,
+    pub input_ids: Vec<MessageId>,
+    pub not_before: Option<String>,
+    pub expires_at: Option<String>,
     pub id: PlanId,
     pub actor_id: ActorId,
     pub trigger_id: MessageId,
@@ -345,6 +351,10 @@ pub struct Plan {
 impl From<ParticipationPlan> for Plan {
     fn from(p: ParticipationPlan) -> Self {
         Self {
+            automatic: p.automatic,
+            input_ids: p.input_ids,
+            not_before: p.not_before.map(|t| t.to_rfc3339()),
+            expires_at: p.expires_at.map(|t| t.to_rfc3339()),
             id: p.id,
             actor_id: p.actor_id,
             trigger_id: p.trigger_id,
@@ -356,6 +366,13 @@ impl From<ParticipationPlan> for Plan {
             revision: p.revision,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticipationInput {
+    pub request_id: CommandId,
+    pub policy: ParticipationPolicy,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -478,6 +495,7 @@ impl crate::SocialError {
             Storage(S::NotFound(_)) => ("not_found", false),
             Storage(S::Forbidden(_)) => ("not_authorized", false),
             Storage(S::Conflict(_)) => ("revision_conflict", true),
+            Storage(S::ParticipationLimit { .. }) => ("participation_limit", false),
             Storage(_) => ("storage_failure", true),
             Ai(_) | ModelUnavailable(_) => ("model_unavailable", false),
             BudgetExceeded => ("budget_exhausted", false),

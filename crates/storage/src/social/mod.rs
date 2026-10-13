@@ -8,6 +8,7 @@ mod memory;
 mod participation;
 mod reads;
 mod reference;
+mod rhythm;
 mod schema;
 mod sqlite;
 mod store;

@@ -26,6 +26,11 @@ pub enum SocialStorageError {
     Forbidden(String),
     #[error("invalid operation: {0}")]
     Invalid(String),
+    #[error("{message}")]
+    ParticipationLimit {
+        reason: ::social::ParticipationReason,
+        message: &'static str,
+    },
     #[error("unsupported or inconsistent schema at '{path}': {detail}")]
     Schema { path: PathBuf, detail: String },
     #[error("legacy source '{path}': {detail}")]

@@ -26,6 +26,7 @@ export const socialClient: SocialClient = {
   withdraw: (id, input) => command("social_withdraw_message", { id, input }),
   control: (id, input) => command("social_control_conversation", { id, input }),
   pauseMember: (id, input) => command("social_pause_member", { id, input }),
+  updateParticipation: (id, input) => command("social_update_participation", { id, input }),
   createGroup: input => command("social_create_group", { input }),
   changeMembership: (id, input) => command("social_change_membership", { id, input }),
   plans: id => command("social_plans", { id }),

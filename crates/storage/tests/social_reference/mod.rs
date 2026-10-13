@@ -497,7 +497,7 @@ async fn v8_migration_preserves_history_and_backs_up_before_creating_reference_i
     let path = f.dir.path().to_owned();
     f.store.close().await.unwrap();
     let sql = Connection::open(path.join("social.sqlite3")).unwrap();
-    sql.execute_batch("DROP TABLE context_reference_sources; DROP TABLE context_references; DELETE FROM schema_migrations WHERE version=9; PRAGMA user_version=8;").unwrap();
+    sql.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DROP TABLE context_reference_sources; DROP TABLE context_references; DELETE FROM schema_migrations WHERE version>=9; PRAGMA user_version=8;").unwrap();
     drop(sql);
     let store =
         SqliteSocialStore::open(DataDirectoryGuard::acquire(&path).unwrap(), f.clock.clone())

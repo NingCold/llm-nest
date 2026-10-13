@@ -7,6 +7,28 @@ use storage::social::{
 };
 
 impl SocialFeature {
+    pub async fn update_participation(
+        self: &Arc<Self>,
+        id: ConversationId,
+        input: wire::ParticipationInput,
+    ) -> Result<wire::Conversation> {
+        let s = self.services()?;
+        let locks = self.conversation_locks(id);
+        let _mutation = locks.mutation.lock().await;
+        s.resources
+            .store
+            .update_participation(
+                self.context(input.request_id)?,
+                storage::social::UpdateParticipation {
+                    conversation_id: id,
+                    policy: input.policy,
+                },
+            )
+            .await?;
+        self.stop_terminal_executions().await?;
+        self.schedule_queue(id);
+        self.conversation(id).await
+    }
     pub async fn message(&self, id: MessageId) -> Result<wire::Message> {
         let s = self.services()?;
         Ok(s.resources.store.message(s.human, id).await?.into())

@@ -34,7 +34,7 @@ impl Db<'_> {
     }
     pub(super) fn cancel_trigger_plans(&self, id: MessageId) -> Result<()> {
         for mut p in self.query_json::<ParticipationPlan>(
-            "SELECT payload FROM participation_plans WHERE trigger_id=?1 AND status='queued'",
+            "SELECT payload FROM participation_plans WHERE status='queued' AND (trigger_id=?1 OR EXISTS(SELECT 1 FROM json_each(payload,'$.input_ids') WHERE value=?1))",
             [id.to_string()],
         )? {
             p.status = PlanStatus::Cancelled;
@@ -170,6 +170,9 @@ impl Db<'_> {
         c.participation_epoch = c.participation_epoch.next()?;
         self.save_conversation(&c)?;
         self.save_receipt(ctx, "end_conversation", input, c.id)?;
-        Ok(c)
+        let mut state = self.participation(c.id)?.state;
+        state.reason = Some(ParticipationReason::UserEnded);
+        self.save_participation_state(c.id, &state)?;
+        self.get("conversations", c.id)
     }
 }

@@ -21,16 +21,32 @@ impl SocialFeature {
         let _execution = tokio::select! { biased; _=self.stop.cancelled()=>return Ok(()), guard=locks.execution.lock()=>guard };
         let s = self.services()?;
         loop {
+            locks
+                .dirty
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             if self.stop.is_cancelled() {
                 return Ok(());
             }
-            let Some(plan) = s
+            let tick = s
                 .resources
                 .store
-                .next_plan(s.human, conversation_id)
-                .await?
-            else {
+                .participation_tick(s.human, conversation_id)
+                .await?;
+            let Some(plan) = tick.plan else {
+                self.schedule_summaries(conversation_id, None);
+                if let Some(deadline) = tick.wake_at {
+                    tokio::select! {
+                        _ = self.stop.cancelled() => return Ok(()),
+                        _ = locks.wake.notified() => {},
+                        _ = s.resources.clock.wait_until(deadline) => {},
+                    }
+                    continue;
+                }
                 return Ok(());
+            };
+            let _slot = tokio::select! {
+                _ = self.stop.cancelled() => return Ok(()),
+                slot = self.execution_slots.acquire() => slot.expect("execution slots remain open"),
             };
             match self.execute_plan(&plan, &locks).await {
                 Ok(()) => {}
@@ -50,9 +66,16 @@ impl SocialFeature {
                         return Err(error);
                     }
                     let failure = error.wire();
+                    let reason = match &error {
+                        SocialError::Storage(SocialStorageError::ParticipationLimit {
+                            reason,
+                            ..
+                        }) => Some(*reason),
+                        _ => None,
+                    };
                     s.resources
                         .store
-                        .fail_plan(s.human, plan.id, failure.message.clone())
+                        .fail_plan(s.human, plan.id, failure.message.clone(), reason)
                         .await?;
                     let _ = self.live.send(wire::LiveEvent::Notice {
                         conversation_id,
@@ -74,79 +97,90 @@ impl SocialFeature {
         let actor_id = plan.actor_id;
         let trigger = plan.trigger_id;
         let s = self.services()?;
-        let (run, client, request, details, cancel) = {
-            let _mutation = locks.mutation.lock().await;
-            if self.stop.is_cancelled() {
-                return Ok(());
-            }
-            let material = s
-                .resources
-                .store
-                .context_material(
-                    s.human,
-                    ContextScope {
-                        actor_id,
-                        conversation_id,
-                    },
-                    trigger,
-                )
-                .await?;
-            let binding = material
-                .contact
-                .binding
-                .as_ref()
-                .ok_or_else(|| SocialError::ModelUnavailable("该 AI 尚未配置模型".into()))?;
-            let binding: wire::Binding = binding.clone().into();
-            let selection = selection(&binding)?;
-            let client = s.llm.snapshot().await;
-            let resolved = client
-                .resolve(&selection)
-                .await?
-                .ok_or_else(|| SocialError::ModelUnavailable("尚未配置模型目录".into()))?;
-            let details = RunDetails {
-                provider: resolved.selection.provider.clone(),
-                model: resolved.selection.model.clone(),
-                wire_model: resolved.spec.wire.clone(),
-                protocol: serde_json::to_value(resolved.spec.protocol)
-                    .expect("protocol is serializable")
-                    .as_str()
-                    .expect("protocol is a string")
-                    .to_owned(),
-                ..Default::default()
+        let (run, client, request, details, cancel) =
+            {
+                let _mutation = locks.mutation.lock().await;
+                if self.stop.is_cancelled() {
+                    return Ok(());
+                }
+                // A newer input may have extended or replaced this plan while awaiting a slot.
+                let tick = s
+                    .resources
+                    .store
+                    .participation_tick(s.human, conversation_id)
+                    .await?;
+                if !tick.plan.is_some_and(|current| {
+                    current.id == plan.id && current.revision == plan.revision
+                }) {
+                    return Ok(());
+                }
+                let material = s
+                    .resources
+                    .store
+                    .context_material(
+                        s.human,
+                        ContextScope {
+                            actor_id,
+                            conversation_id,
+                        },
+                        trigger,
+                    )
+                    .await?;
+                let binding =
+                    material.contact.binding.as_ref().ok_or_else(|| {
+                        SocialError::ModelUnavailable("该 AI 尚未配置模型".into())
+                    })?;
+                let binding: wire::Binding = binding.clone().into();
+                let selection = selection(&binding)?;
+                let client = s.llm.snapshot().await;
+                let resolved = client
+                    .resolve(&selection)
+                    .await?
+                    .ok_or_else(|| SocialError::ModelUnavailable("尚未配置模型目录".into()))?;
+                let details = RunDetails {
+                    provider: resolved.selection.provider.clone(),
+                    model: resolved.selection.model.clone(),
+                    wire_model: resolved.spec.wire.clone(),
+                    protocol: serde_json::to_value(resolved.spec.protocol)
+                        .expect("protocol is serializable")
+                        .as_str()
+                        .expect("protocol is a string")
+                        .to_owned(),
+                    ..Default::default()
+                };
+                let options = crate::generation::options(&binding, &resolved)?;
+                let prepared = ConsciousnessService::prepare(
+                    material,
+                    &resolved.spec,
+                    options.max_tokens.expect("allocated output budget"),
+                )?;
+                // Contact controls span spaces. Keep run creation and token registration together
+                // so a concurrent archive cannot miss the new execution. No model call holds this lock.
+                let mut cancellations = self.cancellations.lock().await;
+                let run = s
+                    .resources
+                    .store
+                    .begin_plan(
+                        s.human,
+                        plan.id,
+                        BeginRun {
+                            snapshot: prepared.snapshot,
+                            expected_revision: prepared.expected_revision,
+                            details: Some(details.clone()),
+                        },
+                    )
+                    .await?;
+                let cancel = CancellationToken::new();
+                cancellations.insert(run.id, cancel.clone());
+                let request = ChatRequest {
+                    selection,
+                    messages: prepared.messages,
+                    options,
+                    tools: vec![],
+                    resolved: None,
+                };
+                (run, client, request, details, cancel)
             };
-            let options = crate::generation::options(&binding, &resolved)?;
-            let prepared = ConsciousnessService::prepare(
-                material,
-                &resolved.spec,
-                options.max_tokens.expect("allocated output budget"),
-            )?;
-            // Contact controls span spaces. Keep run creation and token registration together
-            // so a concurrent archive cannot miss the new execution. No model call holds this lock.
-            let mut cancellations = self.cancellations.lock().await;
-            let run = s
-                .resources
-                .store
-                .begin_plan(
-                    s.human,
-                    plan.id,
-                    BeginRun {
-                        snapshot: prepared.snapshot,
-                        expected_revision: prepared.expected_revision,
-                        details: Some(details.clone()),
-                    },
-                )
-                .await?;
-            let cancel = CancellationToken::new();
-            cancellations.insert(run.id, cancel.clone());
-            let request = ChatRequest {
-                selection,
-                messages: prepared.messages,
-                options,
-                tools: vec![],
-                resolved: None,
-            };
-            (run, client, request, details, cancel)
-        };
         let outcome = self.consume(&run, &client, request, details, &cancel).await;
         self.cancellations.lock().await.remove(&run.id);
         outcome

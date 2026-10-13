@@ -629,6 +629,9 @@ def main():
         from social_reference_acceptance import verify_references
         verify_references(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
 
+        from social_participation_acceptance import verify_participation
+        verify_participation(api, contact, direct, group, send, history, wait_for, REQUESTS, stop, start)
+
         print(f'Fixture: {work}\nGUI: http://127.0.0.1:{port}', flush=True)
         if args.serve:
             print('Serving fixture until STOP file or interrupt.', flush=True)

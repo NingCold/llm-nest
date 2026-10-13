@@ -188,6 +188,7 @@ pub struct ContactRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationRecord {
+    pub participation: ParticipationView,
     pub memory_owner_ids: Vec<ActorId>,
     pub conversation: Conversation,
     pub members: Vec<Membership>,
@@ -208,6 +209,7 @@ pub struct SocialOverview {
 
 #[derive(Debug, Clone)]
 pub struct ContextMaterial {
+    pub required_message_ids: Vec<MessageId>,
     pub reference: Option<ReferenceMaterial>,
     pub summaries: Vec<ConversationSummary>,
     pub memories: Vec<MemoryRecord>,
@@ -220,6 +222,25 @@ pub struct ContextMaterial {
     /// Recent committed history through the trigger, followed by completed answers to it.
     pub messages: Vec<SocialMessage>,
     pub trigger_id: MessageId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticipationView {
+    pub policy: ParticipationPolicy,
+    pub state: ParticipationState,
+    pub budget_day: String,
+    pub auto_turns_today: u32,
+    pub reserved_tokens_today: u32,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateParticipation {
+    pub conversation_id: ConversationId,
+    pub policy: ParticipationPolicy,
+}
+pub struct ParticipationTick {
+    pub plan: Option<ParticipationPlan>,
+    pub wake_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -457,6 +478,16 @@ pub trait SocialStore: Send + Sync {
         operator: ActorId,
         id: ConversationId,
     ) -> SocialStorageResult<Option<ParticipationPlan>>;
+    async fn participation_tick(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> SocialStorageResult<ParticipationTick>;
+    async fn update_participation(
+        &self,
+        ctx: CommandContext,
+        input: UpdateParticipation,
+    ) -> SocialStorageResult<Conversation>;
     async fn queued_conversations(
         &self,
         operator: ActorId,
@@ -472,6 +503,7 @@ pub trait SocialStore: Send + Sync {
         operator: ActorId,
         plan: PlanId,
         failure: String,
+        reason: Option<ParticipationReason>,
     ) -> SocialStorageResult<()>;
     async fn local_human(&self, initial_name: String) -> SocialStorageResult<Actor>;
     async fn actor(&self, operator: ActorId, id: ActorId) -> SocialStorageResult<Actor>;

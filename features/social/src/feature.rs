@@ -5,7 +5,10 @@ use social::*;
 use std::{
     any::Any,
     collections::HashMap,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use storage::social::*;
 use tokio::sync::{Mutex, OnceCell, broadcast};
@@ -18,12 +21,16 @@ pub(crate) struct Services {
 }
 #[derive(Clone, Default)]
 pub(crate) struct ConversationLocks {
+    pub wake: Arc<tokio::sync::Notify>,
+    pub scheduled: Arc<AtomicBool>,
+    pub dirty: Arc<AtomicBool>,
     pub summary: Arc<Mutex<()>>,
     pub mutation: Arc<Mutex<()>>,
     pub execution: Arc<Mutex<()>>,
 }
 
 pub struct SocialFeature {
+    pub(crate) execution_slots: tokio::sync::Semaphore,
     pub(crate) summary_slots: tokio::sync::Semaphore,
     services: OnceCell<Services>,
     locks: StdMutex<HashMap<ConversationId, ConversationLocks>>,
@@ -42,6 +49,7 @@ impl SocialFeature {
     pub fn new() -> Self {
         let (live, _) = broadcast::channel(256);
         Self {
+            execution_slots: tokio::sync::Semaphore::new(4),
             summary_slots: tokio::sync::Semaphore::new(1),
             services: OnceCell::new(),
             locks: StdMutex::new(HashMap::new()),
@@ -317,10 +325,19 @@ impl SocialFeature {
         })
     }
     pub(crate) fn schedule_queue(self: &Arc<Self>, id: ConversationId) {
+        if self.stop.is_cancelled() {
+            return;
+        }
         let feature = self.clone();
         let locks = self.conversation_locks(id);
+        locks.dirty.store(true, Ordering::SeqCst);
+        locks.wake.notify_one();
+        if locks.scheduled.swap(true, Ordering::SeqCst) {
+            return;
+        }
         self.tasks.spawn(async move {
-            if let Err(error) = feature.drain_queue(id, locks).await {
+            locks.dirty.store(false, Ordering::SeqCst);
+            if let Err(error) = feature.drain_queue(id, locks.clone()).await {
                 let wire_error = error.wire();
                 let _ = feature.live.send(wire::LiveEvent::Notice {
                     conversation_id: id,
@@ -337,7 +354,10 @@ impl SocialFeature {
                         .push(error);
                 }
             }
-            feature.schedule_summaries(id, None);
+            locks.scheduled.store(false, Ordering::SeqCst);
+            if locks.dirty.swap(false, Ordering::SeqCst) {
+                feature.schedule_queue(id);
+            }
         });
     }
     pub async fn create_group(&self, input: wire::CreateGroupInput) -> Result<ConversationId> {
@@ -485,5 +505,94 @@ impl Feature for SocialFeature {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod rhythm_tests {
+    use super::*;
+    #[tokio::test]
+    async fn manual_clock_wakes_one_scheduler_and_shutdown_cancels_wait_without_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::new("2026-10-13T00:00:00Z".parse().unwrap()));
+        let store = Arc::new(
+            SqliteSocialStore::open(
+                storage::DataDirectoryGuard::acquire(directory.path()).unwrap(),
+                clock.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let runtime = runtime::builder::RuntimeBuilder::new()
+            .social_resources(SocialResources {
+                store: store.clone(),
+                clock: clock.clone(),
+            })
+            .build()
+            .unwrap();
+        let feature = Arc::new(SocialFeature::new());
+        runtime.register_feature(feature.clone()).await;
+        runtime.initialize_features().await.unwrap();
+        let ai = feature
+            .create_ai(wire::AiInput {
+                request_id: CommandId::new(),
+                name: "test".into(),
+                bio: String::new(),
+                persona: String::new(),
+                binding: None,
+            })
+            .await
+            .unwrap()
+            .account;
+        let cid = feature
+            .open_direct(
+                ai.id,
+                wire::Command {
+                    request_id: CommandId::new(),
+                },
+            )
+            .await
+            .unwrap();
+        let input = || wire::SendInput {
+            request_id: CommandId::new(),
+            text: "hello".into(),
+            mentions: vec![],
+            reply_to: None,
+            reference: None,
+        };
+        feature.send(cid, input()).await.unwrap();
+        for _ in 0..100 {
+            feature.schedule_queue(cid);
+        }
+        let s = feature.services().unwrap();
+        let plan = store.next_plan(s.human, cid).await.unwrap().unwrap();
+        assert_eq!(store.plans(s.human, cid).await.unwrap().len(), 1);
+        clock.set(plan.not_before.unwrap());
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while store.plans(s.human, cid).await.unwrap()[0].status == PlanStatus::Queued {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            store.plans(s.human, cid).await.unwrap()[0].status,
+            PlanStatus::Failed
+        ); // no model configured
+        feature.send(cid, input()).await.unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            runtime.shutdown_features(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(feature.stop.is_cancelled());
+        assert!(
+            !feature
+                .conversation_locks(cid)
+                .scheduled
+                .load(Ordering::SeqCst)
+        );
     }
 }

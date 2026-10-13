@@ -71,6 +71,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/api/social/conversations/{id}/plans", get(plans))
         .route(
+            "/api/social/conversations/{id}/participation",
+            post(update_participation),
+        )
+        .route(
             "/api/social/conversations/{id}/control",
             post(control_conversation),
         )
@@ -256,6 +260,13 @@ async fn control_conversation(
     ApiJson(input): ApiJson<wire::ControlInput>,
 ) -> Result<wire::Conversation> {
     Ok(Json(s.social.control_conversation(id, input).await?))
+}
+async fn update_participation(
+    State(s): State<Arc<AppState>>,
+    ApiPath(id): ApiPath<ConversationId>,
+    ApiJson(input): ApiJson<wire::ParticipationInput>,
+) -> Result<wire::Conversation> {
+    Ok(Json(s.social.update_participation(id, input).await?))
 }
 async fn pause_member(
     State(s): State<Arc<AppState>>,

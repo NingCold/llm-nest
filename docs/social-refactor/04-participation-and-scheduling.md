@@ -2,112 +2,83 @@
 
 [总纲](README.md) · [聊天与消息](02-conversations-and-messages.md) · [AI 执行](05-ai-execution.md)
 
-本文维护所属模块的规则与扩展目标。 实施状态见 [已完成](completed.md) / [尚未完成](pending.md)，当前调用契约见 [API 与事件](07-api-and-events.md)。
+M3 第一批已实现参与节奏；证据见 [实现记录](m3-participation-rhythm.md)。第 8 节的约定联系属于下一批，不能视为当前能力。
 
 ## 1. 职责
 
-ParticipationService 决定谁应该发言、等待或结束；Scheduler 在授权时间或条件到达时重新进行参与决策。二者位于 `features/social`，由 Runtime 的 Feature 生命周期托管。模型可以提供建议，确定性规则拥有最终决定权。
+SocialFeature 负责唤醒、等待、全局执行限额与关闭；SocialStore 在事务内选择目标、保存 ParticipationPlan、复核授权、预留额度及更新 Bout。当前实现位于 feature.rs/execution.rs 和 storage/social/rhythm.rs，不为 ParticipationService/Scheduler 名称单独建立空框架。
 
-意识系统（Consciousness）为已经选定的 AI 与空间准备背景，不决定是否发言。参与服务可以使用允许的触发信息评估计划；进入执行后再通过 ConsciousnessService.prepare_context 准备请求。摘要与未来后台巩固是内部任务，不占用社交 Bout 发言轮数，也不触发主动联系；其模型调用仍受独立预算和共享资源限额控制。
-
-群消息可见范围与发言资格分开：所有当前成员共享完整本群历史，暂停或未被 @ 只影响是否发言。意识系统按本次回复对象与容量选择上下文，参与服务不通过裁剪成员历史决定谁发言。
-
-参与机制不使用后台无限循环聊天来模拟在线。没有符合条件的事件和计划，就不调用模型。
+意识系统为已经选定的 AI 与空间准备上下文，不决定谁发言。摘要是独立内部任务，不计入社交发言轮数、不触发接话或主动联系。当前群成员共享完整群历史；暂停和未被点名只影响发言资格，不缩小可见范围。
 
 ## 2. 触发与决策
 
-触发包括：真人消息、明确 @、回复某 AI、用户邀请发言、计划到期、成员/权限变化、停止命令、运行结束。临时 token delta 不触发其他 AI 的参与。
+真人消息、结构化 @ / 回复、成功提交的 AI 消息可创建计划；规则、成员或控制变化唤醒队列重新检查。token delta、思考、失败片段、工具轨迹和摘要完成均不触发自动接话。没有合格计划就不调用模型。
 
-决策结果建议为 Speak、Wait、Ignore、EndBout；附带目标 ActorId、触发引用、based_on_seq、not_before、expires_at、reason_code、policy_revision 和 dedupe_key。
-
-reason_code 是可理解的有限枚举，例如 mentioned、direct_reply、scheduled_contact、paused、not_authorized、budget_exhausted。它不保存或展示模型隐藏推理。
+决策以实际计划和窗口 ParticipationState 表达。state.reason 为 waiting、input_pending、turn_limit、daily_limit、token_limit、no_candidate、expired、idle、user_ended、policy_changed；失败细节仍在计划 failure 中。没有隐藏推理日志或自然语言意图识别。
 
 ## 3. 确定性规则与优先级
 
-决策依次检查：
+开始前检查活动账号、窗口和成员、暂停、来源与版本、FIFO 队首、not_before/expires_at、模型配置和并发。自动计划另外复核 limitedAuto 与 policy_revision、轮数和每日预留额度。
 
-1. Actor、空间、成员是否活动，执行配置是否有效。
-2. 参与是否暂停、主动联系是否授权、当前是否免打扰。
-3. 触发内容与所需历史是否可见。
-4. 触发或计划是否已经处理、是否过期。
-5. 空间与全局并发、自动轮数和预算是否允许。
-6. 明确 @、回复和邀请优先于普通相关性判断。
-7. 没有明确目标时，按成员模式选择候选；可输出 Wait 或 Ignore。
+新真人消息撤销尚未开始的自动计划，明确 @ / 回复按选择顺序排队。已开始运行保持原触发对象与快照，新输入进入后续计划；不会静默删除正在显示的草稿。暂停优先于 @，文本中的 @ 不替代结构化 mentions。
 
-暂停和停止优先于 @。手动邀请可以创建一次性发言授权，但界面应明确这是恢复或单次许可，后端不能仅凭提示词绕过暂停。
+同空间最多一个 AI 在生成，SocialFeature 全局最多 4 个社交 AI 运行；摘要另有一个独立槽位。取得全局槽位后重新读取计划，防止等待期间已被合并、取消或过期的旧计划开始。
 
 ## 4. 首版参与规则
 
-| 参与规则 | 阶段与行为 |
+| 规则 | 当前行为 |
 | --- | --- |
-| direct_reply | M1 私聊输入触发该 AI 回复；M3 才合并连续输入 |
-| mentioned_only | 群里仅 @、明确回复或邀请触发；新群默认模式 |
-| limited_auto | 允许有限自动接话；M3 加入 |
-| 独立暂停设置 | M1 窗口/成员 paused；不新建对应计划，取消其活动运行和等待计划；不是 Membership.status |
+| direct_reply | 唯一私聊自动响应；默认等待 800ms，可设置 0–2000ms |
+| mentioned_only | 新群默认仅响应明确 @ / 回复；普通输入只保存 |
+| limited_auto | 群详情显式开启，普通输入可以触发一个候选，完整回复后再评估下一个 |
+| 独立暂停 | 窗口/成员 paused 停止相应计划与运行，成员历史可见范围保持不变 |
 
-主动联系是另外的 opt-in 设置，不随 limited_auto 自动开启。群里 @ 多个 AI 时按明确队列逐个回应，每个 AI 都有独立运行记录。
-
-当前一个空间最多一个 AI 在生成；全局资源上限随后续调度用例细化。等待 AI 不阻止真人发送，也不阻止其他空间显示消息。
+自动候选按稳定账号 ID 顺序轮转，跳过当前发言者、暂停、停用或已退出成员。这是确定性的轮流接话，不宣称具备语义相关性判断。模型文本不创建结构化 @，不能自行提高发言额度。开启规则本身不重放旧消息，也不授权未来主动联系。
 
 ## 5. 连续输入与有限接话
 
-M1 可以逐条排队回应，先保证连续消息不丢失；M3 加入私聊可配置的短等待窗口，合并尚未开始的回应计划。实现先以约 800ms 为实验起点，具体值经过体验验证后确认。更新队列的目标消息范围，不合并或改写原始消息。
+私聊仅合并短等待期内、尚未开始、没有引用/回复/mentions 的普通输入计划，每个计划最多 20 条。保留全部原消息和发送回执；input_ids 保存所有输入，trigger_id 指向最后一条。新输入延后 not_before；已开始的计划和各自携带来源的引用/回复计划不合并。任一合并来源修改或撤回都会取消该排队计划。
 
-正在执行的运行保持输入快照和回复对象；新消息形成后续计划。用户明确停止、改变权限或取消该 run 时中断。生成尚未开始的旧计划可以替换，正在显示的草稿不能静默删除。
+意识系统必须完整容纳全部合并输入；不能以摘要或历史裁剪丢掉其中一条。容量不足会明确失败，原消息仍保留。
 
-自动接话只在消息 finalized 后评估，工具日志和部分输出不触发。首版实验参数可采用无人输入连续 AI 发言上限 3 次、单 Bout 自动发言上限 12 次；最终默认值在 M3 验证后确定。
+默认自动接话上限为无人插话连续 3 次 AI 发言、每个 Bout 12 次自动调用、每群每 UTC 日 48 次自动调用及 262144 tokens 预留额度。可配置范围依次为 1–6、1–48、1–200、1024–4000000。自动计划间等待 800ms。连续计数包括已成功的显式回复；显式 @ / 回复不受自动额度阻断，也不消耗自动额度。
 
-真人消息可以重置“连续无人输入”计数，但不能重置每日自动预算或绕过空间暂停。多个 AI 互相 @ 同样受限；达到限额转 waiting 或 ended，并解释原因。
+每日额度在运行开始事务中按整个允许的输入容量 + 输出预留扣减，不依赖供应商 usage；它是保守的调用上限，不是账单估算。开始后失败、取消、崩溃也不返还。达到次数或容量上限就等待新授权，不缩减模型输出、不自动切换模型。真人输入重置连续计数，新 Bout 重置该 Bout 计数；结束、暂停、重启与模型更换不清零每日额度。UTC 日跨过后使用新账本；时钟回拨不能重新打开已花过的旧日期额度。
 
 ## 6. 等待、结束与暂停
 
-- Wait：暂不发言，保留当前 Bout 与未完成话题，不显示假消息。
-- EndBout：将当前交谈标 ended，取消该 Bout 的未执行发言计划和活动运行；最终提交复核 Bout 状态，空间与历史仍存在。
-- PauseConversation：提高 participation_epoch，暂停全部 AI 接话并取消活动运行与队列；真人可以继续记录消息。
-- PauseMember：更新该成员的 paused 与 revision，只停止指定 AI，不改变全群 epoch 或历史可见范围。
-- CancelRun：仅取消本次生成，不永久暂停联系人。
+- Wait：不生成假消息，保留 Bout 与话题。限额或无候选时显示原因。
+- EndBout：显式结束取消当前窗口队列与运行，保留长期窗口、消息和额度记录。
+- PauseConversation / PauseMember：沿用现有 epoch/成员版本及取消边界；恢复仅响应新消息。
+- CancelRun：停止本次生成；不会因失败/取消自动续接下一位，也不永久暂停账号。
+- 修改接话规则：校验 policy.revision，同事务取消排队及在飞自动计划；显式计划保留原来的时点与授权。修改本身不发言。
 
-用户说“今天先到这里”可以作为结束候选；始终提供确定性的界面结束按钮。模型判断结束不能删除约定、改变权限或自主创建新联系计划。
+默认空闲 300 秒结束，可设置 30–3600 秒。只在没有活动运行或排队计划时关闭 Bout；到点不调用模型生成告别语。活动时间使用已保存的真人输入或运行终态，时钟回拨不倒退。自然语言“先到这里”暂不解析，用户可使用确定性的“结束当前交谈”按钮。
 
-显式结束清除本次接话队列并中断本 Bout 活动运行；用户另行设置的未来约定保留并在详情中可见。若用户同时关闭主动联系，则撤销相应 ContactIntent。空闲规则在没有活动运行和可执行发言计划时结束，不额外付费生成告别语。
+下一批独立授权的未来约定将与 Bout 分开，显式结束不误删约定；该规则不表示 ContactIntent 已实现。
 
 ## 7. 持久参与计划
 
-当前 ParticipationPlan 保存 id、conversation_id、actor_id、trigger_id、trigger_sequence、ordinal、membership_revision、status、run_id、failure、revision、created_at。同一触发的目标顺序由 ordinal 保存，计划 ID 为独立 UUID。
+ParticipationPlan 保存 id、conversation_id、actor_id、trigger_id、trigger_sequence、ordinal、membership_revision、status、run_id、failure、revision、created_at，并增加 automatic、input_ids、not_before、expires_at、policy_revision。同一消息/目标唯一，明确目标顺序按 ordinal 保存；合并更新计划原 ID 和版本，旧请求重试不另建计划。
 
-状态为 queued / running / succeeded / failed / cancelled / interrupted。M1 保存真人消息时原子创建计划，开始运行时一并转 running；无需事件消费者复制另一套队列。启动与提交复核成员、暂停、epoch 和来源版本，重启只继续未开始计划，已开始请求标 interrupted。
+状态沿用 queued / running / succeeded / failed / cancelled / interrupted。真人消息与计划原子保存；成功回复、计划终态与后继自动计划同事务保存。新计划有效期 5 分钟；合并后从最新输入计算。过期计划取消并显示原因，不发布积压回复。旧库计划缺少新增可选时间时保持其原有一次性授权，后续新计划使用新规则。
 
-M3 加入 not_before、expires_at、决策原因、政策版本与必要的消费进度。若改为消费业务事件创建计划，同事务更新 offset 与去重计划。过期、预算和领取状态按真实调度用例确定，不将目标字段或状态当作当前 DTO。
+SQLite v10 新增 participation_policies、participation_state、participation_daily_budget；不改旧迁移。状态/预算变化发布 participation_changed 引用事件，Web/IPC 重新读取窗口快照。
 
-## 8. 主动联系意图
+## 8. 主动联系意图（M3 下一批）
 
-ContactIntent 保存 owner_actor_id、ai_actor_id、conversation_id、trigger、payload、due_at、expires_at、timezone、authorization_ref、idempotency_key、status。
+下一批实现显式的一次性 ContactIntent、独立主动联系授权与免打扰。意图需要保存创建者、AI、目标窗口、触发内容、UTC 到期/过期时间、展示时区、授权引用、幂等键和终态。
 
-首版支持一次性时间约定。条件触发限定到本地、已授权的业务事件；“随时关注所有活动”不属于默认权限。计划显示具体时区和时间，内部使用 UTC；重复日程与夏令时规则后续再设计。
-
-状态建议为 pending / claimed / executing / succeeded / skipped / cancelled / failed / uncertain。到期先领取，再复核成员、暂停、免打扰、有效期和预算，通过后创建参与计划或运行；意图本身不能直接调用模型。
-
-正常执行结束时，消息、AiRun 与 ContactIntent 终态一起提交。相同 idempotency_key 不重复创建意图；完成过的意图不再领取。
+计划到期先领取并复核成员、暂停、免打扰、有效期和额度，再产生参与计划；意图不能绕过执行用例直接调用模型。消息、AiRun 和意图终态需原子完成。重复日程、条件监控、夏令时复杂规则与自然语言约定识别后续另行设计。
 
 ## 9. 时间、重启与失败
 
-M3 实时等待需使用可注入单调时钟；当前 Clock 提供 UTC 时间，持久 due_at 与可控等待能力随调度一起完善，测试使用 fake clock。调度采用可取消的异步等待，关闭时停止领取新计划。
+Clock 提供 UTC now 与可取消的 wait_until。SystemClock 用 Tokio 单调计时等待，唤醒后仍复核持久 UTC 时点；墙钟回拨可延后执行，不提前发言。ManualClock 通过通知驱动等待，无需在测试里真实等待几分钟。
 
-应用重启后：
+每窗口只有一个调度任务；新输入/控制唤醒同一任务，不按每条消息积累长期等待任务。启动重新检查 queued 计划及 open Bout：未过期仍授权的计划继续，过期计划取消，已开始运行恢复为 interrupted，禁止重放。关闭先取消定时等待与执行，等待任务和存储收尾，不在退出后开启新调用。
 
-- queued/pending：未过期且仍授权的计划重新评估；免打扰时按有效期延后或 skipped。
-- claimed：确认尚未外部 dispatch 的记录可归还队列。
-- running/executing：恢复已保存草稿并标 interrupted；无法确认外部请求或副作用结果的意图标 uncertain，不自动重放。
-- 已过期：终结，默认不补发积压问候。
-
-本地幂等不等于外部调用 exactly-once。失败重试只能在明确安全、未 dispatch 或用户要求时执行，带退避和次数限制。
+当前未实现 ContactIntent 的 pending/claimed/executing/uncertain 恢复；下一批需区分未派发与外部结果不确定，不把本地幂等声称为外部 exactly-once。
 
 ## 10. 验收
 
-1. 未被叫到的 AI 在 mentioned_only 模式下不调用 provider。
-2. @ 多个 AI 形成有限队列，真人仍可连续发送。
-3. 暂停与运行提交并发时，停止事务生效后不会再发布成功回答。
-4. 自动 AI 互聊到达轮数或预算上限后停下。
-5. 到期意图在免打扰、权限撤回、账号停用时不能发言。
-6. fake clock 下验证延迟、空闲结束、过期、时钟回退与重启补发边界。
-7. 崩溃恢复不重复发布消息或自动重放工具。
+以独立临时库和模拟 provider 验证默认不自动发言、合并原文/回执、运行快照稳定、轮数与每日额度、来源修订、暂停/结束/规则撤销、崩溃恢复及过期/空闲。可控时钟覆盖等待、唤醒、回拨和退出；HTTP/IPC 调用同一用例，实际页面检查保存及状态文案。具体结果见 [本批记录](m3-participation-rhythm.md)，约定联系和免打扰留给下一批验收。

@@ -27,6 +27,7 @@ export const socialClient: SocialClient = {
   withdraw: (id, input) => request(`/messages/${id}/withdraw`, "POST", input),
   control: (id, input) => request(`/conversations/${id}/control`, "POST", input),
   pauseMember: (id, input) => request(`/conversations/${id}/members/participation`, "POST", input),
+  updateParticipation: (id, input) => request(`/conversations/${id}/participation`, "POST", input),
   createGroup: input => request("/groups", "POST", input),
   changeMembership: (id, input) => request(`/conversations/${id}/members`, "POST", input),
   plans: id => request(`/conversations/${id}/plans`),

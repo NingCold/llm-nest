@@ -65,6 +65,7 @@ impl Db<'_> {
             .into_iter()
             .next();
         Ok(ConversationRecord {
+            participation: self.participation(conversation.id)?,
             memory_owner_ids: self.query_json("SELECT DISTINCT json_quote(owner_actor_id) FROM memories WHERE conversation_id=?1 AND status!='forgotten' ORDER BY owner_actor_id", [conversation.id.to_string()])?,
             conversation,
             members,
@@ -111,14 +112,19 @@ impl Db<'_> {
         let human = self.member(operator, conversation.id)?;
         let ai = self.member(scope.actor_id, conversation.id)?;
         let trigger: SocialMessage = self.get("messages", trigger)?;
-        if trigger.conversation_id != conversation.id
-            || trigger.sender_id != operator
-            || trigger.status != MessageStatus::Committed
+        if trigger.conversation_id != conversation.id || trigger.status != MessageStatus::Committed
         {
             return Err(Error::Invalid(
                 "trigger must be a committed local message in this conversation".into(),
             ));
         }
+        let plan = self.query_json::<ParticipationPlan>("SELECT payload FROM participation_plans WHERE trigger_id=?1 AND actor_id=?2 AND status='queued'",params![trigger.id.to_string(),scope.actor_id.to_string()])?.into_iter().next();
+        if trigger.sender_id != operator && !plan.as_ref().is_some_and(|p| p.automatic) {
+            return Err(Error::Forbidden(
+                "AI 消息仅能由已授权的自动接话计划触发".into(),
+            ));
+        }
+        let required_message_ids = plan.map(|p| p.input_ids).unwrap_or_default();
         let mut messages: Vec<SocialMessage> = self.query_json("SELECT payload FROM messages WHERE conversation_id=?1 AND status='committed' AND sequence<=?2 ORDER BY sequence DESC LIMIT 200", params![conversation.id.to_string(), trigger.sequence.get() as i64])?;
         if messages.first().map(|m| m.id) != Some(trigger.id) {
             return Err(Error::Forbidden(
@@ -145,6 +151,7 @@ impl Db<'_> {
             })
             .transpose()?;
         Ok(ContextMaterial {
+            required_message_ids,
             reference: self.reference_material(operator, scope, &messages, &trigger)?,
             summaries: self.query_json("SELECT payload FROM conversation_summaries WHERE conversation_id=?1 AND status='ready' AND through_sequence<?2 ORDER BY through_sequence DESC LIMIT 64",params![conversation.id.to_string(),trigger.sequence.get() as i64])?,
             memories: self.memories(operator, scope)?.into_iter().filter(|m| m.status == MaterialStatus::Confirmed).collect(),

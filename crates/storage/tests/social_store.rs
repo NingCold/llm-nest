@@ -13,6 +13,8 @@ use storage::social::*;
 use storage::{DataDirectoryGuard, FileSessionStore, SessionRecord, SessionStore};
 #[path = "social_memory/mod.rs"]
 mod memory_tests;
+#[path = "social_participation/mod.rs"]
+mod participation_tests;
 #[path = "social_reference/mod.rs"]
 mod reference_tests;
 #[path = "social_summary/mod.rs"]
@@ -168,6 +170,11 @@ impl Fixture {
             .unwrap()
     }
     async fn begin_plan(&self, p: &ParticipationPlan) -> Result<AiRun, SocialStorageError> {
+        if let Some(t) = p.not_before
+            && t > self.clock.now()
+        {
+            self.clock.set(t);
+        }
         let material = self
             .store
             .context_material(
@@ -371,6 +378,9 @@ impl Fixture {
         let sql = self.sql();
         [
             "actors",
+            "participation_policies",
+            "participation_state",
+            "participation_daily_budget",
             "ai_profiles",
             "execution_bindings",
             "relationships",
@@ -439,7 +449,7 @@ async fn v5_account_migration_preserves_history_private_settings_and_old_disable
     let operator = f.human.id;
     f.store.close().await.unwrap();
     let old = Connection::open(&path).unwrap();
-    old.execute_batch("DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
+    old.execute_batch("DROP TABLE participation_daily_budget; DROP TABLE participation_state; DROP TABLE participation_policies; DROP TABLE context_reference_sources; DROP TABLE context_references; DROP TABLE summary_message_sources; DROP TABLE summary_revisions; DROP TABLE conversation_summaries; DROP TABLE summary_settings; DROP TABLE memory_message_sources; DROP TABLE memory_revisions; DROP TABLE memories; DROP TABLE address_book; DROP TABLE account_admins; DELETE FROM schema_migrations WHERE version>=6; UPDATE actors SET payload=json_remove(payload,'$.bio'); UPDATE command_receipts SET kind='control_contact' WHERE kind='control_account'; PRAGMA user_version=5;").unwrap();
     drop(old);
     let store = SqliteSocialStore::open(
         DataDirectoryGuard::acquire(f.dir.path()).unwrap(),

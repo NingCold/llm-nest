@@ -80,6 +80,7 @@ fn fixture() -> (ContextMaterial, ModelSpec) {
         .collect();
     let trigger_id = messages.last().unwrap().id;
     let material = ContextMaterial {
+        required_message_ids: vec![],
         reference: None,
         summaries: vec![],
         memories: vec![],
@@ -132,6 +133,28 @@ fn segment(material: &ContextMaterial) -> ConversationSummary {
         error: None,
         created_at: message.created_at,
         updated_at: message.created_at,
+    }
+}
+
+#[test]
+fn merged_inputs_are_all_required_and_cannot_be_replaced_by_a_summary() {
+    let (mut material, mut model) = fixture();
+    material.required_message_ids = material.messages.iter().map(|m| m.id).collect();
+    material.summaries.push(segment(&material));
+    assert!(matches!(
+        ConsciousnessService::prepare(material.clone(), &model, 128),
+        Err(SocialError::BudgetExceeded)
+    ));
+    model.context_window = Some(8192);
+    let prepared = ConsciousnessService::prepare(material.clone(), &model, 128).unwrap();
+    for id in material.required_message_ids {
+        assert!(
+            prepared
+                .snapshot
+                .sources
+                .iter()
+                .any(|s| matches!(s,SourceRef::Message{message_id,..} if *message_id==id))
+        );
     }
 }
 

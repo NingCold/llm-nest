@@ -194,6 +194,7 @@ pub fn run() {
             social_commands::social_withdraw_message,
             social_commands::social_control_conversation,
             social_commands::social_pause_member,
+            social_commands::social_update_participation,
             social_commands::social_conversation,
             social_commands::social_messages,
             social_commands::social_send,

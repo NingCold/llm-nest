@@ -16,13 +16,17 @@ export interface Message {
 }
 export interface Run { id: string; conversationId: string; actorId: string; messageId: string; status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; revision: string }
 export interface Conversation {
+  participation: ParticipationView
   memoryOwnerIds: string[]
   id: string; kind: "direct" | "group"; title: string; memberIds: string[]; status: "active" | "archived"
   paused: boolean; revision: string; lastSequence: string; legacy: boolean; latestMessage: Message | null; activeRun: Run | null
   members: Membership[]; pendingPlans: ParticipationPlan[]; currentBout: { id: string; status: "open" | "ended"; revision: string } | null
 }
 export interface Membership { actorId: string; paused: boolean; revision: string }
-export interface ParticipationPlan { id: string; actorId: string; triggerId: string; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
+export interface ParticipationPlan { automatic: boolean; inputIds: string[]; notBefore: string | null; expiresAt: string | null; id: string; actorId: string; triggerId: string; triggerSequence: string; ordinal: number; status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted"; runId: string | null; failure: string | null; revision: string }
+export interface ParticipationPolicy { revision: string; mergeDelayMs: number; idleSeconds: number; limitedAuto: boolean; maxConsecutive: number; maxAutoPerBout: number; maxAutoPerDay: number; dailyTokenBudget: number }
+export type ParticipationReason = "waiting" | "input_pending" | "turn_limit" | "daily_limit" | "token_limit" | "no_candidate" | "expired" | "idle" | "user_ended" | "policy_changed"
+export interface ParticipationView { policy: ParticipationPolicy; state: { lastActivity: string | null; consecutiveAi: number; boutAutoTurns: number; reason: ParticipationReason | null }; budgetDay: string; autoTurnsToday: number; reservedTokensToday: number }
 export interface Snapshot { selfId: string; selfName: string; selfAccount: Account; accounts: Account[]; addressBook: ContactEntry[]; conversations: Conversation[]; models: ModelOption[]; cursor: string }
 export interface Failure { code: string; message: string }
 export interface RunDetails {
@@ -33,7 +37,7 @@ export interface RunDetails {
 export interface SendInput { reference?: ReferenceSelection | null; requestId: string; text: string; replyTo: string | null; mentions: string[] }
 export interface SendReceipt { message: Message; executionNotice: Failure | null }
 export interface MessagePage { messages: Message[]; hasMore: boolean }
-export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision: string } }
+export interface Change { cursor: string; change: { kind: string; conversationId?: string; messageId?: string; memoryId?: string; runId?: string; actorId?: string; revision?: string } }
 export type LiveEvent = { type: "execution.notice"; conversationId: string; error: Failure }
   | { type: "generation.delta" | "generation.reasoning_delta"; conversationId: string; runId: string; messageId: string; actorId: string; deltaSeq: number; text: string }
 

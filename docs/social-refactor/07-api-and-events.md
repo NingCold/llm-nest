@@ -30,6 +30,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 空间详情 | GET /conversations/{id} | social_conversation |
 | 成员加入/移出 | POST /conversations/{id}/members | social_change_membership |
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
+| 接话规则 | POST /conversations/{id}/participation | social_update_participation |
 | 分页历史/发送文本 | GET/POST /conversations/{id}/messages | social_messages / social_send |
 | 单条消息 | GET /messages/{id} | social_message |
 | 按窗口/AI 读取及创建记忆 | GET/POST /conversations/{id}/memories/{actor} | social_memories / social_create_memory |
@@ -82,7 +83,9 @@ binding.temperature 与 maxTokens 可省略或为 null；前者使用模型服�
 
 AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被查看 AI，操作者仍为真实管理员。每次读取快照与分页历史复核管理授权，窗口按该 AI 的当前成员身份筛选；查看停用 AI 仍可行，退出群后不能读取该群。它是可手动刷新的只读快照，不使用实际操作者的全局事件订阅，不提供代发消息或远程登录令牌。
 
-消息分页使用 before=sequence，每页最多 200 条，返回 messages/hasMore。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun 和 currentBout；运行详情返回独立 RunDetails，旧运行可为 null。
+消息分页使用 before=sequence，每页最多 200 条，返回 messages/hasMore。空间 DTO 返回当前成员及暂停设置、pendingPlans、activeRun、currentBout 与 participation（policy/state/budgetDay/autoTurnsToday/reservedTokensToday）；运行详情返回独立 RunDetails，旧运行可为 null。
+
+接话规则输入为 requestId/policy；policy 包含 revision（预期规则版本）、mergeDelayMs、idleSeconds、limitedAuto、maxConsecutive、maxAutoPerBout、maxAutoPerDay、dailyTokenBudget。默认规则 revision="1"；规则更新提升自己的版本，恢复旧回执返回当前窗口。范围由路径限定，操作者由后端固定。Plan DTO 增加 automatic/inputIds/notBefore/expiresAt，计时为 UTC 字符串，自动额度失败用 participation_limit 表达，不影响真人消息保存。
 
 原模型、配置与目录同步接口保留；旧 `/api/sessions` 和 chat-event 服务迁移期 Harness，不与社交契约混用。原 contacts 创建/修改/全局归档路由已由上述账号接口替换，不维持含糊的双语义兼容入口；数据迁移保留历史。
 
@@ -109,7 +112,7 @@ AccountView 返回 operatorId 与 snapshot；snapshot.selfId/selfAccount 为被�
 
 ## 4. 持久事件
 
-SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、summaries_changed、run_changed、bout_changed、plan_changed。summaries_changed 只带 conversationId，要求重新读取当前摘要设置与分段；其余变更带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
+SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、summaries_changed、run_changed、bout_changed、plan_changed、participation_changed。summaries_changed 与 participation_changed 只带 conversationId，分别重读摘要或窗口接话状态；其余变更带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
 
 ```json
 {
@@ -159,7 +162,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 消息已保存后的参与失败通过 executionNotice 或计划/运行状态表达，不能把保存回执改成失败。账号停用通过 account_disabled 提示，暂停、无效模型与订阅断线分别展示；磁盘不可写时不伪报已保存终态。
 
-后续能力按所属阶段扩展：阶段完整双适配验收归 M1；联系意图与自动参与归 M3。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
+后续能力按所属阶段扩展：阶段完整双适配验收归 M1；有限自动参与已在 M3 第一批接通；联系意图与免打扰为下一批。工具授权在具体产品需求确定后独立实施，不作为 M1 前置。授权与账号查看需由同一业务层验证真实操作者及目标范围，不接受前端任意替换 senderId。已读位置、列表搜索和屏蔽等按独立链路细化，不提供假成功占位接口。
 
 群话题接续的规则见 [意识系统](03-consciousness.md#23-从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；显式转发产生新的目标消息，不能授予源空间读取权。
 

@@ -15,6 +15,7 @@ export interface SocialClient {
   withdraw(id: string, input: VersionedCommand): Promise<Message>
   control(id: string, input: VersionedCommand & { action: ControlAction }): Promise<Conversation>
   pauseMember(id: string, input: VersionedCommand & { actorId: string; paused: boolean }): Promise<Conversation>
+  updateParticipation(id: string, input: { requestId: string; policy: import("./live-types").ParticipationPolicy }): Promise<Conversation>
   createGroup(input: { requestId: string; title: string; memberIds: string[] }): Promise<string>
   changeMembership(id: string, input: VersionedCommand & { actorId: string; action: "add" | "remove" }): Promise<Conversation>
   plans(id: string): Promise<ParticipationPlan[]>

@@ -598,6 +598,7 @@ impl Db<'_> {
         {
             Some(b) => b,
             None => {
+                self.start_participation_bout(c.id)?;
                 let b = Bout {
                     id: BoutId::new(),
                     conversation_id: c.id,
@@ -1050,7 +1051,7 @@ impl SocialStore for SqliteSocialStore {
     async fn queued_conversations(&self, operator: ActorId) -> Result<Vec<ConversationId>> {
         self.call(move |w| w.read(|db| {
             db.operator(operator)?;
-            let rows:Vec<Conversation> = db.query_json("SELECT c.payload FROM conversations c WHERE EXISTS(SELECT 1 FROM participation_plans p WHERE p.conversation_id=c.id AND p.status='queued') AND EXISTS(SELECT 1 FROM memberships m WHERE m.conversation_id=c.id AND m.actor_id=?1 AND m.status='active')", [operator.to_string()])?;
+            let rows:Vec<Conversation> = db.query_json("SELECT c.payload FROM conversations c WHERE (EXISTS(SELECT 1 FROM participation_plans p WHERE p.conversation_id=c.id AND p.status='queued') OR EXISTS(SELECT 1 FROM bouts b WHERE b.conversation_id=c.id AND b.status='open')) AND EXISTS(SELECT 1 FROM memberships m WHERE m.conversation_id=c.id AND m.actor_id=?1 AND m.status='active')", [operator.to_string()])?;
             Ok(rows.into_iter().map(|c| c.id).collect())
         })).await
     }
@@ -1058,7 +1059,35 @@ impl SocialStore for SqliteSocialStore {
         self.call(move |w| w.transact(|db| db.begin_plan(operator, plan, input)))
             .await
     }
-    async fn fail_plan(&self, operator: ActorId, plan: PlanId, failure: String) -> Result<()> {
+    async fn participation_tick(
+        &self,
+        operator: ActorId,
+        id: ConversationId,
+    ) -> Result<ParticipationTick> {
+        self.call(move |w| {
+            w.transact(|db| {
+                db.operator(operator)?;
+                db.member(operator, id)?;
+                db.participation_tick(id)
+            })
+        })
+        .await
+    }
+    async fn update_participation(
+        &self,
+        ctx: CommandContext,
+        input: UpdateParticipation,
+    ) -> Result<Conversation> {
+        self.call(move |w| w.transact(|db| db.update_participation(&ctx, &input)))
+            .await
+    }
+    async fn fail_plan(
+        &self,
+        operator: ActorId,
+        plan: PlanId,
+        failure: String,
+        reason: Option<ParticipationReason>,
+    ) -> Result<()> {
         self.call(move |w| {
             w.transact(|db| {
                 db.operator(operator)?;
@@ -1074,6 +1103,9 @@ impl SocialStore for SqliteSocialStore {
                     p.failure = Some(failure);
                     p.revision = p.revision.next()?;
                     db.save_plan(&p)?;
+                    let mut state = db.participation(p.conversation_id)?.state;
+                    state.reason = Some(reason.unwrap_or(ParticipationReason::Waiting));
+                    db.save_participation_state(p.conversation_id, &state)?;
                 }
                 Ok(())
             })

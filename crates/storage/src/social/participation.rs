@@ -31,7 +31,7 @@ impl Db<'_> {
         Ok(targets)
     }
     pub(super) fn save_plan(&self, p: &ParticipationPlan) -> Result<()> {
-        self.execute("INSERT INTO participation_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET status=excluded.status,run_id=excluded.run_id,payload=excluded.payload", params![p.id.to_string(), p.conversation_id.to_string(), p.actor_id.to_string(), p.trigger_id.to_string(), p.trigger_sequence.get() as i64, p.ordinal, label(&p.status)?, p.run_id.map(|id| id.to_string()), serde_json::to_string(p)?])?;
+        self.execute("INSERT INTO participation_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET trigger_id=excluded.trigger_id,trigger_sequence=excluded.trigger_sequence,ordinal=excluded.ordinal,status=excluded.status,run_id=excluded.run_id,payload=excluded.payload", params![p.id.to_string(), p.conversation_id.to_string(), p.actor_id.to_string(), p.trigger_id.to_string(), p.trigger_sequence.get() as i64, p.ordinal, label(&p.status)?, p.run_id.map(|id| id.to_string()), serde_json::to_string(p)?])?;
         self.event(SocialChange::PlanChanged {
             conversation_id: p.conversation_id,
             plan_id: p.id,
@@ -125,26 +125,16 @@ impl Db<'_> {
         if let (Some(selection), Some(preview)) = (&input.reference, preview) {
             self.attach_reference(&mut message, targets[0], selection.clone(), &preview)?;
         }
+        self.human_activity(c.id, !c.paused && !memberships.is_empty())?;
         let mut plans = Vec::new();
         if !c.paused {
             for (ordinal, membership) in memberships.into_iter().enumerate() {
-                let p = ParticipationPlan {
-                    id: PlanId::new(),
-                    conversation_id: c.id,
-                    actor_id: membership.actor_id,
-                    trigger_id: message.id,
-                    trigger_sequence: message.sequence,
-                    ordinal: ordinal as u32,
-                    membership_revision: membership.revision,
-                    status: PlanStatus::Queued,
-                    run_id: None,
-                    failure: None,
-                    revision: Revision::ONE,
-                    created_at: self.now,
-                };
-                self.save_plan(&p)?;
+                let p = self.plan_for_message(&c, &message, membership, ordinal as u32)?;
                 plans.push(p);
             }
+        }
+        if targets.is_empty() {
+            self.enqueue_automatic(&message)?;
         }
         self.save_receipt(ctx, "send_message", input, message.id)?;
         Ok(SavedMessage {
@@ -164,6 +154,8 @@ impl Db<'_> {
         self.member(operator, p.conversation_id)?;
         if p.status != PlanStatus::Queued
             || self.next_plan(p.conversation_id)?.map(|head| head.id) != Some(id)
+            || p.not_before.is_some_and(|t| t > self.now)
+            || p.expires_at.is_some_and(|t| t <= self.now)
         {
             return Err(Error::Conflict("plan is no longer the queue head".into()));
         }
@@ -182,7 +174,20 @@ impl Db<'_> {
                 "plan snapshot must include its authorized trigger".into(),
             ));
         }
+        for id in &p.input_ids {
+            if !input
+                .snapshot
+                .sources
+                .iter()
+                .any(|s| matches!(s,SourceRef::Message {message_id,..} if message_id==id))
+            {
+                return Err(Error::Invalid("合并接话必须包含所有原始消息".into()));
+            }
+        }
         let run = self.start_run(operator, input, Some(p.trigger_id))?;
+        if p.automatic {
+            self.reserve_automatic(&p, &run.snapshot)?;
+        }
         p.status = PlanStatus::Running;
         p.run_id = Some(run.id);
         p.revision = p.revision.next()?;
@@ -207,6 +212,7 @@ impl Db<'_> {
             };
             p.revision = p.revision.next()?;
             self.save_plan(&p)?;
+            self.participation_finished(&p, run)?;
         }
         Ok(())
     }

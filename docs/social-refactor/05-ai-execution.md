@@ -12,7 +12,7 @@
 
 ## 2. AiRun 对象与状态
 
-当前 AiRun 为 id、message_id、bout_id、status、revision、snapshot。snapshot 记录目标 AI/空间、档案/绑定/关系版本、参与 epoch、预算与来源依赖；ParticipationPlan 关联 run_id。实际模型、思考、用量、计时和错误保存于独立 RunDetails。意图、工具审计和预算预留随后续用例扩展，不复制为聊天正文。
+当前 AiRun 为 id、message_id、bout_id、status、revision、snapshot。snapshot 记录目标 AI/空间、档案/绑定/关系版本、参与 epoch、预算与来源依赖；ParticipationPlan 关联 run_id。实际模型、思考、用量、计时和错误保存于独立 RunDetails。自动接话额度由 participation_daily_budget 在开始运行时保守扣减；意图和工具审计随后续用例扩展，不复制为聊天正文。
 
 RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循环属于同一 AiRun，默认只产生一个可见社交消息，内部协议消息和工具日志保存在执行记录中。
 
@@ -20,10 +20,10 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 ## 3. 启动流程
 
-1. 领取 ParticipationPlan，确定目标 AI、空间和触发消息范围。
+1. 等待 ParticipationPlan 的时点，取得全局执行槽位后重读队首及计划版本，确定目标 AI、空间和触发消息范围。
 2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding，校验温度、输出上限与思考模式，固定 GenerationOptions 并分配输出预算；不读取全局 Harness 生成设置。
 3. 按实际输出预留调用 ConsciousnessService.prepare_context，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
-4. 再检查档案/绑定版本、暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件。
+4. 再检查档案/绑定版本、暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件；自动计划同时扣减每日次数和整个输入/输出容量额度，拒绝时整个开始事务回滚。
 5. 调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内；后续扩展外部 dispatch 审计时明确记录边界。
 
 无法解析模型时返回候选与可恢复错误，终结计划，不更换身份或静默替换模型。授权和版本在启动过程中变化时，放弃旧计划并重新评估。
@@ -32,7 +32,7 @@ RunId 是独立 UUID，不能继续借 MessageId 表示运行。一轮工具循�
 
 目标 AI 自己的历史完整消息可以映射为 assistant；其他参与者的发言按协议允许的方式保留为带发送者标签的内容。群里其他 AI 的消息不能全部映射成目标 AI 自己的 assistant 历史。
 
-意识系统内部 ContextBuilder 输出中立的 `common::Message` 列表及 ContextSnapshot，ConsciousnessService 以 PreparedContext 返回；执行层与当前工具循环组合后交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。M1 先用近期原文与档案，M2 才增加摘要、显式记忆和跨窗口引用。
+意识系统内部 ContextBuilder 输出中立的 `common::Message` 列表及 ContextSnapshot，ConsciousnessService 以 PreparedContext 返回；执行层与当前工具循环组合后交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。当前已包含近期原文、档案、摘要、显式记忆和显式跨窗口引用；M3 合并计划的全部输入为必要原文。
 
 上下文按 (ActorId, ConversationId) 构造，每次 AiRun 固定自己的快照。同一角色默认复用执行绑定，私聊和各群的消息范围与摘要分别选择；可选 provider 会话 ID、续接链或压缩缓存不得跨该范围复用。软件不依赖一个跨全部聊天窗口的常驻模型上下文。
 

@@ -316,6 +316,19 @@ pub async fn social_control_conversation(
 }
 
 #[tauri::command]
+pub async fn social_update_participation(
+    state: tauri::State<'_, BackendState>,
+    id: ConversationId,
+    input: wire::ParticipationInput,
+) -> Result<wire::Conversation> {
+    feature(state)
+        .await?
+        .update_participation(id, input)
+        .await
+        .map_err(|e| e.wire())
+}
+
+#[tauri::command]
 pub async fn social_pause_member(
     state: tauri::State<'_, BackendState>,
     id: ConversationId,

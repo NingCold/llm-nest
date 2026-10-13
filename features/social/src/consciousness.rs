@@ -68,6 +68,22 @@ impl ConsciousnessService {
             }
             selected.push((quoted, wire));
         }
+        for id in &material.required_message_ids {
+            if selected.iter().any(|(m, _)| m.id == *id) {
+                continue;
+            }
+            let message = material
+                .messages
+                .iter()
+                .find(|m| m.id == *id)
+                .ok_or(SocialError::BudgetExceeded)?;
+            let wire = render(message, material.contact.actor.id, None);
+            used += estimate(&wire);
+            if used > input_limit {
+                return Err(SocialError::BudgetExceeded);
+            }
+            selected.push((message, wire));
+        }
         let mut reference_messages = Vec::new();
         let mut reference_sources = Vec::new();
         let mut reference_dependencies = Vec::new();
@@ -141,7 +157,11 @@ impl ConsciousnessService {
         let all_original_cost: u32 = material
             .messages
             .iter()
-            .filter(|m| m.id != trigger.id && Some(m.id) != quoted.map(|m| m.id))
+            .filter(|m| {
+                m.id != trigger.id
+                    && Some(m.id) != quoted.map(|m| m.id)
+                    && !material.required_message_ids.contains(&m.id)
+            })
             .map(|m| estimate(&render(m, material.contact.actor.id, None)))
             .sum();
         let earliest = material
@@ -184,12 +204,11 @@ impl ConsciousnessService {
             }
             used += summary_cost;
         }
-        for message in material
-            .messages
-            .iter()
-            .rev()
-            .filter(|m| m.id != trigger.id && Some(m.id) != quoted.map(|m| m.id))
-        {
+        for message in material.messages.iter().rev().filter(|m| {
+            m.id != trigger.id
+                && Some(m.id) != quoted.map(|m| m.id)
+                && !material.required_message_ids.contains(&m.id)
+        }) {
             if selected_summaries.iter().any(|s| {
                 s.sources.iter().any(|source| {
                     matches!(source, SourceRef::Message { message_id, revision, .. }

@@ -20,8 +20,8 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 2. 准备实际数据目录，按原规则处理旧默认目录复制，解析并冻结 config/data 路径。
 3. 按进程环境 > 配置目录 > 默认数据目录加载缺失环境变量；读取配置与目录缓存，整体校验。
 4. 取得统一 DataDirectoryGuard，打开 SocialStore；检查 schema 与旧 JSON 导入状态。
-5. 恢复 running 检查点、悬挂预算和意图状态，不重放已 dispatch 请求或工具。
-6. 构造 Runtime 资源，初始化 SocialFeature；启动事件消费与调度，读取已提交位置。
+5. 恢复 running 检查点为 interrupted，保留已扣减的自动额度，不重放已开始请求；意图恢复为下一批。
+6. 构造 Runtime 资源，初始化 SocialFeature；重新检查 queued 计划和 open Bout。每窗口维护一个可唤醒的调度任务，Clock.wait_until 与退出取消并列等待；全局社交并发 4，摘要独立并发 1。
 7. 暴露 init 快照与业务入口。存储和历史恢复未成功时不能发送或启动自动任务。
 
 空文件、仅注释或空 providers 都是有效首次启动状态：可以配置联系人和设置，无法执行 AI。省略 providers 反序列化为空集合，非法语法或类型仍报错，不在解析失败时伪造配置。当前社交私聊已经把真人消息保存与模型可用性分开；旧 Harness 入口保持原发送约束。
@@ -35,6 +35,7 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 | providers、目录、凭据引用 | 现有 TOML/环境配置与目录缓存 | Runtime 校验与原子保存 |
 | 公开账号资料、AI 内部档案、通讯录、管理员授权、关系、群参与、联系约定 | SocialStore | 社交用例事务 |
 | 意识系统记忆、摘要、来源与快照 | SocialStore；原消息/档案仍是各自权威来源 | 意识系统用例与来源版本校验 |
+| 接话节奏与自动额度 | SocialStore 的 ParticipationPolicy/State 和每日额度账本；默认群聊自动接话关闭 | 成员经共享用例显式配置；自动运行同事务预留，重启不返还 |
 | 窗口摘要的模型与预算 | SocialStore 的 SummarySettings；默认关闭，成员显式选择独立模型/思考强度/输出上限 | SocialFeature 复用 AiClient 校验，任务使用配置快照；未来提取/巩固配置另行细化 |
 | ExecutionBinding | SocialStore，引用 provider/model，保存思考强度、temperature/max_tokens | 获授权管理员经 AI 角色管理用例保存，复用 AiClient 协议约束与模型容量校验 |
 | 后续默认新 AI 执行配置 | GUI 设置，沿用可迁移的全局默认语义 | 不覆盖已存在 AI 的绑定；不据此宣称当前已有独立默认设置 |

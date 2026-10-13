@@ -404,6 +404,7 @@ pub trait SocialStore: Send + Sync {
         operator: ActorId,
         id: ConversationId,
         include_images: bool,
+        include_files: bool,
     ) -> SocialStorageResult<super::ConversationTranscript>;
     async fn reference_preview(
         &self,

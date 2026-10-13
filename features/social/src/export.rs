@@ -58,7 +58,7 @@ impl SocialFeature {
         let snapshot = s
             .resources
             .store
-            .conversation_transcript(s.human, id, false)
+            .conversation_transcript(s.human, id, false, false)
             .await?;
         render_export(snapshot, format)
     }
@@ -67,22 +67,28 @@ impl SocialFeature {
         &self,
         id: ConversationId,
         format: ExportFormat,
+        include_images: bool,
+        include_files: bool,
     ) -> Result<ConversationArchive> {
         let s = self.services()?;
         let snapshot = s
             .resources
             .store
-            .conversation_transcript(s.human, id, true)
+            .conversation_transcript(s.human, id, include_images, include_files)
             .await?;
-        tokio::task::spawn_blocking(move || render_archive(snapshot, format))
-            .await
-            .map_err(|e| SocialError::FileExport(e.to_string()))?
+        tokio::task::spawn_blocking(move || {
+            render_archive(snapshot, format, include_images, include_files)
+        })
+        .await
+        .map_err(|e| SocialError::FileExport(e.to_string()))?
     }
 }
 
 fn render_archive(
     mut snapshot: ConversationTranscript,
     format: ExportFormat,
+    include_images: bool,
+    include_files: bool,
 ) -> Result<ConversationArchive> {
     let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options =
@@ -91,23 +97,44 @@ fn render_archive(
     let io_error = |e: std::io::Error| SocialError::FileExport(e.to_string());
     for message in &mut snapshot.messages {
         for (index, part) in message.parts.iter_mut().enumerate() {
-            if let TranscriptPart::Image {
-                data, file_path, ..
-            } = part
-            {
-                let file = crate::images::image_file(
-                    message.id,
-                    index,
-                    data.take().expect("image snapshot includes bytes"),
-                )?;
-                let path = format!("images/{}", file.file_name);
+            let selected = match part {
+                TranscriptPart::Image {
+                    data, file_path, ..
+                } if include_images => {
+                    let file = crate::images::image_file(
+                        message.id,
+                        index,
+                        data.take().expect("selected image snapshot includes bytes"),
+                    )?;
+                    Some((format!("images/{}", file.file_name), file.data, file_path))
+                }
+                TranscriptPart::File {
+                    name,
+                    data,
+                    file_path,
+                    ..
+                } if include_files => {
+                    let path = format!(
+                        "files/{}-{index}/{}",
+                        message.id,
+                        crate::files::file_name(Some(name))
+                    );
+                    Some((
+                        path,
+                        data.take().expect("selected file snapshot includes bytes"),
+                        file_path,
+                    ))
+                }
+                _ => None,
+            };
+            if let Some((path, bytes, file_path)) = selected {
                 archive.start_file(&path, options).map_err(error)?;
-                archive.write_all(&file.data).map_err(io_error)?;
+                archive.write_all(&bytes).map_err(io_error)?;
                 *file_path = Some(path);
             }
         }
     }
-    let document = render_document(&snapshot, format, true)?;
+    let document = render_document(&snapshot, format, include_images, include_files)?;
     archive
         .start_file(format!("chat.{}", format.extension()), options)
         .map_err(error)?;
@@ -133,13 +160,14 @@ fn render_export(
     snapshot: ConversationTranscript,
     format: ExportFormat,
 ) -> Result<ConversationExport> {
-    render_document(&snapshot, format, false)
+    render_document(&snapshot, format, false, false)
 }
 
 fn render_document(
     snapshot: &ConversationTranscript,
     format: ExportFormat,
     include_images: bool,
+    include_files: bool,
 ) -> Result<ConversationExport> {
     let file_name = export_file_name(&snapshot.title, snapshot.conversation_id, format);
     let message_count = snapshot.messages.len();
@@ -154,7 +182,13 @@ fn render_document(
             }
             let content = serde_json::to_string_pretty(&Document {
                 format: "llm-nest.conversation",
-                version: if include_images { 2 } else { 1 },
+                version: if include_files {
+                    3
+                } else if include_images {
+                    2
+                } else {
+                    1
+                },
                 transcript: snapshot,
             })
             .map_err(storage::social::SocialStorageError::from)?;
@@ -162,7 +196,7 @@ fn render_document(
         }
         ExportFormat::Markdown => (
             "text/markdown;charset=utf-8",
-            markdown(snapshot, include_images),
+            markdown(snapshot, include_images, include_files),
         ),
     };
     Ok(ConversationExport {
@@ -192,14 +226,31 @@ fn heading(text: &str) -> String {
     out
 }
 
-fn markdown(s: &ConversationTranscript, include_images: bool) -> String {
+fn link_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            write!(encoded, "%{byte:02X}").expect("writing a string");
+        }
+    }
+    encoded
+}
+
+fn markdown(s: &ConversationTranscript, include_images: bool, include_files: bool) -> String {
     let mut out = format!(
         "# {}\n\n导出时间：{}\n\n聊天 ID：{}\n\n消息数：{}\n\n正文按原文文本保存；{}生成中的消息只包含此时已保存的片段。\n",
         heading(&s.title),
         s.captured_at.to_rfc3339(),
         s.conversation_id,
         s.messages.len(),
-        if include_images {
+        if include_images && include_files {
+            "图片位于 images 文件夹，文件位于 files 文件夹。"
+        } else if include_files {
+            "文件位于 files 文件夹，图片仅含占位说明。"
+        } else if include_images {
             "图片位于 images 文件夹，其他附件仅含占位说明。"
         } else {
             "附件仅含占位说明。"
@@ -270,8 +321,14 @@ fn markdown(s: &ConversationTranscript, include_images: bool) -> String {
                 )),
                 TranscriptPart::File {
                     name,
+                    file_path: Some(path),
+                    ..
+                } => out.push_str(&format!("\n[{}]({})\n", heading(name), link_path(path))),
+                TranscriptPart::File {
+                    name,
                     mime,
                     byte_length,
+                    ..
                 } => out.push_str(&format!(
                     "\n[文件未附带 · {} · {} · {} 字节]\n",
                     heading(name),
@@ -313,6 +370,8 @@ mod tests {
                     },
                     TranscriptPart::File {
                         name: "attachment.bin".into(),
+                        data: None,
+                        file_path: None,
                         mime: "application/pdf".into(),
                         byte_length: 5,
                     },
@@ -375,10 +434,10 @@ mod tests {
             if state == MessageStatus::Withdrawn {
                 s.messages[0].parts.clear();
             }
-            assert!(markdown(&s, false).contains(&format!("状态：{label}")));
+            assert!(markdown(&s, false, false).contains(&format!("状态：{label}")));
         }
         s.messages.clear();
-        assert!(markdown(&s, false).contains("暂无消息。"));
+        assert!(markdown(&s, false, false).contains("暂无消息。"));
         assert!(serde_json::from_str::<ExportFormat>("\"pdf\"").is_err());
     }
     #[test]
@@ -415,7 +474,7 @@ mod tests {
                     file_path: None,
                 });
             }
-            let result = render_archive(s, format).unwrap();
+            let result = render_archive(s, format, true, false).unwrap();
             assert!(result.file.file_name.ends_with(".zip"));
             assert_eq!(result.message_count, 1);
             let mut zip = zip::ZipArchive::new(Cursor::new(result.file.data)).unwrap();
@@ -458,6 +517,102 @@ mod tests {
             data: Some(b"oops".to_vec()),
             file_path: None,
         });
-        assert!(render_archive(s, ExportFormat::Json).is_err());
+        assert!(render_archive(s, ExportFormat::Json, true, false).is_err());
+    }
+    #[test]
+    fn file_archives_keep_exact_bytes_separate_names_and_encoded_markdown_links() {
+        use std::io::Read;
+        let name = "中文 [a](b) #%.bin";
+        for format in [ExportFormat::Markdown, ExportFormat::Json] {
+            for include_images in [false, true] {
+                let mut s = snapshot();
+                let id = s.messages[0].id;
+                s.messages[0].parts = vec![
+                    TranscriptPart::File {
+                        name: name.into(),
+                        mime: "text/html".into(),
+                        byte_length: 4,
+                        data: Some(vec![0, 255, 128, 42]),
+                        file_path: None,
+                    },
+                    TranscriptPart::File {
+                        name: name.into(),
+                        mime: "application/octet-stream".into(),
+                        byte_length: 0,
+                        data: Some(vec![]),
+                        file_path: None,
+                    },
+                    TranscriptPart::File {
+                        name: "../legacy.bin".into(),
+                        mime: "application/octet-stream".into(),
+                        byte_length: 1,
+                        data: Some(vec![9]),
+                        file_path: None,
+                    },
+                ];
+                let mut image = Cursor::new(vec![]);
+                image::DynamicImage::new_rgb8(1, 1)
+                    .write_to(&mut image, image::ImageFormat::Png)
+                    .unwrap();
+                let image = image.into_inner();
+                s.messages[0].parts.push(TranscriptPart::Image {
+                    mime: Some("image/png".into()),
+                    byte_length: image.len(),
+                    data: include_images.then_some(image.clone()),
+                    file_path: None,
+                });
+                let archive = render_archive(s, format, include_images, true).unwrap();
+                let mut zip = zip::ZipArchive::new(Cursor::new(archive.file.data)).unwrap();
+                assert_eq!(zip.len(), if include_images { 5 } else { 4 });
+                let paths = [
+                    format!("files/{id}-0/{name}"),
+                    format!("files/{id}-1/{name}"),
+                    format!("files/{id}-2/attachment.bin"),
+                ];
+                for (path, expected) in paths.iter().zip([vec![0, 255, 128, 42], vec![], vec![9]]) {
+                    let mut bytes = vec![];
+                    let mut entry = zip.by_name(path).unwrap();
+                    assert!(entry.enclosed_name().is_some());
+                    entry.read_to_end(&mut bytes).unwrap();
+                    assert_eq!(bytes, expected);
+                }
+                if include_images {
+                    let mut bytes = vec![];
+                    zip.by_name(&format!("images/{id}-3.png"))
+                        .unwrap()
+                        .read_to_end(&mut bytes)
+                        .unwrap();
+                    assert_eq!(bytes, image);
+                }
+                let mut text = String::new();
+                zip.by_name(&format!("chat.{}", format.extension()))
+                    .unwrap()
+                    .read_to_string(&mut text)
+                    .unwrap();
+                match format {
+                    ExportFormat::Json => {
+                        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+                        assert_eq!(json["version"], 3);
+                        for (index, path) in paths.iter().enumerate() {
+                            assert_eq!(json["messages"][0]["parts"][index]["filePath"], *path);
+                            assert!(json["messages"][0]["parts"][index].get("data").is_none());
+                        }
+                        assert_eq!(json["messages"][0]["parts"][0]["name"], name);
+                    }
+                    ExportFormat::Markdown => {
+                        assert!(text.contains(&format!(
+                            "[{}]({})",
+                            heading(name),
+                            link_path(&paths[0])
+                        )));
+                        assert!(text.contains("%20%5Ba%5D%28b%29%20%23%25.bin"));
+                        assert!(!text.contains("[中文 [a](b)"));
+                        if !include_images {
+                            assert!(text.contains("图片未附带"));
+                        }
+                    }
+                }
+            }
+        }
     }
 }

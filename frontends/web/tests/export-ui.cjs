@@ -39,6 +39,13 @@ const all = n => !n || typeof n !== 'object' ? [] : [n, ...[n.props?.children].f
   assert.equal(archive.messageCount,225); assert.equal(archive.fileName,binary.name);
   assert.equal(requests.at(-1).url,'/api/social/conversations/chat/export?format=markdown&includeImages=true');
   assert.deepEqual(new Uint8Array(await blobs.at(-1).arrayBuffer()),binary.bytes);
+  for (const [includeImages, includeFiles, query] of [[false,true,'&includeFiles=true'],[true,true,'&includeImages=true&includeFiles=true']]) {
+    const result = await http.socialClient.exportConversation('chat','json',includeImages,includeFiles);
+    assert.equal(requests.at(-1).url,`/api/social/conversations/chat/export?format=json${query}`);
+    assert.equal(result.outcome,'downloaded');assert.equal(result.messageCount,225);assert.equal(result.fileName,binary.name);
+    assert.deepEqual(new Uint8Array(await blobs.at(-1).arrayBuffer()),binary.bytes);
+    assert.equal(links.at(-1).download,binary.name);assert.ok(links.at(-1).clicked);assert.equal(blobs.at(-1).type,'application/zip');
+  }
   const count = blobs.length; fail=true;
   await assert.rejects(http.socialClient.saveImage('message',2,'3'),/已退出该群/);
   await assert.rejects(http.socialClient.exportConversation('chat','json',true),/已退出该群/);
@@ -50,11 +57,12 @@ const all = n => !n || typeof n !== 'object' ? [] : [n, ...[n.props?.children].f
     useRef(initial) { const i = index++; return slots[i] ??= { current: initial } },
   };
   const exported = {}, jsx = (type, props) => ({ type, props });
-  const client = { exportConversation: (id, format, includeImages) => { calls.push({ id, format, includeImages }); return new Promise((resolve, reject) => { complete = { resolve, reject } }) } };
+  const client = { exportConversation: (id, format, includeImages, includeFiles) => { calls.push({ id, format, includeImages, includeFiles }); return new Promise((resolve, reject) => { complete = { resolve, reject } }) } };
   vm.runInNewContext(compile('ConversationExportPanel.tsx'), { exports: exported, Error, require: name => name === 'react' ? react : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx } : name === './client' ? { socialClient: client } : {} });
   const render = () => { index = 0; return all(exported.ConversationExportPanel({ conversationId: 'current-window' })) };
   const button = () => render().find(n => n.type === 'button');
   const status = () => render().find(n => n.props.role === 'status')?.props.children;
+  assert.deepEqual(render().filter(n=>n.type==='input').map(n=>n.props.checked),[false,false]);
   render().find(n => n.type === 'select').props.onChange({ target: { value: 'json' } });
   button().props.onClick(); button().props.onClick(); assert.equal(calls.length, 1);
   assert.ok(render().find(n => n.type === 'fieldset').props.disabled);
@@ -71,6 +79,16 @@ const all = n => !n || typeof n !== 'object' ? [] : [n, ...[n.props?.children].f
   render().find(n=>n.type==='input').props.onChange({target:{checked:true}});
   button().props.onClick(); assert.equal(calls.at(-1).includeImages,true);
   complete.resolve({outcome:'downloaded',messageCount:2,fileName:'chat.zip'}); await flush(); assert.match(status(),/chat.zip/);
+
+  const imageOption=()=>render().filter(n=>n.type==='input')[0];
+  const fileOption=()=>render().filter(n=>n.type==='input')[1];
+  imageOption().props.onChange({target:{checked:false}});fileOption().props.onChange({target:{checked:true}});
+  button().props.onClick();assert.equal(calls.at(-1).includeImages,false);assert.equal(calls.at(-1).includeFiles,true);
+  complete.reject(new Error('文件导出失败'));await flush();assert.equal(fileOption().props.checked,true);assert.equal(imageOption().props.checked,false);
+  const failedCall=calls.at(-1);button().props.onClick();assert.deepEqual(calls.at(-1),failedCall);
+  complete.resolve({outcome:'cancelled'});await flush();assert.equal(status(),'已取消导出');assert.equal(fileOption().props.checked,true);
+  imageOption().props.onChange({target:{checked:true}});button().props.onClick();assert.equal(calls.at(-1).includeImages,true);assert.equal(calls.at(-1).includeFiles,true);
+  complete.resolve({outcome:'downloaded',messageCount:2,fileName:'all.zip'});await flush();assert.match(status(),/all.zip/);
 
   slots.length=0; index=0; calls.length=0;
   client.saveImage=(...args)=>{ calls.push(args); return new Promise((resolve,reject)=>{ complete={resolve,reject} }) };

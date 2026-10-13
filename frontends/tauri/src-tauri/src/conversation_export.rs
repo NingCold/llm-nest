@@ -33,6 +33,7 @@ pub async fn social_export_conversation(
     id: ConversationId,
     format: ExportFormat,
     include_images: bool,
+    include_files: bool,
 ) -> Result<ExportResult, wire::ErrorBody> {
     let conversation = feature(state.clone())
         .await?
@@ -40,7 +41,7 @@ pub async fn social_export_conversation(
         .await
         .map_err(|e| e.wire())?;
     let mut name = std::path::PathBuf::from(export_file_name(&conversation.title, id, format));
-    if include_images {
+    if include_images || include_files {
         name.set_extension("zip");
     }
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -50,15 +51,15 @@ pub async fn social_export_conversation(
         .set_parent(&window)
         .set_title("导出聊天记录")
         .add_filter(
-            if include_images {
-                "ZIP（聊天记录与图片）"
+            if include_images || include_files {
+                "ZIP（聊天记录与附件）"
             } else {
                 match format {
                     ExportFormat::Markdown => "Markdown",
                     ExportFormat::Json => "JSON",
                 }
             },
-            &[if include_images {
+            &[if include_images || include_files {
                 "zip"
             } else {
                 format.extension()
@@ -74,9 +75,9 @@ pub async fn social_export_conversation(
     let path = destination.into_path().map_err(save_error)?;
     // Recheck the current operator's access after the dialog has closed.
     let social = feature(state).await?;
-    let (content, message_count) = if include_images {
+    let (content, message_count) = if include_images || include_files {
         let archive = social
-            .export_conversation_archive(id, format)
+            .export_conversation_archive(id, format, include_images, include_files)
             .await
             .map_err(|e| e.wire())?;
         (archive.file.data, archive.message_count)

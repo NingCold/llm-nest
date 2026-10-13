@@ -106,7 +106,7 @@ def main():
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--only-images', action='store_true', help='Run only the isolated image-message acceptance batch')
     parser.add_argument('--only-image-capabilities', action='store_true', help='Run only model image capability and dispatch checks')
-    parser.add_argument('--only-files', action='store_true', help='Run only generic file attachment checks')
+    parser.add_argument('--only-files', action='store_true', help='Run generic file send/download and archive export checks')
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix='llmn-social-acceptance-'))
     provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -205,7 +205,9 @@ def main():
         self_id = initial['selfId']
         if args.only_files:
             from social_file_acceptance import verify_files
+            from social_file_export_acceptance import verify_file_exports
             verify_files(api, contact, direct, group, history, wait_for, REQUESTS, stop, start, request)
+            verify_file_exports(api, contact, direct, group, request)
             print('Fixture:', work)
             return
         if args.only_image_capabilities:

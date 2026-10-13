@@ -2975,7 +2975,7 @@ async fn legacy_preserves_sources_ids_metadata_tools_and_checkpoint_without_repl
     assert_eq!(history[2].status, MessageStatus::Interrupted);
     let export = f
         .store
-        .conversation_transcript(f.human.id, c, false)
+        .conversation_transcript(f.human.id, c, false, false)
         .await
         .unwrap();
     assert!(export.legacy);

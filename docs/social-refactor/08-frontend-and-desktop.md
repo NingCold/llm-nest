@@ -93,9 +93,9 @@ Windows/Linux 关闭系统标题栏，社交页不再预留独立 56px 顶栏。
 
 ## 当前聊天导出
 
-聊天详情的“聊天”页提供“导出聊天记录”，默认 Markdown，可切换 JSON，勾选“包含图片”后保存为 ZIP，内含所选格式的记录与原图。私聊、群聊、归档及已导入历史均显示该入口；不依赖前端已加载记录。导出期间禁用操作，失败保留所选格式与携图选项并允许重试，切换窗口重置提示。Web 显示“已开始下载”，桌面在文件写入完成后显示“已保存”，取消单独提示。未勾选时的附件占位和不附带记忆/思考/内部设定的范围在入口说明。
+聊天详情的“聊天”页提供“导出聊天记录”，默认 Markdown，可切换 JSON；“包含图片”和“包含文件”默认均关闭，可分别选择，任一开启后保存为 ZIP，内含所选格式的记录与附件。私聊、群聊、归档及已导入历史均显示该入口；不依赖前端已加载记录。导出期间禁用操作，失败保留所选格式与两项附件选择并允许重试，切换窗口重置提示。Web 显示“已开始下载”，桌面在文件写入完成后显示“已保存”，取消单独提示。未选类型的附件占位和不附带记忆/思考/内部设定的范围在入口说明。
 
-组件为 `ConversationExportPanel` 与 `ImageSaveButton`，客户端 `exportConversation` / `saveImage` 根据宿主使用 HTTP 文件下载或 IPC 原生另存为；业务读取与格式化共用 SocialFeature。桌面不向 WebView 开放通用文件写入或 dialog 插件命令权限。详见[图片导出记录](image-message-export.md)。
+导出组件为 `ConversationExportPanel`；单个附件保存使用 `ImageSaveButton` / `FileSaveButton`。客户端 `exportConversation` / `saveImage` / `saveFile` 根据宿主使用 HTTP 文件下载或 IPC 原生另存为；业务读取与格式化共用 SocialFeature。桌面不向 WebView 开放通用文件写入或 dialog 插件命令权限。详见[文件导出记录](file-message-export.md)。
 
 ## 1. 信息结构
 

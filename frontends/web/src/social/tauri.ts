@@ -17,7 +17,7 @@ export const socialClient: SocialClient = {
   messageImage: (id, index, revision) => command("social_message_image", { id, index, revision }),
   saveFile: (id, index, revision, account) => command("social_save_file", { id, index, revision, account: account ?? null }),
   saveImage: (id, index, revision, account) => command("social_save_image", { id, index, revision, account: account ?? null }),
-  exportConversation: (id, format, includeImages = false) => command("social_export_conversation", { id, format, includeImages }),
+  exportConversation: (id, format, includeImages = false, includeFiles = false) => command("social_export_conversation", { id, format, includeImages, includeFiles }),
   updateConversationList: (id, input) => command("social_update_conversation_list", { id, input }),
   messageContext: id => command("social_message_context", { id }),
   searchMessages: input => command("social_search_messages", { input }),

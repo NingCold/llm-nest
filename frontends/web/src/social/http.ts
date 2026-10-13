@@ -27,10 +27,10 @@ export const socialClient: SocialClient = {
   messageImage: (id, index, revision) => request(`/messages/${id}/images/${index}?revision=${encodeURIComponent(revision)}`),
   saveFile: async (id, index, revision, account) => download(await responseFor(`${account ? `/ai-accounts/${account}/view` : ""}/messages/${id}/files/${index}/download?revision=${encodeURIComponent(revision)}`)),
   saveImage: async (id, index, revision, account) => download(await responseFor(`${account ? `/ai-accounts/${account}/view` : ""}/messages/${id}/images/${index}/download?revision=${encodeURIComponent(revision)}`)),
-  exportConversation: async (id, format, includeImages = false) => {
+  exportConversation: async (id, format, includeImages = false, includeFiles = false) => {
     const path = `/conversations/${id}/export?format=${format}`
-    if (!includeImages) return downloadExport(await request<ConversationExport>(path))
-    const response = await responseFor(`${path}&includeImages=true`)
+    if (!includeImages && !includeFiles) return downloadExport(await request<ConversationExport>(path))
+    const response = await responseFor(`${path}${includeImages ? "&includeImages=true" : ""}${includeFiles ? "&includeFiles=true" : ""}`)
     const result = await download(response)
     return { ...result, messageCount: Number(response.headers.get("X-LLMN-Message-Count")) }
   },

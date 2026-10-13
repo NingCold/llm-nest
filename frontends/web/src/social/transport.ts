@@ -6,7 +6,7 @@ export interface SocialClient {
   messageImage(id: string, index: number, revision: string): Promise<import("./live-types").ImageInput>
   saveFile(id: string, index: number, revision: string, account?: string): Promise<import("./export").ImageSaveResult>
   saveImage(id: string, index: number, revision: string, account?: string): Promise<import("./export").ImageSaveResult>
-  exportConversation(id: string, format: import("./export").ExportFormat, includeImages?: boolean): Promise<import("./export").ExportResult>
+  exportConversation(id: string, format: import("./export").ExportFormat, includeImages?: boolean, includeFiles?: boolean): Promise<import("./export").ExportResult>
   updateConversationList(id: string, input: VersionedCommand & { action: import("./live-types").ConversationListAction }): Promise<import("./live-types").ConversationListState>
   searchMessages(input: import("./live-types").SearchMessages): Promise<import("./live-types").MessageSearchPage>
   messageContext(id: string): Promise<import("./live-types").MessageContext>

@@ -18,7 +18,7 @@ python scripts/social_acceptance.py
 
 检查模型图片能力时，运行 `python scripts/social_acceptance.py --only-image-capabilities`。它会检查人工设置和恢复跟随目录、未知能力的尝试、历史图片与群引用，以及群内不同 AI 的独立回复。
 
-检查普通文件收发时，运行 `python scripts/social_acceptance.py --only-files`。它会发送文件、重开聊天、下载并核对原始内容，也会检查权限、撤回、大小限制和 AI 实际收到的文件说明。
+检查普通文件收发和导出时，运行 `python scripts/social_acceptance.py --only-files`。它会发送文件、重开聊天、下载并核对原始内容，也会检查权限、撤回、大小限制和 AI 实际收到的文件说明；导出检查包括附件选项组合、同名文件、中文链接和 ZIP 中的原文件。
 
 想打开测试页面，可以先构建界面，再运行：
 

@@ -39,7 +39,7 @@ HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init �
 | 接话计划 | GET /conversations/{id}/plans | social_plans |
 | 接话规则 | POST /conversations/{id}/participation | social_update_participation |
 | 分页历史/发送文字与附件 | GET/POST /conversations/{id}/messages | social_messages / social_send |
-| 单窗口导出（可携图） | GET /conversations/{id}/export?format=markdown\|json&includeImages=true\|false | social_export_conversation |
+| 单窗口导出（可携附件） | GET /conversations/{id}/export?format=markdown\|json&includeImages=true\|false&includeFiles=true\|false | social_export_conversation |
 | 个人已读/未读/置顶 | POST /conversations/{id}/list-state | social_update_conversation_list |
 | 正文搜索 | GET /messages/search | social_search_messages |
 | 原消息与前后记录 | GET /messages/{id}/context | social_message_context |
@@ -75,7 +75,7 @@ Message.images 返回 `{index,mime,byteLength}` 数组，Message.files 返回 `{
 
 普通文件下载统一返回 application/octet-stream、Content-Disposition: attachment、UTF-8 文件名、no-store 与 nosniff；不内联页面内容。IPC `social_save_file` 参数与 social_save_image 相同，复用原生对话框后的权限复核与原子文件写入，返回 cancelled 或 saved/fileName；Web 返回 downloaded/fileName。文件输入为 name/mime/data，最多 4 个、单个 10 MiB、合计 20 MiB，允许零字节；名称和 MIME 规则见[文件记录](file-messages.md)。
 
-单窗口导出接受窗口 ID、`format`（markdown/json）和 `includeImages`（HTTP 省略时为 false，IPC 由客户端明确传入），不接受操作者、文件正文或目标路径。不携图时 HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包；携图时返回 ZIP 二进制，`Content-Disposition` 使用 UTF-8 filename*，`X-LLMN-Message-Count` 给出完整消息数。两者均设置 `Cache-Control: no-store`；ZIP 另设 `X-Content-Type-Options: nosniff`。Web 下载对应 Blob。IPC 的[保存适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，不产生持久事件。携图结构见[图片导出记录](image-message-export.md)。
+单窗口导出接受窗口 ID、`format`（markdown/json）、独立的 `includeImages` / `includeFiles`（HTTP 省略时均为 false，IPC 由客户端明确传入），不接受操作者、文件正文或目标路径。两个附件选项均关闭时 HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包；任一开启时返回 ZIP 二进制，`Content-Disposition` 使用 UTF-8 filename*，`X-LLMN-Message-Count` 给出完整消息数。两者均设置 `Cache-Control: no-store`；ZIP 另设 `X-Content-Type-Options: nosniff`。Web 下载对应 Blob。IPC 的[保存适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，不产生持久事件。记录 JSON 的版本为无附件 v1、仅携图 v2、包含文件选项 v3，filePath 为 ZIP 中的实际相对路径；结构见[文件导出记录](file-message-export.md)。
 
 保存原图走独立 download 路由，返回原始二进制、实际图片 MIME、UTF-8 文件名、no-store 和 nosniff；重新复核消息版本和对应读取权限。IPC `social_save_image` 接受 `{id,index,revision,account}`，account 仅指定需复核管理员权限的只读账号视角，不替换实际操作者。保存位置只能来自原生对话框，关闭对话框后重新读取并校验；取消/成功结果分别为 `{outcome:"cancelled"}` / `{outcome:"saved",fileName}`。Web 使用 `{outcome:"downloaded",fileName}`，不声称已写入磁盘。
 

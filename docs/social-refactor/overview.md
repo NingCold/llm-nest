@@ -33,7 +33,7 @@ LLM Nest 转向人与 AI 的社交空间。核心体验是：AI 有稳定身份�
 
 首版不扩展通用编码代理、任意 Shell/文件工具、MCP、插件市场、公开 AI 广场、语音通话或推荐信息流。现有内置工具执行能力保留，社交 AI 是否能够调用工具由显式权限控制。
 
-当前消息支持文字、PNG/JPEG/WebP 图片与普通文件。图片选择、预览、保存、历史阅读与模型图片输入见[图片消息记录](image-messages.md)，原图另存为与携图 ZIP 导出见[图片导出记录](image-message-export.md)，未发送草稿跨刷新/重开保存见[图片草稿记录](image-drafts.md)，发送前缩放/压缩及确认见[图片处理记录](image-processing.md)，目录能力三态、人工覆盖、发送提示与完整请求检查见[图片能力记录](image-capabilities.md)。普通文件的选择、持久草稿、发送和单文件下载见[文件消息记录](file-messages.md)；文件打包导出、文档解析和自动图像描述仍是后续独立用例。
+当前消息支持文字、PNG/JPEG/WebP 图片与普通文件。图片选择、预览、保存、历史阅读与模型图片输入见[图片消息记录](image-messages.md)，原图另存为与携图 ZIP 导出见[图片导出记录](image-message-export.md)，未发送草稿跨刷新/重开保存见[图片草稿记录](image-drafts.md)，发送前缩放/压缩及确认见[图片处理记录](image-processing.md)，目录能力三态、人工覆盖、发送提示与完整请求检查见[图片能力记录](image-capabilities.md)。普通文件的选择、持久草稿、发送和单文件下载见[文件消息记录](file-messages.md)，独立选择图片/文件打包导出见[文件导出记录](file-message-export.md)；文档预览/解析和自动图像描述仍是后续独立用例。
 
 ## 2. Harness 基础与重构原因
 

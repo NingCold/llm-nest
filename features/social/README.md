@@ -15,7 +15,7 @@
 | 已读、置顶和查找聊天记录 | [message_list.rs](src/message_list.rs) |
 | 接收、读取与保存聊天原图 | [images.rs](src/images.rs) |
 | 接收普通文件、保存原文件和说明文件信息 | [files.rs](src/files.rs) |
-| 导出一个窗口的聊天记录，可附带原图 | [export.rs](src/export.rs) |
+| 导出一个窗口的聊天记录，可附带图片和原文件 | [export.rs](src/export.rs) |
 | 编辑消息、暂停和结束交谈 | [controls.rs](src/controls.rs) |
 | 为 AI 准备对话背景 | [consciousness.rs](src/consciousness.rs) |
 | 保存记忆、整理摘要、接续群话题 | [memory.rs](src/memory.rs)、[summary.rs](src/summary.rs)、[reference.rs](src/reference.rs) |

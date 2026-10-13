@@ -21,14 +21,19 @@ struct ExportQuery {
     format: social_feature::ExportFormat,
     #[serde(default, rename = "includeImages")]
     include_images: bool,
+    #[serde(default, rename = "includeFiles")]
+    include_files: bool,
 }
 async fn export_conversation(
     State(s): State<Arc<AppState>>,
     ApiPath(id): ApiPath<ConversationId>,
     ApiQuery(q): ApiQuery<ExportQuery>,
 ) -> std::result::Result<Response, ApiError> {
-    if q.include_images {
-        let archive = s.social.export_conversation_archive(id, q.format).await?;
+    if q.include_images || q.include_files {
+        let archive = s
+            .social
+            .export_conversation_archive(id, q.format, q.include_images, q.include_files)
+            .await?;
         let count = archive.message_count.to_string();
         let mut response = download_response(archive.file);
         response.headers_mut().insert(

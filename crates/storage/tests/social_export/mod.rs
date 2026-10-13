@@ -22,7 +22,7 @@ async fn full_history_export_is_ordered_isolated_and_read_only() {
     let counts = f.counts();
     let snapshot = f
         .store
-        .conversation_transcript(f.human.id, c.id, false)
+        .conversation_transcript(f.human.id, c.id, false, false)
         .await
         .unwrap();
     assert_eq!(snapshot.title, a.display_name);
@@ -68,7 +68,7 @@ async fn full_history_export_is_ordered_isolated_and_read_only() {
 }
 
 #[tokio::test]
-async fn image_exports_capture_bytes_and_revision_together_and_withdrawal_removes_them() {
+async fn attachment_exports_capture_bytes_and_revision_together_and_withdrawal_removes_them() {
     let f = Fixture::new().await;
     let a = f.ai("A").await;
     let c = f.direct(a.id).await;
@@ -87,6 +87,16 @@ async fn image_exports_capture_bytes_and_revision_together_and_withdrawal_remove
                         mime: Some("image/png".into()),
                         data: original.clone(),
                     },
+                    SocialContent::File {
+                        name: Some("中文.bin".into()),
+                        mime: "application/octet-stream".into(),
+                        data: vec![0, 255, 128],
+                    },
+                    SocialContent::File {
+                        name: None,
+                        mime: "application/octet-stream".into(),
+                        data: vec![],
+                    },
                 ]),
                 reply_to: None,
                 expected_revision: None,
@@ -96,22 +106,60 @@ async fn image_exports_capture_bytes_and_revision_together_and_withdrawal_remove
         .unwrap();
     let snapshot = f
         .store
-        .conversation_transcript(f.human.id, c.id, true)
+        .conversation_transcript(f.human.id, c.id, true, true)
         .await
         .unwrap();
     assert_eq!(snapshot.messages[0].revision, m.revision);
     assert!(
         matches!(&snapshot.messages[0].parts[1], TranscriptPart::Image { data: Some(bytes), .. } if bytes == &original)
     );
+    assert!(
+        matches!(&snapshot.messages[0].parts[2], TranscriptPart::File { name, data: Some(bytes), .. } if name == "中文.bin" && bytes == &vec![0,255,128])
+    );
+    assert!(
+        matches!(&snapshot.messages[0].parts[3], TranscriptPart::File { name, data: Some(bytes), .. } if name == "attachment.bin" && bytes.is_empty())
+    );
+    let files_only = f
+        .store
+        .conversation_transcript(f.human.id, c.id, false, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        &files_only.messages[0].parts[1],
+        TranscriptPart::Image { data: None, .. }
+    ));
+    assert!(matches!(
+        &files_only.messages[0].parts[2],
+        TranscriptPart::File { data: Some(_), .. }
+    ));
+    let images_only = f
+        .store
+        .conversation_transcript(f.human.id, c.id, true, false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        &images_only.messages[0].parts[2],
+        TranscriptPart::File { data: None, .. }
+    ));
     let plain = f
         .store
-        .conversation_transcript(f.human.id, c.id, false)
+        .conversation_transcript(f.human.id, c.id, false, false)
         .await
         .unwrap();
     assert!(matches!(
         plain.messages[0].parts[1],
         TranscriptPart::Image { data: None, .. }
     ));
+    assert!(matches!(
+        &plain.messages[0].parts[2],
+        TranscriptPart::File {
+            data: None,
+            file_path: None,
+            ..
+        }
+    ));
+    let serialized = serde_json::to_string(&files_only).unwrap();
+    assert!(!serialized.contains("\"data\""));
     let current = f
         .store
         .revise_message(
@@ -126,12 +174,15 @@ async fn image_exports_capture_bytes_and_revision_together_and_withdrawal_remove
         .unwrap();
     let revised = f
         .store
-        .conversation_transcript(f.human.id, c.id, true)
+        .conversation_transcript(f.human.id, c.id, true, true)
         .await
         .unwrap();
     assert_eq!(revised.messages[0].revision, current.revision);
     assert!(
         matches!(&revised.messages[0].parts[1], TranscriptPart::Image { data: Some(bytes), .. } if bytes == &original)
+    );
+    assert!(
+        matches!(&revised.messages[0].parts[2], TranscriptPart::File { data: Some(bytes), .. } if bytes == &vec![0,255,128])
     );
     assert!(
         matches!(&snapshot.messages[0].parts[0], TranscriptPart::Text { text } if text == "caption")
@@ -148,7 +199,7 @@ async fn image_exports_capture_bytes_and_revision_together_and_withdrawal_remove
         .unwrap();
     let withdrawn = f
         .store
-        .conversation_transcript(f.human.id, c.id, true)
+        .conversation_transcript(f.human.id, c.id, true, true)
         .await
         .unwrap();
     assert!(withdrawn.messages[0].parts.is_empty());
@@ -162,7 +213,7 @@ async fn archived_blocked_and_empty_conversations_remain_exportable() {
     let c = f.direct(a.id).await;
     assert!(
         f.store
-            .conversation_transcript(f.human.id, c.id, false)
+            .conversation_transcript(f.human.id, c.id, false, false)
             .await
             .unwrap()
             .messages
@@ -204,7 +255,7 @@ async fn archived_blocked_and_empty_conversations_remain_exportable() {
         .unwrap();
     assert_eq!(
         f.store
-            .conversation_transcript(f.human.id, c.id, false)
+            .conversation_transcript(f.human.id, c.id, false, false)
             .await
             .unwrap()
             .messages
@@ -233,7 +284,9 @@ async fn export_requires_current_membership_even_for_account_administrators() {
         .await
         .unwrap();
     assert!(matches!(
-        f.store.conversation_transcript(b.id, direct.id, true).await,
+        f.store
+            .conversation_transcript(b.id, direct.id, true, true)
+            .await,
         Err(SocialStorageError::Forbidden(_))
     ));
     let c = f.group(vec![a.id]).await;
@@ -255,7 +308,7 @@ async fn export_requires_current_membership_even_for_account_administrators() {
         match action {
             MembershipAction::Add => assert_eq!(
                 f.store
-                    .conversation_transcript(b.id, c.id, true)
+                    .conversation_transcript(b.id, c.id, true, true)
                     .await
                     .unwrap()
                     .messages[0]
@@ -263,7 +316,9 @@ async fn export_requires_current_membership_even_for_account_administrators() {
                 old.id
             ),
             MembershipAction::Remove => assert!(matches!(
-                f.store.conversation_transcript(b.id, c.id, true).await,
+                f.store
+                    .conversation_transcript(b.id, c.id, true, true)
+                    .await,
                 Err(SocialStorageError::Forbidden(_))
             )),
         }
@@ -332,7 +387,7 @@ async fn snapshots_keep_current_revisions_statuses_and_attachment_placeholders()
         .unwrap();
     let snapshot = f
         .store
-        .conversation_transcript(f.human.id, c.id, false)
+        .conversation_transcript(f.human.id, c.id, false, false)
         .await
         .unwrap();
     assert_eq!(snapshot.messages[0].revision, revised.revision);
@@ -383,7 +438,7 @@ async fn snapshots_keep_current_revisions_statuses_and_attachment_placeholders()
     );
     assert_eq!(
         f.store
-            .conversation_transcript(f.human.id, c.id, false)
+            .conversation_transcript(f.human.id, c.id, false, false)
             .await
             .unwrap()
             .messages[2]
@@ -423,7 +478,7 @@ async fn export_keeps_reference_ids_without_expanding_other_windows() {
         .unwrap();
     let exported = f
         .store
-        .conversation_transcript(f.human.id, c.id, false)
+        .conversation_transcript(f.human.id, c.id, false, false)
         .await
         .unwrap();
     assert_eq!(

@@ -15,4 +15,4 @@
 | [web-server](web-server/README.md) | 让浏览器访问本地应用 |
 | [tools](tools/README.md) | 执行工具的基础代码，供后续工具功能使用 |
 
-账号和聊天的具体操作在 [features/social](../features/social/README.md)。各模块 README 提供阅读入口，详细设计可从[设计文档](../docs/social-refactor/README.md)查找。
+账号和聊天的具体操作在 [features/social](../features/social/README.md)。各模块 README 提供阅读入口，详细设计可从[设计文档](../docs/design/README.md)查找。

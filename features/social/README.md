@@ -1,6 +1,6 @@
 # social · 聊天功能
 
-[应用功能](../README.md) · [设计与计划](../../docs/social-refactor/README.md)
+[应用功能](../README.md) · [设计说明](../../docs/design/README.md)
 
 从创建一位 AI，到发出消息、收到回复，再到记住共同经历，主要操作都在这里完成。浏览器和桌面调用的是同一套功能。
 

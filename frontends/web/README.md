@@ -48,4 +48,4 @@ pnpm --dir frontends/web test
 pnpm --dir frontends/web build
 ```
 
-构建结果保存在本目录的 `dist`，由 [web-server](../../crates/web-server/README.md) 提供给浏览器。使用临时聊天数据检查界面的方法见[开发指南](../../docs/development.md#运行入口)。
+构建结果保存在本目录的 `dist`，由 [web-server](../../crates/web-server/README.md) 提供给浏览器。使用临时聊天数据检查界面的方法见[开发指南](../../docs/development.md#从源码运行)。

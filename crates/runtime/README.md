@@ -8,7 +8,7 @@
 
 模型图片能力默认跟随目录，需要修正时由 [image_input.rs](src/image_input.rs) 保存；重新同步目录后仍保留人工选择。
 
-桌面和 Web 服务会调用这里的代码。详细说明见[运行与配置](../../docs/social-refactor/09-runtime-and-configuration.md)。
+桌面和 Web 服务会调用这里的代码。详细说明见[运行与配置](../../docs/design/runtime.md)。
 
 在仓库根目录运行测试：
 

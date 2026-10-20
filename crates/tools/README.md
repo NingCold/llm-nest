@@ -12,4 +12,4 @@
 cargo test -p tools --locked
 ```
 
-工具授权列在[候选扩展](../../docs/social-refactor/pending.md#候选扩展)中，后续根据具体使用需求安排。
+工具授权列在[未排期候选](../../docs/project/backlog.md#未排期候选)中，后续根据具体使用需求安排。

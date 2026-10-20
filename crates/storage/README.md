@@ -8,7 +8,7 @@
 
 [social/transcript.rs](src/social/transcript.rs) 为聊天导出读取一个窗口的完整记录，需要时一并读取原图。
 
-备份前关闭应用，再复制完整数据目录即可。目录位置可以在桌面应用的设置里查看；保存方式和历史导入的细节见[存储与迁移](../../docs/social-refactor/06-storage-and-migration.md)。
+备份前关闭应用，再复制完整数据目录即可。目录位置可以在桌面应用的设置里查看；保存方式和历史导入的细节见[存储与迁移](../../docs/design/storage.md)。
 
 在仓库根目录运行测试：
 

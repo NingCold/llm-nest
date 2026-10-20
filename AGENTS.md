@@ -1,6 +1,6 @@
 # AGENTS.md — LLM-Nest
 
-本文件面向修改仓库的开发者和编码代理，记录当前架构、必须维持的行为和验证方式。用户入门见 [README](README.md)，环境搭建见 [开发指南](docs/development.md)，历史验收见 [文档索引](docs/README.md)。
+本文件面向修改仓库的开发者和编码代理，记录当前架构、必须维持的行为和验证方式。用户入门见 [README](README.md)，环境搭建见 [开发指南](docs/development.md)，平台验证见 [验证指南](docs/validation/README.md)。
 
 ## 项目定位与当前范围
 
@@ -8,11 +8,11 @@ LLM Nest 是本地人与 AI 的社交空间，共用 Rust 运行时与一套 Rea
 
 已实现独立账号、私聊/群聊、意识系统、参与节奏与一次性约定联系、协议路由、SQLite 持久化及桌面/Web 设置。工具 worker 是保留的底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或界面按钮声称功能已经可用。
 
-首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/social-refactor/03-consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
+首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
 
 ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。ContactEntry 是按 owner 的有向联系人条目，listed 与 blocked 独立，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，v9 增加跨窗口引用依赖索引，v10 增加接话规则/状态/每日额度，v11 增加约定联系设置与意图、计划的独立触发来源，v12 增加消息完成顺序和个人已读/未读/置顶状态并替换闲置 read_positions，v13 增加个人屏蔽状态，不改写旧迁移。
 
-当前能力与剩余范围分别见 [已完成](docs/social-refactor/completed.md) / [尚未完成](docs/social-refactor/pending.md)，实施顺序见 [TODO](docs/social-refactor/TODO.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；测试使用独立临时数据和模拟 provider 驱动同一真实界面。本文维护修改约束，不重复维护各批测试数量。
+当前能力见 [已完成](docs/project/completed.md)，任务顺序见 [当前安排](docs/project/current.md)，剩余范围见 [待办与候选](docs/project/backlog.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；测试使用独立临时数据和模拟 provider 驱动同一真实界面。本文维护修改约束，不重复维护各批测试数量。
 
 ## 工作前先确认
 
@@ -23,6 +23,7 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 - 正常验证使用独立临时配置/数据和模拟 provider。真实 API 验收会产生费用，仅在已有明确授权时执行。
 - `config/llmn.toml`、`.env`、用户会话、API Key 不得提交、打包、上传到 CI 或打印到日志。保留环境变量引用，不把它替换为明文。
 - 图标的唯一编辑源是 `assets/branding/app-icon.svg`；不要单独修改某一个派生尺寸。
+- 已授权的操作若因工具或权限限制无法执行，可脚本化的部分应提供脚本和运行方法交给用户；说明影响范围，能预览的先验证预览，不把未执行写成完成。
 
 ## 模型分工约定
 
@@ -62,7 +63,7 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 
 ## 架构边界
 
-社交重构遵守总纲中的 [新架构优先与兼容边界](docs/social-refactor/overview.md#新架构优先与兼容边界)：旧代码、配置格式与已完成的 M0 接口都不能成为新领域设计的限制。可以重写 Runtime 资源注入、聊天用例、存储接口和 HTTP/IPC；保护历史与迁移路径，兼容只在边界提供，不要求永久保留旧实现或全部旧接口。不得把 Session 直接当作 Conversation、用全局模型配置承载 AI 身份，或用旧的一问一答生命周期约束群聊与独立 AI 运行。
+社交重构遵守总纲中的 [新架构优先与兼容边界](docs/design/overview.md#新架构优先与兼容边界)：旧代码、配置格式与已完成的 M0 接口都不能成为新领域设计的限制。可以重写 Runtime 资源注入、聊天用例、存储接口和 HTTP/IPC；保护历史与迁移路径，兼容只在边界提供，不要求永久保留旧实现或全部旧接口。不得把 Session 直接当作 Conversation、用全局模型配置承载 AI 身份，或用旧的一问一答生命周期约束群聊与独立 AI 运行。
 
 旧产品入口已完全退役，不再为旧会话接口保留双轨运行。兼容只用于历史数据的读取/导入和 SQLite 顺序迁移；不改写旧迁移、不删除用户数据。
 
@@ -152,7 +153,7 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。社交保存与 AI 执行可用性分开。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
-- 设置路由为 `#/settings/models|appearance|config|about`。Web/Tauri 采用消息/通讯录及各自详情路由，详见 [界面说明](docs/social-refactor/08-frontend-and-desktop.md)。切换保留输入和设置表单。
+- 设置路由为 `#/settings/models|appearance|config|about`。Web/Tauri 采用消息/通讯录及各自详情路由，详见 [界面说明](docs/design/frontend.md)。切换保留输入和设置表单。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
 - Tauri 公共与 Windows 窗口配置均关闭原生文件拖放拦截（dragDropEnabled=false），由共用 Web File 接收图片拖放，不增加任意路径读取 IPC。
 - 无标题栏界面在侧栏空白与页面头部使用 Tauri 原生拖动区域；`deep` 区域排除交互元素，搜索容器显式禁用。空页面只拖动自身空白，聊天/账号正文保留选字；不要用覆盖内容的拖动层扩大命中范围。双击最大化不能替代连续拖动验收。
@@ -194,11 +195,11 @@ python scripts/social_acceptance.py
 - **Feature**：在 features 下实现生命周期并暴露业务方法；通过 FeatureContext 获得运行时能力，事件放到 events。
 - **工具**：先明确权限、副作用、超时和进程边界，再注册能力。不得把“支持工具调用”写成“支持任意安全插件”。
 - **GUI 字段**：从持久化/Runtime 契约开始，同步 HTTP、IPC、前端 DTO、保存失败行为与历史恢复。
-- **文档**：README 面向人阅读：总 README 介绍应用与使用方法，各模块 README 介绍用途、运行方式和阅读入口；使用自然、简洁的表达，少用术语，不写开发日志、架构规则或防御性清单。架构设计放专门文档，实施和验收放历史记录；AGENTS 维护修改约束。每批工作完成后整理已完成/正在推进/尚未完成与 TODO，按实际变更同步当前架构、接口和验证记录，合并冗余信息；历史验收保留当时的范围，不改写成当前能力。直接修订当前规则，避免继续追加互相矛盾的“以此节为准”。最终汇报必须说明本批完成内容、当前里程碑与业务线、该线剩余范围和下一批具体工作，不只报告文件或提交。
+- **文档**：根 README 介绍应用、主要能力和开始方法；详细操作放 `docs/usage.md`，各模块 README 介绍用途、运行方式和阅读入口。使用自然、简洁的表达，少用术语，不写开发日志、架构规则或防御性清单。当前设计放 `docs/design`，已完成/当前安排/待办与候选分别维护在 `docs/project`，检查方法与平台结果放 `docs/validation`，打包专项放 `docs/packaging`；AGENTS 维护修改约束。每批工作完成后更新相关说明与进度，不默认新建批次报告或再开一份 TODO。过时过程记录从目录移除，Git 保留历史；保留的验收结论注明日期与适用版本，不改写成新版本已通过。直接修订当前规则，合并重复内容。文件名使用简短英文小写连字符，README 除外，不再用日期或阶段编号命名常规文档。最终汇报说明本批结果、当前阶段、剩余范围和下一步。
 
 ## 发布与证据
 
 - 当前经过用户确认的 Windows 窗口基线是 `91f9a9b`，包含高速缩放、圆角和上下贴边细边框；2026-09-13 用户确认边框验收通过。
-- Linux 的编译/打包结果和 GUI 验收必须分别记录，见 [本轮记录](docs/linux-acceptance-2026-09-13.md)。
+- Linux 的编译/打包结果和 GUI 验收必须分别记录，见 [Linux 验证状态](docs/validation/linux.md)。
 - 发布应校验 Cargo/Tauri 版本与 tag 一致，产物包含校验和。默认流程生成草稿 Release，由维护者检查后公开。
 - 不提交私有配置、测试目录或个人远程主机地址。源码发布前需要明确项目许可证；不要代替维护者虚构许可证、签名或支持承诺。

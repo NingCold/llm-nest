@@ -12,4 +12,4 @@
 cargo test -p events --locked
 ```
 
-完整的通知说明见[接口与事件](../../docs/social-refactor/07-api-and-events.md)。
+完整的通知说明见[接口与事件](../../docs/design/api.md)。

@@ -6,4 +6,4 @@
 
 安装时显示的应用名是 **LLM Nest**。内部安装目录和升级标识沿用已有值，让新安装包能找到用户之前安装的程序。
 
-模板来自 Tauri 2.11.4，随附许可见 [LICENSE.tauri](LICENSE.tauri)。模板调整的细节和历史检查结果在[安装标识说明](../../../../../docs/windows-installer-branding.md)，构建命令在[发布指南](../../../../../docs/releases.md)。
+模板来自 Tauri 2.11.4，随附许可见 [LICENSE.tauri](LICENSE.tauri)。模板维护的说明在[安装标识说明](../../../../../docs/packaging/windows-branding.md)，构建命令在[发布指南](../../../../../docs/releases.md)。

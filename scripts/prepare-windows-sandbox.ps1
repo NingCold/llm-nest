@@ -16,7 +16,7 @@ $output = Join-Path $projectRoot ('target/sandbox-acceptance-' + [guid]::NewGuid
 $payload = Join-Path $output 'package'
 New-Item -ItemType Directory -Path $payload | Out-Null
 Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path $payload $installer.Name)
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/windows-clean-install.md') -Destination (Join-Path $payload 'CHECKLIST.md')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/packaging/windows-clean-install.md') -Destination (Join-Path $payload 'CHECKLIST.md')
 $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
 Set-Content -LiteralPath (Join-Path $payload 'SHA256.txt') -Value ($hash + '  ' + $installer.Name) -Encoding UTF8
 $escapedPath = [System.Security.SecurityElement]::Escape($payload)

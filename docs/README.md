@@ -2,18 +2,25 @@
 
 [返回项目首页](../README.md)
 
-如果你是第一次使用，先在应用里添加模型服务，再创建一位 AI，就可以开始聊天了。这里可以找到配置说明、开发步骤和后续计划。
+使用方法、设计说明和项目进度分别放在下面几个入口。第一次使用，从使用指南开始即可。
 
 ## 按你想做的事查找
 
 | 想做什么 | 从哪里开始 |
 | --- | --- |
+| 私聊、群聊、发图片和文件、管理记忆、保存数据 | [使用指南](usage.md) |
 | 连接模型服务或本机 Ollama | [模型配置](configuration.md) |
 | 从源码运行、修改界面或检查改动 | [开发指南](development.md) |
 | 找到某项功能对应的代码 | [界面](../frontends/README.md) · [聊天功能](../features/README.md) · [共用模块](../crates/README.md) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |
-| 理解账号、聊天和意识系统的设计 | [设计与计划](social-refactor/README.md) |
-| 了解接下来准备做什么 | [近期路线](social-refactor/TODO.md) · [当前任务](social-refactor/in-progress.md) · [候选扩展](social-refactor/pending.md) |
-| 查阅某次修改和测试结果 | [历史记录](history.md) |
+| 理解账号、聊天和意识系统的设计 | [设计说明](design/README.md) |
+| 了解已做完什么、现在做什么、以后可能做什么 | [已完成](project/completed.md) · [当前安排](project/current.md) · [待办与候选](project/backlog.md) |
+| 检查功能，了解 Windows 和 Linux 的验证情况 | [验证指南](validation/README.md) |
 
 参与代码修改时，也请阅读 [AGENTS.md](../AGENTS.md) 中的项目约定。
+
+## 文档怎样维护
+
+使用指南写操作方法，设计说明写当前规则，项目进度写安排，验证文档写已检查的环境和仍缺少的检查。一个话题只维护一份主要说明，其他地方用链接引用。
+
+完成一批工作后，更新对应说明和进度；有新的验证结果时，更新相应平台记录。无需为每个小改动新建一篇报告。已经过时的过程记录从目录中移除，需要追溯时查 Git 历史。

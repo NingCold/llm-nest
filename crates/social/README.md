@@ -9,7 +9,7 @@
 - [consciousness.rs](src/consciousness.rs)：记忆、摘要和它们引用的内容。
 - [participation.rs](src/participation.rs) 与 [contact_intent.rs](src/contact_intent.rs)：接话规则和约定联系。
 
-功能操作由 [features/social](../../features/social/README.md) 完成。设计背后的想法见[设计与计划](../../docs/social-refactor/README.md)。
+功能操作由 [features/social](../../features/social/README.md) 完成。设计背后的想法见[设计说明](../../docs/design/README.md)。
 
 在仓库根目录运行测试：
 

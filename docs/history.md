@@ -8,6 +8,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
+| [Windows 本机程序更新（2026-10-20）](windows-local-update-2026-10-20.md) | release EXE 更新现有程序，仓库外备份、数据升级核对及原快捷方式启动；不运行安装器 |
 | [Windows 桌面体验验收（2026-10-20）](social-refactor/windows-desktop-experience-2026-10-20.md) | 当前 Tauri EXE 的附件选择、草稿关闭恢复、图片处理、原生保存与覆盖失败、中断回复恢复；Linux 与安装任务暂缓 |
 | [首版本地社交体验收尾](social-refactor/first-release-experience.md) | 完整流程复验、五类实际问题修复、浏览器附件草稿重启与实际 ZIP 下载；平台验收仍独立保留 |
 | [通用文件附件第二批](social-refactor/file-message-export.md) | 图片/文件独立导出选项、同一快照原字节、重名与空文件、Markdown 链接和 JSON v3、编译产物清理 |

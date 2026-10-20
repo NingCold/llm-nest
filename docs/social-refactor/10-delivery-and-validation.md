@@ -76,7 +76,7 @@ M1 同步修订 README、AGENTS 的当前定位、代码地图和无模型发送
 
 已按用户约定移除旧 ChatFeature、SessionManager、旧 HTTP/chat-event、demo、CLI/TUI 及并行浏览器模拟产品。Runtime 只服务社交存储与模型配置，旧格式只保留读取/导入。设置可选择历史来源导入只读窗口，原文件不改写；详细范围见 [退役记录](legacy-retirement.md)。
 
-消息列表、联系人屏蔽、单窗口导出、图片消息与普通文件收发已补齐日常社交体验，见[已完成](completed.md)。完整使用流程的验收与必要修复已完成，见[收尾记录](first-release-experience.md)。下一批桌面平台收尾的范围和结束条件见[正在推进](in-progress.md)；新增能力保留为候选。
+消息列表、联系人屏蔽、单窗口导出、图片消息与普通文件收发已补齐日常社交体验，见[已完成](completed.md)。完整使用流程的验收与必要修复已完成，见[收尾记录](first-release-experience.md)。桌面平台收尾已开展 [Windows 实测](windows-desktop-experience-2026-10-20.md)，Linux 与安装任务按用户要求暂缓；当前范围和结束条件见[正在推进](in-progress.md)，新增能力保留为候选。
 
 ## 7. 验证层次与命令
 

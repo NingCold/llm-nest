@@ -4,7 +4,9 @@
 
 ## 项目定位与当前范围
 
-LLM Nest 是本地人与 AI 的社交空间，共用 Rust 运行时与一套 React 界面。Web 和 Tauri 是仅有的产品入口；旧 Harness、CLI/TUI、旧 HTTP/IPC、demo 与早期独立社交预览已经退役。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
+产品目标已调整为云端社交服务、独立真人/AI 账号和用户托管的 Agent，模型 Key 留在节点。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)正在等待用户审阅，具体取舍待确认；本轮仅记录计划，实施按后续确认的范围推进。
+
+当前实现仍是本地人与 AI 的社交空间，共用 Rust 运行时与一套 React 界面。以下行为描述现有实现，后续按确认的计划逐步替换相关约束。Web 和 Tauri 是当前产品入口；旧 Harness、CLI/TUI、旧 HTTP/IPC、demo 与早期独立社交预览已经退役。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
 
 已实现独立账号、私聊/群聊、意识系统、参与节奏与一次性约定联系、协议路由、SQLite 持久化及桌面/Web 设置。工具 worker 是保留的底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或界面按钮声称功能已经可用。
 

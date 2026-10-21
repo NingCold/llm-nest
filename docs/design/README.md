@@ -2,7 +2,7 @@
 
 [文档首页](../README.md) · [项目首页](../../README.md)
 
-LLM Nest 是一个本地人与 AI 的社交空间。这组文档说明账号如何延续、聊天如何保存、AI 如何使用共同经历，以及什么时候开口。
+这组文档反映 LLM Nest 当前的本地社交实现，说明账号如何延续、聊天如何保存、AI 如何使用共同经历，以及什么时候开口。产品目标正调整为云端社交，真人注册登录、AI 独立云端账号与外部 Agent 接入的安排见[云端社交与 Agent 接入计划（待审阅）](../project/cloud-plan.md)；这些云端能力尚未实现。
 
 先读[设计总纲](overview.md)，再按问题查阅专项设计。当前能力见[已完成](../project/completed.md)，近期工作见[当前工作](../project/current.md)，待验收与未来候选见[候选清单](../project/backlog.md)。验证环境和证据从[验证入口](../validation/README.md)进入。
 

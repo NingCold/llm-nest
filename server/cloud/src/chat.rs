@@ -72,12 +72,12 @@ async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     )
 }
 fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){"withdrawn"}else{"committed"},"attachments":r.get::<Value,_>("attachments")})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"aiResponse":r.get::<Option<Value>,_>("ai_response")})
 }
 async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
     let peer = account(tx, if pair.0 == owner { pair.1 } else { pair.0 }).await?;
-    let r = sqlx::query("SELECT * FROM cloud_list WHERE owner=$1 AND conversation=$2")
+    let r = sqlx::query("SELECT l.*, (SELECT coalesce(max(position),0) FROM cloud_messages WHERE conversation=$2 AND status<>'generating') AS latest_position FROM cloud_list l WHERE owner=$1 AND conversation=$2")
         .bind(owner)
         .bind(id)
         .fetch_one(&mut **tx)
@@ -89,9 +89,9 @@ async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     .bind(id)
     .fetch_optional(&mut **tx)
     .await?;
-    let unread:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1 AND sender<>$2 AND position>$3 AND NOT withdrawn").bind(id).bind(owner).bind(pos).fetch_one(&mut **tx).await?;
+    let unread:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1 AND sender<>$2 AND position>$3 AND NOT withdrawn AND status<>'generating'").bind(id).bind(owner).bind(pos).fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":id,"peer":peer,"revision":"1","lastMessage":last.as_ref().map(message),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
+        json!({"id":id,"peer":peer,"revision":"1","lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
     )
 }
 async fn init(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value>> {
@@ -240,7 +240,7 @@ async fn messages(
     rows.truncate(limit as usize);
     rows.reverse();
     let latest: i64 = sqlx::query_scalar(
-        "SELECT coalesce(max(position),0) FROM cloud_messages WHERE conversation=$1",
+        "SELECT coalesce(max(position),0) FROM cloud_messages WHERE conversation=$1 AND status<>'generating'",
     )
     .bind(id)
     .fetch_one(&mut *tx)
@@ -442,7 +442,12 @@ async fn send(
     }
     let mid = Uuid::new_v4();
     let attachments = uploads(&s, mid, &v).await?;
-    let row=sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments) VALUES($1,$2,$3,$4,$5) RETURNING *").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).fetch_one(&mut *tx).await?;
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments) VALUES($1,$2,$3,$4,$5)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).execute(&mut *tx).await?;
+    crate::nodes::enqueue(&mut tx, id, mid, p.id, pair).await?;
+    let row = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
+        .bind(mid)
+        .fetch_one(&mut *tx)
+        .await?;
     let result = message(&row);
     notify(&mut tx, id, pair).await?;
     save_receipt(&mut tx, p.id, &v, "send", id, &result).await?;
@@ -494,7 +499,12 @@ async fn mutate(
     {
         return Err(bad("消息为空或过长"));
     }
-    let r=sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *").bind(id).bind(text).bind(remove).fetch_one(&mut *tx).await?;
+    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).execute(&mut *tx).await?;
+    crate::nodes::source_changed(&mut tx, id).await?;
+    let r = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
     let result = message(&r);
     notify(&mut tx, cid, pair).await?;
     save_receipt(&mut tx, p.id, &v, kind, id, &result).await?;
@@ -549,7 +559,7 @@ async fn list(
         let pos: i64 = raw.parse().map_err(|_| bad("无效已读位置"))?;
         if pos != 0
             && !sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM cloud_messages WHERE conversation=$1 AND position=$2)",
+                "SELECT EXISTS(SELECT 1 FROM cloud_messages WHERE conversation=$1 AND position=$2 AND status<>'generating')",
             )
             .bind(id)
             .bind(pos)
@@ -581,7 +591,7 @@ async fn search(
     if query.trim().is_empty() {
         return Err(bad("搜索内容为空"));
     }
-    let mut rows=sqlx::query("SELECT m.* FROM cloud_messages m JOIN cloud_conversations c ON c.id=m.conversation WHERE (c.first_id=$1 OR c.second_id=$1) AND ($2::uuid IS NULL OR c.id=$2) AND NOT m.withdrawn AND strpos(translate(m.body,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),translate($3,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'))>0 AND m.position<$4 ORDER BY m.position DESC LIMIT 51").bind(p.id).bind(q.conversation_id).bind(query).bind(q.before_position.unwrap_or(i64::MAX)).fetch_all(&s.pool).await?;
+    let mut rows=sqlx::query("SELECT m.* FROM cloud_messages m JOIN cloud_conversations c ON c.id=m.conversation WHERE (c.first_id=$1 OR c.second_id=$1) AND ($2::uuid IS NULL OR c.id=$2) AND NOT m.withdrawn AND m.status<>'generating' AND strpos(translate(m.body,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),translate($3,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'))>0 AND m.position<$4 ORDER BY m.position DESC LIMIT 51").bind(p.id).bind(q.conversation_id).bind(query).bind(q.before_position.unwrap_or(i64::MAX)).fetch_all(&s.pool).await?;
     let more = rows.len() > 50;
     rows.truncate(50);
     Ok(Json(
@@ -596,7 +606,7 @@ async fn context(
     let p = auth::authenticate(&s, &h).await?;
     let mut tx = s.pool.begin().await?;
     let row = sqlx::query(
-        "SELECT conversation,position FROM cloud_messages WHERE id=$1 AND NOT withdrawn",
+        "SELECT conversation,position FROM cloud_messages WHERE id=$1 AND NOT withdrawn AND status<>'generating'",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -879,6 +889,10 @@ mod tests {
                 .await
                 .unwrap();
             sqlx::raw_sql(include_str!("../migrations/0002_chat.sql"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::raw_sql(include_str!("../migrations/0003_nodes.sql"))
                 .execute(&pool)
                 .await
                 .unwrap();

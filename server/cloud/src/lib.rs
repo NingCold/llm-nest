@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod chat;
 pub mod db;
+pub mod nodes;
 use db as sqlx;
 
 use axum::{
@@ -155,6 +156,7 @@ pub fn router(state: Arc<AppState>, web_dir: PathBuf) -> Router {
     let api = Router::new()
         .merge(auth::routes().layer(DefaultBodyLimit::max(16 * 1024)))
         .merge(chat::routes().layer(DefaultBodyLimit::max(40 * 1024 * 1024)))
+        .merge(nodes::routes().layer(DefaultBodyLimit::max(1024 * 1024)))
         .fallback(|| async { AppError::not_found() })
         .layer(middleware::from_fn_with_state(boundary_state, boundary));
     Router::new()

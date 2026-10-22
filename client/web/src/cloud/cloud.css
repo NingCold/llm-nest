@@ -213,3 +213,35 @@
 .cloud-workspace .conversation-menu > div {
   z-index: 15;
 }
+.cloud-ai-intro, .cloud-ai-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.cloud-ai-intro { justify-content: space-between; margin: 8px 0 28px; }
+.cloud-ai-intro h1 { font-size: 24px; font-weight: 600; margin: 0 0 6px; }
+.cloud-ai-intro p, .cloud-ai-heading p, .cloud-ai-empty p { color: var(--s-muted); font-size: 13px; line-height: 1.7; }
+.cloud-ai-intro > .social-button { flex-shrink: 0; }
+.cloud-ai-list { display: grid; gap: 16px; }
+.cloud-ai-card { padding: 22px; border: 1px solid var(--s-line); border-radius: 14px; }
+.cloud-ai-heading h2 { font-size: 15px; font-weight: 600; }
+.cloud-ai-heading > div:nth-child(2) { flex: 1; }
+.cloud-ai-bio { margin-top: 16px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cloud-node-state { display: flex; align-items: center; gap: 6px; color: var(--s-muted); font-size: 12px; }
+.cloud-node-state i { width: 6px; height: 6px; background: var(--s-muted); border-radius: 50%; }
+.cloud-node-state.online i { background: var(--s-accent); }
+.cloud-node-description { display: flex; align-items: center; gap: 8px; padding: 18px 0; color: var(--s-muted); font-size: 12px; }
+.cloud-ai-card .cloud-actions { flex-wrap: wrap; gap: 10px; }
+.cloud-ai-empty { max-width: 460px; margin: 64px auto; text-align: center; }
+.cloud-ai-empty > svg { margin: 0 auto 18px; width: 30px; height: 30px; color: var(--s-muted); }
+.cloud-ai-empty h2 { margin-bottom: 10px; font-size: 17px; font-weight: 500; }
+.cloud-ai-dialog { width: min(480px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; }
+.cloud-ai-dialog .cloud-form { display: grid; gap: 16px; }
+.cloud-ai-dialog .cloud-form p { font-size: 13px; line-height: 1.7; color: var(--s-muted); }
+.cloud-ai-dialog .cloud-form label { display: grid; gap: 8px; font-size: 13px; }
+.cloud-ai-dialog :is(input, textarea) { background: var(--s-paper); color: var(--s-text); border: 1px solid var(--s-line); border-radius: 8px; padding: 10px 12px; width: 100%; }
+.cloud-ai-dialog textarea { resize: vertical; min-height: 90px; }
+.cloud-generation-status, .cloud-task-status { color: var(--s-muted); font-size: 11px; line-height: 1.7; }
+.cloud-generation-status { display: block; padding-top: 4px; }
+.cloud-task-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+@media (max-width: 640px) { .cloud-ai-intro { align-items: flex-start; flex-direction: column; } }

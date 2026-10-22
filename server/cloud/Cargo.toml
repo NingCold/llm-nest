@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+connector.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 serde.workspace = true
@@ -29,3 +30,4 @@ percent-encoding = "2"
 
 [dev-dependencies]
 tempfile = "3"
+reqwest.workspace = true

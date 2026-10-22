@@ -21,6 +21,7 @@ export interface Message {
   status: string;
   createdAt: string;
   attachments: Attachment[];
+  aiResponse?: { taskId: string; status: string; error?: string | null } | null;
 }
 export interface Conversation {
   id: string;
@@ -30,6 +31,7 @@ export interface Conversation {
   manualUnread: boolean;
   pinned: boolean;
   listRevision: string;
+  latestPosition: string;
 }
 export interface Snapshot {
   self: Account;

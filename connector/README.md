@@ -1,31 +1,25 @@
-# 连接器
+# Connector
 
-当前提供已用于社交服务 HTTP/SSE 与桌面 IPC/Channel 的订阅协议类型，供 Rust 消费方独立引用。它是连接器目前已有的协议部分；节点 WSS、节点授权、网络连接与重连尚未实现，不是完整 Agent SDK。
+`connector` 提供云端节点 HTTP/WSS 协议和社交事件类型。它不加载模型、数据库或应用 Runtime，外部 Agent 可以单独依赖这个包。
 
-- `SocialEvent` / `SocialChange`：带持久 cursor 的变更引用。消费方重新读取当前获授权实体，事件不携带聊天正文。
-- `SocialGenerationEvent` / `LiveEvent`：无持久 cursor 的临时生成片段和执行提示。
-- `SubscriptionEvent`：`change`、`generation`、`resync` 三种订阅交付。支持 serde 序列化和反序列化；持久 cursor 与修订号保持十进制字符串。
+`node::NodeClient` 接收服务器地址、节点凭据和可选 PEM CA。HTTPS 与 WSS 都验证证书；只有 localhost 和回环 IP 可以使用 HTTP/WS。凭据没有 Debug 输出。HTTP 错误保留状态码和服务端正文。
 
-库只依赖 serde 和中立的 `social` 类型，不依赖 Runtime、存储、模型客户端或 GUI。订阅执行、权限复核、SSE 帧与 IPC 确认仍由各自现有模块负责。
+先生成一个节点 UUID 和 32 字节随机 secret（64 位小写十六进制），在本机安全保存。使用同一个 secret 调用 `pair`，真人在“我的账号 → 我管理的 AI”输入配对码授权，再查询 `pairing_status` 得到 AI 和绑定版本。每个 AI 使用自己的凭据。
 
-仓库外的 Rust 项目可使用路径依赖：
+## 独立示例
 
-```toml
-[dependencies]
-connector = { path = "/path/to/llm-nest/connector" }
-serde_json = "1"
+`examples/external_node.rs` 只依赖 connector 的接口。它返回明确标注的固定演示文字，不调用模型，也不是自带 Agent。设置 `LLMN_SERVER`、`LLMN_NODE_ID`、`LLMN_NODE_SECRET`；私有 CA 另设置 `LLMN_CA_FILE` 为 PEM 文件路径。不要把这些值提交到仓库。
+
+```text
+cargo run -p connector --example external_node -- pair
+cargo run -p connector --example external_node -- status PAIRING_ID
+cargo run -p connector --example external_node -- run
 ```
 
-```rust
-let event: connector::SubscriptionEvent =
-    serde_json::from_str(r#"{"kind":"resync"}"#)?;
-```
+授权后 `run` 每两秒读取任务，读取材料、取得持久开始确认，然后提交固定回答。它用于确认外部节点能接入，不支持持久恢复；运行中断后，不重做已开始的任务。需要真实模型、预算和持久检查点时使用 `agent/node`。
 
-运行真实协议解析示例与协议测试：
+## 实现自己的 Agent
 
-```sh
-cargo run -p connector --example parse_subscription
-cargo test -p connector
-```
+`connect()` 建立连接后，由调用者发送 `ClientFrame::Hello` 并等待 `Ready`，然后重新读取 `tasks()`。连接丢失后可以再次 `connect()`，但连接器不会自动重试模型。WSS 通知仅用于提醒读取权威 HTTP 状态；原生 ping/pong 在读取连接时处理。
 
-HTTP/SSE 适配器将变更和生成内容分别放入各自 SSE 事件，客户端需先读取 SSE 的事件名与 data；这里的 `SubscriptionEvent` 是共享业务交付封装，不负责解析 SSE 文本帧。
+模型调用前保存原始 start 请求，取得并保存开始回执。已经开始但结果不明的任务不能自动重做。最终结果先保存在节点，再通过原 request ID 和正文重传。`Delta` 是最多每 500ms 一次的完整文字检查点，最终 HTTP result 才是权威结果。附件接口只为已授权材料提供原字节，普通文件只给模型元信息。

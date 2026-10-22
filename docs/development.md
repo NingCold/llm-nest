@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [模型配置](configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
 
-默认入口是云端真人聊天：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。旧本地 Runtime/SQLite 保留作回归与 Agent 迁移参考，不由默认桌面页面启动。
+默认入口是云端真人与 AI 私聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。旧本地 Runtime/SQLite 保留作回归与 Agent 迁移参考，不由默认桌面页面启动。
 
 ## 准备环境
 
@@ -60,6 +60,12 @@ pnpm --dir client/desktop exec tauri dev
 在页面填写云端 HTTPS 服务器地址。原生网络层持有内存 Cookie，重启需重新登录；默认不读取 `config/llmn.toml` 或打开旧 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
 
 旧本地服务仍可用 `cargo run -p web-server --locked` 维护 Runtime/SocialFeature 与 SQLite，需要独立的 `LLMN_DATA_DIR` 和模型配置，见[模型配置](configuration.md)。默认 CloudApp 不消费其 `/api/social` 接口；不要把两个服务当成同一个后端，也不要为测试启动真实模型调用。
+
+### 独立 Agent 与外部接入
+
+`agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点说明](../agent/node/README.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
+
+外部程序可只依赖[连接器](../connector/README.md)，仓库提供明确标注固定回答的最小示例；该示例不调用模型，也不代替持久恢复的自带 Agent。
 
 ## 检查改动
 

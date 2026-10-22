@@ -1,10 +1,10 @@
-# 云端真人聊天服务
+# 云端聊天服务
 
 [服务端](../README.md) · [开发指南](../../docs/development.md) · [API](../../docs/design/api.md)
 
-`cloud-server` 独立运行，使用 PostgreSQL 保存账号、认证、联系人、唯一私聊、消息、个人读态及事件。图片和普通文件字节保存在独立持久目录。它不依赖本地 Runtime、SocialStore、模型客户端或 AI 执行器。
+`cloud-server` 独立运行，使用 PostgreSQL 保存账号、认证、联系人、唯一私聊、消息、个人读态、AI 节点绑定与执行任务及事件。图片和普通文件字节保存在独立持久目录。它不依赖本地 Runtime、SocialStore、模型客户端或 AI 执行器。
 
-当前提供邀请注册、邮箱验证、密码登录与找回、会话撤销、公开资料修改、联系人查找和真人私聊；消息支持附件、编辑、撤回、搜索定位与单窗口导出。AI 节点、群聊、屏蔽、意识系统和正式旧库迁移尚未接入。
+当前提供邀请注册、邮箱验证、密码登录与找回、会话撤销、公开资料修改、联系人查找和真人私聊；消息支持附件、编辑、撤回、搜索定位与单窗口导出。另已实现云端 AI 创建、配对授权、节点状态/替换/撤销、HTTPS/WSS 任务协议和私聊回复，已完成本机 Agent 与云端 Web 闭环验证。模型调用在独立 Agent 上进行，见[节点说明](../../agent/node/README.md)与[协议](../../docs/design/api.md#云端-ai-与节点接口)。群聊、屏蔽、记忆/摘要、在线内部配置和正式旧库迁移尚未接入。
 
 ## 启动
 
@@ -33,6 +33,6 @@ cargo run -p cloud-server --locked
 
 ## 验证与迁移边界
 
-设置独立测试库的 `CLOUD_TEST_DATABASE_URL` 后运行 `cargo test -p cloud-server -- --nocapture`。测试为每例建立隔离 schema，实际 PostgreSQL 的 10 项测试已通过；未设置变量时数据库测试会跳过，不能当成完整验证。
+设置独立测试库的 `CLOUD_TEST_DATABASE_URL` 后运行 `cargo test -p cloud-server -- --nocapture`。测试为每例建立隔离 schema，未设置变量时数据库测试会跳过，不能当成完整验证。当前验证结果集中在[验证指南](../../docs/validation/README.md)。
 
 [本地数据样本](tests/fixtures/README.md) 只做测试映射，验证稳定 UUID、公开名字/简介、消息相对顺序和原始附件字节。它不是正式迁移器，不读取用户旧库。ActorId 可直接保留为 PostgreSQL UUID；旧 sequence 与附件 part index 需要明确映射。AI、群、旧状态及内部资料迁移按后续计划完成。

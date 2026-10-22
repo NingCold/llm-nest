@@ -4,7 +4,7 @@
 
 ## 项目定位与当前范围
 
-产品目标为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步已实现独立云端真人服务和默认云端客户端，当前验证状态见进度文档；AI 节点、群聊和意识系统的云端接入尚待后续步骤。
+产品目标为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步已实现独立云端真人服务和默认云端客户端；第 2 步已实现云端 AI、节点配对与 WSS、独立 Agent、私聊流式回复及持久恢复，已完成本机 Agent 与云端 Web 闭环验证。群聊和意识资料迁入属于第 3 步，在线管理与桌面后台入口属于第 4 步。当前验证状态见进度文档。
 
 保留一个仓库，划清客户端、服务端、自带 Agent 和连接器四个模块的边界：前三者独立运行，连接器可独立引用。云端 PostgreSQL 保存社交记录，附件使用独立持久目录；自带 Agent 的 SQLite 保存角色、模型参数、记忆和每个 AI 自己的窗口摘要。模型 Key 与节点凭据只在节点保管，不进迁移包；外部 Agent 自选内部实现。
 
@@ -22,7 +22,7 @@
 
 云端联系人为有向关系，双方唯一私聊；每次读取、搜索、下载和导出检查当前认证账号。消息、个人读态、命令摘要回执与持久事件同事务；回执不存正文或附件原字节，重放返回当前权威消息，撤回不能被旧回执复活。附件按生成的消息 UUID 与索引存放，读写时复核 revision；SSE 按账号从持久事件补齐，客户端成功刷新后推进游标。草稿按服务器、账号、窗口隔离，发送结果未确认时只允许手动重试同一请求。详细云端契约见 [API](docs/design/api.md) 与 [存储](docs/design/storage.md)。
 
-下文的 SocialFeature、SQLite、AI、群聊、意识和接话规则记录保留的本地实现，供回归及后续迁移核对，不是当前云端入口的已开放功能。旧 Harness、CLI/TUI 与 demo 已退役。工具 worker 仍是底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或旧测试声称云端功能已经可用。
+下文的 SocialFeature、旧 SocialStore/SQLite、群聊、显式记忆、摘要和接话规则记录保留的本地实现，供回归及后续迁移核对；云端 AI 的当前行为以 connector::node 与 agent/node、server/cloud 的协议为准，不能把旧本地管理和意识功能当作已接入。旧 Harness、CLI/TUI 与 demo 已退役。工具 worker 仍是底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或旧测试声称云端功能已经可用。
 
 原本地首版支持一个真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)。本地 SocialFeature 读取并检查材料，调用 `agent/core` 按角色与空间构造请求。
 
@@ -64,14 +64,15 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | `crates/common` | Message、ContentPart、ID、Usage、计时、中断与运行检查点等公共类型 |
 | `crates/social` | 中立身份/空间/消息/运行类型、意识系统范围与来源快照、可控时钟 |
 | `agent/ai-client` | AiProvider/AiClient、ModelRouter、内置目录、配置类型、协议工厂、协议适配、SSE 分帧 |
+| `agent/node` | 独立 llmn-agent、配对、每 AI 本地档案、SQLite 执行检查点与节点预算；模型 Key 仅引用环境变量 |
 | `agent/core` | 纯上下文组装、生成预算、摘要提示词；独立 ContextInput，不读取存储或配置 |
-| `connector` | 持久 SocialEvent、临时 SocialGenerationEvent 与 SubscriptionEvent 编解码；节点网络接入待实现 |
+| `connector` | 社交订阅编解码；中立节点 DTO、HTTPS/WSS 客户端与独立外部示例 |
 | `crates/storage` | SocialStore/SQLite、目录锁、事务/备份与独立旧格式导入边界 |
 | `agent/tools` | Tool、ToolRegistry、固定白名单子进程和内置 echo/add |
 | `crates/runtime` | 配置/目录缓存/热更新、Feature 生命周期与必需的 SocialResources 注入 |
 | `server/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、意识材料适配/显式记忆/窗口摘要任务/群话题接续、运行协调、共享业务 DTO |
 | `server/http` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
-| `server/cloud` | 独立云端真人认证、PostgreSQL 社交记录、附件与持久事件；当前默认客户端的后端 |
+| `server/cloud` | 独立云端认证、真人/AI 账号、节点绑定和任务、PostgreSQL 社交记录、附件与持久事件；当前默认客户端的后端 |
 | `client/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
 | `client/web/src/cloud` | 默认云端账号、私聊、草稿与 HTTPS/SSE 界面 |
 | `client/web/src/social` | 共用社交样式与基础组件、草稿存储，以及保留的本地社交状态与视图 |
@@ -80,7 +81,7 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 
 旧 SessionManager、ChatFeature、JSON 写入存储、RuntimeEvent、PluginManager 和 app-sdk 空壳已移除。历史 JSON DTO 仅位于 `storage::legacy`，导入实现位于 `storage::social::legacy`；协议适配与当前社交模型不依赖旧运行生命周期。
 
-`server/cloud` 已独立运行并使用 PostgreSQL；`crates/runtime`、`crates/storage` 仍供保留的本地宿主回归使用，`server/social` 仍协调本地模型运行。桌面还链接延迟 Runtime，但云端入口不初始化它。后续 Agent 增加独立入口与节点存储，不要把这些过渡依赖当成目标架构。`connector` 不依赖 Runtime、存储、模型或 GUI；`builtin-agent` 不依赖存储、Runtime、服务端或连接器；`cloud-server` 不依赖本地 Runtime/SQLite 或模型模块。运行 `python scripts/check-boundaries.py` 检查三条已落实的依赖边界。
+`server/cloud` 已独立运行并使用 PostgreSQL；`crates/runtime`、`crates/storage` 仍供保留的本地宿主回归使用，`server/social` 仍协调本地模型运行。桌面还链接延迟 Runtime，但云端入口不初始化它。`agent/node` 已有独立入口与节点 SQLite，不依赖旧 Runtime/SocialStore 或服务端；不要把桌面的过渡依赖当成目标架构。`connector` 不依赖 Runtime、存储、模型或 GUI；`builtin-agent` 不依赖存储、Runtime、服务端或连接器；`cloud-server` 不依赖本地 Runtime/SQLite 或模型模块。运行 `python scripts/check-boundaries.py` 检查已落实的依赖边界。
 
 ## 架构边界
 

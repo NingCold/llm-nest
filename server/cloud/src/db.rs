@@ -24,6 +24,13 @@ pub fn migrator() -> sqlx_core::migrate::Migrator {
                 include_str!("../migrations/0002_chat.sql").into(),
                 false,
             ),
+            Migration::new(
+                3,
+                "nodes".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/0003_nodes.sql").into(),
+                false,
+            ),
         ]
         .into(),
         ..Migrator::DEFAULT

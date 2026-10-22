@@ -94,6 +94,7 @@ const conversation = {
   manualUnread: false,
   pinned: true,
   listRevision: "1",
+  latestPosition: "1",
 };
 const noop = () => {},
   asyncNoop = async () => {};
@@ -175,6 +176,15 @@ assert.match(html, /profile-intro/);
 assert.match(html, /账号 ID/);
 assert.match(html, /公开简介/);
 assert.match(html, /登录会话/);
+assert.match(html, /我管理的 AI/);
+html = render({ page: { ...p.page, messages: [{ ...message, status: "generating", text: "部分回复" }] } });
+assert.match(html, /正在回复/);
+html = render({ page: { ...p.page, messages: [{ ...message, senderId: me.id, aiResponse: { taskId: "task", status: "running" } }] } });
+assert.match(html, /AI 正在回复/);
+assert.match(html, /停止回复/);
+html = render({ page: { ...p.page, messages: [{ ...message, aiResponse: { taskId: "task", status: "failed", error: "image_input_unsupported" } }] } });
+assert.match(html, /暂不支持图片/);
+assert.doesNotMatch(html, /停止回复|image_input_unsupported/);
 html = render({ tab: "settings" });
 assert.match(html, /外观/);
 assert.match(html, /浅色/);

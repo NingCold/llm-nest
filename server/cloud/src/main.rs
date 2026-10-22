@@ -77,17 +77,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let bind = std::env::var("CLOUD_BIND").unwrap_or_else(|_| "127.0.0.1:8787".into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
+    cloud_server::nodes::recover(&pool).await?;
     println!("云端聊天服务已启动：{bind}");
+    let maintenance = tokio::spawn(cloud_server::nodes::maintain(pool.clone()));
     let state = Arc::new(AppState {
         pool,
         attachments,
         public_url,
         mail,
     });
-    axum::serve(listener, cloud_server::router(state, web_dir))
+    let result = axum::serve(listener, cloud_server::router(state, web_dir))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
-        .await?;
+        .await;
+    maintenance.abort();
+    let _ = maintenance.await;
+    result?;
     Ok(())
 }

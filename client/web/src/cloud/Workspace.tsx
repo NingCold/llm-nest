@@ -34,6 +34,7 @@ import { useUiStore } from "@/store/ui";
 import type { DraftRecord } from "../social/drafts";
 import { fileSize } from "../social/files";
 import { download, request } from "./api";
+import { AiManagement } from "./AiManagement";
 import type {
   Account,
   Conversation,
@@ -89,6 +90,36 @@ interface Props {
 const avatar = (a?: Account) =>
   a ? { avatar: a.name.slice(0, 1), color: "sage" as const } : undefined;
 const unread = (c: Conversation) => c.unreadCount > 0 || c.manualUnread;
+function responseStatus(response: NonNullable<Message["aiResponse"]>) {
+  const errors: Record<string, string> = {
+    image_input_unsupported: "这个 AI 使用的模型暂不支持图片",
+    node_budget_exhausted: "节点今天的调用额度已用完",
+    preparation_failed: "准备回复失败，请管理员检查本机的模型配置",
+    source_changed: "相关消息已修改或撤回，这次回复已停止",
+    node_changed: "运行节点已更换，这次回复已停止",
+    node_revoked: "节点连接已撤销，这次回复已停止",
+    empty_response: "模型没有返回正文，请发送新消息再试",
+    generation_timeout: "模型回复超时",
+    generation_interrupted: "回复已中断",
+    node_restart_uncertain: "节点已重启，上次回复结果尚未确认",
+    node_restart_before_start: "节点已重启，上次未开始的回复已停止",
+    provider_authentication_failed: "模型服务认证失败，请管理员检查本机密钥",
+    provider_rate_limited: "模型服务暂时繁忙，请稍后再试",
+    provider_connection_failed: "暂时无法连接模型服务",
+    provider_timeout: "连接模型服务超时",
+    provider_protocol_failed: "模型服务返回的内容无法读取",
+    provider_configuration_failed: "模型配置需要管理员检查",
+    provider_api_failed: "模型服务未能完成这次回复",
+    node_connection_failed: "节点连接中断，回复已停止",
+    node_storage_failed: "节点保存失败，请管理员检查本机存储",
+  };
+  const states: Record<string, string> = {
+    queued: "等待 AI 回复", running: "AI 正在回复", cancelled: "已停止回复",
+    expired: "等待已超时，请发送新消息", uncertain: "回复被中断，尚未确认结果",
+    failed: "这次未能回复，请管理员检查节点", interrupted: "回复已中断",
+  };
+  return (response.error && errors[response.error]) || states[response.status] || `AI 回复状态：${response.status}`;
+}
 const attachmentPath = (m: Message, a: Attachment) =>
   `/chat/messages/${m.id}/attachments/${a.index}?revision=${m.revision}`;
 function InlineImage({
@@ -180,6 +211,7 @@ export function Workspace(p: Props) {
     [searchBusy, setSearchBusy] = useState(false),
     [searched, setSearched] = useState(false),
     [settings, setSettings] = useState("appearance"),
+    [accountSection, setAccountSection] = useState("profile"),
     [profileEditing, setProfileEditing] = useState(false),
     [sessions, setSessions] = useState<
       { id: string; createdAt: string; expiresAt: string; current: boolean }[]
@@ -360,7 +392,7 @@ export function Workspace(p: Props) {
             <Avatar contact={avatar(account)} size="large" />
             <div>
               <h1>{account.name}</h1>
-              <p>真人 · 账号正常</p>
+              <p>{account.kind === "ai" ? "AI" : "真人"} · 账号正常</p>
             </div>
             {!own && (
               <button
@@ -733,8 +765,7 @@ export function Workspace(p: Props) {
                                       c,
                                       unread(c)
                                         ? {
-                                            readPosition:
-                                              c.lastMessage?.position,
+                                            readPosition: c.latestPosition,
                                             manualUnread: false,
                                           }
                                         : { manualUnread: true },
@@ -823,13 +854,16 @@ export function Workspace(p: Props) {
             ) : (
               <div className="social-list">
                 {p.tab === "account" ? (
-                  <button className="contact-list-item selected">
+                  <><button className={`contact-list-item ${accountSection === "profile" ? "selected" : ""}`} onClick={() => setAccountSection("profile")}>
                     <Avatar contact={avatar(p.me)} />
                     <span>
                       <strong>账号资料</strong>
                       <small>公开资料与登录会话</small>
                     </span>
                   </button>
+                  <button className={`contact-list-item ${accountSection === "ai" ? "selected" : ""}`} onClick={() => setAccountSection("ai")}>
+                    <Settings /><span><strong>我管理的 AI</strong><small>账号与运行节点</small></span><ArrowRight />
+                  </button></>
                 ) : (
                   (
                     [
@@ -924,7 +958,7 @@ export function Workspace(p: Props) {
                 </div>
               </section>
             ) : p.tab === "account" ? (
-              profile(p.me, true)
+              accountSection === "ai" ? <AiManagement back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
             ) : p.tab === "contacts" ? (
               selectedContact ? (
                 profile(selectedContact, false)
@@ -960,7 +994,7 @@ export function Workspace(p: Props) {
                       <Avatar contact={avatar(conversation.peer)} />
                       <span>
                         <strong>{conversation.peer.name}</strong>
-                        <small>长期私聊 · 聊天记录持续保存</small>
+                        <small>{conversation.peer.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
                       </span>
                     </button>
                     <IconButton
@@ -1075,6 +1109,8 @@ export function Workspace(p: Props) {
                                 ) : (
                                   <>
                                     <MarkdownView content={m.text} />
+                                    {m.status === "generating" && <span className="cloud-generation-status" role="status">正在回复…</span>}
+                                    {["interrupted", "failed"].includes(m.status) && <span className="cloud-generation-status">{m.status === "failed" ? "回复未完成" : "回复已中断"}</span>}
                                     {m.attachments.map((a) =>
                                       a.kind === "image" ? (
                                         <InlineImage
@@ -1111,6 +1147,16 @@ export function Workspace(p: Props) {
                                     )}
                                   </>
                                 )}
+                              </div>
+                            )}
+                            {m.aiResponse && m.aiResponse.status !== "completed" && (
+                              <div className="cloud-task-status" role="status">
+                                <span>{responseStatus(m.aiResponse)}</span>
+                                {["queued", "running"].includes(m.aiResponse.status) && <button className="text-button" onClick={() => void p.act(async () => {
+                                  await request(`/chat/ai-tasks/${m.aiResponse!.taskId}/cancel`, "POST", { requestId: crypto.randomUUID() });
+                                  await p.history();
+                                  await p.refresh();
+                                })}>停止回复</button>}
                               </div>
                             )}
                             {m.senderId === p.me.id &&

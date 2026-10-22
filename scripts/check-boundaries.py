@@ -19,6 +19,8 @@ def main():
                           "web-server", "cloud-server", "tauri-frontend"},
         "cloud-server": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
                          "social-feature", "web-server", "tauri-frontend"},
+        "agent-node": {"runtime", "storage", "social-feature", "web-server",
+                       "cloud-server", "tauri-frontend"},
     }
     for start, excluded in forbidden.items():
         pending = [(start, [start])]

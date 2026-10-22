@@ -142,7 +142,7 @@ levels = ["off", "low", "high"]
 format = "deepseek-effort"
 ```
 
-支持的格式为 `openai-effort`、`deepseek-thinking`、`deepseek-effort`、`anthropic-thinking`、`gemini-thinking`，部分格式支持 `budget_tokens`。各服务对相同强度的实际预算不同，字段定义见 [reasoning.rs](../crates/ai-client/src/reasoning.rs)。
+支持的格式为 `openai-effort`、`deepseek-thinking`、`deepseek-effort`、`anthropic-thinking`、`gemini-thinking`，部分格式支持 `budget_tokens`。各服务对相同强度的实际预算不同，字段定义见 [reasoning.rs](../agent/ai-client/src/reasoning.rs)。
 
 ## AI 账号参数与配置更新
 

@@ -41,7 +41,7 @@
 
 ## 执行边界
 
-保留 `crates/ai-client` 的 ModelSelection 校验、按 provider + effective protocol 路由、共享 SSE 分帧、工具配对规则和配置快照；保留工具注册表及固定白名单子进程。新执行模块放在 `features/social/src/execution.rs`。执行通过意识系统取得背景，不另写一套摘要、召回或记忆逻辑。
+保留 `agent/ai-client` 的 ModelSelection 校验、按 provider + effective protocol 路由、共享 SSE 分帧、工具配对规则和配置快照；保留工具注册表及固定白名单子进程。当前执行协调位于 `server/social/src/execution.rs`，负责持久队列、开始与终态事务、流式保存和广播。`agent/core` 已承接纯上下文选材、输出预算与生成参数、摘要提示词，接收宿主提供的 ContextInput；`agent/ai-client` 继续负责模型请求与协议。执行通过这一核心准备背景，不另写一套摘要、召回或记忆逻辑。模块已分开，当前仍共用进程、Runtime 和 SQLite，尚无独立 Agent 进程或节点网络。
 
 执行由 SocialFeature 组织，遵守 [新架构优先与兼容边界](overview.md#新架构优先与兼容边界)。AI 主动联系或群聊接话使用独立触发来源，不伪造真人输入。
 
@@ -57,7 +57,7 @@ RunId 是独立 UUID，与 MessageId 分开。当前一次 AiRun 对应一个可
 
 1. 等待 ParticipationPlan 的时点，取得全局执行槽位后重读队首及计划版本，确定目标 AI、空间和触发消息范围。
 2. 取得同一 Runtime 配置快照，解析该 AI 的 ExecutionBinding，校验温度、输出上限与思考模式，固定 GenerationOptions 并分配输出预算；不读取全局生成设置。
-3. 按实际输出预留调用 ConsciousnessService::prepare(material, model, output_tokens)，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
+3. 读取授权材料并显式转换为 ContextInput，按实际输出预留调用 Agent 核心的 ConsciousnessService::prepare(input, model, output_tokens)，取得 PreparedContext，固定档案、实际材料来源、成员权限与版本。
 4. 再检查档案/绑定版本、暂停、epoch、预算和并发，事务保存 AiRun、generating 消息与开始事件；自动计划同时扣减每日次数和整个输入/输出容量额度，拒绝时整个开始事务回滚。
 5. 调用快照 AiClient。网络调用不能发生在数据库事务或全局写锁内；后续扩展外部 dispatch 审计时明确记录边界。
 
@@ -67,7 +67,7 @@ RunId 是独立 UUID，与 MessageId 分开。当前一次 AiRun 对应一个可
 
 目标 AI 自己的历史完整消息可以映射为 assistant；其他参与者的发言按协议允许的方式保留为带发送者标签的内容。群里其他 AI 的消息不能全部映射成目标 AI 自己的 assistant 历史。
 
-ConsciousnessService::prepare 构造中立的 `common::Message` 列表及 ContextSnapshot，以 PreparedContext 返回；执行层交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。当前已包含近期原文、档案、摘要、显式记忆和显式跨窗口引用；合并计划的全部输入为必要原文；约定联系使用独立触发类型和必要的授权内容，不伪造用户新消息，最终提交复核 ContactIntent。
+`builtin-agent` 的 ConsciousnessService::prepare 构造中立的 `common::Message` 列表及 ContextSnapshot，以 PreparedContext 返回；执行层交给 ai-client 做具体协议转换。发送者标签、回复目标和时间线属于本次内容结构，GUI 不构造协议 JSON。当前已包含近期原文、档案、摘要、显式记忆和显式跨窗口引用；合并计划的全部输入为必要原文；约定联系使用独立触发类型和必要的授权内容，不伪造用户新消息，最终提交复核 ContactIntent。
 
 上下文按 (ActorId, ConversationId) 构造，每次 AiRun 固定自己的快照。同一角色默认复用执行绑定，私聊和各群的消息范围与摘要分别选择；可选 provider 会话 ID、续接链或压缩缓存不得跨该范围复用。软件不依赖一个跨全部聊天窗口的常驻模型上下文。
 

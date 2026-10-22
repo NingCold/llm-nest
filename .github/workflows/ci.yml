@@ -50,12 +50,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf
       - name: Frontend
         run: |
-          pnpm --dir frontends/web install --frozen-lockfile
-          pnpm --dir frontends/tauri install --frozen-lockfile
-          pnpm --dir frontends/web typecheck
-          pnpm --dir frontends/web test
+          pnpm --dir client/web install --frozen-lockfile
+          pnpm --dir client/desktop install --frozen-lockfile
+          pnpm --dir client/web typecheck
+          pnpm --dir client/web test
       - name: Rust checks
         run: |
+          python scripts/check-boundaries.py
           cargo fmt --all -- --check
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked

@@ -16,7 +16,7 @@ uuid.workspace = true
 ai-client.workspace = true
 storage.workspace = true
 social.workspace = true
-tools = { path = "../tools" }
+tools = { path = "../../agent/tools" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,6 +1,6 @@
 use super::{SocialStorageResult as Result, sqlite::Db, store::*};
 use ::social::*;
-use events::SocialChange;
+use connector::SocialChange;
 use rusqlite::params;
 
 impl Db<'_> {

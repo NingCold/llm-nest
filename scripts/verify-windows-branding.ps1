@@ -2,7 +2,7 @@ param([string]$BuildDirectory)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$config = Get-Content -LiteralPath (Join-Path $projectRoot 'frontends/tauri/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+$config = Get-Content -LiteralPath (Join-Path $projectRoot 'client/desktop/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
 if (-not $BuildDirectory) {
     $BuildDirectory = Join-Path $projectRoot 'target/x86_64-pc-windows-msvc/release'
 }

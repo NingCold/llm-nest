@@ -15,8 +15,8 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="0.1.0"\n')
-            names = ("frontends/tauri/src-tauri/tauri.conf.json",
-                     "frontends/tauri/package.json", "frontends/web/package.json")
+            names = ("client/desktop/src-tauri/tauri.conf.json",
+                     "client/desktop/package.json", "client/web/package.json")
             for name in names:
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -33,12 +33,12 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="0.1.1-alpha.1"\n')
-            for name in ("frontends/tauri/src-tauri/tauri.conf.json",
-                         "frontends/tauri/package.json", "frontends/web/package.json"):
+            for name in ("client/desktop/src-tauri/tauri.conf.json",
+                         "client/desktop/package.json", "client/web/package.json"):
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"version": "0.1.1-alpha.1"}))
-            tauri_path = root / "frontends/tauri/src-tauri/tauri.conf.json"
+            tauri_path = root / "client/desktop/src-tauri/tauri.conf.json"
             with self.assertRaisesRegex(ValueError, "numeric"):
                 release.validate(root)
             for msi_version in ("0.1.0.1", "0.1.1.alpha.1", "0.1.1.65536"):

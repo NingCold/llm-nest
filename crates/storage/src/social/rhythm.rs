@@ -39,7 +39,7 @@ impl Db<'_> {
         state: &ParticipationState,
     ) -> Result<()> {
         self.execute("INSERT INTO participation_state VALUES(?1,?2) ON CONFLICT(conversation_id) DO UPDATE SET payload=excluded.payload",params![id.to_string(),serde_json::to_string(state)?])?;
-        self.event(events::SocialChange::ParticipationChanged {
+        self.event(connector::SocialChange::ParticipationChanged {
             conversation_id: id,
         })
     }

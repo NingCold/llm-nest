@@ -63,10 +63,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf xvfb xauth dbus-x11 libfuse2t64
       - name: Frontend checks
         run: |
-          pnpm --dir frontends/web install --frozen-lockfile
-          pnpm --dir frontends/tauri install --frozen-lockfile
-          pnpm --dir frontends/web typecheck
-          pnpm --dir frontends/web test
+          pnpm --dir client/web install --frozen-lockfile
+          pnpm --dir client/desktop install --frozen-lockfile
+          pnpm --dir client/web typecheck
+          pnpm --dir client/web test
       - name: Rust and offline acceptance
         run: |
           cargo fmt --all -- --check
@@ -77,7 +77,7 @@ jobs:
           python scripts/social_acceptance.py --only-image-capabilities
           python scripts/social_acceptance.py --only-files
       - name: Build embedded desktop installers
-        working-directory: frontends/tauri
+        working-directory: client/desktop
         run: node node_modules/@tauri-apps/cli/tauri.js build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --ci -- --locked
       - name: Check Windows icons and install identity
         if: runner.os == 'Windows'

@@ -5,9 +5,9 @@
 [app-icon.svg](app-icon.svg) 是应用图标的源文件。修改它后，在仓库根目录运行：
 
 ```bash
-pnpm --dir frontends/tauri icons
+pnpm --dir client/desktop icons
 ```
 
 脚本会生成桌面使用的 ICO、ICNS 和 PNG，以及网页图标和界面标识。首次运行前，需要按[开发指南](../../docs/development.md)安装前端依赖。
 
-生成的桌面图标位于 `frontends/tauri/src-tauri/icons`，网页资源位于 `frontends/web/public`。界面内的标识会随浅色、深色主题调整颜色。
+生成的桌面图标位于 `client/desktop/src-tauri/icons`，网页资源位于 `client/web/public`。界面内的标识会随浅色、深色主题调整颜色。

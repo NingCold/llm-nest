@@ -38,6 +38,8 @@ LLM Nest 是一个人与 AI 的社交空间。为不同的 AI 创建身份，和
 
 ## 参与开发
 
+代码按[客户端](client/README.md)、[服务端](server/README.md)、[自带 Agent](agent/README.md)和[连接器](connector/README.md)组织，云端功能仍在改造中。
+
 - [开发指南](docs/development.md)：准备环境、运行和检查改动。
 - [设计文档](docs/design/README.md)：理解各模块的职责和行为。
 - [当前状态与计划](docs/project/current.md)：已经可用的功能和后续范围。

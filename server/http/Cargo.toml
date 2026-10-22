@@ -1,0 +1,25 @@
+[package]
+name = "web-server"
+version.workspace = true
+edition.workspace = true
+description = "HTTP server exposing LLM Nest runtime (social accounts, conversations and SSE) to web frontends"
+
+[dependencies]
+axum = "0.8"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
+futures-util.workspace = true
+
+social-feature = { path = "../../server/social" }
+social.workspace = true
+runtime = { path = "../../crates/runtime" }
+connector.workspace = true
+ai-client.workspace = true
+storage.workspace = true
+percent-encoding = "2"
+
+[[bin]]
+name = "web-server"
+path = "src/main.rs"

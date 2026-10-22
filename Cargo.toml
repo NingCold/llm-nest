@@ -3,14 +3,15 @@ resolver = "2"
 members = [
     "crates/common",
     "crates/social",
-    "crates/ai-client",
-    "crates/events",
+    "agent/ai-client",
+    "agent/core",
+    "connector",
     "crates/runtime",
-    "crates/tools",
+    "agent/tools",
     "crates/storage",
-    "crates/web-server",
-    "features/social",
-    "frontends/tauri/src-tauri",
+    "server/http",
+    "server/social",
+    "client/desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -37,10 +38,16 @@ uuid = { version = "1", features = ["v4", "serde"] }
 path = "crates/common"
 
 [workspace.dependencies.ai-client]
-path = "crates/ai-client"
+path = "agent/ai-client"
 
 [workspace.dependencies.storage]
 path = "crates/storage"
 
 [workspace.dependencies.social]
 path = "crates/social"
+
+[workspace.dependencies.builtin-agent]
+path = "agent/core"
+
+[workspace.dependencies.connector]
+path = "connector"

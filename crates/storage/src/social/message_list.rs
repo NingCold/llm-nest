@@ -73,7 +73,7 @@ impl Db<'_> {
         state.revision = state.revision.next()?;
         self.execute("INSERT INTO conversation_list_state VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(conversation_id,actor_id) DO UPDATE SET read_through=excluded.read_through,marked_unread=excluded.marked_unread,pinned=excluded.pinned,revision=excluded.revision",
             params![input.conversation_id.to_string(),ctx.operator.to_string(),state.read_through.get() as i64,state.marked_unread,state.pinned,state.revision.get() as i64])?;
-        self.event(events::SocialChange::ConversationListChanged {
+        self.event(connector::SocialChange::ConversationListChanged {
             conversation_id: input.conversation_id,
             actor_id: ctx.operator,
             revision: state.revision,

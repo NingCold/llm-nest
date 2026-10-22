@@ -4,7 +4,7 @@
 
 ## 已确认的云端重构方向
 
-[云端改造计划](../project/cloud-plan.md)的六项方案已全部确认。本轮仅收束第 0 步设计，第 1 步暂不实施。云端保存正式聊天原文与附件；自带 Agent 在本地 SQLite 按稳定 AI 账号保存角色设定、模型参数、显式记忆，以及按 AI 账号 + 窗口 + 来源分段组织的摘要、配置与来源版本。模型 Key 与节点连接凭据独立保存在本机秘密配置，不随意识资料导出或上传。
+[云端改造计划](../project/cloud-plan.md)的六项方案已全部确认。第 0 步设计与代码结构准备已完成，云端真人聊天是下一步。目标由云端保存正式聊天原文与附件；自带 Agent 在本地 SQLite 按稳定 AI 账号保存角色设定、模型参数、显式记忆，以及按 AI 账号 + 窗口 + 来源分段组织的摘要、配置与来源版本。模型 Key 与节点连接凭据独立保存在本机秘密配置，不随意识资料导出或上传。
 
 ### 上下文与摘要归属
 
@@ -34,7 +34,7 @@
 
 ## 职责与边界
 
-意识系统统一负责为确定的 AI、空间和运行选择背景，维护可追溯的摘要与记忆，并处理修订和遗忘。当前 ConsciousnessService 位于 `features/social/src/consciousness.rs`，由 SocialFeature 持有；中立领域类型放在 `crates/social/src/consciousness.rs`。不新增独立 Feature、Runtime 或数据库。
+意识系统统一负责为确定的 AI、空间和运行选择背景，维护可追溯的摘要与记忆，并处理修订和遗忘。纯上下文组装位于 `agent/core/src/consciousness.rs`，由 `builtin-agent` 的 ConsciousnessService 接收 ContextInput 并返回模型消息与来源快照；它不读取数据库或宿主配置。SocialFeature 负责授权材料读取、输入适配、记忆与摘要用例、事务和运行协调。中立领域类型位于 `crates/social/src/consciousness.rs`。当前仍在同一进程中使用同一 SQLite，尚未拆分节点进程、存储或网络。
 
 经历材料分为三层：完整窗口原文、按窗口分段的摘要、归属于稳定 AI 及关系/群范围的长期记忆。近期上下文是本次从这些材料中选择的结果。角色背景另由管理员维护；原文、摘要、记忆与档案分别保存、更新和追溯，聊天历史不等于全部长期记忆。
 
@@ -42,10 +42,12 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `features/social/src/consciousness.rs` | ConsciousnessService 与请求材料构造 |
-| `features/social/src/memory.rs` | 显式记忆创建、编辑、读取与遗忘 |
-| `features/social/src/summary.rs` | 窗口分段摘要任务、读取与失效 |
-| `features/social/src/reference.rs` | 群来源预览与跨窗口接续 |
+| `agent/core/src/consciousness.rs`、`agent/core/src/input.rs` | 纯上下文选材、请求组装及 ContextInput 输入 |
+| `agent/core/src/generation.rs`、`agent/core/src/summary.rs` | 输出预算与生成参数、摘要提示词 |
+| `server/social/src/consciousness.rs` | 将授权读取的 ContextMaterial 显式转换为 Agent 输入 |
+| `server/social/src/memory.rs` | 显式记忆创建、编辑、读取与遗忘 |
+| `server/social/src/summary.rs` | 窗口分段摘要任务、读取与失效 |
+| `server/social/src/reference.rs` | 群来源预览与跨窗口接续 |
 | `crates/social/src/consciousness.rs` | 中立材料类型、范围、来源与快照 |
 
 完整消息仍由聊天用例写入 SocialStore，档案由身份用例维护。意识系统读取这些权威来源，不能复制一套独立聊天记录或把 AiProfile 当成自动生成的记忆。来源与权限筛选贯穿各组件，最终提交使用存储层原子版本校验。
@@ -76,7 +78,7 @@
 
 ### 近期上下文由谁维护
 
-软件保存聊天记录和可见范围；意识系统维护摘要、记忆及所选消息引用，ConsciousnessService 在每次生成前构造上下文。模型的上下文窗口是本次输入、输出及协议所需内容的容量限制，按模型能力设置预算并预留输出空间。
+软件保存聊天记录和可见范围；SocialFeature 协调摘要、记忆与来源读取，自带 Agent 核心的 ConsciousnessService 在每次生成前从已提供材料构造上下文。模型的上下文窗口是本次输入、输出及协议所需内容的容量限制，按模型能力设置预算并预留输出空间。
 
 执行层先根据 AI 的绑定分配输出预算，再交给意识系统。显式 max_tokens 按原值预留，不压回 1024；留空时回答预算取 1024 与窗口四分之一的较小值，若当前 Anthropic 思考模式使用独立预算则加上该预算，最后受模型输出能力限制。输入预算为窗口容量减去实际输出预留。近期历史可按预算选择，完整原记录保留；角色与空间信息、当前触发消息及回复对象无法容纳时返回 budget_exhausted，不截断必要原文。参数边界见 [AI 执行](execution.md)。
 
@@ -143,7 +145,7 @@ ConversationSummary 保存 conversation_id、稳定的 sequence 覆盖范围、�
 
 ContextReference 随私聊 SocialMessage 保存 target、initiated_by、attached_to、selection（源群与原文/可选摘要版本）和 stale。它是检索锚点，不授予超出原来源的访问权；引用共享与显式转发分别处理。ContextSnapshot 固定本次实际使用的来源及权限版本，跨窗口派生内容继续追踪这些依赖。
 
-ContextScope 标识目标 ActorId + ConversationId。ContextSnapshot 包含实际使用的消息/摘要/记忆引用及版本、来源权限版本、档案/绑定/关系设置版本和预算信息，归属一次 AiRun。ConsciousnessService::prepare(material, model, output_tokens) 返回运行期 PreparedContext：中立 common::Message 列表和 ContextSnapshot；持久化只保存需要的引用与版本，不另存完整请求副本。
+ContextScope 标识目标 ActorId + ConversationId。ContextSnapshot 包含实际使用的消息/摘要/记忆引用及版本、来源权限版本、档案/绑定/关系设置版本和预算信息，归属一次 AiRun。ConsciousnessService::prepare(input, model, output_tokens) 返回运行期 PreparedContext：中立 common::Message 列表和 ContextSnapshot；持久化只保存需要的引用与版本，不另存完整请求副本。
 
 ## 可见范围
 
@@ -184,7 +186,7 @@ ContextScope 标识目标 ActorId + ConversationId。ContextSnapshot 包含实�
 
 ## 检索与上下文构造
 
-`ConsciousnessService::prepare(material, model, output_tokens)` 接收存储提供的 ContextMaterial、解析后的 ModelSpec 和实际输出预留，返回 PreparedContext。材料包含当前账号与窗口、触发消息或约定、必要合并输入、共同群引用、显式记忆、摘要和相应版本。
+SocialFeature 从 SocialStore 取得授权范围内的 ContextMaterial，在 `server/social/src/consciousness.rs` 显式转换成 `builtin-agent` 自有的 ContextInput。`ConsciousnessService::prepare(input, model, output_tokens)` 接收该输入、解析后的 ModelSpec 和实际输出预留，返回 PreparedContext。输入包含当前账号与窗口、触发消息或约定、必要合并输入、共同群引用、显式记忆、摘要和相应版本；纯核心不依赖 SocialStore、Runtime、HTTP/IPC 或连接器。
 
 选材优先级与消息最终排列分别处理。预算先预留 system 中的角色、空间与参与指令，以及约定触发时完整的 Contact 内容；然后依次选择：
 

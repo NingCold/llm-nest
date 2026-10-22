@@ -9,11 +9,12 @@
 在仓库根目录执行：
 
 ```bash
+python scripts/check-boundaries.py
 cargo fmt --all -- --check
 cargo test -p <受影响的包> --locked
 cargo clippy -p <受影响的包> --all-targets --locked
-pnpm --dir frontends/web typecheck
-pnpm --dir frontends/web test
+pnpm --dir client/web typecheck
+pnpm --dir client/web test
 cargo build -p web-server --locked
 python scripts/acceptance.py
 python scripts/social_acceptance.py
@@ -36,3 +37,21 @@ python scripts/social_acceptance.py
 | 平台与包 | 真实目标设备的窗口/缩放/输入、实际路径、快捷方式、安装标识及 worker；两条 HTTP/IPC 适配保持同一业务语义 |
 
 测试检查用户可见结果和边界，不只镜像实现。当前尚未开放的工具执行与多人联网，不作为已实现功能的验收场景。
+
+## 最近一次代码拆分验证
+
+2026-10-22，在本机 Windows 上验证四部分目录与核心库拆分：
+
+- Rust MSVC 全工作区测试、格式检查与 Clippy 完成；Clippy 仍有原代码的风格提示。
+- 共用前端类型检查、全部 18 组测试及 Web/桌面前端构建通过。
+- Agent 核心与连接器依赖边界检查通过；另一个独立 Cargo 工程成功引用连接器并解析订阅事件。
+- 本地宿主验收通过。Release 构建通过完整模拟聊天验收和普通文件专项，覆盖上下文、摘要、来源失效、5.6 MiB 图片组合、12 MiB 文件组合及携带附件的导出。
+- 发布版本与脚本检查、文档链接检查通过。未进行安装包制作、安装更新或新的桌面人工验收。
+
+本轮 Debug 构建在两组大附件请求中触发脚本的 15 秒超时，图片单独复测也超时；Release 构建在原等待上限内通过。没有修改业务行为或放宽超时，也未把 Debug 的完整验收记为通过。复现发布构建检查：
+
+```powershell
+cargo +stable-x86_64-pc-windows-msvc build -p web-server --release --target x86_64-pc-windows-msvc --locked
+python scripts/social_acceptance.py --binary target/x86_64-pc-windows-msvc/release/web-server.exe
+python scripts/social_acceptance.py --binary target/x86_64-pc-windows-msvc/release/web-server.exe --only-files
+```

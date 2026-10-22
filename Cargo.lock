@@ -253,6 +253,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "builtin-agent"
+version = "0.1.1-alpha.3"
+dependencies = [
+ "ai-client",
+ "common",
+ "image",
+ "serde_json",
+ "social",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -433,6 +445,15 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "connector"
+version = "0.1.1-alpha.3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "social",
 ]
 
 [[package]]
@@ -860,16 +881,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "events"
-version = "0.1.1-alpha.3"
-dependencies = [
- "common",
- "serde",
- "serde_json",
- "social",
 ]
 
 [[package]]
@@ -3505,9 +3516,10 @@ version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "base64 0.22.1",
+ "builtin-agent",
  "chrono",
  "common",
- "events",
+ "connector",
  "futures-util",
  "image",
  "runtime",
@@ -3606,8 +3618,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "common",
+ "connector",
  "dirs 5.0.1",
- "events",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3886,7 +3898,7 @@ name = "tauri-frontend"
 version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
- "events",
+ "connector",
  "open",
  "runtime",
  "serde",
@@ -4794,7 +4806,7 @@ version = "0.1.1-alpha.3"
 dependencies = [
  "ai-client",
  "axum",
- "events",
+ "connector",
  "futures-util",
  "percent-encoding",
  "runtime",

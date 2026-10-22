@@ -23,8 +23,8 @@ python scripts/social_acceptance.py
 想打开测试页面，可以先构建界面，再运行：
 
 ```bash
-pnpm --dir frontends/web build:social-runtime
-python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist --serve
+pnpm --dir client/web build:social-runtime
+python scripts/social_acceptance.py --dist client/web/.social-runtime-dist --serve
 ```
 
 使用脚本打印的地址。检查结束后，在它打印的临时目录中创建 `STOP` 文件即可关闭测试服务。
@@ -33,6 +33,7 @@ python scripts/social_acceptance.py --dist frontends/web/.social-runtime-dist --
 
 | 要做的事 | 脚本或说明 |
 | --- | --- |
+| 检查 Agent 核心与连接器的依赖边界 | `python scripts/check-boundaries.py` |
 | 准备桌面聊天测试数据 | [social_desktop_fixture.py](social_desktop_fixture.py) |
 | 更新应用图标 | [generate-icons.mjs](generate-icons.mjs)，用法见[图标说明](../assets/branding/README.md) |
 | 构建和检查 Linux 安装包 | [Linux 脚本](linux/README.md) |

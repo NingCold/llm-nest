@@ -1241,7 +1241,7 @@ async fn contact_archive_is_atomic_across_spaces_and_preserves_other_ai_and_hist
         .await
         .unwrap();
     assert!(events.iter().any(
-        |e| matches!(e.change, events::SocialChange::ActorChanged {actor_id,..} if actor_id==a.id)
+        |e| matches!(e.change, connector::SocialChange::ActorChanged {actor_id,..} if actor_id==a.id)
     ));
     f.close().await;
 }

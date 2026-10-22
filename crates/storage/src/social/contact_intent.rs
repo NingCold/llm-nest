@@ -23,7 +23,7 @@ impl Db<'_> {
     }
     fn save_contact(&self, i: &ContactIntent) -> Result<()> {
         self.execute("INSERT INTO contact_intents VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET status=excluded.status,payload=excluded.payload",params![i.id.to_string(),i.conversation_id.to_string(),i.actor_id.to_string(),i.created_by.to_string(),label(&i.status)?,i.due_at.to_rfc3339(),serde_json::to_string(i)?])?;
-        self.event(events::SocialChange::ContactScheduleChanged {
+        self.event(connector::SocialChange::ContactScheduleChanged {
             conversation_id: i.conversation_id,
         })
     }
@@ -117,7 +117,7 @@ impl Db<'_> {
             // A response already sent to a provider cannot be safely deferred/replayed.
             for i in self.query_json("SELECT payload FROM contact_intents WHERE conversation_id=?1 AND status='executing'",[input.conversation_id.to_string()])? { self.stop_contact(i,ContactIntentStatus::Cancelled,"进入免打扰，已停止本次联系")?; }
         }
-        self.event(events::SocialChange::ContactScheduleChanged {
+        self.event(connector::SocialChange::ContactScheduleChanged {
             conversation_id: input.conversation_id,
         })?;
         self.save_receipt(ctx, "update_contact_settings", input, input.conversation_id)?;

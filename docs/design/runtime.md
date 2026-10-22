@@ -33,13 +33,13 @@ Agent 启动先取得本地存储锁，读取配置、凭据引用与执行检�
 
 ## 当前本地实现的适用范围
 
-以下为现有嵌入式 Runtime、单库资源注入与关闭流程，尚未实现上述服务/Agent 拆分或后台常驻。尤其当前关闭窗口会关闭 Runtime，不能据此声称目标后台运行已可用；旧流程保留用于当前维护与迁移。
+以下为现有嵌入式 Runtime、单库资源注入与关闭流程。源码已按 client、server、agent、connector 划分，Agent 纯核心与共享订阅事件已提取；上述独立进程、数据库和节点网络拆分以及后台常驻仍未实现。尤其当前关闭窗口会关闭 Runtime，不能据此声称目标后台运行已可用；旧流程保留用于当前维护与迁移。
 
 ## Runtime 的职责
 
-Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命周期和关闭。SocialFeature 实现身份、聊天、意识系统（Consciousness）、参与与调度用例；Runtime 不堆积前端专用的业务条件。ConsciousnessService 由 SocialFeature 创建和持有，使用注入的同一 SocialStore、AiClient、Clock 与预算资源，不成为独立 Runtime 或 Feature。
+Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命周期和关闭。SocialFeature 实现身份、聊天、意识资料管理、参与与调度用例，并负责授权材料读取、事务和执行协调；Runtime 不堆积前端专用的业务条件。`agent/core` 的 ConsciousnessService 是接收 ContextInput 的纯上下文组装服务，生成预算与摘要提示词也归属该库，不读取 SocialStore、Clock 或宿主配置。SocialFeature 将存储材料显式转换后调用它，模型请求仍使用 Runtime 注入的 AiClient；没有新增独立 Runtime、Feature 或数据库。
 
-FeatureContext 必需注入 AiClient 与 SocialResources（SocialStore/Clock）。参与队列、并发限制和临时生成广播由 SocialFeature 自己维护，持久事件来自 SocialStore。SessionManager、旧 RuntimeEvent 与工具注册不再属于 Runtime 业务上下文；底层工具库保留，但社交尚未启用。
+FeatureContext 必需注入 AiClient 与 SocialResources（SocialStore/Clock）。参与队列、并发限制和临时生成广播由 SocialFeature 自己维护，持久事件来自 SocialStore；持久/临时事件及 SubscriptionEvent 由 `connector` 定义，SocialFeature 保留订阅读取与协调。SessionManager、旧 RuntimeEvent 与工具注册不再属于 Runtime 业务上下文；底层工具库保留，但社交尚未启用。
 
 共享 Runtime 遵守 [新架构优先与兼容边界](overview.md#新架构优先与兼容边界)。生产宿主统一 `Runtime::open(config_path, data_dir)`，直接持有 SQLite 与模型快照；确定性测试通过 `Runtime::with_resources` 注入独立资源，不建立旧会话运行时。
 
@@ -95,7 +95,7 @@ GUI 的实际操作者固定为后端的本地真人。账号查看只传被查�
 
 当前 SocialFeature.initialize 恢复运行并继续持久 queued 计划、Bout 与有效约定调度；重复初始化不能产生多个调度器。Clock 与 mock provider 可注入，业务代码不自行创建真实凭据或新的独立 Runtime。
 
-SocialFeature 初始化意识系统，并管理按窗口显式启用的摘要任务；自动提取和巩固尚未实现。后台任务使用明确模型绑定与独立调用预算，摘要并发为 1，每次唤醒最多 4 段、单次 120 秒；没有配置或输入预算不足时显示可恢复状态，不隐式调用另一个付费模型。
+SocialFeature 管理意识资料用例，并协调按窗口显式启用的摘要任务；纯上下文、生成预算与摘要提示词使用 `builtin-agent` 核心。自动提取和巩固尚未实现。后台任务使用明确模型绑定与独立调用预算，摘要并发为 1，每次唤醒最多 4 段、单次 120 秒；没有配置或输入预算不足时显示可恢复状态，不隐式调用另一个付费模型。
 
 shutdown 顺序：停止接受新执行 → 停止参与调度和意识后台任务领取 → 取消活动运行与后台任务 → 等待中断保存与工具退出 → 刷新状态并释放事件资源 → 关闭数据库 → 释放目录锁。摘要未完成时可以依据来源重新评估，不能在重启时无条件重放已 dispatch 的外部调用；新任务仍受预算与版本约束。
 

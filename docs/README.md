@@ -11,11 +11,11 @@
 | 私聊、群聊、发图片和文件、管理记忆、保存数据 | [使用指南](usage.md) |
 | 连接模型服务或本机 Ollama | [模型配置](configuration.md) |
 | 从源码运行、修改界面或检查改动 | [开发指南](development.md) |
-| 找到某项功能对应的代码 | [界面](../frontends/README.md) · [聊天功能](../features/README.md) · [共用模块](../crates/README.md) |
+| 找到某项功能对应的代码 | [客户端](../client/README.md) · [服务端](../server/README.md) · [Agent](../agent/README.md) · [连接器](../connector/README.md) · [共用模块](../crates/README.md) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |
 | 理解账号、聊天和意识系统的设计 | [设计说明](design/README.md) |
 | 了解已做完什么、现在做什么、以后可能做什么 | [已完成](project/completed.md) · [当前安排](project/current.md) · [待办与候选](project/backlog.md) |
-| 查看云端社交、独立 AI 账号与 Agent 接入的分步安排 | [云端社交与 Agent 接入计划（设计已定，尚未实现）](project/cloud-plan.md) |
+| 查看云端社交、独立 AI 账号与 Agent 接入的分步安排 | [云端社交与 Agent 接入计划](project/cloud-plan.md) |
 | 检查功能，了解 Windows 和 Linux 的验证情况 | [验证指南](validation/README.md) |
 
 参与代码修改时，也请阅读 [AGENTS.md](../AGENTS.md) 中的项目约定。

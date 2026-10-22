@@ -5,7 +5,7 @@ use super::{
 use crate::DataDirectoryGuard;
 use ::social::*;
 use async_trait::async_trait;
-use events::{SocialChange, SocialEvent};
+use connector::{SocialChange, SocialEvent};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{

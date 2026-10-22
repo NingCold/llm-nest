@@ -22,9 +22,9 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 | 文件 | 字段 |
 | --- | --- |
 | `Cargo.toml` | `workspace.package.version` |
-| `frontends/tauri/src-tauri/tauri.conf.json` | `version` |
-| `frontends/tauri/package.json` | `version` |
-| `frontends/web/package.json` | `version` |
+| `client/desktop/src-tauri/tauri.conf.json` | `version` |
+| `client/desktop/package.json` | `version` |
+| `client/web/package.json` | `version` |
 
 每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前为 `0.1.1-alpha.3`；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
@@ -63,7 +63,7 @@ git push origin v0.1.1-alpha.3
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-Push-Location frontends/tauri
+Push-Location client/desktop
 ./node_modules/.bin/tauri.cmd build --target x86_64-pc-windows-msvc --bundles nsis msi --ci --config src-tauri/tauri.windows.conf.json -- --locked
 Pop-Location
 ./scripts/verify-windows-icons.ps1
@@ -72,7 +72,7 @@ Pop-Location
 
 产物位于 `target/x86_64-pc-windows-msvc/release/bundle`。Tauri CLI 会构建并嵌入生产前端，裸 `cargo build --release` 不能代替这一步。
 
-对外显示名为 **LLM Nest**，内部二进制、历史安装目录和注册项继续使用 `LLM-Nest`，用户数据仍在 `~/.llmn`。模板来源和升级约束见[模板说明](../frontends/tauri/src-tauri/packaging/windows/README.md)，包检查和安装验收见 [Windows 验证](validation/windows.md)。
+对外显示名为 **LLM Nest**，内部二进制、历史安装目录和注册项继续使用 `LLM-Nest`，用户数据仍在 `~/.llmn`。模板来源和升级约束见[模板说明](../client/desktop/src-tauri/packaging/windows/README.md)，包检查和安装验收见 [Windows 验证](validation/windows.md)。
 
 ## 本地 Linux 打包
 

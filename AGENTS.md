@@ -4,7 +4,7 @@
 
 ## 项目定位与当前范围
 
-产品目标已调整为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认与文档整理已完成。用户当前要求先不实现，第 1 步云端真人聊天尚未开始。
+产品目标已调整为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步云端真人聊天尚未开始。
 
 保留一个仓库，划清客户端、服务端、自带 Agent 和连接器四个模块的边界：前三者独立运行，连接器可独立引用。云端 PostgreSQL 保存社交记录，附件使用独立持久目录；自带 Agent 的 SQLite 保存角色、模型参数、记忆和每个 AI 自己的窗口摘要。模型 Key 与节点凭据只在节点保管，不进迁移包；外部 Agent 自选内部实现。
 
@@ -20,7 +20,7 @@
 
 已实现独立账号、私聊/群聊、意识系统、参与节奏与一次性约定联系、协议路由、SQLite 持久化及桌面/Web 设置。工具 worker 是保留的底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或界面按钮声称功能已经可用。
 
-首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)，由 SocialFeature 内部服务按角色与空间构造请求。
+首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)。SocialFeature 读取并检查材料，调用 `agent/core` 按角色与空间构造请求。
 
 ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。ContactEntry 是按 owner 的有向联系人条目，listed 与 blocked 独立，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，v9 增加跨窗口引用依赖索引，v10 增加接话规则/状态/每日额度，v11 增加约定联系设置与意图、计划的独立触发来源，v12 增加消息完成顺序和个人已读/未读/置顶状态并替换闲置 read_positions，v13 增加个人屏蔽状态，不改写旧迁移。
 
@@ -59,19 +59,22 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | --- | --- |
 | `crates/common` | Message、ContentPart、ID、Usage、计时、中断与运行检查点等公共类型 |
 | `crates/social` | 中立身份/空间/消息/运行类型、意识系统范围与来源快照、可控时钟 |
-| `crates/ai-client` | AiProvider/AiClient、ModelRouter、内置目录、配置类型、协议工厂、协议适配、SSE 分帧 |
-| `crates/events` | 持久 SocialEvent 引用与临时 SocialGenerationEvent |
+| `agent/ai-client` | AiProvider/AiClient、ModelRouter、内置目录、配置类型、协议工厂、协议适配、SSE 分帧 |
+| `agent/core` | 纯上下文组装、生成预算、摘要提示词；独立 ContextInput，不读取存储或配置 |
+| `connector` | 持久 SocialEvent、临时 SocialGenerationEvent 与 SubscriptionEvent 编解码；节点网络接入待实现 |
 | `crates/storage` | SocialStore/SQLite、目录锁、事务/备份与独立旧格式导入边界 |
-| `crates/tools` | Tool、ToolRegistry、固定白名单子进程和内置 echo/add |
+| `agent/tools` | Tool、ToolRegistry、固定白名单子进程和内置 echo/add |
 | `crates/runtime` | 配置/目录缓存/热更新、Feature 生命周期与必需的 SocialResources 注入 |
-| `features/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、意识上下文/显式记忆/窗口摘要任务/群话题接续、独立模型运行、共享业务 DTO |
-| `crates/web-server` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
-| `frontends/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
-| `frontends/web/src/social` | 唯一真实社交状态与视图，HTTP/IPC 适配 |
-| `frontends/tauri/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
+| `server/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、意识材料适配/显式记忆/窗口摘要任务/群话题接续、运行协调、共享业务 DTO |
+| `server/http` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
+| `client/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
+| `client/web/src/social` | 唯一真实社交状态与视图，HTTP/IPC 适配 |
+| `client/desktop/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
 | `scripts` / `docs` | 可执行验收/构建流程与证据 |
 
 旧 SessionManager、ChatFeature、JSON 写入存储、RuntimeEvent、PluginManager 和 app-sdk 空壳已移除。历史 JSON DTO 仅位于 `storage::legacy`，导入实现位于 `storage::social::legacy`；协议适配与当前社交模型不依赖旧运行生命周期。
+
+本次是代码归属与核心库拆分，尚未完成进程和数据库分离。`crates/runtime`、`crates/storage` 仍供当前本地宿主共用，桌面仍内嵌 Runtime，`server/social` 仍协调本地模型运行。后续云端服务移除模型和私有意识依赖，Agent 增加独立入口与节点存储；不要把这些过渡依赖当成目标架构。`connector` 不依赖 Runtime、存储、模型或 GUI；`builtin-agent` 不依赖存储、Runtime、服务端或连接器。运行 `python scripts/check-boundaries.py` 检查这两条已落实的依赖边界。
 
 ## 架构边界
 
@@ -158,10 +161,10 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 
 ### GUI 与平台
 
-- React 源码只有 `frontends/web` 一套。Tauri 构建输出到忽略的 `frontends/tauri/dist`，Web 输出 `frontends/web/dist`；两者均忽略，不提交派生 bundle。
+- React 源码只有 `client/web` 一套。Tauri 构建输出到忽略的 `client/desktop/dist`，Web 输出 `client/web/dist`；两者均忽略，不提交派生 bundle。
 - Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，Web/桌面 WebView 在 IndexedDB `llm-nest-social-drafts` 按实际真人账号与窗口保存文字、图片/文件 Blob、提及/回复/引用以及不可变的待确认发送快照；先保存完整命令再发送，恢复后只允许手动重试同一内容与 ID，不自动发送。旧 localStorage `llm-nest-social-live-drafts-v1` 只在边界迁入当前可见窗口，事务完成后清理；附件不写入 localStorage。恢复失败不开放空草稿编辑，写入失败保留输入并提示重试；事务版本阻止多页面互相覆盖。发送成功清理对应草稿与附件，保留期间新增内容；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
 - IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先向已注册页面请求草稿保存确认，等待正在读取的附件及 IndexedDB 写入；确认匹配当前 page/request 后才拒绝新业务命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭。草稿失败或 10 秒超时保持窗口与后端可用，页面重载/销毁释放等待，未注册页面不阻止初始启动失败时退出；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
-- `frontends/tauri/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
+- `client/desktop/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。社交保存与 AI 执行可用性分开。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
@@ -186,8 +189,8 @@ cargo fmt --all -- --check
 cargo test -p <受影响的包> --locked
 cargo clippy -p <受影响的包> --all-targets --locked
 
-pnpm --dir frontends/web typecheck
-pnpm --dir frontends/web test
+pnpm --dir client/web typecheck
+pnpm --dir client/web test
 
 cargo build -p web-server --locked
 python scripts/acceptance.py
@@ -204,7 +207,7 @@ python scripts/social_acceptance.py
 ## 新增功能的落点
 
 - **协议**：更新 Protocol、build_provider 和对应 convert/SSE；添加协议 fixture，覆盖错误、终止和工具调用。新增 provider 品牌但协议相同时优先改目录/配置。
-- **Feature**：在 features 下实现生命周期并暴露业务方法；通过 FeatureContext 获得运行时能力，事件放到 events。
+- **社交用例**：在 `server/social` 实现业务与当前 Feature 生命周期；纯上下文和生成策略放 `agent/core`，共享事件契约放 `connector`。不要新增跨层本地调用来代替计划中的节点协议。
 - **工具**：先明确权限、副作用、超时和进程边界，再注册能力。不得把“支持工具调用”写成“支持任意安全插件”。
 - **GUI 字段**：从持久化/Runtime 契约开始，同步 HTTP、IPC、前端 DTO、保存失败行为与历史恢复。
 - **文档**：根 README 介绍应用、主要能力和开始方法；详细操作放 `docs/usage.md`，各模块 README 介绍用途、运行方式和阅读入口。使用自然、简洁的表达，少用术语，不写开发日志、架构规则或防御性清单。当前设计放 `docs/design`，已完成/当前安排/待办与候选分别维护在 `docs/project`，检查方法与平台结果放 `docs/validation`，打包专项放 `docs/packaging`；AGENTS 维护修改约束。每批工作完成后更新相关说明与进度，不默认新建批次报告或再开一份 TODO。过时过程记录从目录移除，Git 保留历史；保留的验收结论注明日期与适用版本，不改写成新版本已通过。直接修订当前规则，合并重复内容。文件名使用简短英文小写连字符，README 除外，不再用日期或阶段编号命名常规文档。最终汇报说明本批结果、当前阶段、剩余范围和下一步。

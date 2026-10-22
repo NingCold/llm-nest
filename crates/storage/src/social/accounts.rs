@@ -1,6 +1,6 @@
 use super::{SocialStorageError as Error, SocialStorageResult as Result, sqlite::Db, store::*};
 use ::social::*;
-use events::SocialChange;
+use connector::SocialChange;
 use rusqlite::{OptionalExtension, params};
 
 impl Db<'_> {

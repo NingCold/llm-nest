@@ -1,4 +1,5 @@
 //! Neutral social domain contracts. No provider, transport, or persistence dependencies.
+pub mod attachment;
 pub mod clock;
 pub mod consciousness;
 pub mod contact_intent;

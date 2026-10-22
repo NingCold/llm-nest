@@ -4,7 +4,7 @@
 
 用户看到的名称为 **LLM Nest**，二进制、现有安装目录和注册项仍用 `LLM-Nest`，应用 identifier 保持 `com.llmnest.tauri`。显示名不应改变旧安装识别；不要全局替换名称或随意修改产品标识。
 
-Windows 模板在 `frontends/tauri/src-tauri/packaging/windows`，来自 Tauri CLI **2.11.4** 的 [NSIS](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi) 和 [WiX](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle/windows/msi/main.wxs)。引入模板的许可见 [LICENSE.tauri](../../frontends/tauri/src-tauri/packaging/windows/LICENSE.tauri)，不代表项目整体许可证。
+Windows 模板在 `client/desktop/src-tauri/packaging/windows`，来自 Tauri CLI **2.11.4** 的 [NSIS](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi) 和 [WiX](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle/windows/msi/main.wxs)。引入模板的许可见 [LICENSE.tauri](../../client/desktop/src-tauri/packaging/windows/LICENSE.tauri)，不代表项目整体许可证。
 
 - NSIS 保留 `LLM-Nest` 安装目录、卸载注册项和安装位置注册项，安装器/快捷方式/应用列表使用显示名。检测 MSI 兼容新旧显示名与发布者组合。
 - `hooks.nsh` 仅处理仍指向当前安装的旧快捷方式，不覆盖指向其他程序的同名快捷方式。

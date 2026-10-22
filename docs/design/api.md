@@ -40,13 +40,13 @@ Agent 主动建立 WSS 连接接收任务和控制，通过 HTTPS 按 AI 凭据�
 
 ## 当前本地实现的适用范围
 
-以下章节及源码链接描述已实现的单机 HTTP/IPC 契约：固定本地真人、共享 SocialFeature 与 SQLite。公网认证、PostgreSQL、WSS 节点和上述拆分均尚未实现；保留这些说明用于当前维护与迁移，不据此向公网开放现有本地服务。
+以下章节及源码链接描述已实现的单机 HTTP/IPC 契约：固定本地真人、共享 SocialFeature 与 SQLite。源码已划分为 client、server、agent、connector，并提取 Agent 纯核心；公网认证、PostgreSQL、WSS 节点及独立进程/存储仍尚未实现；保留这些说明用于当前维护与迁移，不据此向公网开放现有本地服务。
 
-本文集中维护当前传输契约，后续能力单独列出，不预先固定尚未实现的路由。源码入口为 [HTTP](../../crates/web-server/src/social_api.rs)、[IPC](../../frontends/tauri/src-tauri/src/social_commands.rs)、[共享 DTO](../../features/social/src/wire.rs) 与 [持久事件](../../crates/events/src/social_event.rs)。
+本文集中维护当前传输契约，后续能力单独列出，不预先固定尚未实现的路由。源码入口为 [HTTP](../../server/http/src/social_api.rs)、[IPC](../../client/desktop/src-tauri/src/social_commands.rs)、[共享 DTO](../../server/social/src/wire.rs) 与 [持久事件](../../connector/src/social_event.rs)。
 
 ## 共享业务入口
 
-HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。显式记忆管理位于 SocialFeature 内部 memory 模块，ConsciousnessService 读取并构造上下文；窗口摘要由 summary 模块沿此边界生成与维护，原消息仍由聊天用例维护。
+HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。显式记忆管理位于 SocialFeature 的 memory 模块；SocialFeature 读取授权材料并转换为 ContextInput，调用 `agent/core` 的 ConsciousnessService 纯函数式组装上下文。窗口摘要的授权、任务、来源校验和存储仍由 SocialFeature 的 summary 模块协调，摘要提示词与生成预算使用 Agent 核心；原消息由聊天用例维护。
 
 外部业务字段为 camelCase，枚举值按各自 serde 契约；ID 为 UUID 字符串，revision、sequence、cursor 为十进制字符串。请求使用 requestId；expectedRevision 针对被修改对象，不能拿空间 revision 替代消息或成员 revision。
 
@@ -115,7 +115,7 @@ Message.images 返回 `{index,mime,byteLength}` 数组，Message.files 返回 `{
 
 普通文件下载统一返回 application/octet-stream、Content-Disposition: attachment、UTF-8 文件名、no-store 与 nosniff；不内联页面内容。IPC `social_save_file` 参数与 social_save_image 相同，复用原生对话框后的权限复核与原子文件写入，返回 cancelled 或 saved/fileName；Web 返回 downloaded/fileName。文件输入为 name/mime/data，最多 4 个、单个 10 MiB、合计 20 MiB，允许零字节；名称和 MIME 规则见[聊天与消息](conversations.md)。
 
-单窗口导出接受窗口 ID、`format`（markdown/json）、独立的 `includeImages` / `includeFiles`（HTTP 省略时均为 false，IPC 由客户端明确传入），不接受操作者、文件正文或目标路径。两个附件选项均关闭时 HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包；任一开启时返回 ZIP 二进制，`Content-Disposition` 使用 UTF-8 filename*，`X-LLMN-Message-Count` 给出完整消息数。两者均设置 `Cache-Control: no-store`；ZIP 另设 `X-Content-Type-Options: nosniff`。Web 下载对应 Blob。IPC 的[保存适配](../../frontends/tauri/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，不产生持久事件。记录 JSON 的版本为无附件 v1、仅携图 v2、包含文件选项 v3，filePath 为 ZIP 中的实际相对路径；结构见[聊天与消息](conversations.md)。
+单窗口导出接受窗口 ID、`format`（markdown/json）、独立的 `includeImages` / `includeFiles`（HTTP 省略时均为 false，IPC 由客户端明确传入），不接受操作者、文件正文或目标路径。两个附件选项均关闭时 HTTP 返回 `{fileName,mediaType,messageCount,content}` JSON 文件内容包；任一开启时返回 ZIP 二进制，`Content-Disposition` 使用 UTF-8 filename*，`X-LLMN-Message-Count` 给出完整消息数。两者均设置 `Cache-Control: no-store`；ZIP 另设 `X-Content-Type-Options: nosniff`。Web 下载对应 Blob。IPC 的[保存适配](../../client/desktop/src-tauri/src/conversation_export.rs)打开原生“另存为”，取消返回 `{outcome:"cancelled"}`；成功写入返回 `{outcome:"saved",fileName,messageCount}`，文件名取实际保存目标。两个适配共用 SocialFeature 的读取和格式化，不产生持久事件。记录 JSON 的版本为无附件 v1、仅携图 v2、包含文件选项 v3，filePath 为 ZIP 中的实际相对路径；结构见[聊天与消息](conversations.md)。
 
 保存原图走独立 download 路由，返回原始二进制、实际图片 MIME、UTF-8 文件名、no-store 和 nosniff；重新复核消息版本和对应读取权限。IPC `social_save_image` 接受 `{id,index,revision,account}`，account 仅指定需复核管理员权限的只读账号视角，不替换实际操作者。保存位置只能来自原生对话框，关闭对话框后重新读取并校验；取消/成功结果分别为 `{outcome:"cancelled"}` / `{outcome:"saved",fileName}`。Web 使用 `{outcome:"downloaded",fileName}`，不声称已写入磁盘。
 
@@ -211,7 +211,7 @@ SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_
 
 cursor 在本地库全局单调递增，与业务事务同提交。事件只保存引用，不保存消息、记忆或修订原文；客户端读取当前可见版本，旧事件不能恢复撤回正文。数据库状态是权威数据，不按事件重建历史正文。
 
-回放至少一次，客户端按 cursor 去重，并在状态应用成功后推进游标。消息变更按 MessageId 读取，已加载的早期消息也能更新。持久事件由 SocialStore 提供，临时生成事件由 SocialFeature 发布；两者不依赖旧运行时事件总线。
+回放至少一次，客户端按 cursor 去重，并在状态应用成功后推进游标。消息变更按 MessageId 读取，已加载的早期消息也能更新。持久事件由 SocialStore 提供，临时生成事件由 SocialFeature 发布；SocialEvent、SocialGenerationEvent、LiveEvent 和 SubscriptionEvent 的共享类型位于 `connector`，HTTP/IPC 消费同一订阅封装。连接器当前不实现节点授权或网络协议，两类事件不依赖旧运行时事件总线。
 
 ## 临时生成事件
 

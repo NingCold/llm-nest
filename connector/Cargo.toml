@@ -1,0 +1,11 @@
+[package]
+name = "connector"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+social.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

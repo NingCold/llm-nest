@@ -1,7 +1,7 @@
 use super::{LegacyImportResult, LegacyPreview, SocialStorageResult};
 use ::social::*;
 use async_trait::async_trait;
-use events::SocialEvent;
+use connector::SocialEvent;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -357,7 +357,7 @@ pub struct RunDetails {
     pub error: Option<RunFailure>,
 }
 
-pub use events::SocialFailure as RunFailure;
+pub use connector::SocialFailure as RunFailure;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

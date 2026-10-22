@@ -2,7 +2,7 @@
 
 [设计入口](README.md) · [当前工作](../project/current.md) · [开发约束](../../AGENTS.md)
 
-云端社交与用户托管 Agent 的设计已经确认并整理完成，实施顺序见[云端计划](../project/cloud-plan.md)。按用户当前要求，先保留文档方案，暂不实现；现有程序仍是本地社交版本。
+云端社交与用户托管 Agent 的设计已经确认，四部分代码目录与核心库已拆分，实施顺序见[云端计划](../project/cloud-plan.md)。现有程序仍按本地方式运行，云端账号和独立节点尚未接通。
 
 ## 云端目标架构
 
@@ -61,25 +61,30 @@ flowchart LR
 flowchart TD
     UI[React GUI] --> Adapter[Web HTTP/SSE 或 Tauri IPC/Channel]
     Adapter --> Feature[SocialFeature 业务用例]
-    Feature --> Consciousness[意识系统]
+    Feature --> Consciousness[agent/core 上下文与生成预算]
     Feature --> Resources[Runtime 注入模型客户端、存储与时钟]
-    Consciousness --> Resources
+    Feature --> Protocol[connector 订阅协议]
     Resources --> Store[SocialStore / SQLite]
-    Resources --> Models[AiClient / 协议适配器]
+    Resources --> Models[agent/ai-client 模型协议]
 ```
 
 | 模块 | 职责 |
 | --- | --- |
 | `crates/common` / `crates/social` | 基础消息与 ID / 中立社交类型和可控时钟 |
-| `crates/ai-client` | 严格模型校验、目录、配置类型、协议路由与 SSE 分帧 |
-| `crates/events` / `crates/storage` | 持久引用和临时生成事件 / SQLite、事务、锁、备份与导入 |
+| `agent/ai-client` | 严格模型校验、目录、配置类型、协议路由与 SSE 分帧 |
+| `agent/core` | 根据独立输入组装上下文，计算生成预算和摘要提示词 |
+| `connector` / `crates/storage` | 持久引用和临时生成事件 / SQLite、事务、锁、备份与导入 |
 | `crates/runtime` | 配置快照、目录缓存、资源注入、Feature 生命周期 |
-| `features/social` | 账号、聊天、意识系统、参与调度、执行与共享业务 DTO |
-| `crates/web-server` / `frontends/tauri/src-tauri` | HTTP/SSE 与桌面 IPC/Channel 适配 |
-| `frontends/web` | 唯一 React 界面、状态、草稿和两种客户端适配 |
-| `crates/tools` | 固定白名单工具 worker，当前不接入社交执行 |
+| `server/social` | 账号、聊天、意识材料适配、参与调度、执行协调与业务 DTO |
+| `server/http` / `client/desktop/src-tauri` | HTTP/SSE 与桌面 IPC/Channel 适配 |
+| `client/web` | 唯一 React 界面、状态、草稿和两种客户端适配 |
+| `agent/tools` | 固定白名单工具 worker，当前不接入社交执行 |
 
-`social` 不依赖 Runtime、存储或 GUI；`events` 可以依赖 social，storage 可以依赖二者。Runtime 通过 trait 管理 Feature，不反向依赖具体 SocialFeature。意识系统由 SocialFeature 内部服务承担，复用同一存储、AiClient 与 Clock。两种 GUI 适配器调用相同业务方法，不复制规则。
+`social` 不依赖 Runtime、存储或 GUI；`connector` 只依赖 serde 和中立 social 类型，storage 使用连接器的事件定义。`builtin-agent` 依赖模型客户端和中立类型，不读取 Runtime、存储或服务端。两条已落实的依赖边界由 `scripts/check-boundaries.py` 检查。
+
+Runtime 通过 trait 管理 Feature，不反向依赖具体 SocialFeature。SocialFeature 读取和检查材料，再转换为 Agent 核心输入；权限、事务、运行调度和流式保存仍在现有本地用例里。两种 GUI 适配器调用相同业务方法，不复制规则。
+
+`crates/runtime` 和 `crates/storage` 仍是过渡中的共用部分，桌面仍嵌入本地运行时。目录拆分不等于云端服务、Agent 进程和数据已经分离：第 1 步建立独立真人服务，第 2 步接入节点，第 3 步迁移意识资料，按主计划逐步替换这些依赖。
 
 ## 一致性与隐私
 

@@ -12,7 +12,7 @@ dirs = "5"
 common.workspace = true
 ai-client.workspace = true
 social.workspace = true
-events = { path = "../events" }
+connector.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }

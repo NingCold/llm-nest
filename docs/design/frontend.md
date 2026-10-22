@@ -22,7 +22,7 @@ Web 与 Tauri 共用真实社交界面。当前进度见[当前工作](../projec
 
 节点恢复只处理尚未开始且仍有效的任务，过期不补发；已开始但结果不明的调用不自动重试。取消后的旧结果由云端拒收，界面不承诺已经发出的模型调用立即停止或免除费用。运行和迁移的完整范围见[已确认约定](../project/cloud-plan.md#已确认的运行与迁移约定)。
 
-以下章节记录现有本地实现；云端登录、节点远程管理、统一云端聊天和后台常驻尚未实现，第 1 步暂不实施。
+以下章节记录现有本地实现；客户端已迁入 `client/`，云端登录、节点远程管理、统一云端聊天和后台常驻仍待后续实施。
 
 ## 信息结构
 
@@ -179,6 +179,6 @@ Windows/Linux 关闭系统标题栏，社交页不再预留独立 56px 顶栏。
 
 Windows 保留透明 WebView 合成表面与 shadow=false。启动 HTML 透明，初始化成功或失败后界面不透明；原生底色用 Window.setBackgroundColor 同步。普通 Windows 11 窗口由 DWM 绘制圆角/边框；未最大化或全屏、上下占满当前显示器 rcWork（容差 2 物理像素）时关闭原生描边并画 1 物理像素矩形内描边。状态事件带 revision，迟到事件不覆盖新状态。Windows 10 不支持 DWM 属性时回退细边框。窗口不使用透明外边距、额外阴影窗口、区域裁切或 CSS 裁切整个应用。Linux 使用主题底色，不具有 Windows Acrylic 声明；其新布局仍按[候选清单](../project/backlog.md)安排实机复验。
 
-桌面前端输出到忽略的 `frontends/tauri/dist`，Web 为 `frontends/web/dist`，验收构建可用 `.social-runtime-dist`。生成权限 schema 不手改，权限源是 capabilities。公共和 Windows 配置均使用 dragDropEnabled=false。图标唯一源为 `assets/branding/app-icon.svg`，安装 identifier、路径与升级标识按[发布指南](../releases.md)保持。
+桌面前端输出到忽略的 `client/desktop/dist`，Web 为 `client/web/dist`，验收构建可用 `.social-runtime-dist`。生成权限 schema 不手改，权限源是 capabilities。公共和 Windows 配置均使用 dragDropEnabled=false。图标唯一源为 `assets/branding/app-icon.svg`，安装 identifier、路径与升级标识按[发布指南](../releases.md)保持。
 
 验证使用同一真实界面、独立临时数据和模拟 provider；详见[验证入口](../validation/README.md)。

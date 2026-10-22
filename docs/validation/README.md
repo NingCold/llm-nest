@@ -2,6 +2,8 @@
 
 [开发指南](../development.md) · [Windows](windows.md) · [Linux](linux.md) · [设计](../design/README.md)
 
+本页命令与平台记录针对现有本地版本。云端目标设计已完成，实施后的验收条件见[改造计划](../project/cloud-plan.md)，当前不计为通过。
+
 先验证改动所属模块及相关调用链，再按范围扩大。使用独立临时配置、数据和模拟 provider；不要把个人配置、会话或密钥放进 fixture、CI 或发布资源。真实模型验收会产生费用，必须已有明确授权。
 
 在仓库根目录执行：

@@ -2,6 +2,46 @@
 
 [总纲](overview.md) · [存储与迁移](storage.md) · [界面与桌面](frontend.md)
 
+## 云端目标设计（尚未实现）
+
+本节落实[云端计划](../project/cloud-plan.md)已采纳的方案，供后续实现；下面的本地路由表不是云端接口清单。首轮只确定操作语义与字段，不宣称路由、连接器或命令已经可用。
+
+### 传输与身份
+
+客户端共用 HTTPS JSON 命令/查询与 SSE 同步；桌面 IPC 只承担系统能力和本机 Agent 管理。真人请求以登录会话确定实际操作者，不能传入 operatorId 或 senderId 切换身份。AI 节点使用管理员授权的专用可撤销凭据，凭据限定 AI 与当前绑定版本；不是管理员的登录会话，也不能用于读取其他 AI 的资料。
+
+Agent 主动建立 WSS 连接接收任务和控制，通过 HTTPS 按 AI 凭据读取授权原文与附件，无需开放入站端口。一个 AI 同时只有一个有效节点，一个节点可运行多个 AI；手动更换节点提升绑定版本并撤销旧资格。连接器仅实现协议与身份处理，不依赖完整 Runtime、AiClient 或自带意识系统。
+
+### 最小操作契约
+
+下表是待实现的操作类别，不是现有路由。ID 保持稳定，版本与游标使用十进制字符串；业务修改以 requestId 幂等，expectedRevision 指向被修改对象。相同 ID 的不同内容应报冲突，不覆盖原命令。
+
+| 操作 | 身份与最小语义字段 | 完成条件 |
+| --- | --- | --- |
+| 真人社交命令/查询 | 登录会话；requestId、目标账号/窗口/消息 ID、expectedRevision；分页游标 | 云端权限检查与 PostgreSQL 事务完成后返回回执；附件读取再次检查当前成员和消息 revision |
+| 绑定/撤销节点 | AI 管理员会话；requestId、aiId、nodeId、expectedRevision | 云端保存新 bindingVersion；只有初始管理员可增删 AI 管理员，节点管理不授予群管理权 |
+| 节点握手与能力 | 节点凭据；协议版本范围、nodeId、aiId/bindingVersion、支持的任务与内容类型、恢复游标 | 服务端确认协商版本和有效绑定；无共同版本或缺少必要能力时明确拒绝，不静默降级或丢图片 |
+| 任务下发/领取 | 有效节点；taskId、aiId、conversationId、bindingVersion、任务版本、触发类型/ID、必要 inputIds、来源 ID/revision、参与与权限版本、notBefore/expiresAt | 领取不等于允许调用模型；有效期、取消和当前授权由云端复核 |
+| 材料读取 | 有效节点；taskId、aiId、bindingVersion、消息/附件 ID 与 revision、分页边界 | 仅返回目标 AI 当前有权读取的来源与权限版本；普通文件只向模型提供元信息，不把字节混入上下文 |
+| 开始确认 | 有效节点；requestId、taskId、bindingVersion、任务/来源版本、节点配置与意识快照版本 | 云端持久化开始及自动次数预留并返回确认；节点未收到确认不得调用模型 |
+| 临时片段/草稿检查点 | 有效节点；taskId、runId、messageId、bindingVersion、deltaSeq 或检查点版本 | 临时 delta 允许丢失；接受的草稿检查点可持久化，不能冒充最终成功 |
+| 提交结果/查询回执 | 有效节点；requestId、taskId、runId、messageId、bindingVersion、开始确认 ID、来源版本、终态/正文及可选用量 | 云端同事务复核社交资格与来源，保存正式消息、任务终态和事件；同 ID 重交返回回执，旧绑定或已撤销结果拒收 |
+| 取消/主动发言申请 | 真人获授权会话或有效节点，按操作限定；requestId、taskId 或 aiId/conversationId、触发与来源、expectedRevision | 云端按接话、屏蔽、成员与授权规则决定；节点申请不直接产生聊天消息 |
+| 在线内部资料管理 | AI 管理员会话；requestId、aiId、bindingVersion、资料类别、节点 expectedRevision、操作内容 | 云端复核管理员并转发在线节点；节点保存后才成功，不排队离线修改 |
+| 关系/窗口显式记忆 | 当前真人成员会话；requestId、aiId、conversationId、bindingVersion、节点 expectedRevision、来源版本 | 沿用现有成员与来源范围校验，转发节点保存；不授予内部档案、模型或摘要管理权 |
+
+模型 Key 只在节点本地填写和解析，根本不经过平台。模型选择、参数、persona、记忆与摘要保存在节点；在线管理转发可能接触这些正文，但不写入云端持久库或日志。平台可保存命令 ID、状态和版本等不含正文的回执元信息；超时显示“结果未确认”，按原 requestId 查询或重试，由节点去重，不能换 ID 当作新修改，也不声称跨云端与节点的分布式事务。查询与重试先复核当前授权，再返回可见回执，不凭旧 requestId 绕过撤权。普通配置修改作用于新运行；内部资料的撤销规则见[执行设计](execution.md)。
+
+### 事件与重连
+
+云端持久事件保存可重放的账号、权限、消息、任务和来源变化引用，按认证主体过滤；SSE 使用最后已应用的持久游标续接。游标失效时重新读取有权限的快照再订阅，不把其他账号的事件作为补齐来源。临时 delta 使用 runId/deltaSeq，与持久游标分开；重连读取草稿或最终消息，终态覆盖临时片段并拒绝迟到 delta。
+
+节点 WSS 也以已应用的持久游标补齐任务、取消、来源失效与绑定变化；断线后先核对有效绑定、任务状态与来源，再继续尚未开始且有效的任务。已开始但结果不明的调用不自动重做；本地保存的完成结果可用原 ID 查询/重交，仍受当前取消、权限、来源和绑定约束。云端的社交授权版本与节点内部记忆版本分别由各自权威存储核验，不要求云端验证外部 Agent 的全部内部实现。
+
+## 当前本地实现的适用范围
+
+以下章节及源码链接描述已实现的单机 HTTP/IPC 契约：固定本地真人、共享 SocialFeature 与 SQLite。公网认证、PostgreSQL、WSS 节点和上述拆分均尚未实现；保留这些说明用于当前维护与迁移，不据此向公网开放现有本地服务。
+
 本文集中维护当前传输契约，后续能力单独列出，不预先固定尚未实现的路由。源码入口为 [HTTP](../../crates/web-server/src/social_api.rs)、[IPC](../../frontends/tauri/src-tauri/src/social_commands.rs)、[共享 DTO](../../features/social/src/wire.rs) 与 [持久事件](../../crates/events/src/social_event.rs)。
 
 ## 共享业务入口
@@ -220,4 +260,4 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 群话题接续的规则见 [意识系统](consciousness.md#从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；独立转发仍为候选，未来共享选定内容也不能授予源空间读取权。
 
-本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；未来公网认证另行设计。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。
+本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；云端认证与节点接入以本文顶部目标设计为准，当前尚未实现。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。

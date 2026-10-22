@@ -2,6 +2,8 @@
 
 [项目首页](../README.md) · [模型配置](configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
 
+以下命令用于现有本地版本。云端服务和独立 Agent 的设计已定，尚未实现，后续环境与命令按[改造计划](project/cloud-plan.md)在对应批次补齐。
+
 ## 准备环境
 
 仓库 CI 和 Linux 构建容器固定使用 Rust 1.97.0、Node.js 24.18.0、pnpm 11.22.0；脚本需要 Python 3.11+。建议本机使用相同版本，避免因工具差异改动锁文件。

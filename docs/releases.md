@@ -2,6 +2,8 @@
 
 [开发指南](development.md) · [验证指南](validation/README.md) · [全部文档](README.md)
 
+本页描述现有本地版本的打包与发布。云端服务容器、独立 Agent 和连接器属于[改造计划](project/cloud-plan.md)，目前尚无对应发布产物。
+
 ## 安装包范围
 
 | 平台 | 构建环境 | 产物 |

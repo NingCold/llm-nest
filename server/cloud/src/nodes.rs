@@ -8,7 +8,7 @@ use axum::{
     },
     http::{HeaderMap, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -21,6 +21,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/ai", get(managed).post(create))
+        .route("/ai/{id}/status", put(status))
         .route("/ai/{id}/node", post(bind))
         .route("/ai/{id}/node/revoke", post(revoke))
         .route("/node/pairings", post(pair))
@@ -106,20 +107,13 @@ async fn admin(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<()> {
     Ok(())
 }
 async fn account(tx: &mut Tx<'_>, ai: Uuid) -> Result<Value> {
-    let r = sqlx::query("SELECT id,name,bio,kind FROM accounts WHERE id=$1")
-        .bind(ai)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or_else(AppError::not_found)?;
-    Ok(
-        json!({"id":r.get::<Uuid,_>(0),"name":r.get::<String,_>(1),"bio":r.get::<String,_>(2),"kind":r.get::<String,_>(3)}),
-    )
+    crate::chat::account(tx, ai).await
 }
 async fn view(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<Value> {
-    let r=sqlx::query("SELECT a.initial,b.version,b.node_id,b.node_name,b.last_seen_at,b.connection_id IS NOT NULL AND b.last_seen_at>now()-interval '45 seconds' AS online FROM cloud_ai_admins a JOIN cloud_ai_bindings b ON b.ai_id=a.ai_id WHERE a.ai_id=$1 AND a.administrator=$2").bind(ai).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::forbidden)?;
+    let r=sqlx::query("SELECT a.initial,ac.status_revision,jsonb_build_object('id',ac.id,'name',ac.name,'bio',ac.bio,'kind',ac.kind,'status',ac.status) AS account,b.version,b.node_id,b.node_name,b.last_seen_at,b.connection_id IS NOT NULL AND b.last_seen_at>now()-interval '45 seconds' AS online FROM cloud_ai_admins a JOIN cloud_ai_bindings b ON b.ai_id=a.ai_id JOIN accounts ac ON ac.id=a.ai_id WHERE a.ai_id=$1 AND a.administrator=$2").bind(ai).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::forbidden)?;
     let nid: Option<Uuid> = r.get("node_id");
     Ok(
-        json!({"account":account(tx,ai).await?,"role":if r.get::<bool,_>("initial"){"initial"}else{"admin"},"bindingVersion":r.get::<i64,_>("version").to_string(),"node":nid.map(|nid|json!({"id":nid,"name":r.get::<Option<String>,_>("node_name"),"online":r.get::<bool,_>("online"),"lastSeenAt":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_seen_at")}))}),
+        json!({"account":r.get::<Value,_>("account"),"role":if r.get::<bool,_>("initial"){"initial"}else{"admin"},"statusRevision":r.get::<i64,_>("status_revision").to_string(),"bindingVersion":r.get::<i64,_>("version").to_string(),"node":nid.map(|nid|json!({"id":nid,"name":r.get::<Option<String>,_>("node_name"),"online":r.get::<bool,_>("online"),"lastSeenAt":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_seen_at")}))}),
     )
 }
 async fn admin_receipt(
@@ -348,14 +342,9 @@ async fn publish(tx: &mut Tx<'_>, tid: Uuid) -> Result<()> {
         .bind(tid)
         .fetch_one(&mut **tx)
         .await?;
-    let response = json!({"taskId":tid,"status":r.get::<String,_>("state"),"error":r.get::<Option<String>,_>("error_code")});
-    sqlx::query("UPDATE cloud_messages SET ai_response=$2 WHERE id=$1")
-        .bind(r.get::<Uuid, _>("input_id"))
-        .bind(response)
-        .execute(&mut **tx)
-        .await?;
     let cid: Uuid = r.get("conversation");
-    sqlx::query("INSERT INTO cloud_events(owner,conversation) SELECT first_id,id FROM cloud_conversations WHERE id=$1 UNION ALL SELECT second_id,id FROM cloud_conversations WHERE id=$1").bind(cid).execute(&mut **tx).await?;
+    sqlx::query("UPDATE cloud_messages SET ai_responses=(SELECT coalesce(jsonb_agg(jsonb_build_object('aiId',ai_id,'taskId',id,'status',state,'error',error_code) ORDER BY queue_position),'[]'::jsonb) FROM cloud_node_tasks WHERE input_id=$1) WHERE id=$1").bind(r.get::<Uuid,_>("input_id")).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO cloud_events(owner,conversation) SELECT account_id,conversation FROM cloud_members WHERE conversation=$1").bind(cid).execute(&mut **tx).await?;
     event(
         tx,
         r.get("ai_id"),
@@ -370,23 +359,57 @@ async fn publish(tx: &mut Tx<'_>, tid: Uuid) -> Result<()> {
             "tasksChanged"
         },
     )
-    .await
+    .await?;
+    if !matches!(r.get::<String, _>("state").as_str(), "queued" | "running")
+        && let Some(next)=sqlx::query("SELECT ai_id,binding_version,id FROM cloud_node_tasks WHERE conversation=$1 AND state='queued' ORDER BY queue_position LIMIT 1").bind(cid).fetch_optional(&mut **tx).await? {
+        event(tx,next.get("ai_id"),next.get("binding_version"),next.get("id"),"tasksChanged").await?;
+    }
+    Ok(())
 }
-pub(crate) async fn enqueue(
-    tx: &mut Tx<'_>,
-    cid: Uuid,
-    mid: Uuid,
-    sender: Uuid,
-    pair: (Uuid, Uuid),
-) -> Result<()> {
-    let ai = if pair.0 == sender { pair.1 } else { pair.0 };
-    let binding:Option<i64>=sqlx::query_scalar("SELECT b.version FROM cloud_ai_bindings b JOIN accounts a ON a.id=b.ai_id WHERE a.id=$1 AND a.kind='ai'").bind(ai).fetch_optional(&mut **tx).await?;
-    let Some(version) = binding else {
-        return Ok(());
+pub(crate) async fn enqueue(tx: &mut Tx<'_>, cid: Uuid, mid: Uuid, sender: Uuid) -> Result<()> {
+    let c = sqlx::query("SELECT kind,revision FROM cloud_conversations WHERE id=$1")
+        .bind(cid)
+        .fetch_one(&mut **tx)
+        .await?;
+    let m = sqlx::query("SELECT mentions,reply_to FROM cloud_messages WHERE id=$1")
+        .bind(mid)
+        .fetch_one(&mut **tx)
+        .await?;
+    let mut targets: Vec<Uuid> = if c.get::<String, _>("kind") == "direct" {
+        sqlx::query_scalar(
+            "SELECT account_id FROM cloud_members WHERE conversation=$1 AND account_id<>$2",
+        )
+        .bind(cid)
+        .bind(sender)
+        .fetch_all(&mut **tx)
+        .await?
+    } else {
+        m.get("mentions")
     };
-    let tid = Uuid::new_v4();
-    sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at) VALUES($1,$2,$3,$4,1,$5,now()+interval '5 minutes')").bind(tid).bind(ai).bind(cid).bind(mid).bind(version).execute(&mut **tx).await?;
-    publish(tx, tid).await
+    if let Some(reply) = m.get::<Option<Uuid>, _>("reply_to") {
+        let a: Uuid = sqlx::query_scalar("SELECT sender FROM cloud_messages WHERE id=$1")
+            .bind(reply)
+            .fetch_one(&mut **tx)
+            .await?;
+        targets.push(a);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for ai in targets {
+        if !seen.insert(ai) {
+            continue;
+        }
+        let binding:Option<i64>=sqlx::query_scalar("SELECT b.version FROM cloud_ai_bindings b JOIN accounts a ON a.id=b.ai_id JOIN cloud_members m ON m.account_id=a.id AND m.conversation=$2 WHERE a.id=$1 AND a.kind='ai' AND a.status='active'").bind(ai).bind(cid).fetch_optional(&mut **tx).await?;
+        if let Some(version) = binding {
+            let tid = Uuid::new_v4();
+            sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at,conversation_revision) VALUES($1,$2,$3,$4,1,$5,now()+interval '5 minutes',$6)").bind(tid).bind(ai).bind(cid).bind(mid).bind(version).bind(c.get::<i64,_>("revision")).execute(&mut **tx).await?;
+            publish(tx, tid).await?;
+        }
+    }
+    Ok(())
+}
+pub(crate) async fn conversation_changed(tx: &mut Tx<'_>, cid: Uuid, reason: &str) -> Result<()> {
+    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE conversation=$1 AND state IN ('queued','running','uncertain')").bind(cid).fetch_all(&mut **tx).await?;
+    invalidate_rows(tx, rows, reason).await
 }
 async fn invalidate_rows(
     tx: &mut Tx<'_>,
@@ -397,7 +420,7 @@ async fn invalidate_rows(
         let tid: Uuid = r.get("id");
         sqlx::query("UPDATE cloud_node_tasks SET state='cancelled',revision=revision+1,error_code=$2,delta_text='',finished_at=now() WHERE id=$1").bind(tid).bind(reason).execute(&mut **tx).await?;
         if let Some(mid) = r.get::<Option<Uuid>, _>("message_id") {
-            if reason == "cancelled" {
+            if matches!(reason, "cancelled" | "blocked" | "account_disabled") {
                 finish_message(tx, &r, &r.get::<String, _>("delta_text"), "interrupted").await?;
             } else {
                 sqlx::query("DELETE FROM cloud_messages WHERE id=$1 AND status<>'committed'")
@@ -415,7 +438,7 @@ async fn invalidate_ai(tx: &mut Tx<'_>, ai: Uuid, reason: &str) -> Result<()> {
     invalidate_rows(tx, rows, reason).await
 }
 pub(crate) async fn source_changed(tx: &mut Tx<'_>, mid: Uuid) -> Result<()> {
-    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE state IN ('queued','running','uncertain') AND (input_id=$1 OR EXISTS(SELECT 1 FROM jsonb_array_elements(sources) s WHERE s->>'messageId'=$1::text))").bind(mid).fetch_all(&mut **tx).await?;
+    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE state IN ('queued','running','uncertain') AND (input_id=$1 OR EXISTS(SELECT 1 FROM cloud_messages m WHERE m.id=cloud_node_tasks.input_id AND m.reply_to=$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements(sources) s WHERE s->>'messageId'=$1::text))").bind(mid).fetch_all(&mut **tx).await?;
     invalidate_rows(tx, rows, "source_changed").await
 }
 async fn expire(tx: &mut Tx<'_>, ai: Uuid) -> Result<()> {
@@ -429,14 +452,14 @@ async fn expire(tx: &mut Tx<'_>, ai: Uuid) -> Result<()> {
     Ok(())
 }
 async fn authorized_task(tx: &mut Tx<'_>, n: &Node, tid: Uuid) -> Result<sqlx::postgres::PgRow> {
-    sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_conversations c ON c.id=t.conversation WHERE t.id=$1 AND t.ai_id=$2 AND t.binding_version=$3 AND (c.first_id=$2 OR c.second_id=$2)").bind(tid).bind(n.ai).bind(n.version).fetch_optional(&mut **tx).await?.ok_or_else(AppError::not_found)
+    sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_members c ON c.conversation=t.conversation JOIN accounts a ON a.id=t.ai_id WHERE t.id=$1 AND t.ai_id=$2 AND t.binding_version=$3 AND c.account_id=$2 AND a.status='active'").bind(tid).bind(n.ai).bind(n.version).fetch_optional(&mut **tx).await?.ok_or_else(AppError::not_found)
 }
 async fn tasks(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value>> {
     let mut tx = s.pool.begin().await?;
     lock(&mut tx).await?;
     let n = authenticate(&mut tx, &h).await?;
     expire(&mut tx, n.ai).await?;
-    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE ai_id=$1 AND binding_version=$2 AND state IN ('queued','running') ORDER BY created_at,id").bind(n.ai).bind(n.version).fetch_all(&mut *tx).await?;
+    let rows=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN accounts a ON a.id=t.ai_id JOIN cloud_members m ON m.account_id=t.ai_id AND m.conversation=t.conversation WHERE t.ai_id=$1 AND t.binding_version=$2 AND a.status='active' AND (t.state='running' OR t.state='queued' AND NOT EXISTS(SELECT 1 FROM cloud_node_tasks q WHERE q.conversation=t.conversation AND (q.state='running' OR q.state='queued' AND q.queue_position<t.queue_position))) ORDER BY t.queue_position").bind(n.ai).bind(n.version).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!(rows.iter().map(task_value).collect::<Vec<_>>())))
 }
@@ -454,27 +477,63 @@ async fn task(
     Ok(Json(task_value(&r)))
 }
 async fn history(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<Vec<sqlx::postgres::PgRow>> {
-    let trigger = sqlx::query("SELECT position,revision,withdrawn FROM cloud_messages WHERE id=$1")
-        .bind(r.get::<Uuid, _>("input_id"))
-        .fetch_one(&mut **tx)
-        .await?;
+    check_conversation(tx, r).await?;
+    let trigger =
+        sqlx::query("SELECT position,revision,withdrawn,reply_to FROM cloud_messages WHERE id=$1")
+            .bind(r.get::<Uuid, _>("input_id"))
+            .fetch_one(&mut **tx)
+            .await?;
     if trigger.get::<bool, _>("withdrawn")
         || trigger.get::<i64, _>("revision") != r.get::<i64, _>("input_revision")
     {
         return Err(AppError::conflict("触发原文已变化"));
     }
-    let mut rows=sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND position<=$2 AND NOT withdrawn AND status='committed' ORDER BY position DESC LIMIT 100").bind(r.get::<Uuid,_>("conversation")).bind(trigger.get::<i64,_>("position")).fetch_all(&mut **tx).await?;
-    rows.reverse();
+    let mut rows=sqlx::query("SELECT m.* FROM cloud_messages m WHERE m.conversation=$1 AND NOT m.withdrawn AND m.status='committed' AND (m.position<=$2 OR EXISTS(SELECT 1 FROM cloud_node_tasks prior JOIN cloud_messages input ON input.id=prior.input_id WHERE prior.message_id=m.id AND prior.conversation=$1 AND prior.queue_position<$3 AND prior.state='completed' AND input.position<=$2)) ORDER BY m.position DESC LIMIT 100").bind(r.get::<Uuid,_>("conversation")).bind(trigger.get::<i64,_>("position")).bind(r.get::<i64,_>("queue_position")).fetch_all(&mut **tx).await?;
+    let mut required = vec![r.get::<Uuid, _>("input_id")];
+    if let Some(reply) = trigger.get::<Option<Uuid>, _>("reply_to") {
+        required.push(reply);
+    }
+    for id in required {
+        if rows.iter().any(|m| m.get::<Uuid, _>("id") == id) {
+            continue;
+        }
+        let row=sqlx::query("SELECT * FROM cloud_messages WHERE id=$1 AND conversation=$2 AND NOT withdrawn AND status='committed'").bind(id).bind(r.get::<Uuid,_>("conversation")).fetch_optional(&mut **tx).await?.ok_or_else(||AppError::conflict("必要原文已失效"))?;
+        rows.push(row);
+    }
+    rows.sort_by_key(|m| m.get::<i64, _>("position"));
     Ok(rows)
 }
 fn sources(rows: &[sqlx::postgres::PgRow]) -> Value {
     json!(rows.iter().map(|m|json!({"messageId":m.get::<Uuid,_>("id"),"revision":m.get::<i64,_>("revision").to_string()})).collect::<Vec<_>>())
 }
-async fn check_sources(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
-    let saved: Value = r.get("sources");
-    if sources(&history(tx, r).await?) != saved {
-        return Err(AppError::conflict("上下文原文已变化"));
+async fn check_conversation(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
+    let cid = r.get::<Uuid, _>("conversation");
+    let rev: i64 = sqlx::query_scalar("SELECT revision FROM cloud_conversations WHERE id=$1")
+        .bind(cid)
+        .fetch_one(&mut **tx)
+        .await?;
+    if rev != r.get::<i64, _>("conversation_revision")
+        || crate::groups::direct_blocked(tx, cid).await?
+    {
+        return Err(AppError::conflict("窗口参与权限已变化"));
     }
+    Ok(())
+}
+async fn frozen_history(
+    tx: &mut Tx<'_>,
+    r: &sqlx::postgres::PgRow,
+) -> Result<Vec<sqlx::postgres::PgRow>> {
+    check_conversation(tx, r).await?;
+    let saved: Value = r.get("sources");
+    let mut rows = vec![];
+    for source in saved.as_array().unwrap() {
+        let row=sqlx::query("SELECT * FROM cloud_messages WHERE id=$1 AND conversation=$2 AND revision=$3 AND NOT withdrawn AND status='committed'").bind(id(source,"messageId")?).bind(r.get::<Uuid,_>("conversation")).bind(revision(source,"revision")?).fetch_optional(&mut **tx).await?.ok_or_else(||AppError::conflict("上下文原文已变化"))?;
+        rows.push(row);
+    }
+    Ok(rows)
+}
+async fn check_sources(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
+    frozen_history(tx, r).await?;
     Ok(())
 }
 async fn materials(
@@ -490,12 +549,29 @@ async fn materials(
     if !matches!(r.get::<String, _>("state").as_str(), "queued" | "running") {
         return Err(AppError::conflict("任务已结束"));
     }
-    let rows = history(&mut tx, &r).await?;
+    let rows = if r.get::<String, _>("state") == "running" {
+        frozen_history(&mut tx, &r).await?
+    } else {
+        history(&mut tx, &r).await?
+    };
     let src = sources(&rows);
     let cid: Uuid = r.get("conversation");
-    let peer:Uuid=sqlx::query_scalar("SELECT CASE WHEN first_id=$2 THEN second_id ELSE first_id END FROM cloud_conversations WHERE id=$1").bind(cid).bind(n.ai).fetch_one(&mut *tx).await?;
-    let messages:Vec<Value>=rows.iter().map(|m|json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"text":m.get::<String,_>("body"),"revision":m.get::<i64,_>("revision").to_string(),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments")})).collect();
-    let out = json!({"task":task_value(&r),"ai":account(&mut tx,n.ai).await?,"peer":account(&mut tx,peer).await?,"messages":messages,"sources":src});
+    let c = sqlx::query("SELECT kind,name,revision FROM cloud_conversations WHERE id=$1")
+        .bind(cid)
+        .fetch_one(&mut *tx)
+        .await?;
+    let members: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT account_id FROM cloud_members WHERE conversation=$1 ORDER BY account_id",
+    )
+    .bind(cid)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut accounts = vec![];
+    for member in members {
+        accounts.push(account(&mut tx, member).await?);
+    }
+    let messages:Vec<Value>=rows.iter().map(|m|json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"text":m.get::<String,_>("body"),"revision":m.get::<i64,_>("revision").to_string(),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments")})).collect();
+    let out = json!({"task":task_value(&r),"ai":account(&mut tx,n.ai).await?,"conversation":{"id":cid,"kind":c.get::<String,_>("kind"),"name":c.get::<String,_>("name"),"revision":c.get::<i64,_>("revision").to_string(),"members":accounts},"messages":messages,"sources":src});
     tx.commit().await?;
     Ok(Json(out))
 }
@@ -519,7 +595,11 @@ async fn attachment(
     {
         return Err(AppError::conflict("任务不再有效"));
     }
-    let rows = history(&mut tx, &r).await?;
+    let rows = if r.get::<String, _>("state") == "running" {
+        frozen_history(&mut tx, &r).await?
+    } else {
+        history(&mut tx, &r).await?
+    };
     let m = rows
         .iter()
         .find(|m| m.get::<Uuid, _>("id") == mid)
@@ -585,7 +665,20 @@ async fn start(
     if state != "queued" || r.get::<i64, _>("revision") != revision(&v, "taskRevision")? {
         return Err(AppError::conflict("任务已开始、失效或版本已变化"));
     }
-    let rows = history(&mut tx, &r).await?;
+    if revision(&v, "conversationRevision")? != r.get::<i64, _>("conversation_revision") {
+        return Err(AppError::conflict("窗口版本已变化"));
+    }
+    let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state='queued' AND queue_position<$2)").bind(r.get::<Uuid,_>("conversation")).bind(r.get::<i64,_>("queue_position")).fetch_one(&mut *tx).await?;
+    if blocked {
+        let mut e = AppError::conflict("任务尚未轮到");
+        e.code = "task_not_ready";
+        return Err(e);
+    }
+    let rows = if r.get::<String, _>("state") == "running" {
+        frozen_history(&mut tx, &r).await?
+    } else {
+        history(&mut tx, &r).await?
+    };
     if sources(&rows) != v["sources"] {
         return Err(AppError::conflict("上下文原文已变化"));
     }
@@ -596,7 +689,9 @@ async fn start(
     .fetch_one(&mut *tx)
     .await?
     {
-        return Err(AppError::conflict("窗口已有运行任务"));
+        let mut e = AppError::conflict("窗口已有运行任务");
+        e.code = "conversation_busy";
+        return Err(e);
     }
     let r=sqlx::query("UPDATE cloud_node_tasks SET state='running',revision=revision+1,start_request=$2,start_fingerprint=$3,sources=$4,snapshot_id=$5,run_id=$6,message_id=$7,confirmation_id=$8,started_at=now() WHERE id=$1 RETURNING *").bind(tid).bind(rid).bind(fp).bind(&v["sources"]).bind(config).bind(Uuid::new_v4()).bind(Uuid::new_v4()).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?;
     let response = start_receipt(&r);
@@ -629,7 +724,7 @@ async fn finish_message(
             .execute(&mut **tx)
             .await?;
     } else {
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET body=$4,status=$5,position=nextval(pg_get_serial_sequence('cloud_messages','position')),updated_at=now(),revision=cloud_messages.revision+1").bind(mid).bind(r.get::<Uuid,_>("conversation")).bind(r.get::<Uuid,_>("ai_id")).bind(text).bind(status).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3)) ON CONFLICT(id) DO UPDATE SET body=$4,status=$5,position=nextval(pg_get_serial_sequence('cloud_messages','position')),updated_at=now(),revision=cloud_messages.revision+1").bind(mid).bind(r.get::<Uuid,_>("conversation")).bind(r.get::<Uuid,_>("ai_id")).bind(text).bind(status).execute(&mut **tx).await?;
     }
     Ok(())
 }
@@ -738,7 +833,7 @@ async fn cancel(
     let p = auth::authenticate(&s, &h).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx).await?;
-    let r=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_conversations c ON c.id=t.conversation WHERE t.id=$1 AND (c.first_id=$2 OR c.second_id=$2)").bind(tid).bind(p.id).fetch_optional(&mut *tx).await?.ok_or_else(AppError::not_found)?;
+    let r=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_members c ON c.conversation=t.conversation WHERE t.id=$1 AND c.account_id=$2").bind(tid).bind(p.id).fetch_optional(&mut *tx).await?.ok_or_else(AppError::not_found)?;
     if admin_receipt(&mut tx, p.id, &v, "cancel", tid)
         .await?
         .is_some()
@@ -867,7 +962,7 @@ async fn delta(
         .execute(&mut *tx)
         .await?;
     if !text.is_empty() {
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status) VALUES($1,$2,$3,$4,'generating') ON CONFLICT(id) DO UPDATE SET body=$4,updated_at=now(),revision=cloud_messages.revision+1").bind(r.get::<Uuid,_>("message_id")).bind(r.get::<Uuid,_>("conversation")).bind(n.ai).bind(text).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name) VALUES($1,$2,$3,$4,'generating',(SELECT name FROM accounts WHERE id=$3)) ON CONFLICT(id) DO UPDATE SET body=$4,updated_at=now(),revision=cloud_messages.revision+1").bind(r.get::<Uuid,_>("message_id")).bind(r.get::<Uuid,_>("conversation")).bind(n.ai).bind(text).execute(&mut *tx).await?;
     } else {
         sqlx::query("DELETE FROM cloud_messages WHERE id=$1 AND status='generating'")
             .bind(r.get::<Uuid, _>("message_id"))
@@ -883,7 +978,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
     let valid = match hello {
         Ok(Some(Ok(Message::Text(text)))) => {
-            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:1,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
+            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:2,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
         }
         _ => false,
     };
@@ -912,7 +1007,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     if send_frame(
         &mut socket,
         ServerFrame::Ready {
-            protocol_version: 1,
+            protocol_version: 2,
         },
     )
     .await
@@ -976,3 +1071,45 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
 #[cfg(test)]
 #[path = "nodes_tests.rs"]
 mod tests;
+
+async fn status(
+    State(s): State<Arc<AppState>>,
+    h: HeaderMap,
+    Path(ai): Path<Uuid>,
+    Json(v): Json<Value>,
+) -> Result<Json<Value>> {
+    let p = auth::authenticate(&s, &h).await?;
+    let mut tx = s.pool.begin().await?;
+    lock(&mut tx).await?;
+    admin(&mut tx, ai, p.id).await?;
+    if admin_receipt(&mut tx, p.id, &v, "status", ai)
+        .await?
+        .is_some()
+    {
+        return Ok(Json(view(&mut tx, ai, p.id).await?));
+    }
+    let status = field(&v, "status")?;
+    if !matches!(status, "active" | "disabled") {
+        return Err(AppError::bad("账号状态无效"));
+    }
+    let rev: i64 = sqlx::query_scalar("SELECT status_revision FROM accounts WHERE id=$1")
+        .bind(ai)
+        .fetch_one(&mut *tx)
+        .await?;
+    if revision(&v, "expectedStatusRevision")? != rev {
+        return Err(AppError::conflict("账号状态版本已变化"));
+    }
+    sqlx::query("UPDATE accounts SET status=$2,status_revision=status_revision+1 WHERE id=$1")
+        .bind(ai)
+        .bind(status)
+        .execute(&mut *tx)
+        .await?;
+    if status == "disabled" {
+        invalidate_ai(&mut tx, ai, "account_disabled").await?;
+    }
+    sqlx::query("INSERT INTO cloud_events(owner) SELECT administrator FROM cloud_ai_admins WHERE ai_id=$1 UNION SELECT m.account_id FROM cloud_members m JOIN cloud_members own ON own.conversation=m.conversation WHERE own.account_id=$1 UNION SELECT owner FROM cloud_contacts WHERE target=$1").bind(ai).execute(&mut *tx).await?;
+    let out = view(&mut tx, ai, p.id).await?;
+    save_admin_receipt(&mut tx, p.id, &v, "status", ai, &out).await?;
+    tx.commit().await?;
+    Ok(Json(out))
+}

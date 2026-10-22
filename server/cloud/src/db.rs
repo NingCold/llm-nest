@@ -31,6 +31,13 @@ pub fn migrator() -> sqlx_core::migrate::Migrator {
                 include_str!("../migrations/0003_nodes.sql").into(),
                 false,
             ),
+            Migration::new(
+                4,
+                "groups".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/0004_groups.sql").into(),
+                false,
+            ),
         ]
         .into(),
         ..Migrator::DEFAULT

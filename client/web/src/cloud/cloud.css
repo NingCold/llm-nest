@@ -245,3 +245,14 @@
 .cloud-generation-status { display: block; padding-top: 4px; }
 .cloud-task-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
 @media (max-width: 640px) { .cloud-ai-intro { align-items: flex-start; flex-direction: column; } }
+
+.cloud-group-choices { max-height: 240px; overflow: auto; display: grid; gap: 10px; }
+.cloud-group-member { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--s-line); }
+.cloud-group-member > span { flex: 1; min-width: 90px; overflow-wrap: anywhere; }
+.cloud-group-member small { display: block; color: var(--s-muted); font-size: 11px; margin-top: 4px; }
+.cloud-group-member select { width: auto; }
+.cloud-mention-picker { display: flex; flex-wrap: wrap; gap: 8px 16px; border: 0; padding: 8px 0; margin: 0; max-height: 120px; overflow: auto; }
+.cloud-mention-picker legend { color: var(--s-muted); font-size: 11px; }
+.cloud-mention-picker .cloud-check { font-size: 12px; }
+.cloud-mentions, .cloud-reply-draft { font-size: 12px; color: var(--s-accent); padding: 6px 0; }
+.cloud-reply-draft { display: flex; justify-content: space-between; gap: 12px; }

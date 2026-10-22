@@ -10,6 +10,7 @@ interface ManagedAi {
   account: Account;
   role: "initial" | "admin";
   bindingVersion: string;
+  statusRevision: string;
   node: { id: string; name: string; online: boolean; lastSeenAt: string | null } | null;
 }
 interface Props {
@@ -50,11 +51,11 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
     catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (alive.current) setBusy(false); }
   };
-  const submit = async (path: string, body: object) => {
-    const signature = JSON.stringify([path, body]);
+  const submit = async (path: string, body: object, method = "POST") => {
+    const signature = JSON.stringify([path, method, body]);
     if (command.current.signature !== signature)
       command.current = { signature, id: crypto.randomUUID() };
-    await request(path, "POST", { ...body, requestId: command.current.id });
+    await request(path, method, { ...body, requestId: command.current.id });
     command.current = { signature: "", id: "" };
     if (alive.current) setDialog(null);
     await load();
@@ -83,12 +84,13 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
                 <section className="cloud-ai-card" key={ai.account.id}>
                   <div className="cloud-ai-heading">
                     <Avatar contact={{ avatar: ai.account.name.slice(0, 1), color: "sage" }} />
-                    <div><h2>{ai.account.name}</h2><p>{ai.role === "initial" ? "初始管理员" : "管理员"}</p></div>
+                    <div><h2>{ai.account.name}{ai.account.status === "disabled" && " · 已停用"}</h2><p>{ai.role === "initial" ? "初始管理员" : "管理员"}</p></div>
                     <span className={`cloud-node-state ${ai.node?.online ? "online" : ""}`}><i />{!ai.node ? "尚未连接" : ai.node.online ? "在线" : "离线"}</span>
                   </div>
                   {ai.account.bio && <p className="cloud-ai-bio">{ai.account.bio}</p>}
                   <div className="cloud-node-description"><Server /><span>{ai.node?.name || "连接 Agent 后，AI 就能回复消息。"}</span></div>
                   <div className="cloud-actions">
+                    <button className="social-button secondary" disabled={busy} onClick={() => void act(() => submit(`/ai/${ai.account.id}/status`, { expectedStatusRevision: ai.statusRevision, status: ai.account.status === "disabled" ? "active" : "disabled" }, "PUT"))}>{ai.account.status === "disabled" ? "恢复账号" : "停用账号"}</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => void act(() => openDirect(ai.account))}><MessageCircle />发消息</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => { setError(""); setDialog({ kind: "bind", ai }); }}>{ai.node ? "更换节点" : "连接节点"}</button>
                     {ai.node && <button className="text-button" disabled={busy} onClick={() => { setError(""); setDialog({ kind: "revoke", ai }); }}><Unplug />撤销连接</button>}

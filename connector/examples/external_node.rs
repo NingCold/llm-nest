@@ -42,17 +42,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     let material = client.materials(&task.id).await?;
                     // Stable IDs allow repeated start/result submissions with identical content.
-                    let receipt = client
+                    let started = client
                         .start(
                             &task.id,
                             &StartRequest {
                                 request_id: task.id.clone(),
                                 task_revision: task.revision.clone(),
+                                conversation_revision: material.conversation.revision,
                                 sources: material.sources,
                                 configuration_revision: "deterministic-example-v1".into(),
                             },
                         )
-                        .await?;
+                        .await;
+                    let receipt = match started {
+                        Ok(receipt) => receipt,
+                        Err(error) if error.is_queue_wait() => break,
+                        Err(error) => return Err(error.into()),
+                    };
                     client.result(&task.id, &ResultRequest {
                     request_id: task.id.clone(), run_id: receipt.run_id,
                     message_id: receipt.message_id, confirmation_id: receipt.confirmation_id,

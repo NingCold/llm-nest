@@ -4,7 +4,7 @@
 
 ## 项目定位与当前范围
 
-产品目标为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步已实现独立云端真人服务和默认云端客户端；第 2 步已实现云端 AI、节点配对与 WSS、独立 Agent、私聊流式回复及持久恢复，已完成本机 Agent 与云端 Web 闭环验证。群聊和意识资料迁入属于第 3 步，在线管理与桌面后台入口属于第 4 步。当前验证状态见进度文档。
+产品目标为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步已实现独立云端真人服务和默认云端客户端；第 2 步已实现云端 AI、节点配对与 WSS、独立 Agent、私聊流式回复及持久恢复，已完成本机 Agent 与云端 Web 闭环验证。第 3 步第一批已实现云端群聊、显式 @/回复、多 AI 串行任务、联系人屏蔽与 AI 停用/恢复，集成验收状态以进度文档为准；第二批为意识资料迁入，第三批为自动接话与约定，在线管理与桌面后台入口属于第 4 步。当前验证状态见进度文档。
 
 保留一个仓库，划清客户端、服务端、自带 Agent 和连接器四个模块的边界：前三者独立运行，连接器可独立引用。云端 PostgreSQL 保存社交记录，附件使用独立持久目录；自带 Agent 的 SQLite 保存角色、模型参数、记忆和每个 AI 自己的窗口摘要。模型 Key 与节点凭据只在节点保管，不进迁移包；外部 Agent 自选内部实现。
 
@@ -22,7 +22,9 @@
 
 云端联系人为有向关系，双方唯一私聊；每次读取、搜索、下载和导出检查当前认证账号。消息、个人读态、命令摘要回执与持久事件同事务；回执不存正文或附件原字节，重放返回当前权威消息，撤回不能被旧回执复活。附件按生成的消息 UUID 与索引存放，读写时复核 revision；SSE 按账号从持久事件补齐，客户端成功刷新后推进游标。草稿按服务器、账号、窗口隔离，发送结果未确认时只允许手动重试同一请求。详细云端契约见 [API](docs/design/api.md) 与 [存储](docs/design/storage.md)。
 
-下文的 SocialFeature、旧 SocialStore/SQLite、群聊、显式记忆、摘要和接话规则记录保留的本地实现，供回归及后续迁移核对；云端 AI 的当前行为以 connector::node 与 agent/node、server/cloud 的协议为准，不能把旧本地管理和意识功能当作已接入。旧 Harness、CLI/TUI 与 demo 已退役。工具 worker 仍是底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或旧测试声称云端功能已经可用。
+当前云端群以真实成员表授权，群主/管理员/成员权限不因 AI 管理权扩大。消息保存 senderName/replyTo/mentions 和多 AI 响应状态；显式提及/回复任务按持久顺序串行同群。节点 v2 使用真实 conversation/members，开始回传 conversationRevision，触发与回复原文及图片均为必要材料。上下文读取触发位置以内原文及本窗更早队列的已完成 AI 输出（其触发位置不晚于当前触发），不混入后来无关真人消息；开始后逐条复核冻结 sources，不重选最近历史。成员变化取消整群未完成任务，屏蔽只限制双方私聊，停用只取消该 AI；屏蔽/停用保留有效中断片段，停用期间真人私聊仍保存但不排任务，恢复均不补发。正常队列等待不调用模型；仅明确未开始的 409 conversation_busy/task_not_ready 可原子撤销本次节点意图与预留，已开始与未知网络失败沿用原恢复规则。
+
+下文的 SocialFeature、旧 SocialStore/SQLite、显式记忆、摘要和接话规则记录保留的本地实现，供回归及后续迁移核对；云端 AI 的当前行为以 connector::node 与 agent/node、server/cloud 的协议为准，不能把旧本地管理和意识功能当作已接入。旧 Harness、CLI/TUI 与 demo 已退役。工具 worker 仍是底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或旧测试声称云端功能已经可用。
 
 原本地首版支持一个真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)。本地 SocialFeature 读取并检查材料，调用 `agent/core` 按角色与空间构造请求。
 
@@ -74,7 +76,7 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | `server/http` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
 | `server/cloud` | 独立云端认证、真人/AI 账号、节点绑定和任务、PostgreSQL 社交记录、附件与持久事件；当前默认客户端的后端 |
 | `client/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
-| `client/web/src/cloud` | 默认云端账号、私聊、草稿与 HTTPS/SSE 界面 |
+| `client/web/src/cloud` | 默认云端账号、私聊/群聊、草稿与 HTTPS/SSE 界面 |
 | `client/web/src/social` | 共用社交样式与基础组件、草稿存储，以及保留的本地社交状态与视图 |
 | `client/desktop/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
 | `scripts` / `docs` | 可执行验收/构建流程与证据 |

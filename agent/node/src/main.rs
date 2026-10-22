@@ -317,7 +317,7 @@ async fn cycle(
     let mut socket = api.connect().await?;
     socket
         .send(&ClientFrame::Hello {
-            protocol_version: 1,
+            protocol_version: 2,
             node_id: config.node_id.clone(),
             ai_id: binding.ai.clone(),
             binding_version: binding.version.clone(),
@@ -325,7 +325,7 @@ async fn cycle(
         .await?;
     match socket.recv().await? {
         Some(ServerFrame::Ready {
-            protocol_version: 1,
+            protocol_version: 2,
         }) => {}
         _ => bail!("node handshake failed"),
     }
@@ -343,11 +343,12 @@ async fn cycle(
                 let llm = AiClient::from_config(&config.providers)?.snapshot().await;
                 let material = api.materials(&task.id).await?;
                 let sources = material.sources.clone();
+                let conversation_revision = material.conversation.revision.clone();
                 let (request, tokens) = context::prepare(&api, &router, &profile, material).await?;
-                Ok::<_, anyhow::Error>((llm, request, tokens, sources))
+                Ok::<_, anyhow::Error>((llm, request, tokens, sources, conversation_revision))
             };
             let prepared = while_connected(&mut socket, &task.id, prepared).await;
-            let (llm, request, tokens, sources) = match prepared {
+            let (llm, request, tokens, sources, conversation_revision) = match prepared {
                 Ok(value) => value,
                 Err(error) => {
                     let message = error.to_string();
@@ -372,14 +373,16 @@ async fn cycle(
             let start = StartRequest {
                 request_id: id(),
                 task_revision: task.revision.clone(),
+                conversation_revision,
                 sources,
                 configuration_revision: profile.revision,
             };
+            let budget_day = chrono::Utc::now().format("%Y-%m-%d").to_string();
             if let Err(error) = store.reserve(
                 &task.id,
                 &binding.ai,
                 &start,
-                &chrono::Utc::now().format("%Y-%m-%d").to_string(),
+                &budget_day,
                 tokens,
                 store::BudgetLimits {
                     calls: config.daily_calls,
@@ -401,7 +404,14 @@ async fn cycle(
                 .await?;
                 continue;
             }
-            let receipt = api.start(&task.id, &start).await?;
+            let receipt = match api.start(&task.id, &start).await {
+                Ok(receipt) => receipt,
+                Err(error) if error.is_queue_wait() => {
+                    store.defer_unstarted(&task.id, &budget_day, tokens)?;
+                    break;
+                }
+                Err(error) => return Err(error.into()),
+            };
             store.started(&task.id, &receipt)?;
             let mut text = String::new();
             let mut usage = None;
@@ -445,6 +455,32 @@ async fn cycle(
             frame=socket.recv()=>match frame? {Some(ServerFrame::Error {..})|None=>bail!("node connection closed"),_=>{}},
             _=tokio::time::sleep(Duration::from_secs(2))=>{}
         }
+    }
+}
+#[cfg(test)]
+#[test]
+fn only_explicit_unstarted_queue_conflicts_allow_deferral() {
+    for code in ["conversation_busy", "task_not_ready"] {
+        assert!(
+            NodeError::Api {
+                status: 409,
+                body: serde_json::json!({"code":code}).to_string()
+            }
+            .is_queue_wait()
+        );
+    }
+    for (status, body) in [
+        (409, "{}"),
+        (409, r#"{"code":"source_changed"}"#),
+        (500, r#"{"code":"conversation_busy"}"#),
+    ] {
+        assert!(
+            !NodeError::Api {
+                status,
+                body: body.into()
+            }
+            .is_queue_wait()
+        );
     }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -615,6 +651,7 @@ mod recovery_tests {
         let start = StartRequest {
             request_id: "original-start".into(),
             task_revision: "1".into(),
+            conversation_revision: "1".into(),
             sources: vec![],
             configuration_revision: "1".into(),
         };

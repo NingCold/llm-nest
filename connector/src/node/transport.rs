@@ -32,6 +32,22 @@ pub enum NodeError {
     Json(#[from] serde_json::Error),
 }
 
+impl NodeError {
+    pub fn is_queue_wait(&self) -> bool {
+        match self {
+            NodeError::Api { status: 409, body } => serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .and_then(|body| {
+                    body.get("code")
+                        .and_then(|code| code.as_str())
+                        .map(|code| matches!(code, "conversation_busy" | "task_not_ready"))
+                })
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
 /// Network client only; it never retries model work or stores credentials.
 #[derive(Clone)]
 pub struct NodeClient {
@@ -303,13 +319,13 @@ mod tests {
                 assert!(matches!(
                     serde_json::from_str::<ClientFrame>(&text).unwrap(),
                     ClientFrame::Hello {
-                        protocol_version: 1,
+                        protocol_version: 2,
                         ..
                     }
                 ));
                 ws.send(Message::Text(
                     serde_json::to_string(&ServerFrame::Ready {
-                        protocol_version: 1,
+                        protocol_version: 2,
                     })
                     .unwrap()
                     .into(),
@@ -324,7 +340,7 @@ mod tests {
             let mut connection = client.connect().await.unwrap();
             connection
                 .send(&ClientFrame::Hello {
-                    protocol_version: 1,
+                    protocol_version: 2,
                     node_id: "n".into(),
                     ai_id: "a".into(),
                     binding_version: "1".into(),
@@ -334,7 +350,7 @@ mod tests {
             assert_eq!(
                 connection.recv().await.unwrap(),
                 Some(ServerFrame::Ready {
-                    protocol_version: 1
+                    protocol_version: 2
                 })
             );
             assert_eq!(connection.recv().await.unwrap(), None);

@@ -155,7 +155,7 @@ impl Fixture {
             &format!("/node/tasks/{}/materials", task["id"].as_str().unwrap()),
         ))
         .await;
-        let req = json!({"requestId":Uuid::new_v4(),"taskRevision":task["revision"],"sources":mat["sources"],"configurationRevision":"test-v1"});
+        let req = json!({"requestId":Uuid::new_v4(),"taskRevision":task["revision"],"sources":mat["sources"],"configurationRevision":"test-v2","conversationRevision":mat["conversation"]["revision"]});
         (task, req)
     }
     async fn close(self) {
@@ -213,7 +213,7 @@ async fn pairing_authorization_and_idempotent_execution() {
     );
     let cid = f.conversation(aid).await;
     let trigger = f.send(&cid, "hello").await;
-    assert_eq!(trigger["aiResponse"]["status"], "queued");
+    assert_eq!(trigger["aiResponses"][0]["status"], "queued");
     let (task, start) = f.prepare(&secret).await;
     let path = format!("/node/tasks/{}/start", task["id"].as_str().unwrap());
     let receipt = value(f.node(&secret, Method::POST, &path).json(&start)).await;
@@ -386,9 +386,22 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     let (secret, node, _) = f.bind_ai(aid, "0").await;
     let cid = f.conversation(aid).await;
     let client = connector::node::NodeClient::new(&f.url, &secret, None).unwrap();
+    let mut obsolete = client.connect().await.unwrap();
+    obsolete
+        .send(&connector::node::ClientFrame::Hello {
+            protocol_version: 1,
+            node_id: node.to_string(),
+            ai_id: aid.into(),
+            binding_version: "1".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(obsolete.recv().await.unwrap(),Some(connector::node::ServerFrame::Error{code,..}) if code=="invalid_hello")
+    );
     let mut ws = client.connect().await.unwrap();
     ws.send(&connector::node::ClientFrame::Hello {
-        protocol_version: 1,
+        protocol_version: 2,
         node_id: node.to_string(),
         ai_id: aid.into(),
         binding_version: "1".into(),
@@ -398,7 +411,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     assert_eq!(
         ws.recv().await.unwrap(),
         Some(connector::node::ServerFrame::Ready {
-            protocol_version: 1
+            protocol_version: 2
         })
     );
     let (outgoing, mut commands) = tokio::sync::mpsc::unbounded_channel();
@@ -614,7 +627,7 @@ async fn preparation_failure_expiry_and_authorized_images() {
     ))
     .await;
     assert_eq!(
-        page["messages"].as_array().unwrap().last().unwrap()["aiResponse"]["status"],
+        page["messages"].as_array().unwrap().last().unwrap()["aiResponses"][0]["status"],
         "expired"
     );
     assert_eq!(
@@ -750,5 +763,490 @@ async fn explicit_cancel_preserves_partial_and_revoke_invalidates_credential() {
             .status(),
         401
     );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn groups_fifo_multiple_nodes_frozen_sources_and_member_permissions() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let a = f.ai().await;
+    let b = f.ai().await;
+    let aid = a["account"]["id"].as_str().unwrap();
+    let bid = b["account"]["id"].as_str().unwrap();
+    let (sa, _, _) = f.bind_ai(aid, "0").await;
+    let (sb, _, _) = f.bind_ai(bid, "0").await;
+    let create =
+        json!({"requestId":Uuid::new_v4(),"name":"真实群","memberIds":[f.humans[1].0,aid,bid]});
+    let group = value(f.human(0, Method::POST, "/chat/groups").json(&create)).await;
+    let cid = group["id"].as_str().unwrap();
+    assert_eq!(group["kind"], "group");
+    assert!(group["peer"].is_null());
+    assert_eq!(group["members"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        value(f.human(0, Method::POST, "/chat/groups").json(&create)).await,
+        group
+    );
+    let send_path = format!("/chat/conversations/{cid}/messages");
+    let plain = f.send(cid, "Test AI 普通名字不触发").await;
+    assert_eq!(plain["aiResponses"], json!([]));
+    let input = json!({"requestId":Uuid::new_v4(),"text":"一起回答","mentions":[aid,bid,aid]});
+    let trigger = value(f.human(0, Method::POST, &send_path).json(&input)).await;
+    assert_eq!(trigger["aiResponses"].as_array().unwrap().len(), 2);
+    assert_eq!(trigger["aiResponses"][0]["aiId"], aid);
+    assert_eq!(trigger["senderName"], "human0");
+    let duplicate = value(f.human(0, Method::POST, &send_path).json(&input)).await;
+    assert_eq!(duplicate["id"], trigger["id"]);
+    assert_eq!(
+        value(f.node(&sb, Method::GET, "/node/tasks")).await,
+        json!([])
+    );
+    let second = trigger["aiResponses"][1]["taskId"].as_str().unwrap();
+    let mb = value(f.node(&sb, Method::GET, &format!("/node/tasks/{second}/materials"))).await;
+    let premature = json!({"requestId":Uuid::new_v4(),"taskRevision":mb["task"]["revision"],"configurationRevision":"test","conversationRevision":mb["conversation"]["revision"],"sources":mb["sources"]});
+    let response = f
+        .node(&sb, Method::POST, &format!("/node/tasks/{second}/start"))
+        .json(&premature)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 409);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["code"],
+        "task_not_ready"
+    );
+    let (first, start) = f.prepare(&sa).await;
+    let first_id = first["id"].as_str().unwrap();
+    f.send(cid, "准备后未来无关输入").await;
+    let still_prepared = value(f.node(
+        &sa,
+        Method::GET,
+        &format!("/node/tasks/{first_id}/materials"),
+    ))
+    .await;
+    assert_eq!(still_prepared["sources"], start["sources"]);
+    assert!(
+        !still_prepared["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "准备后未来无关输入")
+    );
+
+    let (first_started, second_started) = tokio::join!(
+        f.node(&sa, Method::POST, &format!("/node/tasks/{first_id}/start"))
+            .json(&start)
+            .send(),
+        f.node(&sb, Method::POST, &format!("/node/tasks/{second}/start"))
+            .json(&premature)
+            .send()
+    );
+    let first_started = first_started.unwrap();
+    assert_eq!(first_started.status(), 200);
+    let receipt = first_started.json::<Value>().await.unwrap();
+    assert_eq!(second_started.unwrap().status(), 409);
+    assert_eq!(
+        value(f.node(&sb, Method::GET, "/node/tasks")).await,
+        json!([])
+    );
+    value(
+        f.node(&sa, Method::POST, &format!("/node/tasks/{first_id}/result"))
+            .json(&final_result(&receipt, "第一位回答")),
+    )
+    .await;
+    let (second_task, start2) = f.prepare(&sb).await;
+    assert_eq!(second_task["id"], second);
+    let mat2 = value(f.node(&sb, Method::GET, &format!("/node/tasks/{second}/materials"))).await;
+    assert!(
+        mat2["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "第一位回答")
+    );
+    assert!(
+        !mat2["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "准备后未来无关输入")
+    );
+    let receipt2 = value(
+        f.node(&sb, Method::POST, &format!("/node/tasks/{second}/start"))
+            .json(&start2),
+    )
+    .await;
+    f.send(cid, "开始后新的真人消息不改变冻结材料").await;
+    value(
+        f.node(&sb, Method::POST, &format!("/node/tasks/{second}/result"))
+            .json(&final_result(&receipt2, "第二位回答")),
+    )
+    .await;
+    let running: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM cloud_node_tasks WHERE conversation=$1 AND state='running'",
+    )
+    .bind(cid.parse::<Uuid>().unwrap())
+    .fetch_one(&f.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(running, 0);
+    let denied = f
+        .human(1, Method::PUT, &format!("/chat/groups/{cid}"))
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","name":"无权限"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+    let leave = json!({"requestId":Uuid::new_v4(),"expectedRevision":"1"});
+    value(
+        f.human(1, Method::POST, &format!("/chat/groups/{cid}/leave"))
+            .json(&leave),
+    )
+    .await;
+    assert_eq!(
+        value(
+            f.human(1, Method::POST, &format!("/chat/groups/{cid}/leave"))
+                .json(&leave)
+        )
+        .await,
+        json!({"ok":true})
+    );
+    for path in [
+        &send_path,
+        &format!("/chat/conversations/{cid}/export?format=json"),
+        &format!("/chat/messages/{}/context", trigger["id"].as_str().unwrap()),
+    ] {
+        assert_eq!(
+            f.human(1, Method::GET, path).send().await.unwrap().status(),
+            404
+        );
+    }
+    assert_eq!(
+        f.human(
+            1,
+            Method::GET,
+            &format!("/chat/search?query=一起&conversationId={cid}")
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        404
+    );
+    let search = value(f.human(1, Method::GET, "/chat/search?query=一起")).await;
+    assert!(search["messages"].as_array().unwrap().is_empty());
+    // A removed member cannot replay an earlier command to retrieve the current message.
+    assert_eq!(
+        f.human(1, Method::POST, &send_path)
+            .json(&json!({"requestId":Uuid::new_v4(),"text":"离群后"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn groups_roles_versions_block_and_ai_disable_do_not_replay() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let cid = f.conversation(aid).await;
+    f.send(&cid, "排队私聊").await;
+    let blocked = json!({"requestId":Uuid::new_v4(),"expectedRevision":"0","blocked":true});
+    let relation = value(
+        f.human(0, Method::PUT, &format!("/chat/contacts/{aid}/block"))
+            .json(&blocked),
+    )
+    .await;
+    assert_eq!(relation["directBlocked"], true);
+    assert_eq!(relation["listed"], false);
+    assert_eq!(
+        value(f.node(&secret, Method::GET, "/node/tasks")).await,
+        json!([])
+    );
+    assert_eq!(
+        f.human(
+            0,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages")
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"text":"blocked"}))
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        403
+    );
+    // Listing/removing preserves the independent block bit.
+    value(
+        f.human(0, Method::POST, "/chat/contacts")
+            .json(&json!({"accountId":aid,"listed":true})),
+    )
+    .await;
+    value(
+        f.human(0, Method::POST, "/chat/contacts")
+            .json(&json!({"accountId":aid,"listed":false})),
+    )
+    .await;
+    assert_eq!(
+        value(f.human(0, Method::GET, &format!("/chat/contacts/{aid}"))).await["blocked"],
+        true
+    );
+    let group=value(f.human(0,Method::POST,"/chat/groups").json(&json!({"requestId":Uuid::new_v4(),"name":"群不受私聊屏蔽影响","memberIds":[aid,f.humans[1].0]}))).await;
+    let gid = group["id"].as_str().unwrap();
+    let trigger = value(
+        f.human(
+            1,
+            Method::POST,
+            &format!("/chat/conversations/{gid}/messages"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"text":"群中提及","mentions":[aid]})),
+    )
+    .await;
+    assert_eq!(trigger["aiResponses"].as_array().unwrap().len(), 1);
+    let (task, start) = f.prepare(&secret).await;
+    let tid = task["id"].as_str().unwrap();
+    let receipt = value(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+            .json(&start),
+    )
+    .await;
+    value(
+        f.human(0, Method::PUT, &format!("/chat/contacts/{aid}/block"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3","blocked":false})),
+    )
+    .await;
+    let mut node_headers = HeaderMap::new();
+    node_headers.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {secret}").parse().unwrap(),
+    );
+    delta(
+        &f.state,
+        &node_headers,
+        connector::node::ClientFrame::Delta {
+            task_id: tid.into(),
+            run_id: receipt["runId"].as_str().unwrap().into(),
+            message_id: receipt["messageId"].as_str().unwrap().into(),
+            confirmation_id: receipt["confirmationId"].as_str().unwrap().into(),
+            sequence: 1,
+            text: "部分有效片段".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(f.human(1,Method::PUT,&format!("/ai/{aid}/status")).json(&json!({"requestId":Uuid::new_v4(),"expectedStatusRevision":"1","status":"disabled"})).send().await.unwrap().status(),403);
+    let disabled = value(f.human(0, Method::PUT, &format!("/ai/{aid}/status")).json(
+        &json!({"requestId":Uuid::new_v4(),"expectedStatusRevision":"1","status":"disabled"}),
+    ))
+    .await;
+    assert_eq!(disabled["account"]["status"], "disabled");
+    assert_eq!(disabled["bindingVersion"], "1");
+    let stored_while_disabled = f.send(&cid, "停用期间仍可保存私聊原文").await;
+    assert_eq!(stored_while_disabled["aiResponses"], json!([]));
+
+    let page = value(f.human(
+        0,
+        Method::GET,
+        &format!("/chat/conversations/{gid}/messages"),
+    ))
+    .await;
+    assert!(
+        page["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "部分有效片段" && m["status"] == "interrupted")
+    );
+
+    assert_eq!(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/result"))
+            .json(&final_result(&receipt, "迟到结果"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    value(
+        f.human(0, Method::PUT, &format!("/ai/{aid}/status")).json(
+            &json!({"requestId":Uuid::new_v4(),"expectedStatusRevision":"2","status":"active"}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        value(f.node(&secret, Method::GET, "/node/tasks")).await,
+        json!([])
+    );
+    assert_eq!(
+        f.send(&cid, "恢复后的新触发").await["aiResponses"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // Owner promotes a human admin; ordinary admins cannot promote others or remove owner.
+    let promoted = value(
+        f.human(
+            0,
+            Method::PUT,
+            &format!("/chat/groups/{gid}/members/{}", f.humans[1].0),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","role":"admin"})),
+    )
+    .await;
+    assert_eq!(promoted["revision"], "2");
+    assert_eq!(
+        f.human(1, Method::PUT, &format!("/chat/groups/{gid}/members/{aid}"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","role":"admin"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        f.human(
+            1,
+            Method::DELETE,
+            &format!("/chat/groups/{gid}/members/{}", f.humans[0].0)
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2"}))
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        403
+    );
+    assert_eq!(
+        f.human(0, Method::POST, &format!("/chat/groups/{gid}/owner"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","accountId":aid}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let transfer=value(f.human(0,Method::POST,&format!("/chat/groups/{gid}/owner")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","accountId":f.humans[1].0}))).await;
+    assert_eq!(transfer["revision"], "3");
+    assert_eq!(
+        f.human(1, Method::POST, &format!("/chat/groups/{gid}/leave"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn groups_old_reply_required_membership_cancellation_and_concurrent_commands() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let group = value(f.human(0, Method::POST, "/chat/groups").json(
+        &json!({"requestId":Uuid::new_v4(),"name":"资料与版本","memberIds":[aid,f.humans[1].0]}),
+    ))
+    .await;
+    let cid = group["id"].as_str().unwrap();
+    let old = Uuid::new_v4();
+    let cid_uuid = cid.parse::<Uuid>().unwrap();
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,sender_name,body) VALUES($1,$2,$3,'Test AI','old necessary reply')").bind(old).bind(cid_uuid).bind(aid.parse::<Uuid>().unwrap()).execute(&f.state.pool).await.unwrap();
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,sender_name,body) SELECT md5($1::text || g::text)::uuid,$1,$2,'human0','history ' || g::text FROM generate_series(1,105) g").bind(cid_uuid).bind(f.humans[0].0).execute(&f.state.pool).await.unwrap();
+    let trigger = value(
+        f.human(
+            0,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"text":"回复老AI消息","replyTo":old})),
+    )
+    .await;
+    assert_eq!(trigger["aiResponses"].as_array().unwrap().len(), 1);
+    let (task, start) = f.prepare(&secret).await;
+    let tid = task["id"].as_str().unwrap();
+    assert!(
+        start["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["messageId"] == old.to_string())
+    );
+    let receipt = value(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+            .json(&start),
+    )
+    .await;
+    let command = json!({"requestId":Uuid::new_v4(),"expectedRevision":"1"});
+    let path = format!("/chat/groups/{cid}/members/{}", f.humans[1].0);
+    let (r1, r2) = tokio::join!(
+        f.human(0, Method::DELETE, &path).json(&command).send(),
+        f.human(0, Method::DELETE, &path).json(&command).send()
+    );
+    assert!(r1.unwrap().status().is_success());
+    assert!(r2.unwrap().status().is_success());
+    assert_eq!(
+        value(f.node(&secret, Method::GET, &format!("/node/tasks/{tid}"))).await["status"],
+        "cancelled"
+    );
+    assert_eq!(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/result"))
+            .json(&final_result(&receipt, "成员变更后不可提交"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let other_group =
+        value(f.human(0, Method::POST, "/chat/groups").json(
+            &json!({"requestId":Uuid::new_v4(),"name":"另一个群","memberIds":[f.humans[1].0]}),
+        ))
+        .await;
+    assert_eq!(
+        f.human(
+            0,
+            Method::DELETE,
+            &format!(
+                "/chat/groups/{}/members/{}",
+                other_group["id"].as_str().unwrap(),
+                f.humans[1].0
+            )
+        )
+        .json(&command)
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        409
+    );
+    value(f.human(0,Method::POST,&format!("/chat/groups/{cid}/members")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","accountId":f.humans[1].0}))).await;
+    assert_eq!(
+        value(f.node(&secret, Method::GET, "/node/tasks")).await,
+        json!([])
+    );
+    // Different commands race at one version: exactly one applies.
+    let (a, b) = tokio::join!(
+        f.human(0, Method::PUT, &format!("/chat/groups/{cid}"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3","name":"A"}))
+            .send(),
+        f.human(0, Method::PUT, &format!("/chat/groups/{cid}"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3","name":"B"}))
+            .send()
+    );
+    let statuses = [a.unwrap().status().as_u16(), b.unwrap().status().as_u16()];
+    assert!(statuses == [200, 409] || statuses == [409, 200]);
     f.close().await;
 }

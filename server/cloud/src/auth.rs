@@ -111,6 +111,7 @@ pub struct Account {
     pub name: String,
     pub bio: String,
     pub kind: String,
+    pub status: String,
 }
 #[derive(Clone, Debug)]
 pub struct Principal {
@@ -180,6 +181,7 @@ fn account(r: sqlx::postgres::PgRow) -> Account {
         name: r.get("name"),
         bio: r.get("bio"),
         kind: r.get("kind"),
+        status: r.get("status"),
     }
 }
 pub async fn authenticate(s: &AppState, h: &HeaderMap) -> Result<Principal> {
@@ -550,7 +552,7 @@ async fn profile(
             .fetch_one(&mut *tx)
             .await?,
     );
-    sqlx::query("INSERT INTO cloud_events(owner) SELECT $1::uuid UNION SELECT owner FROM cloud_contacts WHERE target=$1 UNION SELECT target FROM cloud_contacts WHERE owner=$1 UNION SELECT CASE WHEN first_id=$1 THEN second_id ELSE first_id END FROM cloud_conversations WHERE first_id=$1 OR second_id=$1")
+    sqlx::query("INSERT INTO cloud_events(owner) SELECT $1::uuid UNION SELECT owner FROM cloud_contacts WHERE target=$1 UNION SELECT target FROM cloud_contacts WHERE owner=$1 UNION SELECT m.account_id FROM cloud_members m JOIN cloud_members own ON own.conversation=m.conversation WHERE own.account_id=$1")
         .bind(p.id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(updated))
@@ -650,10 +652,15 @@ mod tests {
                 .connect(&url)
                 .await
                 .unwrap();
-            sqlx::raw_sql(include_str!("../migrations/0001_accounts.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
+            sqlx::raw_sql(concat!(
+                include_str!("../migrations/0001_accounts.sql"),
+                include_str!("../migrations/0002_chat.sql"),
+                include_str!("../migrations/0003_nodes.sql"),
+                include_str!("../migrations/0004_groups.sql")
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
                 pool,
@@ -969,10 +976,6 @@ mod tests {
         let Some(f) = Fixture::new().await else {
             return;
         };
-        sqlx::raw_sql(include_str!("../migrations/0002_chat.sql"))
-            .execute(&f.state.pool)
-            .await
-            .unwrap();
         let owner = Uuid::new_v4();
         let contact = Uuid::new_v4();
         let peer = Uuid::new_v4();
@@ -1002,6 +1005,7 @@ mod tests {
             .execute(&f.state.pool)
             .await
             .unwrap();
+        sqlx::query("INSERT INTO cloud_members(conversation,account_id) SELECT id,first_id FROM cloud_conversations UNION ALL SELECT id,second_id FROM cloud_conversations").execute(&f.state.pool).await.unwrap();
         let mut tx = f.state.pool.begin().await.unwrap();
         let t = session(&mut tx, owner).await.unwrap();
         tx.commit().await.unwrap();

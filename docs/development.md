@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [模型配置](configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
 
-默认入口是云端真人与 AI 私聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。旧本地 Runtime/SQLite 保留作回归与 Agent 迁移参考，不由默认桌面页面启动。
+默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。旧本地 Runtime/SQLite 保留作回归与 Agent 迁移参考，不由默认桌面页面启动。
 
 ## 准备环境
 

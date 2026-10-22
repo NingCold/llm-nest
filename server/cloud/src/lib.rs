@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod chat;
 pub mod db;
+mod groups;
 pub mod nodes;
 use db as sqlx;
 

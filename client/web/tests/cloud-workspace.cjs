@@ -85,10 +85,11 @@ const message = {
   status: "committed",
   createdAt: "2026-10-20T12:00:00Z",
   attachments: [],
+  senderName: "朋友", replyTo: null, mentions: [], aiResponses: [],
 };
 const conversation = {
   id: "direct",
-  peer,
+  peer, kind: "direct", name: peer.name, members: [{ account: me, role: "member" }, { account: peer, role: "member" }], revision: "1", directBlocked: false,
   lastMessage: message,
   unreadCount: 1,
   manualUnread: false,
@@ -151,6 +152,7 @@ const Workspace = load("cloud/Workspace").Workspace,
       React.createElement(Workspace, { ...p, ...overrides }),
     );
 let html = render();
+assert.match(html, /创建群聊/);
 assert.match(html, /social-sidebar/);
 assert.match(html, /rail-brand/);
 assert.match(html, /主导航/);
@@ -164,7 +166,7 @@ assert.match(html, /保留的草稿/);
 assert.match(html, /添加图片/);
 assert.match(html, /添加文件/);
 assert.match(html, /聊天详情/);
-assert.doesNotMatch(html, /创建群聊|创建 AI|意识与记忆|模型服务/);
+assert.doesNotMatch(html, /创建 AI|意识与记忆|模型服务/);
 html = render({ tab: "contacts", active: "" });
 assert.match(html, /contact-list-item/);
 assert.match(html, /查找账号/);
@@ -179,10 +181,10 @@ assert.match(html, /登录会话/);
 assert.match(html, /我管理的 AI/);
 html = render({ page: { ...p.page, messages: [{ ...message, status: "generating", text: "部分回复" }] } });
 assert.match(html, /正在回复/);
-html = render({ page: { ...p.page, messages: [{ ...message, senderId: me.id, aiResponse: { taskId: "task", status: "running" } }] } });
+html = render({ page: { ...p.page, messages: [{ ...message, senderId: me.id, aiResponses: [{ aiId: "peer", taskId: "task", status: "running" }] }] } });
 assert.match(html, /AI 正在回复/);
 assert.match(html, /停止回复/);
-html = render({ page: { ...p.page, messages: [{ ...message, aiResponse: { taskId: "task", status: "failed", error: "image_input_unsupported" } }] } });
+html = render({ page: { ...p.page, messages: [{ ...message, aiResponses: [{ aiId: "peer", taskId: "task", status: "failed", error: "image_input_unsupported" }] }] } });
 assert.match(html, /暂不支持图片/);
 assert.doesNotMatch(html, /停止回复|image_input_unsupported/);
 html = render({ tab: "settings" });
@@ -263,3 +265,42 @@ assert.match(html, /class="social-button primary auth-submit" disabled/);
 console.log(
   "PASS: cloud uses original sidebar/list/profile/message/composer structure, Markdown rendering, native-free settings and explicit pending retry and accessible authentication fields",
 );
+
+const ai1 = { id: "ai1", name: "蓝雀", bio: "", kind: "ai", status: "active" };
+const ai2 = { ...ai1, id: "ai2", name: "白鹭" };
+const group = { ...conversation, id: "group", kind: "group", name: "共同讨论", peer: null,
+  members: [{ account: me, role: "owner" }, { account: peer, role: "member" }, { account: ai1, role: "member" }, { account: ai2, role: "member" }] };
+const groupProps = { active: group.id, snapshot: { ...p.snapshot, conversations: [group] },
+  page: { ...p.page, messages: [{ ...message, conversationId: group.id, senderId: "former", senderName: "已退出的朋友", replyTo: "old-message", mentions: [ai1.id, ai2.id], aiResponses: [{ aiId: ai1.id, taskId: "one", status: "running" }, { aiId: ai2.id, taskId: "two", status: "queued" }] }] },
+  record: { draft: { ...p.record.draft, mentions: [ai1.id, ai2.id], replyTo: message.id }, pending: null } };
+html = render(groupProps);
+assert.match(html, /共同讨论/);
+assert.match(html, /群聊 · 4 位成员/);
+assert.match(html, /已退出的朋友/);
+assert.match(html, /蓝雀：AI 正在回复/);
+assert.match(html, /白鹭：等待 AI 回复/);
+assert.equal((html.match(/停止回复/g) || []).length, 2);
+assert.match(html, /取消回复/);
+assert.match(html, /提及成员/);
+assert.equal((html.match(/type="checkbox" checked=""/g) || []).length, 2);
+html = render({ ...groupProps, record: { ...groupProps.record, pending: { ...groupProps.record.draft, requestId: "pending-group" } } });
+assert.match(html, /<fieldset[^>]*disabled/);
+html = render({ snapshot: { ...p.snapshot, conversations: [{ ...conversation, directBlocked: true }] } });
+assert.match(html, /双方私聊已屏蔽/);
+assert.match(html, /<button[^>]*aria-label="发送消息"[^>]*disabled/);
+const { GroupDetails, ContactBlock } = load("cloud/Groups");
+const details = (c, meId) => renderToStaticMarkup(React.createElement(GroupDetails, { conversation: c, me: meId, busy: false, act: asyncNoop, refresh: asyncNoop, leave: noop }));
+html = details(group, me.id);
+assert.match(html, /保存群名称/); assert.match(html, /添加成员/); assert.match(html, /转让群主/); assert.match(html, /群角色/);
+assert.doesNotMatch(html, />退出群聊</);
+assert.equal((html.match(/>转让群主<\/button>/g) || []).length, 1, "owner can transfer only to the other human");
+html = details(group, peer.id);
+assert.match(html, /退出群聊/); assert.doesNotMatch(html, /添加成员|保存群名称|转让群主|群角色|>移出</);
+html = details({ ...group, members: group.members.map(m => m.account.id === peer.id ? { ...m, role: "admin" } : m) }, peer.id);
+assert.match(html, /添加成员/); assert.match(html, /移出/); assert.doesNotMatch(html, /转让群主|群角色/);
+html = renderToStaticMarkup(React.createElement(ContactBlock, { account: peer, act: asyncNoop, refresh: asyncNoop, busy: false }));
+assert.match(html, /共同群聊仍可正常使用/);
+console.log("PASS: real group conversations, historical sender names, independent AI tasks, structured draft targets, pending lock and group roles");
+
+html = render({ ...groupProps, record: { draft: { ...groupProps.record.draft, mentions: ["former-member"] }, pending: null } });
+assert.match(html, /移除已离群提及：former-member/);

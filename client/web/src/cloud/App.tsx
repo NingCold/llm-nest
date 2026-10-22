@@ -126,7 +126,17 @@ export default function CloudApp() {
     const data = await request<Snapshot>("/chat/init");
     if (e === epoch.current && sequence === refreshSeq.current) {
       setSnapshot(data);
+      snapshotRef.current = data;
       setMe(data.self);
+      const selected = activeRef.current;
+      if (selected && !data.conversations.some(c => c.id === selected)) {
+        activeRef.current = "";
+        view.current++;
+        setActive("");
+        setPage(null);
+        setResults([]);
+        setMessageLocation(null);
+      }
     }
     return data.cursor;
   };
@@ -388,7 +398,7 @@ export default function CloudApp() {
   };
   const send = () =>
     run(async () => {
-      if (!draftReady || busy) return;
+      if (!draftReady || busy || snapshotRef.current?.conversations.find((c) => c.id === active)?.directBlocked) return;
       setBusy(true);
       try {
         const current = recordRef.current;
@@ -407,16 +417,29 @@ export default function CloudApp() {
           e = epoch.current,
           v = view.current;
         await save({ ...current, pending });
-        await request(`/chat/conversations/${id}/messages`, "POST", {
-          requestId: pending.requestId,
-          text: pending.text,
-          images: pending.images?.map(({ mime, data }) => ({ mime, data })),
-          files: pending.files?.map(({ name, mime, data }) => ({
-            name,
-            mime,
-            data,
-          })),
-        });
+        try {
+          await request(`/chat/conversations/${id}/messages`, "POST", {
+            requestId: pending.requestId,
+            text: pending.text,
+            mentions: pending.mentions ?? [],
+            replyTo: pending.replyTo ?? null,
+            images: pending.images?.map(({ mime, data }) => ({ mime, data })),
+            files: pending.files?.map(({ name, mime, data }) => ({
+              name,
+              mime,
+              data,
+            })),
+          });
+        } catch (error) {
+          // An old pending command may already have succeeded before access changed.
+          // Only an explicit rejection of the first dispatch unlocks its editable draft.
+          if (!current.pending && error instanceof HttpError &&
+              [400, 403, 404, 409, 413, 415, 422].includes(error.status) && e === epoch.current) {
+            if (v === view.current && activeRef.current === id) await save(current);
+            else await db.save(owner, id, current);
+          }
+          throw error;
+        }
         if (e !== epoch.current) return;
         if (v === view.current && activeRef.current === id)
           await save({ draft: emptyDraft(), pending: null });
@@ -527,7 +550,7 @@ export default function CloudApp() {
     setSearchMore(found.hasMore);
     if (!older && !found.messages.length) setNotice("没有找到匹配消息");
   };
-  const locate = async (m: Message) => {
+  const locate = async (m: Pick<Message, "id">) => {
     const sequence = ++searchSeq.current,
       v = view.current;
     const data = await request<Page & { conversationId: string }>(

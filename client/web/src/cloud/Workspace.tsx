@@ -34,6 +34,7 @@ import { useUiStore } from "@/store/ui";
 import type { DraftRecord } from "../social/drafts";
 import { fileSize } from "../social/files";
 import { download, request } from "./api";
+import { CreateGroup, GroupDetails, ContactBlock } from "./Groups";
 import { AiManagement } from "./AiManagement";
 import type {
   Account,
@@ -67,7 +68,7 @@ interface Props {
   selectConversation(id: string): void;
   queryChange(value: string): void;
   search(older: boolean, scope: string): Promise<unknown>;
-  locate(message: Message): Promise<unknown>;
+  locate(message: Pick<Message, "id">): Promise<unknown>;
   act(fn: () => Promise<unknown>): Promise<void>;
   refresh(): Promise<unknown>;
   history(older?: boolean): Promise<unknown>;
@@ -87,11 +88,14 @@ interface Props {
   onPreview(url?: string): void;
   dismissError(): void;
 }
-const avatar = (a?: Account) =>
+const avatar = (a?: Pick<Account, "name"> | null) =>
   a ? { avatar: a.name.slice(0, 1), color: "sage" as const } : undefined;
 const unread = (c: Conversation) => c.unreadCount > 0 || c.manualUnread;
-function responseStatus(response: NonNullable<Message["aiResponse"]>) {
+function responseStatus(response: Message["aiResponses"][number]) {
   const errors: Record<string, string> = {
+    membership_changed: "群成员已变化，这次回复已停止",
+    account_disabled: "AI 账号已停用",
+    direct_blocked: "双方私聊已屏蔽",
     image_input_unsupported: "这个 AI 使用的模型暂不支持图片",
     node_budget_exhausted: "节点今天的调用额度已用完",
     preparation_failed: "准备回复失败，请管理员检查本机的模型配置",
@@ -114,7 +118,7 @@ function responseStatus(response: NonNullable<Message["aiResponse"]>) {
     node_storage_failed: "节点保存失败，请管理员检查本机存储",
   };
   const states: Record<string, string> = {
-    queued: "等待 AI 回复", running: "AI 正在回复", cancelled: "已停止回复",
+    completed: "已回复", queued: "等待 AI 回复", running: "AI 正在回复", cancelled: "已停止回复",
     expired: "等待已超时，请发送新消息", uncertain: "回复被中断，尚未确认结果",
     failed: "这次未能回复，请管理员检查节点", interrupted: "回复已中断",
   };
@@ -206,6 +210,7 @@ export function Workspace(p: Props) {
     [directory, setDirectory] = useState<Account[]>([]),
     [directoryBusy, setDirectoryBusy] = useState(false),
     [details, setDetails] = useState(false),
+    [creatingGroup, setCreatingGroup] = useState(false),
     [unreadOnly, setUnreadOnly] = useState(false),
     [scope, setScope] = useState("all"),
     [searchBusy, setSearchBusy] = useState(false),
@@ -225,6 +230,10 @@ export function Workspace(p: Props) {
   const showPreview = (url: string | undefined, trigger: HTMLElement) => {
     previewTrigger.current = trigger;
     p.onPreview(url);
+  };
+  const replyLabel = (id: string) => {
+    const source = p.page?.messages.find(message => message.id === id);
+    return source ? source.status === "withdrawn" ? "已撤回的消息" : `${source.senderName}：${source.text.slice(0, 80) || "附件消息"}` : "查看回复的消息";
   };
   const located = p.location?.conversationId === p.active;
   const theme = useUiStore((s) => s.theme),
@@ -257,7 +266,7 @@ export function Workspace(p: Props) {
       (c) =>
         (!unreadOnly || unread(c)) &&
         (!p.query ||
-          c.peer.name
+          c.name
             .toLocaleLowerCase()
             .includes(p.query.toLocaleLowerCase())),
     );
@@ -479,6 +488,7 @@ export function Workspace(p: Props) {
             </section>
             {!own ? (
               <section>
+                <ContactBlock key={account.id} account={account} busy={p.busy} act={p.act} refresh={p.refresh} />
                 <h2>联系人</h2>
                 <p>通讯录只记录自己的联系人，移除不会删除聊天历史。</p>
                 <button
@@ -592,6 +602,7 @@ export function Workspace(p: Props) {
                       : p.me.name}
                 </p>
               </div>
+              {p.tab === "messages" && <IconButton label="创建群聊" onClick={() => setCreatingGroup(true)}><Plus /></IconButton>}
               {p.tab === "contacts" && (
                 <IconButton
                   label="添加联系人"
@@ -709,10 +720,10 @@ export function Workspace(p: Props) {
                               p.selectConversation(c.id);
                             }}
                           >
-                            <Avatar contact={avatar(c.peer)} />
+                            <Avatar contact={avatar({ name: c.name })} />
                             <span className="conversation-list-text">
                               <span>
-                                <strong>{c.peer.name}</strong>
+                                <strong>{c.name}</strong>
                                 <time>
                                   {c.lastMessage &&
                                     shortTime(c.lastMessage.createdAt)}
@@ -747,7 +758,7 @@ export function Workspace(p: Props) {
                           >
                             {c.pinned && <Pin className="pin-indicator" />}
                             <details className="conversation-menu">
-                              <summary aria-label={`${c.peer.name} 的消息选项`}>
+                              <summary aria-label={`${c.name} 的消息选项`}>
                                 <MoreHorizontal />
                               </summary>
                               <div>
@@ -815,7 +826,7 @@ export function Workspace(p: Props) {
                                   {
                                     p.snapshot?.conversations.find(
                                       (c) => c.id === m.conversationId,
-                                    )?.peer.name
+                                    )?.name
                                   }
                                 </strong>
                                 <time>{shortTime(m.createdAt)}</time>
@@ -972,7 +983,7 @@ export function Workspace(p: Props) {
               <>
                 <section
                   className="conversation-view"
-                  aria-label={`${conversation.peer.name}聊天`}
+                  aria-label={`${conversation.name}聊天`}
                 >
                   <header
                     className="conversation-header"
@@ -989,12 +1000,12 @@ export function Workspace(p: Props) {
                     </IconButton>
                     <button
                       className="conversation-heading"
-                      onClick={() => openContact(conversation.peer)}
+                      onClick={() => conversation.peer ? openContact(conversation.peer) : setDetails(true)}
                     >
-                      <Avatar contact={avatar(conversation.peer)} />
+                      <Avatar contact={avatar({ name: conversation.name })} />
                       <span>
-                        <strong>{conversation.peer.name}</strong>
-                        <small>{conversation.peer.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
+                        <strong>{conversation.name}</strong>
+                        <small>{conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
                       </span>
                     </button>
                     <IconButton
@@ -1059,7 +1070,7 @@ export function Workspace(p: Props) {
                         >
                           <Avatar
                             contact={avatar(
-                              m.senderId === p.me.id ? p.me : conversation.peer,
+                              { name: m.senderName },
                             )}
                             self={m.senderId === p.me.id}
                             size="small"
@@ -1067,12 +1078,13 @@ export function Workspace(p: Props) {
                           <div className="live-message-content">
                             <div className="live-message-label">
                               <span>
-                                {m.senderId === p.me.id
-                                  ? p.me.name
-                                  : conversation.peer.name}
+                                {m.senderName}
                               </span>
                               <time>{shortTime(m.createdAt)}</time>
                             </div>
+                            {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo! }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
+                            {!!m.mentions.length && <div className="cloud-mentions">{m.mentions.map(id => <span key={id}>@{conversation.members.find(member => member.account.id === id)?.account.name || id} </span>)}</div>}
+                            {m.status === "committed" && <button className="text-button" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
                             {p.editing?.id === m.id ? (
                               <form
                                 className="live-message-editor cloud-form"
@@ -1149,16 +1161,16 @@ export function Workspace(p: Props) {
                                 )}
                               </div>
                             )}
-                            {m.aiResponse && m.aiResponse.status !== "completed" && (
-                              <div className="cloud-task-status" role="status">
-                                <span>{responseStatus(m.aiResponse)}</span>
-                                {["queued", "running"].includes(m.aiResponse.status) && <button className="text-button" onClick={() => void p.act(async () => {
-                                  await request(`/chat/ai-tasks/${m.aiResponse!.taskId}/cancel`, "POST", { requestId: crypto.randomUUID() });
+                            {m.aiResponses.map(response => (
+                              <div className="cloud-task-status" role="status" key={response.taskId}>
+                                <span>{conversation.members.find(member => member.account.id === response.aiId)?.account.name}：{responseStatus(response)}</span>
+                                {["queued", "running"].includes(response.status) && <button className="text-button" onClick={() => void p.act(async () => {
+                                  await request(`/chat/ai-tasks/${response.taskId}/cancel`, "POST", { requestId: crypto.randomUUID() });
                                   await p.history();
                                   await p.refresh();
                                 })}>停止回复</button>}
                               </div>
-                            )}
+                            ))}
                             {m.senderId === p.me.id &&
                               m.status !== "withdrawn" && (
                                 <div className="live-message-actions">
@@ -1269,15 +1281,22 @@ export function Workspace(p: Props) {
                           ))}
                         </div>
                       )}
+                      {conversation.directBlocked && <p role="status">双方私聊已屏蔽，历史和草稿保留。解除屏蔽后可发送新消息。</p>}
+                      {p.record.draft.replyTo && <div className="cloud-reply-draft">回复：{replyLabel(p.record.draft.replyTo)}<button className="text-button" disabled={p.busy || !!p.record.pending || !p.draftReady} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: null } }))}>取消回复</button></div>}
+                      {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
+                        <legend>提及成员（仅勾选才会通知 AI 回复）</legend>
+                        {conversation.members.filter(member => member.account.id !== p.me.id).map(({ account }) => <label className="cloud-check" key={account.id}><input type="checkbox" checked={p.record.draft.mentions?.includes(account.id) || false} onChange={e => { const mentions = p.record.draft.mentions || []; void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: e.target.checked ? [...mentions, account.id] : mentions.filter(id => id !== account.id) } })); }} />@{account.name}</label>)}
+                        {p.record.draft.mentions?.filter(id => !conversation.members.some(member => member.account.id === id)).map(id => <button type="button" className="text-button" key={id} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: p.record.draft.mentions!.filter(previous => previous !== id) } }))}>移除已离群提及：{id}</button>)}
+                      </fieldset>}
                       <textarea
                         aria-label="消息输入框"
                         rows={2}
                         maxLength={20000}
-                        disabled={!p.draftReady || p.busy || !!p.record.pending}
+                        disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}
                         placeholder={
                           dragging
                             ? "松开添加附件"
-                            : `给 ${conversation.peer.name} 发消息…`
+                            : `给 ${conversation.name} 发消息…`
                         }
                         value={p.record.draft.text}
                         onChange={(e) => p.text(e.target.value)}
@@ -1361,6 +1380,7 @@ export function Workspace(p: Props) {
                           aria-label="发送消息"
                           disabled={
                             !p.draftReady ||
+                            conversation.directBlocked ||
                             p.busy ||
                             !!p.record.pending ||
                             (!p.record.draft.text.trim() &&
@@ -1388,7 +1408,7 @@ export function Workspace(p: Props) {
                           <p>上次发送尚未确认。重试会使用同一请求确认结果。</p>
                           <button
                             className="text-button"
-                            disabled={p.busy}
+                            disabled={p.busy || conversation.directBlocked}
                             onClick={() => void p.send()}
                           >
                             重试上次发送
@@ -1414,13 +1434,14 @@ export function Workspace(p: Props) {
                       </IconButton>
                     </header>
                     <div className="details-scroll">
+                      {conversation.kind === "group" && <GroupDetails key={conversation.id + conversation.revision} conversation={conversation} me={p.me.id} busy={p.busy} act={p.act} refresh={p.refresh} leave={() => p.selectConversation("")} />}
                       <div className="details-hero">
                         <Avatar
-                          contact={avatar(conversation.peer)}
+                          contact={avatar({ name: conversation.name })}
                           size="large"
                         />
-                        <h2>{conversation.peer.name}</h2>
-                        <p>一个持续积累的长期私聊</p>
+                        <h2>{conversation.name}</h2>
+                        <p>{conversation.kind === "group" ? "所有当前成员共享完整群历史" : "一个持续积累的长期私聊"}</p>
                       </div>
                       <section className="cloud-detail-section">
                         <h3>聊天设置</h3>
@@ -1456,12 +1477,7 @@ export function Workspace(p: Props) {
                           <CheckCheck />
                           标为已读
                         </button>
-                        <button
-                          className="social-button secondary"
-                          onClick={() => openContact(conversation.peer)}
-                        >
-                          查看联系人资料
-                        </button>
+                        {conversation.peer && <button className="social-button secondary" onClick={() => openContact(conversation.peer!)}>查看联系人资料</button>}
                       </section>
                       <section className="cloud-detail-section">
                         <h3>导出聊天记录</h3>
@@ -1523,6 +1539,7 @@ export function Workspace(p: Props) {
           </div>
         </main>
       </div>
+      {creatingGroup && <CreateGroup me={p.me.id} contacts={listed} busy={p.busy} error={p.error} act={p.act} refresh={p.refresh} select={id => { p.selectConversation(id); navigate("messages"); }} close={() => setCreatingGroup(false)} />}
       <Dialog
         open={!!p.preview}
         onOpenChange={(open) => {

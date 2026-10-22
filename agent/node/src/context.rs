@@ -29,18 +29,37 @@ fn image_cost(message: &NodeMessage) -> Result<(usize, u64)> {
 }
 /// Keep whole messages: required trigger first, then newest history within image limits.
 fn select_image_history(messages: Vec<NodeMessage>, trigger: &str) -> Result<Vec<NodeMessage>> {
-    let required = messages
+    let trigger_message = messages
         .iter()
-        .position(|m| m.id == trigger)
+        .find(|m| m.id == trigger)
         .ok_or_else(|| anyhow::anyhow!("missing trigger message"))?;
-    let (mut count, mut bytes) = image_cost(&messages[required])?;
+    let reply = trigger_message.reply_to.as_deref();
+    if let Some(reply) = reply {
+        anyhow::ensure!(
+            messages.iter().any(|m| m.id == reply),
+            "missing reply message"
+        );
+    }
+    let mut selected = messages
+        .iter()
+        .map(|m| m.id == trigger || Some(m.id.as_str()) == reply)
+        .collect::<Vec<_>>();
+    let (mut count, mut bytes) = (0, 0);
+    for (message, required) in messages.iter().zip(&selected) {
+        if *required {
+            let cost = image_cost(message)?;
+            count += cost.0;
+            bytes += cost.1;
+        }
+    }
     anyhow::ensure!(
         count <= 16 && bytes <= REQUEST_IMAGE_BYTES,
         "required_images_exceed_budget"
     );
-    let mut selected = vec![false; messages.len()];
-    selected[required] = true;
-    for index in (0..messages.len()).rev().filter(|index| *index != required) {
+    for index in (0..messages.len()).rev() {
+        if selected[index] {
+            continue;
+        }
         let (more_count, more_bytes) = image_cost(&messages[index])?;
         if count + more_count <= 16 && bytes + more_bytes <= REQUEST_IMAGE_BYTES {
             selected[index] = true;
@@ -87,13 +106,13 @@ pub async fn prepare(
     let ai: ActorId = material.ai.id.parse()?;
     let conversation_id: ConversationId = material.task.conversation_id.parse()?;
     let trigger = material.task.trigger_message_id.parse()?;
-    if !material
-        .messages
-        .iter()
-        .any(|m| m.id == material.task.trigger_message_id)
-    {
-        bail!("missing trigger message");
-    }
+    anyhow::ensure!(
+        material.conversation.id == material.task.conversation_id,
+        "conversation mismatch"
+    );
+    let conversation_revision = serde_json::from_value(serde_json::Value::String(
+        material.conversation.revision.clone(),
+    ))?;
     let now = chrono::Utc::now();
     let mut messages = Vec::new();
     for (index, message) in material.messages.iter().enumerate() {
@@ -128,16 +147,16 @@ pub async fn prepare(
             id: message.id.parse()?,
             conversation_id,
             sender_id: message.sender_id.parse()?,
-            sender_name: if message.sender_id == material.ai.id {
-                material.ai.name.clone()
-            } else {
-                material.peer.name.clone()
-            },
+            sender_name: message.sender_name.clone(),
             sequence: Sequence::new(index as u64 + 1)?,
             body,
-            reply_to: None,
+            reply_to: message.reply_to.as_deref().map(str::parse).transpose()?,
             context_reference: None,
-            mentions: vec![],
+            mentions: message
+                .mentions
+                .iter()
+                .map(|id| id.parse())
+                .collect::<Result<_, _>>()?,
             run_id: None,
             status: MessageStatus::Committed,
             revision: serde_json::from_value(serde_json::Value::String(message.revision.clone()))?,
@@ -181,21 +200,43 @@ pub async fn prepare(
         },
         conversation: Conversation {
             id: conversation_id,
-            kind: ConversationKind::Direct,
+            kind: match material.conversation.kind.as_str() {
+                "direct" => ConversationKind::Direct,
+                "group" => ConversationKind::Group,
+                _ => bail!("invalid conversation kind"),
+            },
             relationship_id: None,
-            title: String::new(),
+            title: material.conversation.name,
             status: EntityStatus::Active,
             paused: false,
-            revision: Revision::ONE,
+            revision: conversation_revision,
             context_epoch: Epoch::ONE,
             participation_epoch: Epoch::ONE,
             last_sequence: Sequence::new(messages.len() as u64)?,
             created_at: now,
             legacy: false,
         },
-        members: vec![],
+        members: material
+            .conversation
+            .members
+            .iter()
+            .map(|member| {
+                Ok(Membership {
+                    conversation_id,
+                    actor_id: member.id.parse()?,
+                    status: MembershipStatus::Active,
+                    paused: false,
+                    revision: Revision::ONE,
+                })
+            })
+            .collect::<Result<_>>()?,
         relationship_revision: None,
-        participant_names: vec![material.ai.name, material.peer.name],
+        participant_names: material
+            .conversation
+            .members
+            .into_iter()
+            .map(|member| member.name)
+            .collect(),
         messages,
         trigger: ContextTrigger::Message(trigger),
     };
@@ -222,12 +263,13 @@ mod tests {
     fn materials() -> TaskMaterials {
         let ai = uuid::Uuid::new_v4().to_string();
         let peer = uuid::Uuid::new_v4().to_string();
+        let conversation = uuid::Uuid::new_v4().to_string();
         let trigger = uuid::Uuid::new_v4().to_string();
         TaskMaterials {
             task: NodeTask {
                 id: uuid::Uuid::new_v4().to_string(),
                 ai_id: ai.clone(),
-                conversation_id: uuid::Uuid::new_v4().to_string(),
+                conversation_id: conversation.clone(),
                 binding_version: "1".into(),
                 revision: "1".into(),
                 trigger_message_id: trigger.clone(),
@@ -240,15 +282,24 @@ mod tests {
                 bio: String::new(),
                 kind: "ai".into(),
             },
-            peer: NodeAccount {
-                id: peer.clone(),
-                name: "Human".into(),
-                bio: String::new(),
-                kind: "human".into(),
+            conversation: NodeConversation {
+                id: conversation,
+                kind: "direct".into(),
+                name: String::new(),
+                revision: "1".into(),
+                members: vec![NodeAccount {
+                    id: peer.clone(),
+                    name: "Human".into(),
+                    bio: String::new(),
+                    kind: "human".into(),
+                }],
             },
             messages: vec![NodeMessage {
                 id: trigger,
                 sender_id: peer,
+                sender_name: "Human".into(),
+                reply_to: None,
+                mentions: vec![],
                 text: "hello".into(),
                 revision: "1".into(),
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -362,6 +413,77 @@ image_input=false
         assert_eq!(selected.len(), 16);
         assert_eq!(selected[0].id, "5");
         assert_eq!(selected[15].id, "trigger");
+    }
+    #[tokio::test]
+    async fn group_context_keeps_roster_actual_senders_and_required_reply() {
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let mut material = materials();
+        material.conversation.kind = "group".into();
+        material.conversation.name = "Working group".into();
+        material.conversation.members.push(material.ai.clone());
+        let other = NodeAccount {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Other AI".into(),
+            bio: String::new(),
+            kind: "ai".into(),
+        };
+        material.conversation.members.push(other.clone());
+        let mut quoted = material.messages[0].clone();
+        quoted.id = uuid::Uuid::new_v4().to_string();
+        quoted.sender_id = other.id;
+        quoted.sender_name = other.name;
+        quoted.text = "Earlier independent answer".into();
+        quoted.attachments.clear();
+        material.messages[0].reply_to = Some(quoted.id.clone());
+        material.messages[0].sender_name = "Original human".into();
+        material.messages.insert(0, quoted);
+        let (request, _) = prepare(&api, &router(), &profile(), material.clone())
+            .await
+            .unwrap();
+        let text = format!("{:?}", request.messages);
+        for expected in [
+            "Working group",
+            "Other AI",
+            "Original human",
+            "Earlier independent answer",
+        ] {
+            assert!(text.contains(expected), "missing {expected}");
+        }
+        material.task.conversation_id = uuid::Uuid::new_v4().to_string();
+        material.conversation.id = material.task.conversation_id.clone();
+        material.conversation.name = "Separate group".into();
+        material.messages.remove(0);
+        material.messages[0].reply_to = None;
+        let (request, _) = prepare(&api, &router(), &profile(), material)
+            .await
+            .unwrap();
+        let text = format!("{:?}", request.messages);
+        assert!(text.contains("Separate group"));
+        assert!(!text.contains("Earlier independent answer"));
+    }
+    #[test]
+    fn reply_images_are_required_even_when_older_than_recent_history() {
+        let reply = image_message("reply", 2, IMAGE_BYTES);
+        let history = image_message("history", 2, IMAGE_BYTES);
+        let mut trigger = image_message("trigger", 2, IMAGE_BYTES);
+        trigger.reply_to = Some("reply".into());
+        let selected = select_image_history(vec![reply, history, trigger], "trigger").unwrap();
+        assert_eq!(
+            selected.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["reply", "trigger"]
+        );
+        let mut trigger = image_message("trigger", 3, IMAGE_BYTES);
+        trigger.reply_to = Some("reply".into());
+        assert!(
+            select_image_history(
+                vec![image_message("reply", 2, IMAGE_BYTES), trigger],
+                "trigger"
+            )
+            .is_err()
+        );
+        let mut trigger = image_message("trigger", 0, 0);
+        trigger.reply_to = Some("missing".into());
+        assert!(select_image_history(vec![trigger], "trigger").is_err());
     }
     #[test]
     fn required_image_overflow_and_untrusted_download_lengths_are_rejected() {

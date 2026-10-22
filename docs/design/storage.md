@@ -4,15 +4,21 @@
 
 ## 当前云端存储
 
-`server/cloud` 直接使用 PostgreSQL，不经过旧 SocialStore。`0001_accounts.sql` 保存 accounts、credentials、邀请、待验证注册、会话、密码重置和认证限流；`0002_chat.sql` 保存 cloud_contacts、cloud_conversations、cloud_list、cloud_messages、cloud_receipts、cloud_events。`0003_nodes.sql` 增加 AI 管理员、节点绑定、配对、任务及节点事件。启动自动运行顺序迁移。
+`server/cloud` 直接使用 PostgreSQL，不经过旧 SocialStore。`0001_accounts.sql` 保存 accounts、credentials、邀请、待验证注册、会话、密码重置和认证限流；`0002_chat.sql` 保存 cloud_contacts、cloud_conversations、cloud_list、cloud_messages、cloud_receipts、cloud_events。`0003_nodes.sql` 增加 AI 管理员、节点绑定、配对、任务及节点事件；`0004_groups.sql` 增加真实群与成员、结构化提及/回复、多 AI 任务回执、联系人屏蔽及账号启停。启动自动运行顺序迁移，不改写旧迁移。
 
-双方 UUID 有序配对和唯一约束保证唯一私聊；账号、窗口和消息 ID 均可沿用稳定 UUID。消息 position 是全局交付顺序，个人 read_position 不回退；消息发送、编辑/撤回、列表修改与相关账号的持久事件及回执在同一事务提交。写事务在分配事件 ID 前取得同一 advisory lock，保证可重放游标的提交顺序。init 和历史页的消息/读位置使用一致快照。
+双方 UUID 有序配对和唯一约束保证唯一私聊；群的 kind 为 group，first_id/second_id 均为 null，以 name 和 cloud_members 表达真实群，不使用 AI 账号占位。账号、窗口和消息 ID 均可沿用稳定 UUID。消息 position 是全局交付顺序，个人 read_position 不回退；消息发送、编辑/撤回、列表修改与相关账号的持久事件及回执在同一事务提交。写事务在分配事件 ID 前取得同一 advisory lock，保证可重放游标的提交顺序。init 和历史页的消息/读位置使用一致快照。
+
+`cloud_members(conversation,account_id,role)` 是私聊与群的当前成员授权表，role 为 owner/admin/member；0004 为既有私聊补入双方 member。每群至多一位 owner 的部分唯一索引配合群管理事务保持群主不变量。成员变化提升窗口 revision，保留已提交聊天，取消未完成任务及其失效派生片段，并向旧成员和新成员提交事件；移出成员后每次读取均检查当前成员表。
+
+0004 为 accounts 增加 status/status_revision，为 cloud_contacts 增加 listed/blocked/revision；通讯录列出与私聊屏蔽独立，移除联系人保留条目。cloud_messages 增加 sender_name（既有消息按发送者账号补齐）、reply_to、mentions UUID 数组与 ai_responses JSONB 数组；旧 ai_response 合并 aiId 迁为数组后删除旧列。历史署名不要求发送者仍是成员，mentions 保留明确选择的顺序，reply_to 由业务层复核同窗 committed 来源。ai_responses 按对应任务的 queue_position 重建，不将多个 AI 的状态覆盖成一个值。
+
+cloud_node_tasks 新增 queue_position（唯一 bigserial）与 conversation_revision；窗口未完成任务的索引按 `(conversation,queue_position)` 支持跨节点 FIFO。材料选择限定于触发位置以内原文，另允许本窗更早 queue_position 的 completed 任务输出，且该任务的触发位置不得晚于当前触发；排除后续无关真人输入，最近 100 条之外仍补足必要触发/回复来源。开始事务复核队首、成员/账号/屏蔽、窗口 revision 与材料来源，持久保存 sources 后，后续 delta/result 逐条检查冻结来源，不重新选最近历史。`cloud_group_receipts` 按实际 owner/request 保存群与关系命令的 fingerprint 和窗口引用；不保存命令正文。AI 启停仍使用账号状态版本，取消只影响目标 AI 的未完成任务；屏蔽只影响对应私聊，二者保留有效片段为 interrupted，停用期间仍保存真人私聊消息但不为目标 AI 排任务，恢复/解除不重排。
 
 附件元数据在消息 JSONB，原字节位于独立受管理目录的 `{messageId}/{attachmentIndex}`。先校验、独占创建文件、同步落盘，成功后提交数据库引用；数据库失败可能留下不可见的无引用文件，当前没有自动孤儿清理器。正文编辑保留原字节，撤回事务清空正文及元数据后删除文件。下载持有消息共享锁直至原字节读取完成；导出在一致快照中锁定完整消息及读取所选附件，避免撤回与读取拼出不一致记录。备份须配套保存数据库与附件，不将独立目录复制视为已实现的在线备份工具。
 
 cloud_receipts 只保存命令 SHA256 与实体 ID，不重复保存正文或 base64；重复请求返回当前权威状态，旧回执不能恢复撤回内容。密码使用 Argon2 哈希，邀请、验证/重置链接、会话只存校验值和有效性信息。SMTP 秘密属于部署环境。云端保存 AI 社交任务、来源修订、开始/结果指纹与确认 ID、累计草稿及终态、用量报告和节点事件；配对/绑定只保存节点 secret 的哈希。云端没有模型 Key、persona、内部模型参数、记忆或摘要正文。
 
-客户端草稿复用 IndexedDB，owner 包含服务器与实际账号，再按窗口隔离；附件 Blob 和待确认发送命令保存在本机，不是服务器正式历史。浏览器来源隔离与桌面内存会话说明见[界面设计](frontend.md)。
+客户端草稿复用 IndexedDB，owner 包含服务器与实际账号，再按窗口隔离；文字、mentions/replyTo、附件 Blob 和不可变待确认发送命令同事务保存在本机，不是服务器正式历史。刷新不自动发送，未知发送结果只手动重试原 ID/原内容；首次明确拒绝才恢复可编辑草稿，已存在 pending 的后续权限拒绝不能证明旧发送未提交。浏览器来源隔离与桌面内存会话说明见[界面设计](frontend.md)。
 
 [本地 payload 映射探针](../../server/cloud/tests/fixtures/README.md) 用合成数据和真实共享类型核对 UUID、公开资料、消息相对顺序及图片/文件原字节。旧 per-window sequence 需映射到云端 global position，旧正文 part index 需映射到云端附件索引。它不是迁移器；头像、停用状态、账号版本、AI、群、意识及来源依赖仍需正式备份预览与迁移设计，不读取或修改用户旧库。
 
@@ -20,11 +26,11 @@ cloud_receipts 只保存命令 SHA256 与实体 ID，不重复保存正文或 ba
 
 `agent/node` 独立使用 `node.sqlite`，与旧 `social.sqlite3` 无关。bindings 保存每 AI 的绑定版本和原始节点凭据，profiles 保存每 AI 的角色、模型选择和参数，tasks 保存开始意图、开始回执、草稿及原始最终提交，budget/meta 保存每日保守预留及不回退的日期。节点目录有独占进程锁和当前用户私有权限；凭据数据库不能提交、分享或打包。
 
-`node.toml` 保存服务器、nodeId、CA 路径、预算与新绑定的档案模板，provider Key 只允许环境变量引用，解析出的模型 Key 不进入 SQLite。每 AI 档案由本机 profile CLI 保存；显式记忆、摘要与迁移包尚未迁入。事务与恢复规则见[执行设计](execution.md#当前云端私聊执行)。
+`node.toml` 保存服务器、nodeId、CA 路径、预算与新绑定的档案模板，provider Key 只允许环境变量引用，解析出的模型 Key 不进入 SQLite。每 AI 档案由本机 profile CLI 保存；显式记忆、摘要与迁移包尚未迁入。事务与恢复规则见[执行设计](execution.md#当前云端私聊与群聊执行)。只有同一进程收到云端开始接口明确 409 `task_not_ready`/`conversation_busy` 未开始响应时，才在本地事务删除尚无开始回执的 intent，并撤销该次预留的调用数/token，保留日期单调。普通冲突、断线、确认丢失、已开始或重启后的不确定状态均不适用该撤销路径。
 
 ## 完整云端与 Agent 存储目标（部分待实现）
 
-[云端改造计划](../project/cloud-plan.md)确定了完整数据归属。真人/AI 私聊、节点绑定/任务及节点档案与执行检查点已落地；下列群、意识资料、完整在线管理及正式迁移仍是目标，不能据此声称已经有对应表或工具。
+[云端改造计划](../project/cloud-plan.md)确定了完整数据归属。真人/AI 私聊、显式提及/回复群聊、当前成员与角色、屏蔽和 AI 启停、节点绑定/任务及节点档案与执行检查点已落地；下列意识资料、完整参与规则与在线管理及正式迁移仍是目标，不能据此声称已经有对应表或工具。
 
 ### 数据归属
 
@@ -60,7 +66,7 @@ cloud_receipts 只保存命令 SHA256 与实体 ID，不重复保存正文或 ba
 
 ## 本地 SQLite 实现参考（待迁移）
 
-以下所有章节只描述保留的本地 SQLite/SocialFeature 实现，不描述默认 CloudApp 或 cloud-server。旧库及顺序迁移保留，用于回归和后续 Agent 迁移；不要把其意识、群和执行能力视为已接入云端。
+以下所有章节只描述保留的本地 SQLite/SocialFeature 实现，不描述默认 CloudApp 或 cloud-server。旧库及顺序迁移保留，用于回归和后续 Agent 迁移；不要把其共享群摘要、意识资料和参与执行机制视为已接入云端；云端群当前仅采用本文顶部的成员及显式提及/回复契约。
 
 ### 存储布局与锁
 

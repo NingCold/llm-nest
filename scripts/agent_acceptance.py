@@ -148,7 +148,8 @@ image_input = true
             return api.request(path, 'POST', {'requestId': uid(), 'text': text, 'images': [], 'files': []})
 
         def reply_state(mid):
-            return next(m for m in api.request(path)['messages'] if m['id'] == mid).get('aiResponse')
+            responses = next(m for m in api.request(path)['messages'] if m['id'] == mid)['aiResponses']
+            return next((r for r in responses if r['aiId'] == ai['account']['id']), None)
 
         def completed(mid):
             def read():

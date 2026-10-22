@@ -24,6 +24,7 @@ fn bad(s: &str) -> AppError {
 }
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(crate::groups::routes())
         .route("/chat/init", get(init))
         .route("/chat/accounts", get(accounts))
         .route("/chat/contacts", post(contacts))
@@ -47,12 +48,20 @@ async fn lock(tx: &mut Tx<'_>) -> Result<()> {
         .await?;
     Ok(())
 }
-async fn member(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<(Uuid, Uuid)> {
-    let r=sqlx::query("SELECT first_id,second_id FROM cloud_conversations WHERE id=$1 AND (first_id=$2 OR second_id=$2)").bind(id).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::not_found)?;
-    Ok((r.get(0), r.get(1)))
+pub(crate) async fn member(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Vec<Uuid>> {
+    let members: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT account_id FROM cloud_members WHERE conversation=$1 ORDER BY account_id",
+    )
+    .bind(id)
+    .fetch_all(&mut **tx)
+    .await?;
+    if !members.contains(&owner) {
+        return Err(AppError::not_found());
+    }
+    Ok(members)
 }
-async fn notify(tx: &mut Tx<'_>, id: Uuid, pair: (Uuid, Uuid)) -> Result<()> {
-    for owner in [pair.0, pair.1] {
+pub(crate) async fn notify(tx: &mut Tx<'_>, id: Uuid, members: Vec<Uuid>) -> Result<()> {
+    for owner in members {
         sqlx::query("INSERT INTO cloud_events(owner,conversation) VALUES($1,$2)")
             .bind(owner)
             .bind(id)
@@ -61,22 +70,48 @@ async fn notify(tx: &mut Tx<'_>, id: Uuid, pair: (Uuid, Uuid)) -> Result<()> {
     }
     Ok(())
 }
-async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
-    let r = sqlx::query("SELECT id,name,bio,kind FROM accounts WHERE id=$1")
+pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
+    let r = sqlx::query("SELECT id,name,bio,kind,status FROM accounts WHERE id=$1")
         .bind(id)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(AppError::not_found)?;
     Ok(
-        json!({"id":r.get::<Uuid,_>(0),"name":r.get::<String,_>(1),"bio":r.get::<String,_>(2),"kind":r.get::<String,_>(3)}),
+        json!({"id":r.get::<Uuid,_>(0),"name":r.get::<String,_>(1),"bio":r.get::<String,_>(2),"kind":r.get::<String,_>(3),"status":r.get::<String,_>(4)}),
     )
 }
 fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"aiResponse":r.get::<Option<Value>,_>("ai_response")})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses")})
 }
-async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
+pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
-    let peer = account(tx, if pair.0 == owner { pair.1 } else { pair.0 }).await?;
+    let c = sqlx::query("SELECT kind,name,revision FROM cloud_conversations WHERE id=$1")
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await?;
+    let kind: String = c.get("kind");
+    let peer = if kind == "direct" {
+        account(tx, *pair.iter().find(|&&p| p != owner).unwrap()).await?
+    } else {
+        Value::Null
+    };
+    let mut members = vec![];
+    for member in &pair {
+        let role: String = sqlx::query_scalar(
+            "SELECT role FROM cloud_members WHERE conversation=$1 AND account_id=$2",
+        )
+        .bind(id)
+        .bind(member)
+        .fetch_one(&mut **tx)
+        .await?;
+        members.push(json!({"account":account(tx,*member).await?,"role":role}));
+    }
+    let name = if kind == "direct" {
+        peer["name"].clone()
+    } else {
+        json!(c.get::<String, _>("name"))
+    };
+    let blocked = crate::groups::direct_blocked(tx, id).await?;
     let r = sqlx::query("SELECT l.*, (SELECT coalesce(max(position),0) FROM cloud_messages WHERE conversation=$2 AND status<>'generating') AS latest_position FROM cloud_list l WHERE owner=$1 AND conversation=$2")
         .bind(owner)
         .bind(id)
@@ -91,7 +126,7 @@ async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     .await?;
     let unread:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1 AND sender<>$2 AND position>$3 AND NOT withdrawn AND status<>'generating'").bind(id).bind(owner).bind(pos).fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":id,"peer":peer,"revision":"1","lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
+        json!({"id":id,"kind":kind,"name":name,"peer":peer,"members":members,"directBlocked":blocked,"revision":c.get::<i64,_>("revision").to_string(),"lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
     )
 }
 async fn init(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value>> {
@@ -101,16 +136,17 @@ async fn init(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value
         .execute(&mut *tx)
         .await?;
     let me = account(&mut tx, p.id).await?;
-    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT target FROM cloud_contacts WHERE owner=$1")
-        .bind(p.id)
-        .fetch_all(&mut *tx)
-        .await?;
+    let ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT target FROM cloud_contacts WHERE owner=$1 AND listed")
+            .bind(p.id)
+            .fetch_all(&mut *tx)
+            .await?;
     let mut contacts = vec![];
     for id in ids {
         contacts.push(account(&mut tx, id).await?)
     }
     let ids: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM cloud_conversations WHERE first_id=$1 OR second_id=$1")
+        sqlx::query_scalar("SELECT conversation FROM cloud_members WHERE account_id=$1")
             .bind(p.id)
             .fetch_all(&mut *tx)
             .await?;
@@ -149,8 +185,8 @@ async fn accounts(
     Query(q): Query<Q>,
 ) -> Result<Json<Value>> {
     auth::authenticate(&s, &h).await?;
-    let rows=sqlx::query("SELECT id,name,bio,kind FROM accounts WHERE strpos(lower(name),lower($1))>0 OR id::text=$1 ORDER BY name,id LIMIT 50").bind(q.query.unwrap_or_default()).fetch_all(&s.pool).await?;
-    Ok(Json(Value::Array(rows.iter().map(|r|json!({"id":r.get::<Uuid,_>(0),"name":r.get::<String,_>(1),"bio":r.get::<String,_>(2),"kind":r.get::<String,_>(3)})).collect())))
+    let rows=sqlx::query("SELECT id,name,bio,kind,status FROM accounts WHERE strpos(lower(name),lower($1))>0 OR id::text=$1 ORDER BY name,id LIMIT 50").bind(q.query.unwrap_or_default()).fetch_all(&s.pool).await?;
+    Ok(Json(Value::Array(rows.iter().map(|r|json!({"id":r.get::<Uuid,_>(0),"name":r.get::<String,_>(1),"bio":r.get::<String,_>(2),"kind":r.get::<String,_>(3),"status":r.get::<String,_>(4)})).collect())))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,13 +207,13 @@ async fn contacts(
     lock(&mut tx).await?;
     account(&mut tx, v.account_id).await?;
     if v.listed.unwrap_or(true) {
-        sqlx::query("INSERT INTO cloud_contacts VALUES($1,$2) ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO cloud_contacts(owner,target) VALUES($1,$2) ON CONFLICT(owner,target) DO UPDATE SET listed=true,revision=cloud_contacts.revision+1")
             .bind(p.id)
             .bind(v.account_id)
             .execute(&mut *tx)
             .await?;
     } else {
-        sqlx::query("DELETE FROM cloud_contacts WHERE owner=$1 AND target=$2")
+        sqlx::query("UPDATE cloud_contacts SET listed=false,revision=revision+1 WHERE owner=$1 AND target=$2")
             .bind(p.id)
             .bind(v.account_id)
             .execute(&mut *tx)
@@ -209,6 +245,7 @@ async fn direct(
     };
     let id:Uuid=sqlx::query_scalar("INSERT INTO cloud_conversations(id,first_id,second_id) VALUES($1,$2,$3) ON CONFLICT(first_id,second_id) DO UPDATE SET first_id=excluded.first_id RETURNING id").bind(Uuid::new_v4()).bind(a).bind(b).fetch_one(&mut *tx).await?;
     for owner in [a, b] {
+        sqlx::query("INSERT INTO cloud_members(conversation,account_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(id).bind(owner).execute(&mut *tx).await?;
         sqlx::query(
             "INSERT INTO cloud_list(owner,conversation) VALUES($1,$2) ON CONFLICT DO NOTHING",
         )
@@ -217,7 +254,7 @@ async fn direct(
         .execute(&mut *tx)
         .await?;
     }
-    notify(&mut tx, id, (a, b)).await?;
+    notify(&mut tx, id, vec![a, b]).await?;
     let result = conversation(&mut tx, id, p.id).await?;
     tx.commit().await?;
     Ok(Json(result))
@@ -254,6 +291,9 @@ async fn messages(
 struct Input {
     request_id: Uuid,
     text: Option<String>,
+    reply_to: Option<Uuid>,
+    #[serde(default)]
+    mentions: Vec<Uuid>,
     expected_revision: Option<String>,
     #[serde(default)]
     images: Vec<Upload>,
@@ -294,6 +334,11 @@ async fn receipt(
             .collect::<Vec<_>>()
     ]))
     .map_err(|_| AppError::internal())?;
+    let fingerprint = if v.reply_to.is_none() && v.mentions.is_empty() {
+        fingerprint
+    } else {
+        format!("{fingerprint}:{}", json!([v.reply_to, v.mentions]))
+    };
     let fingerprint = format!("{:x}", Sha256::digest(fingerprint.as_bytes()));
     if let Some(r) =
         sqlx::query("SELECT fingerprint,response FROM cloud_receipts WHERE owner=$1 AND request=$2")
@@ -345,6 +390,11 @@ async fn save_receipt(
             .collect::<Vec<_>>()
     ]))
     .map_err(|_| AppError::internal())?;
+    let fingerprint = if v.reply_to.is_none() && v.mentions.is_empty() {
+        fingerprint
+    } else {
+        format!("{fingerprint}:{}", json!([v.reply_to, v.mentions]))
+    };
     let fingerprint = format!("{:x}", Sha256::digest(fingerprint.as_bytes()));
     sqlx::query("INSERT INTO cloud_receipts VALUES($1,$2,$3,$4)")
         .bind(owner)
@@ -440,10 +490,11 @@ async fn send(
     {
         return Err(bad("消息为空或过长"));
     }
+    crate::groups::validate_send(&mut tx, id, &pair, v.reply_to, &v.mentions).await?;
     let mid = Uuid::new_v4();
     let attachments = uploads(&s, mid, &v).await?;
-    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments) VALUES($1,$2,$3,$4,$5)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).execute(&mut *tx).await?;
-    crate::nodes::enqueue(&mut tx, id, mid, p.id, pair).await?;
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments,sender_name,reply_to,mentions) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).bind(v.reply_to).bind(&v.mentions).execute(&mut *tx).await?;
+    crate::nodes::enqueue(&mut tx, id, mid, p.id).await?;
     let row = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
         .bind(mid)
         .fetch_one(&mut *tx)
@@ -587,11 +638,15 @@ async fn search(
     Query(q): Query<Q>,
 ) -> Result<Json<Value>> {
     let p = auth::authenticate(&s, &h).await?;
+    if let Some(cid) = q.conversation_id {
+        let mut tx = s.pool.begin().await?;
+        member(&mut tx, cid, p.id).await?;
+    }
     let query = q.query.unwrap_or_default();
     if query.trim().is_empty() {
         return Err(bad("搜索内容为空"));
     }
-    let mut rows=sqlx::query("SELECT m.* FROM cloud_messages m JOIN cloud_conversations c ON c.id=m.conversation WHERE (c.first_id=$1 OR c.second_id=$1) AND ($2::uuid IS NULL OR c.id=$2) AND NOT m.withdrawn AND m.status<>'generating' AND strpos(translate(m.body,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),translate($3,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'))>0 AND m.position<$4 ORDER BY m.position DESC LIMIT 51").bind(p.id).bind(q.conversation_id).bind(query).bind(q.before_position.unwrap_or(i64::MAX)).fetch_all(&s.pool).await?;
+    let mut rows=sqlx::query("SELECT m.* FROM cloud_messages m JOIN cloud_members c ON c.conversation=m.conversation WHERE c.account_id=$1 AND ($2::uuid IS NULL OR c.conversation=$2) AND NOT m.withdrawn AND m.status<>'generating' AND strpos(translate(m.body,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),translate($3,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'))>0 AND m.position<$4 ORDER BY m.position DESC LIMIT 51").bind(p.id).bind(q.conversation_id).bind(query).bind(q.before_position.unwrap_or(i64::MAX)).fetch_all(&s.pool).await?;
     let more = rows.len() > 50;
     rows.truncate(50);
     Ok(Json(
@@ -896,6 +951,10 @@ mod tests {
                 .execute(&pool)
                 .await
                 .unwrap();
+            sqlx::raw_sql(include_str!("../migrations/0004_groups.sql"))
+                .execute(&pool)
+                .await
+                .unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
                 pool,
@@ -971,6 +1030,20 @@ mod tests {
         let first = one.unwrap().0;
         assert_eq!(first["id"], two.unwrap().0["id"]);
         let cid = Uuid::parse_str(first["id"].as_str().unwrap()).unwrap();
+        assert_eq!(first["name"], "human1");
+        let other_view = direct(
+            State(f.state.clone()),
+            b.clone(),
+            Json(Target {
+                account_id: f.users[0].0,
+                listed: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(other_view["name"], "human0");
+        assert_eq!(other_view["id"], first["id"]);
         let request = Uuid::new_v4();
         let command = json!({"requestId":request,"text":"中文 A%_ literal"});
         let m = send(
@@ -1408,6 +1481,12 @@ mod local_mapping_tests {
             .await
             .unwrap();
         for id in [owner, other] {
+            sqlx::query("INSERT INTO cloud_members(conversation,account_id) VALUES($1,$2)")
+                .bind(cid)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
             sqlx::query("INSERT INTO cloud_list(owner,conversation) VALUES($1,$2)")
                 .bind(id)
                 .bind(cid)

@@ -133,6 +133,21 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
         tx.commit().context("persist model start intent")?;
         Ok(())
     }
+    /// Only after the cloud explicitly confirms this invocation has not started.
+    pub fn defer_unstarted(&self, id: &str, day: &str, tokens: u64) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        let removed = tx.execute(
+            "DELETE FROM tasks WHERE id=?1 AND state='intent' AND receipt_json IS NULL",
+            [id],
+        )?;
+        anyhow::ensure!(removed == 1, "only an unstarted intent may be deferred");
+        tx.execute(
+            "UPDATE budget SET calls=calls-1,tokens=tokens-?2 WHERE day=?1",
+            params![day, i64::try_from(tokens)?],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
     pub fn started(&self, id: &str, receipt: &connector::node::StartReceipt) -> Result<()> {
         self.db.execute(
             "UPDATE tasks SET state='started',receipt_json=?2 WHERE id=?1",
@@ -168,9 +183,50 @@ mod tests {
         connector::node::StartRequest {
             request_id: "r".into(),
             task_revision: "1".into(),
+            conversation_revision: "1".into(),
             sources: vec![],
             configuration_revision: "1".into(),
         }
+    }
+    #[test]
+    fn explicit_unstarted_deferral_releases_only_its_reservation() {
+        let directory = tempfile::tempdir().unwrap();
+        let s = Store::open(&directory.path().join("node.db")).unwrap();
+        s.reserve(
+            "deferred",
+            "ai",
+            &start(),
+            "2026-10-22",
+            20,
+            BudgetLimits {
+                calls: 2,
+                tokens: 100,
+            },
+        )
+        .unwrap();
+        s.reserve(
+            "other",
+            "ai",
+            &start(),
+            "2026-10-22",
+            30,
+            BudgetLimits {
+                calls: 2,
+                tokens: 100,
+            },
+        )
+        .unwrap();
+        s.defer_unstarted("deferred", "2026-10-22", 20).unwrap();
+        assert!(s.state("deferred").unwrap().is_none());
+        let budget: (i64, i64) =
+            s.db.query_row("SELECT calls,tokens FROM budget", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(budget, (1, 30));
+        s.db.execute("UPDATE tasks SET state='started' WHERE id='other'", [])
+            .unwrap();
+        assert!(s.defer_unstarted("other", "2026-10-22", 30).is_err());
     }
     #[test]
     fn reservation_is_persistent_and_never_refunded() {

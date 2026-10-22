@@ -1,4 +1,4 @@
-//! Version one cloud node protocol. Identifiers and revisions are opaque strings.
+//! Version two cloud node protocol. Identifiers and revisions are opaque strings.
 use serde::{Deserialize, Serialize};
 
 macro_rules! dto { ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
@@ -35,13 +35,14 @@ dto!(NodeTask {
     expires_at: String
 });
 dto!(NodeAttachment { index: usize, kind: String, mime: String, byte_length: u64, name: Option<String> });
-dto!(NodeMessage { id: String, sender_id: String, text: String, revision: String, created_at: String, attachments: Vec<NodeAttachment> });
+dto!(NodeMessage { id: String, sender_id: String, sender_name: String, reply_to: Option<String>, mentions: Vec<String>, text: String, revision: String, created_at: String, attachments: Vec<NodeAttachment> });
 dto!(SourceRevision {
     message_id: String,
     revision: String
 });
-dto!(TaskMaterials { task: NodeTask, ai: NodeAccount, peer: NodeAccount, messages: Vec<NodeMessage>, sources: Vec<SourceRevision> });
-dto!(StartRequest { request_id: String, task_revision: String, sources: Vec<SourceRevision>, configuration_revision: String });
+dto!(NodeConversation { id: String, kind: String, name: String, revision: String, members: Vec<NodeAccount> });
+dto!(TaskMaterials { task: NodeTask, ai: NodeAccount, conversation: NodeConversation, messages: Vec<NodeMessage>, sources: Vec<SourceRevision> });
+dto!(StartRequest { request_id: String, task_revision: String, conversation_revision: String, sources: Vec<SourceRevision>, configuration_revision: String });
 dto!(StartReceipt {
     task_id: String,
     run_id: String,
@@ -106,7 +107,7 @@ mod tests {
     #[test]
     fn frame_wire_names() {
         let frame = ClientFrame::Hello {
-            protocol_version: 1,
+            protocol_version: 2,
             node_id: "node".into(),
             ai_id: "ai".into(),
             binding_version: "2".into(),
@@ -114,13 +115,23 @@ mod tests {
         let json = serde_json::to_value(&frame).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"type":"hello","protocolVersion":1,"nodeId":"node","aiId":"ai","bindingVersion":"2"})
+            serde_json::json!({"type":"hello","protocolVersion":2,"nodeId":"node","aiId":"ai","bindingVersion":"2"})
         );
         assert_eq!(serde_json::from_value::<ClientFrame>(json).unwrap(), frame);
         assert_eq!(
             serde_json::to_value(ServerFrame::TasksChanged).unwrap(),
             serde_json::json!({"type":"tasksChanged"})
         );
+    }
+    #[test]
+    fn start_v2_requires_conversation_revision() {
+        let wire = serde_json::json!({"requestId":"r", "taskRevision":"1", "conversationRevision":"7", "sources":[], "configurationRevision":"1"});
+        let request: StartRequest = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(request.conversation_revision, "7");
+        assert_eq!(serde_json::to_value(request).unwrap(), wire);
+        let mut old = wire;
+        old.as_object_mut().unwrap().remove("conversationRevision");
+        assert!(serde_json::from_value::<StartRequest>(old).is_err());
     }
     #[test]
     fn transport_policy() {

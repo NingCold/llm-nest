@@ -4,7 +4,7 @@
 
 ## 项目定位与当前范围
 
-产品目标已调整为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步云端真人聊天尚未开始。
+产品目标为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步已实现独立云端真人服务和默认云端客户端，当前验证状态见进度文档；AI 节点、群聊和意识系统的云端接入尚待后续步骤。
 
 保留一个仓库，划清客户端、服务端、自带 Agent 和连接器四个模块的边界：前三者独立运行，连接器可独立引用。云端 PostgreSQL 保存社交记录，附件使用独立持久目录；自带 Agent 的 SQLite 保存角色、模型参数、记忆和每个 AI 自己的窗口摘要。模型 Key 与节点凭据只在节点保管，不进迁移包；外部 Agent 自选内部实现。
 
@@ -16,15 +16,19 @@
 
 云端维护发言任务与次数，节点维护调用、并发和 token 预算；模型调用前取得云端持久开始确认，已开始而结果不明的调用不自动重做。首轮单机容器部署，客户端 HTTPS/SSE，节点主动 WSS 连接；迁移先备份预览、保留旧库，原文迁云端、意识资料迁节点。细节见[已确认约定](docs/project/cloud-plan.md#已确认的运行与迁移约定)与模块设计。这些是目标约束，不代表现有程序已完成改造。
 
-当前实现仍是本地人与 AI 的社交空间，共用 Rust 运行时与一套 React 界面。以下行为描述现有实现，后续按确认的计划逐步替换相关约束。Web 和 Tauri 是当前产品入口；旧 Harness、CLI/TUI、旧 HTTP/IPC、demo 与早期独立社交预览已经退役。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
+当前默认入口是 `client/web/src/cloud`，Web 与 Tauri 都连接 `server/cloud` 的 HTTPS JSON/SSE。服务独立使用 PostgreSQL 和附件目录，不加载本地 Runtime、SQLite 或模型配置。桌面 IPC 转发云端请求并保留原生保存、窗口和草稿关闭交互，默认页面不启动保留的延迟 Runtime。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
 
-已实现独立账号、私聊/群聊、意识系统、参与节奏与一次性约定联系、协议路由、SQLite 持久化及桌面/Web 设置。工具 worker 是保留的底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或界面按钮声称功能已经可用。
+首轮邀请由维护者生成，可撤销、默认七天有效且只能注册一次；注册保留三十分钟，验证邮箱后原子创建账号并消耗邀请。密码使用 Argon2，令牌仅存哈希，真人身份来自 HttpOnly 会话 Cookie。网页变更请求检查 `X-LLMN-Client` 与来源，桌面凭据只在原生内存，重启重新登录。测试服务仅在 Tailscale 内网使用，测试 CA 明确信任、私有 outbox 不公开；不关闭 TLS 验证，不提交具体服务器连接资料。
 
-首版为一个本地真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，当前群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)。SocialFeature 读取并检查材料，调用 `agent/core` 按角色与空间构造请求。
+云端联系人为有向关系，双方唯一私聊；每次读取、搜索、下载和导出检查当前认证账号。消息、个人读态、命令摘要回执与持久事件同事务；回执不存正文或附件原字节，重放返回当前权威消息，撤回不能被旧回执复活。附件按生成的消息 UUID 与索引存放，读写时复核 revision；SSE 按账号从持久事件补齐，客户端成功刷新后推进游标。草稿按服务器、账号、窗口隔离，发送结果未确认时只允许手动重试同一请求。详细云端契约见 [API](docs/design/api.md) 与 [存储](docs/design/storage.md)。
+
+下文的 SocialFeature、SQLite、AI、群聊、意识和接话规则记录保留的本地实现，供回归及后续迁移核对，不是当前云端入口的已开放功能。旧 Harness、CLI/TUI 与 demo 已退役。工具 worker 仍是底层能力，社交执行尚未开放工具；MCP、通用编码代理、Shell/文件工具、插件市场、知识库和工作流编排尚未实现。不要根据目录名、预留类型或旧测试声称云端功能已经可用。
+
+原本地首版支持一个真人与多个 AI 私聊、群聊。主入口为消息/通讯录，记忆管理位于聊天详情与联系人详情；每个角色与用户有唯一长期私聊，各群独立，群成员共享入群前后的完整群历史。软件上下文与记忆机制统一称为 [意识系统（Consciousness）](docs/design/consciousness.md)。本地 SocialFeature 读取并检查材料，调用 `agent/core` 按角色与空间构造请求。
 
 ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，内部 persona/执行绑定只经管理员接口返回。ContactEntry 是按 owner 的有向联系人条目，listed 与 blocked 独立，移除不改 Actor.status、私聊、群成员或运行。创建者是初始管理员，可授予/撤销普通管理员；普通管理员不能转授或移除初始管理员。停用/恢复只经账号管理权限执行，恢复不重放旧队列。账号查看是带权限复核的只读快照/分页，实际操作者不变，不接收任意客户端 operatorId，不复用全局订阅或提供人工代发。SQLite v6 迁移保留旧停用状态与历史，不将内部 persona 复制成公开 bio；v7 增加显式记忆，v8 增加窗口分段摘要、配置与来源修订，v9 增加跨窗口引用依赖索引，v10 增加接话规则/状态/每日额度，v11 增加约定联系设置与意图、计划的独立触发来源，v12 增加消息完成顺序和个人已读/未读/置顶状态并替换闲置 read_positions，v13 增加个人屏蔽状态，不改写旧迁移。
 
-当前能力见 [已完成](docs/project/completed.md)，任务顺序见 [当前安排](docs/project/current.md)，剩余范围见 [待办与候选](docs/project/backlog.md)。Web 与 Tauri 默认共用真实社交界面，HTTP/SSE 和 IPC/Channel 共用业务与订阅；测试使用独立临时数据和模拟 provider 驱动同一真实界面。本文维护修改约束，不重复维护各批测试数量。
+当前能力见 [已完成](docs/project/completed.md)，任务顺序见 [当前安排](docs/project/current.md)，剩余范围见 [待办与候选](docs/project/backlog.md)。云端测试使用独立 PostgreSQL 与测试邮件；本地模型回归继续使用临时数据和模拟 provider。本文维护修改约束，不重复维护各批测试数量。
 
 ## 工作前先确认
 
@@ -67,14 +71,16 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | `crates/runtime` | 配置/目录缓存/热更新、Feature 生命周期与必需的 SocialResources 注入 |
 | `server/social` | 联系人/私聊/群聊用例、修订/参与控制、持久接话队列、意识材料适配/显式记忆/窗口摘要任务/群话题接续、运行协调、共享业务 DTO |
 | `server/http` | HTTP/SSE 适配、GUI DTO、静态前端服务 |
+| `server/cloud` | 独立云端真人认证、PostgreSQL 社交记录、附件与持久事件；当前默认客户端的后端 |
 | `client/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
+| `client/web/src/cloud` | 默认云端账号、私聊、草稿与 HTTPS/SSE 界面 |
 | `client/web/src/social` | 唯一真实社交状态与视图，HTTP/IPC 适配 |
 | `client/desktop/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
 | `scripts` / `docs` | 可执行验收/构建流程与证据 |
 
 旧 SessionManager、ChatFeature、JSON 写入存储、RuntimeEvent、PluginManager 和 app-sdk 空壳已移除。历史 JSON DTO 仅位于 `storage::legacy`，导入实现位于 `storage::social::legacy`；协议适配与当前社交模型不依赖旧运行生命周期。
 
-本次是代码归属与核心库拆分，尚未完成进程和数据库分离。`crates/runtime`、`crates/storage` 仍供当前本地宿主共用，桌面仍内嵌 Runtime，`server/social` 仍协调本地模型运行。后续云端服务移除模型和私有意识依赖，Agent 增加独立入口与节点存储；不要把这些过渡依赖当成目标架构。`connector` 不依赖 Runtime、存储、模型或 GUI；`builtin-agent` 不依赖存储、Runtime、服务端或连接器。运行 `python scripts/check-boundaries.py` 检查这两条已落实的依赖边界。
+`server/cloud` 已独立运行并使用 PostgreSQL；`crates/runtime`、`crates/storage` 仍供保留的本地宿主回归使用，`server/social` 仍协调本地模型运行。桌面还链接延迟 Runtime，但云端入口不初始化它。后续 Agent 增加独立入口与节点存储，不要把这些过渡依赖当成目标架构。`connector` 不依赖 Runtime、存储、模型或 GUI；`builtin-agent` 不依赖存储、Runtime、服务端或连接器；`cloud-server` 不依赖本地 Runtime/SQLite 或模型模块。运行 `python scripts/check-boundaries.py` 检查三条已落实的依赖边界。
 
 ## 架构边界
 
@@ -162,13 +168,13 @@ React GUI → Web HTTP/SSE / Tauri IPC/Channel
 ### GUI 与平台
 
 - React 源码只有 `client/web` 一套。Tauri 构建输出到忽略的 `client/desktop/dist`，Web 输出 `client/web/dist`；两者均忽略，不提交派生 bundle。
-- Web 与 Tauri 默认共用真实社交界面；legacy/demo/social-preview 查询参数不再切换产品。`build:social-runtime` 写入忽略的 `.social-runtime-dist`。真实聊天从后端读取，Web/桌面 WebView 在 IndexedDB `llm-nest-social-drafts` 按实际真人账号与窗口保存文字、图片/文件 Blob、提及/回复/引用以及不可变的待确认发送快照；先保存完整命令再发送，恢复后只允许手动重试同一内容与 ID，不自动发送。旧 localStorage `llm-nest-social-live-drafts-v1` 只在边界迁入当前可见窗口，事务完成后清理；附件不写入 localStorage。恢复失败不开放空草稿编辑，写入失败保留输入并提示重试；事务版本阻止多页面互相覆盖。发送成功清理对应草稿与附件，保留期间新增内容；订阅游标在对应状态应用成功后推进，终态覆盖临时 delta。
+- Web 与 Tauri 默认共用 CloudApp；legacy/demo/social-preview 查询参数不切换产品。云端草稿复用 IndexedDB `llm-nest-social-drafts`，按服务器、实际真人账号与窗口保存文字、图片/文件 Blob 及不可变的待确认发送快照；先保存完整命令再发送，恢复后只允许手动重试同一内容与 ID，不自动发送。附件不写入 localStorage，恢复或写入失败需显示错误，不能用空草稿覆盖；事务版本阻止多页面互相覆盖。订阅游标在对应状态应用成功后推进。保留的本地界面另有提及/回复/引用草稿及旧 localStorage 迁入逻辑；`build:social-runtime` 只用于本地模块回归，写入忽略的 `.social-runtime-dist`。
 - IPC 订阅属于调用 WebView，每次推送应用成功后确认；仅一个未确认事件，确认超时释放，临时广播溢出要求 resync。替代订阅、页面重载和窗口销毁释放订阅，不能取消 AI run。主窗口关闭先向已注册页面请求草稿保存确认，等待正在读取的附件及 IndexedDB 写入；确认匹配当前 page/request 后才拒绝新业务命令、释放订阅，再等待 Runtime 运行中断保存与 SQLite writer 关闭。草稿失败或 10 秒超时保持窗口与后端可用，页面重载/销毁释放等待，未注册页面不阻止初始启动失败时退出；有界等待失败保持窗口并显示保存错误，初始化失败不妨碍关闭。
 - `client/desktop/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
 - `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
 - 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。社交保存与 AI 执行可用性分开。
 - HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
-- 设置路由为 `#/settings/models|appearance|config|about`。Web/Tauri 采用消息/通讯录及各自详情路由，详见 [界面说明](docs/design/frontend.md)。切换保留输入和设置表单。
+- 当前云端入口提供消息、通讯录和我的账号，认证链接使用 `#/register|verify|reset`；保留的本地设置路由为 `#/settings/models|appearance|config|about`，不是云端已开放页面。详见 [界面说明](docs/design/frontend.md)，切换时保留当前草稿。
 - Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
 - Tauri 公共与 Windows 窗口配置均关闭原生文件拖放拦截（dragDropEnabled=false），由共用 Web File 接收图片拖放，不增加任意路径读取 IPC。
 - 无标题栏界面在侧栏空白与页面头部使用 Tauri 原生拖动区域；`deep` 区域排除交互元素，搜索容器显式禁用。空页面只拖动自身空白，聊天/账号正文保留选字；不要用覆盖内容的拖动层扩大命中范围。双击最大化不能替代连续拖动验收。
@@ -198,6 +204,7 @@ python scripts/social_acceptance.py
 ```
 
 - 全量跨平台检查：`cargo test --workspace --locked`。Linux 需要先安装 GTK/WebKitGTK/OpenSSL 开发依赖，见开发指南。
+- 云端测试设置独立 `CLOUD_TEST_DATABASE_URL` 后执行 `cargo test -p cloud-server --locked`；无变量的跳过不计为数据库通过。部署联调用 `scripts/cloud_acceptance.py`，真实地址、测试登录资料与证书保存在忽略目录，具体结果见验证指南。
 - Windows 发布使用 MSVC，不能把 GNU 本地构建当作发布包。桌面必须通过 Tauri CLI 构建，确保嵌入前端；裸 cargo release 可能仍访问开发地址。
 - `scripts/acceptance.py` 使用独立临时配置与旧格式夹具，验证空配置、旧接口退役、本地访问边界、显式部分导入/重启与底层 worker；`social_acceptance.py` 使用模拟 provider 验证完整社交链路。
 - 旧 Harness 的真实 API 脚本已退役；新付费验收须另获明确授权，不放入默认 CI，不得从个人配置生成 CI 密钥或发布资源。
@@ -207,7 +214,7 @@ python scripts/social_acceptance.py
 ## 新增功能的落点
 
 - **协议**：更新 Protocol、build_provider 和对应 convert/SSE；添加协议 fixture，覆盖错误、终止和工具调用。新增 provider 品牌但协议相同时优先改目录/配置。
-- **社交用例**：在 `server/social` 实现业务与当前 Feature 生命周期；纯上下文和生成策略放 `agent/core`，共享事件契约放 `connector`。不要新增跨层本地调用来代替计划中的节点协议。
+- **社交用例**：当前云端业务落在 `server/cloud`，`server/social` 保留原本地实现供回归和后续迁入；不要将新云端用例接回本地 Feature 生命周期。纯上下文和生成策略放 `agent/core`，节点通信契约放 `connector`，不以跨层本地调用代替节点协议。
 - **工具**：先明确权限、副作用、超时和进程边界，再注册能力。不得把“支持工具调用”写成“支持任意安全插件”。
 - **GUI 字段**：从持久化/Runtime 契约开始，同步 HTTP、IPC、前端 DTO、保存失败行为与历史恢复。
 - **文档**：根 README 介绍应用、主要能力和开始方法；详细操作放 `docs/usage.md`，各模块 README 介绍用途、运行方式和阅读入口。使用自然、简洁的表达，少用术语，不写开发日志、架构规则或防御性清单。当前设计放 `docs/design`，已完成/当前安排/待办与候选分别维护在 `docs/project`，检查方法与平台结果放 `docs/validation`，打包专项放 `docs/packaging`；AGENTS 维护修改约束。每批工作完成后更新相关说明与进度，不默认新建批次报告或再开一份 TODO。过时过程记录从目录移除，Git 保留历史；保留的验收结论注明日期与适用版本，不改写成新版本已通过。直接修订当前规则，合并重复内容。文件名使用简短英文小写连字符，README 除外，不再用日期或阶段编号命名常规文档。最终汇报说明本批结果、当前阶段、剩余范围和下一步。

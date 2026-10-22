@@ -1,0 +1,38 @@
+# 云端真人聊天服务
+
+[服务端](../README.md) · [开发指南](../../docs/development.md) · [API](../../docs/design/api.md)
+
+`cloud-server` 独立运行，使用 PostgreSQL 保存账号、认证、联系人、唯一私聊、消息、个人读态及事件。图片和普通文件字节保存在独立持久目录。它不依赖本地 Runtime、SocialStore、模型客户端或 AI 执行器。
+
+当前提供邀请注册、邮箱验证、密码登录与找回、会话撤销、公开资料修改、联系人查找和真人私聊；消息支持附件、编辑、撤回、搜索定位与单窗口导出。AI 节点、群聊、屏蔽、意识系统和正式旧库迁移尚未接入。
+
+## 启动
+
+先构建静态页面并准备 PostgreSQL：
+
+```bash
+pnpm --dir client/web build
+cargo run -p cloud-server --locked
+```
+
+启动前通过进程环境配置以下内容，不将真实值提交到仓库：
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `CLOUD_DATABASE_URL` | PostgreSQL 连接串；启动自动运行顺序迁移 |
+| `CLOUD_PUBLIC_URL` | 页面公开来源；HTTPS，本机开发允许 localhost HTTP |
+| `CLOUD_ATTACHMENTS_DIR` | 附件持久目录，与静态网页和测试收件箱分开 |
+| `CLOUD_WEB_DIR` | 静态目录，默认 `client/web/dist` |
+| `CLOUD_BIND` | 监听地址，默认 `127.0.0.1:8787` |
+| `CLOUD_SMTP_HOST`、`CLOUD_SMTP_FROM` | 邮件发送配置；可配 `CLOUD_SMTP_PORT`、`CLOUD_SMTP_USERNAME`、`CLOUD_SMTP_PASSWORD` |
+| `CLOUD_MAIL_OUTBOX` | 绝对路径的私有测试收件箱；设置后使用文件邮件，不发送 SMTP |
+
+管理员生成邀请：`cargo run -p cloud-server --locked -- invite 7`；撤销使用 `revoke-invite 邀请码`。命令只需要数据库连接。邀请码和邮件链接属于秘密，不应贴入公开日志。
+
+容器入口见 [Dockerfile](Dockerfile) 和 [Compose](deploy/compose.yaml)。当前测试配置在 Tailscale 地址的 8443 提供 HTTPS，使用测试 CA 和私有 outbox；测试收件箱不放进静态目录。数据库和附件需要配套持久化与备份，单窗口导出不能代替整库备份。
+
+## 验证与迁移边界
+
+设置独立测试库的 `CLOUD_TEST_DATABASE_URL` 后运行 `cargo test -p cloud-server -- --nocapture`。测试为每例建立隔离 schema，实际 PostgreSQL 的 10 项测试已通过；未设置变量时数据库测试会跳过，不能当成完整验证。
+
+[本地数据样本](tests/fixtures/README.md) 只做测试映射，验证稳定 UUID、公开名字/简介、消息相对顺序和原始附件字节。它不是正式迁移器，不读取用户旧库。ActorId 可直接保留为 PostgreSQL UUID；旧 sequence 与附件 part index 需要明确映射。AI、群、旧状态及内部资料迁移按后续计划完成。

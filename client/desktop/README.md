@@ -2,17 +2,15 @@
 
 [应用界面](../README.md) · [开发指南](../../docs/development.md)
 
-这里把 LLM Nest 的页面做成桌面应用。目前仍内嵌本地 Runtime，独立服务端与 Agent 进程及网络连接尚未实现。打开窗口时，本地聊天服务也会一起启动；页面本身来自 [web](../web/README.md)。
+桌面应用使用与 Web 相同的 CloudApp。启动后填写独立云端服务的 HTTPS 地址，注册或登录后使用真人私聊。默认页面不会初始化旧本地 Runtime，也不要求本机模型配置。
 
-图片选择、预览、发送前缩放与压缩，以及聊天阅读与 Web 共用界面。处理图片时可以对比原图和结果，确认后再加入草稿。未发送的文字与图片会保存在本机，重开应用后可以继续编辑。关闭时会先等草稿保存完毕；如果保存失败，窗口会留下来提示重试。
+[原生云端网络层](src-tauri/src/cloud.rs) 负责 JSON、SSE 和附件传输，会话 Cookie 仅保存在进程内存，不交给网页脚本；重启应用后需要重新登录。服务器地址会在本机保存。下载和聊天导出通过系统“另存为”保存，取消、失败和写入成功分别反馈。
 
-保存原图或导出聊天时会打开系统的“另存为”，可以选择文件名和保存位置。导出时可分别勾选“包含图片”和“包含文件”，把记录和所选附件一起保存为 ZIP。
+文字与附件草稿按服务器、实际账号和窗口保存在本机 IndexedDB。关闭窗口前先等待草稿保存；失败时保留窗口并提示重试。关闭窗口不停止远端云端服务。当前没有独立本机 Agent 或托盘后台运行功能。
 
-“添加文件”可以发送普通文档、文本和压缩包，文件草稿也会在重开后恢复。聊天里的“保存文件”通过系统对话框另存原文件。目前 AI 只知道文件名、类型和大小，文档内容阅读尚未提供。
+## 开发
 
-聊天时会提示 AI 是否支持看图，设置中的“模型图片能力”可以跟随目录或人工修正。桌面与 Web 使用相同的能力信息和保存方式。
-
-准备好 Rust、Node.js、pnpm 和系统依赖后，在仓库根目录运行：
+准备好 Rust MSVC（Windows）、Node.js、pnpm 和平台依赖，在仓库根目录运行：
 
 ```bash
 pnpm --dir client/web install --frozen-lockfile
@@ -20,6 +18,6 @@ pnpm --dir client/desktop install --frozen-lockfile
 pnpm --dir client/desktop exec tauri dev
 ```
 
-Windows 和 Linux 的环境准备步骤见[开发指南](../../docs/development.md)。首次启动后，可以在设置里添加模型服务。
+Windows/Linux 环境准备见[开发指南](../../docs/development.md)。测试站点使用私有 CA 时，可在启动进程前设置 `CLOUD_CA_CERT_FILE` 指向测试 CA 的 PEM 文件；该选项只用于授权测试，不关闭 TLS 校验，也不打包私有证书。
 
-窗口、应用启动和本地命令的代码在 [src-tauri](src-tauri/README.md)。制作安装包请看[构建与发布](../../docs/releases.md)，更新图标请看[图标说明](../../assets/branding/README.md)。
+旧本地 IPC 和 Runtime 仍保留为延迟初始化能力，供后续迁移维护，不是默认聊天通路。窗口和打包代码见 [src-tauri](src-tauri/README.md)，发布与图标见[发布指南](../../docs/releases.md)和[图标说明](../../assets/branding/README.md)。

@@ -2,9 +2,43 @@
 
 [总纲](overview.md) · [存储与迁移](storage.md) · [界面与桌面](frontend.md)
 
-## 云端目标设计（尚未实现）
+## 已实现的云端接口
 
-本节落实[云端计划](../project/cloud-plan.md)已采纳的方案，供后续实现；下面的本地路由表不是云端接口清单。首轮只确定操作语义与字段，不宣称路由、连接器或命令已经可用。
+默认 CloudApp 使用 `cloud-server` 的 `/api`，与保留的本地 `/api/social` 是两套不同契约。所有聊天操作者取登录会话，不接受客户端 senderId/operatorId。浏览器使用同源 HttpOnly Cookie；桌面经原生网络层持有内存 Cookie。修改请求带 `X-LLMN-Client: 1`，服务器检查来源与跨站请求。JSON 业务错误为 `{code,message}`，常用状态为 400、401、403、404、409、500；入口解析错误沿用 HTTP 状态。
+
+| 用途 | 方法与路径（省略 `/api`） |
+| --- | --- |
+| 邀请注册 / 修正邮箱 / 重发验证 | POST `/auth/register`；PATCH `/auth/registration`；POST `/auth/resend` |
+| 验证邮箱 / 登录 / 退出 | POST `/auth/verify`；POST `/auth/login`；POST `/auth/logout` |
+| 密码找回 / 重置 | POST `/auth/forgot`；POST `/auth/reset` |
+| 当前账号 / 修改公开资料 | GET / PATCH `/me` |
+| 登录会话 / 撤销会话 | GET `/auth/sessions`；DELETE `/auth/sessions/{id}` |
+| 账号、通讯录、私聊一致快照及 cursor | GET `/chat/init` |
+| 按名字或完整 UUID 查账号 | GET `/chat/accounts?query=…` |
+| 添加 / 移除联系人 | POST `/chat/contacts`，`{accountId,listed}` |
+| 打开双方唯一私聊 | POST `/chat/direct`，`{accountId}` |
+| 历史 / 发送 | GET / POST `/chat/conversations/{id}/messages` |
+| 编辑 / 撤回自己的消息 | PATCH `/chat/messages/{id}`；POST `/chat/messages/{id}/withdraw` |
+| 已读、手动未读、置顶 | PUT `/chat/conversations/{id}/list` |
+| 正文字面搜索 | GET `/chat/search?query=…&conversationId=…&beforePosition=…` |
+| 原消息前后记录 | GET `/chat/messages/{id}/context` |
+| 附件读取 / 图片预览 | GET `/chat/messages/{id}/attachments/{index}?revision=…`；图片可加 `inline=true` |
+| 单窗口导出 | GET `/chat/conversations/{id}/export?format=markdown\|json&includeImages=true\|false&includeFiles=true\|false` |
+| 持久变更提示 SSE | GET `/chat/events?after=…` |
+
+ID 是 UUID，revision、position、listRevision、readPosition、cursor 是十进制字符串。消息返回稳定 id/conversationId/senderId、text、createdAt/updatedAt、revision/position、committed 或 withdrawn 状态，以及 `attachments[{index,kind,name,mime,byteLength}]`。index 是该云端消息的附件索引，不是旧本地 MessageBody 的 part index。
+
+消息发送使用 `{requestId,text,images:[{mime,data}],files:[{name,mime,data}]}`，data 为原字节 base64，不接受路径或 URL。图片支持 PNG/JPEG/WebP，每条最多 4 张、单张 4 MiB、合计 8 MiB、边长 4096；文件最多 4 个、单个 10 MiB、合计 20 MiB。发送 HTTP 正文上限 40 MiB，服务端检查真实图片格式及解码。编辑使用 `{requestId,expectedRevision,text}`，保留附件；撤回使用相同 ID/版本字段，清空正文和附件。下载复核当前成员和当前 revision，普通文件仅 attachment/octet-stream，响应 no-store/nosniff；图片下载采用稳定消息 ID、索引和识别扩展名。
+
+列表修改使用 `{requestId,expectedRevision,pinned?,readPosition?,manualUnread?}`，其中 expectedRevision 指 listRevision。已读位置必须属于当前私聊且单调，自发和撤回消息不计未读。分页 `before`/`limit` 返回升序 messages、hasMore、同一快照的 latestPosition；搜索按 position 倒序、每页 50，中文/符号按字面、ASCII 英文不区分大小写。
+
+消息和列表命令以实际账号/requestId 去重；同 ID 不同内容冲突。回执只存规范化命令的 SHA256 与实体 ID，重试复核身份后返回当前权威实体，不能借旧回执恢复撤回内容。导出读取完整私聊一致快照，包含稳定发送者 ID、当前正文/状态；当前真人聊天没有跨窗口引用。附件选项任一开启返回同时含 chat.md、chat.json 与所选原字节的 ZIP，JSON filePath 对应实际路径；它不是整库备份。
+
+SSE 的事件名为 `change`，SSE id 与数据 cursor 一致，数据为 `{cursor,conversationId?}`，只表示需要重读，不携带正文。事件按登录账号过滤，服务端持续复核会话；客户端仅在快照应用成功后推进 cursor，断线后用最新 cursor 重连，也支持标准 Last-Event-ID。快照与 cursor 一致读取，事件分配前取得事务 advisory lock，避免提交顺序倒置导致漏事件。当前没有 AI delta、任务领取或节点 WSS 接口。
+
+## 后续 Agent 接入契约（尚未实现）
+
+本节保留[云端计划](../project/cloud-plan.md)已确认的 Agent/AI 目标，不能据此调用尚未实现的节点接口。真人聊天以本文顶部实际路由为准。
 
 ### 传输与身份
 
@@ -40,11 +74,11 @@ Agent 主动建立 WSS 连接接收任务和控制，通过 HTTPS 按 AI 凭据�
 
 ## 当前本地实现的适用范围
 
-以下章节及源码链接描述已实现的单机 HTTP/IPC 契约：固定本地真人、共享 SocialFeature 与 SQLite。源码已划分为 client、server、agent、connector，并提取 Agent 纯核心；公网认证、PostgreSQL、WSS 节点及独立进程/存储仍尚未实现；保留这些说明用于当前维护与迁移，不据此向公网开放现有本地服务。
+以下章节及源码链接描述已实现的单机 HTTP/IPC 契约：固定本地真人、共享 SocialFeature 与 SQLite。源码已划分为 client、server、agent、connector，并提取 Agent 纯核心；本地宿主没有云端认证；WSS 节点仍未实现。以下 SocialFeature 路由只供本地实现维护和迁移参考，不是默认客户端的云端接口。
 
 本文集中维护当前传输契约，后续能力单独列出，不预先固定尚未实现的路由。源码入口为 [HTTP](../../server/http/src/social_api.rs)、[IPC](../../client/desktop/src-tauri/src/social_commands.rs)、[共享 DTO](../../server/social/src/wire.rs) 与 [持久事件](../../connector/src/social_event.rs)。
 
-## 共享业务入口
+### 共享业务入口
 
 HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身份、权限、记忆或调度规则。Feature trait 只负责生命周期与 downcast。显式记忆管理位于 SocialFeature 的 memory 模块；SocialFeature 读取授权材料并转换为 ContextInput，调用 `agent/core` 的 ConsciousnessService 纯函数式组装上下文。窗口摘要的授权、任务、来源校验和存储仍由 SocialFeature 的 summary 模块协调，摘要提示词与生成预算使用 Agent 核心；原消息由聊天用例维护。
 
@@ -52,7 +86,7 @@ HTTP 与 Tauri 调用同一 SocialFeature 业务方法，传输层不实现身�
 
 个人屏蔽命令使用 `requestId`、`blocked`、`expectedRevision`（无条目为 null），返回带 `listed`、`blocked`、`revision` 的 ContactEntry；操作者取宿主当前账号。Conversation 的 `directBlocked` 表达任一方屏蔽后的私聊状态，群聊始终为 false。变更沿用 `contact_changed`，相关运行、计划和约定同时发出各自变更事件。详见[身份与关系](accounts.md)。
 
-## 当前接口
+### 当前接口
 
 HTTP 前缀为 `/api/social`。Web 与 Tauri 调用同一 SocialFeature。init 只返回公开账号、个人通讯录、窗口与模型选项；内部设定与绑定只通过管理员接口读取。实际操作者由后端固定，不接受客户端 senderId/operatorId 替换身份。当前完整接口列于下表。历史导入 DTO 沿用存储边界的 snake_case 字段，其余业务 DTO 为 camelCase。
 
@@ -176,7 +210,7 @@ Conversation.contactSchedule 返回 settings 与 intents（全部活动及最近
 
 开始摘要参数为 requestId/retry，retry 为 null 表示下一段，或 {id, expectedRevision} 表示重建同一分段。没有较早原文时返回 null，不调用模型。摘要包含范围、text/status/revision、来源、模型绑定、attempt、错误和时间；sources 沿用 SourceRef 的 snake_case 字段（kind/message_id/conversation_id/revision），其余 DTO 为 camelCase。发起人由后端固定，范围由存储推导；调用方不能指定摘要正文、原文集合或任意操作者。配置/请求回执幂等，冲突返回共享错误。
 
-## 发送与幂等
+### 发送与幂等
 
 ```json
 {
@@ -193,7 +227,7 @@ Conversation.contactSchedule 返回 settings 与 intents（全部活动及最近
 
 前端保存失败保留输入；未知发送结果继续使用原 requestId/expectedRevision 重试。后续刷新失败不撤销已收到的成功回执。编辑按消息自身版本检查，其他成员追加消息不会使无关编辑冲突。
 
-## 持久事件
+### 持久事件
 
 SocialEvent 为 cursor + change。change.kind 当前为 actor_changed、contact_changed、conversation_changed、message_changed、memory_changed、summaries_changed、run_changed、bout_changed、plan_changed、participation_changed、contact_schedule_changed、conversation_list_changed。conversation_list_changed 带 conversationId/actorId/revision，客户端重读自己的列表状态；它不触发历史或意识重读。summaries_changed、participation_changed 与 contact_schedule_changed 只带 conversationId，分别重读摘要、窗口接话或约定状态；其余变更带实体 ID、revision 和适用的 conversationId。contact_changed 带 ownerId/accountId；memory_changed 带 conversationId/actorId/memoryId/revision，不含正文。通讯录变更与 Actor 的管理/资料/停用变更分别表达。
 
@@ -213,13 +247,13 @@ cursor 在本地库全局单调递增，与业务事务同提交。事件只保�
 
 回放至少一次，客户端按 cursor 去重，并在状态应用成功后推进游标。消息变更按 MessageId 读取，已加载的早期消息也能更新。持久事件由 SocialStore 提供，临时生成事件由 SocialFeature 发布；SocialEvent、SocialGenerationEvent、LiveEvent 和 SubscriptionEvent 的共享类型位于 `connector`，HTTP/IPC 消费同一订阅封装。连接器当前不实现节点授权或网络协议，两类事件不依赖旧运行时事件总线。
 
-## 临时生成事件
+### 临时生成事件
 
 SocialGenerationEvent 当前有 generation.delta、generation.reasoning_delta 和 execution.notice。正文/思考片段包含 runId、messageId、actorId、conversationId、deltaSeq、text；执行提示包含 conversationId/error，没有 run 的持久游标。
 
 普通 token 不写入持久日志。重连读取已保存草稿/终态，最终记录覆盖临时缓冲，终态后忽略迟到 delta。临时广播溢出发 resync，客户端清除旧历史页与临时缓冲后重新分页，草稿保留；重置前的读取响应不能填回旧正文。
 
-## 启动、订阅与补齐
+### 启动、订阅与补齐
 
 init 在一致读取中返回 selfId/selfName/selfAccount、公开 accounts（含停用账号）、当前操作者的 addressBook、窗口列表元数据、模型选项和 cursor。通讯录按自己的 listed 条目展示，未列出和停用分别处理；accounts 保留用于群成员/历史身份与重新添加。公开快照不包含内部 persona/绑定/管理员，管理页面使用独立的获授权接口。列表 latestMessage 与意识系统的历史摘要分别处理。
 
@@ -250,7 +284,7 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 持久日志当前不压缩，尚未实现游标过期、空间过滤 watermark 和统一的所有边界错误。HTTP/IPC 在重放、溢出和订阅释放时使用同一业务语义；宿主退出等待运行中断保存和数据库 writer 收尾，见 [运行时](runtime.md#生命周期与关闭)。
 
-## 错误与后续能力
+### 错误与后续能力
 
 共享业务错误为 code/message/retryable。目前 invalid_input → 400，not_found → 404，not_authorized → 403，revision_conflict → 409，model_unavailable/budget_exhausted → 422，storage_failure/unavailable → 503。IPC 使用相同业务错误体。社交 HTTP 的 JSON/Path/Query 解析失败也返回该结构，code 为 invalid_input、retryable 为 false；保留传输状态码：非法 JSON 语法、路径和查询为 400，JSON 字段/类型错误为 422，缺少 JSON Content-Type 为 415，超过正文上限为 413。当前不返回 currentRevision。
 
@@ -260,4 +294,4 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 群话题接续的规则见 [意识系统](consciousness.md#从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；独立转发仍为候选，未来共享选定内容也不能授予源空间读取权。
 
-本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；云端认证与节点接入以本文顶部目标设计为准，当前尚未实现。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。
+本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；云端真人认证见本文顶部实际接口，节点接入仍按后续目标设计实施。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。

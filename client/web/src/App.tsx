@@ -6,7 +6,7 @@ import { WindowControls } from "@/components/layout/WindowControls"
 import { IS_DESKTOP } from "@/lib/desktop"
 import { StartupSurface } from "@/components/StartupSurface"
 
-const SocialApp = lazy(() => import("./social/App"))
+const CloudApp = lazy(() => import("./cloud/App"))
 
 function ShutdownError() {
   const [error, setError] = useState<string | null>(null)
@@ -32,22 +32,8 @@ function ThemeSync() {
   return null
 }
 
-function NavigationSync() {
-  useEffect(() => {
-    const sync = () => useUiStore.getState().syncRoute()
-    const shortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === ",") {
-        event.preventDefault(); useUiStore.getState().showSettings()
-      }
-    }
-    window.addEventListener("hashchange", sync); window.addEventListener("keydown", shortcut)
-    return () => { window.removeEventListener("hashchange", sync); window.removeEventListener("keydown", shortcut) }
-  }, [])
-  return null
-}
-
 export default function App() {
-  return <><ThemeSync /><NavigationSync /><WindowControls /><ShutdownError /><ErrorBoundary>
-    <Suspense fallback={<StartupSurface />}><SocialApp /></Suspense>
+  return <><ThemeSync /><WindowControls /><ShutdownError /><ErrorBoundary>
+    <Suspense fallback={<StartupSurface />}><CloudApp /></Suspense>
   </ErrorBoundary></>
 }

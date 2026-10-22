@@ -2,8 +2,8 @@
 
 [项目首页](../README.md) · [开发指南](../docs/development.md)
 
-这里负责账号、联系人、聊天记录和消息同步。[http](http/README.md) 提供浏览器接口和页面，[social](social/README.md) 处理具体聊天操作。
+[cloud](cloud/README.md) 是默认客户端连接的独立云端服务，负责邀请注册、邮箱验证、登录会话、联系人、真人私聊和持久事件同步。社交数据使用 PostgreSQL，附件保存在独立持久目录；服务不加载模型或本地 Runtime。
 
-现在运行的仍是本地服务，在仓库根目录执行 `cargo run -p web-server --locked` 即可启动，准备方法见开发指南。它还通过共用运行时调用本机模型、保存 SQLite 数据。
+云端服务可使用 [Dockerfile](cloud/Dockerfile) 和 [Compose](cloud/deploy/compose.yaml) 部署。当前测试部署仅通过 Tailscale 的 HTTPS 8443 端口访问，使用测试 CA 和私有测试收件箱，不等同于公开邮件服务上线。
 
-接下来会接入云端账号和 PostgreSQL，再把模型运行交给独立 Agent。当前服务还没有云端登录和节点认证，不能作为已完成的云端服务部署。
+[http](http/README.md) 与 [social](social/README.md) 保留原来的本地 HTTP/SocialFeature、SQLite 和模型协调实现，供维护、回归与后续 Agent 迁移参考。`web-server` 不是默认云端客户端的后端。AI 节点 WSS、群聊及意识系统的云端接入尚未实现。

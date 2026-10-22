@@ -8,8 +8,9 @@
 
 | 想做什么 | 从哪里开始 |
 | --- | --- |
-| 私聊、群聊、发图片和文件、管理记忆、保存数据 | [使用指南](usage.md) |
-| 连接模型服务或本机 Ollama | [模型配置](configuration.md) |
+| 注册登录、私聊、发送附件和保存聊天 | [使用指南](usage.md) |
+| 部署一个仅内网可用的测试服务 | [部署说明](../server/cloud/deploy/README.md) |
+| 了解自带 Agent 的模型配置 | [模型配置](configuration.md)；云端 Agent 接入尚待实施 |
 | 从源码运行、修改界面或检查改动 | [开发指南](development.md) |
 | 找到某项功能对应的代码 | [客户端](../client/README.md) · [服务端](../server/README.md) · [Agent](../agent/README.md) · [连接器](../connector/README.md) · [共用模块](../crates/README.md) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |

@@ -1,0 +1,31 @@
+[package]
+name = "cloud-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+axum = "0.8"
+tokio.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+base64.workspace = true
+social.workspace = true
+# Only the PostgreSQL driver is needed. The umbrella crate also resolves SQLite,
+# which conflicts with the independent Agent's newer rusqlite native library.
+sqlx-core = { version = "=0.8.6", default-features = false, features = ["_rt-tokio", "_tls-native-tls", "uuid", "chrono", "json", "migrate"] }
+sqlx-postgres = { version = "=0.8.6", default-features = false, features = ["uuid", "chrono", "json", "migrate"] }
+argon2 = "0.5.3"
+rand = "0.8"
+sha2 = "0.10"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
+tower-http = { version = "0.6", features = ["fs", "limit"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+zip = { version = "9", default-features = false }
+percent-encoding = "2"
+
+[dev-dependencies]
+tempfile = "3"

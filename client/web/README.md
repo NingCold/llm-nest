@@ -2,45 +2,20 @@
 
 [应用界面](../README.md) · [开发指南](../../docs/development.md)
 
-这里是 LLM Nest 的全部页面：消息、通讯录、聊天窗口、AI 角色管理和设置。桌面应用也使用这套界面。屏蔽与解除可以在联系人资料或私聊详情中操作。
+默认入口是 [CloudApp](src/cloud/App.tsx)，提供邀请注册与邮箱验证、登录及密码找回、联系人、真人私聊、附件、消息搜索与导出。浏览器直接访问同源 `/api`，桌面也使用同一套页面，通过原生网络层转发相同 API。
 
-聊天输入框支持选择、拖入和粘贴图片，发送前可预览、移除，历史图片可以点开放大并保存原图。聊天详情中可以导出记录，分别勾选“包含图片”和“包含文件”能把所选附件一起打包下载。相关界面在 [ChatComposer.tsx](src/social/ChatComposer.tsx)、[MessageImages.tsx](src/social/MessageImages.tsx) 和 [ConversationExportPanel.tsx](src/social/ConversationExportPanel.tsx)。
+消息发送前会把文字、附件和不可变重试命令保存到 IndexedDB，按服务器、实际账号和窗口隔离。断线或结果未确认时保留原命令供手动重试，不自动发送。草稿不跨设备同步。
 
-图片超限时可以先缩放或压缩，预览结果后加入草稿。已有草稿中的图片也能处理，取消后保留原草稿。相关代码在 [ImageProcessingDialog.tsx](src/social/ImageProcessingDialog.tsx) 和 [image-processing.ts](src/social/image-processing.ts)。
+## 开发
 
-输入区还会提示 AI 是否支持看图。模型设置可以跟随目录或人工修正，相关界面在 [ModelImageInput.tsx](src/components/settings/ModelImageInput.tsx) 和 [ImageCapabilityHint.tsx](src/social/ImageCapabilityHint.tsx)。
-
-“添加文件”可以发送文档、文本和压缩包，聊天中显示名称、类型和大小，点击“保存文件”下载。AI 当前只收到这些信息，尚未读取文件内容。相关界面在 [MessageFiles.tsx](src/social/MessageFiles.tsx)。
-
-未发送的文字、图片、文件和回复对象会自动保存在当前浏览器，刷新或重新打开同一地址后可以继续编辑。保存失败时，输入框下方会提示重试。上次发送结果尚未确认时，可以查看原内容并手动重试。草稿保存代码在 [draft-storage.ts](src/social/draft-storage.ts)。
-
-## 开发时运行
-
-先按[配置说明](../../config/README.md)准备 `config/llmn.toml`。下面的命令都在仓库根目录执行。
-
-安装依赖：
+在仓库根目录执行：
 
 ```bash
 pnpm --dir client/web install --frozen-lockfile
-```
-
-打开两个终端，分别运行：
-
-```bash
-# 终端一：本地服务
-cargo run -p web-server
-
-# 终端二：页面开发服务器
 pnpm --dir client/web dev
 ```
 
-打开 `http://localhost:1420`。修改页面后，浏览器会自动更新。
-
-## 找到要改的页面
-
-消息和通讯录从 [src/social/App.tsx](src/social/App.tsx) 开始；未读、置顶和搜索在 [ConversationList.tsx](src/social/ConversationList.tsx)；聊天窗口在 [LiveChat.tsx](src/social/LiveChat.tsx)，账号页面在 [AccountPages.tsx](src/social/AccountPages.tsx)。设置页面在 [components/settings](src/components/settings/SettingsPage.tsx)。
-
-检查和构建也在仓库根目录执行：
+开发页为 `http://localhost:1420`，`/api` 默认代理到 `http://127.0.0.1:8787`；启动 `cloud-server` 时将 `CLOUD_PUBLIC_URL` 设为页面地址。可通过 `LLMN_API` 改变代理目标。后端配置见[云端服务](../../server/cloud/README.md)。
 
 ```bash
 pnpm --dir client/web typecheck
@@ -48,4 +23,6 @@ pnpm --dir client/web test
 pnpm --dir client/web build
 ```
 
-构建结果保存在本目录的 `dist`，由 [web-server](../../server/http/README.md) 提供给浏览器。使用临时聊天数据检查界面的方法见[开发指南](../../docs/development.md#从源码运行)。
+构建输出 `dist`，由 `cloud-server` 提供。云端状态、网络和样式位于 [src/cloud](src/cloud/App.tsx)；公共入口见 [src/App.tsx](src/App.tsx)。
+
+`src/social` 保留旧本地社交页面、草稿和图片处理组件，供回归及迁移复用。其 AI、群、记忆、摘要、约定联系和模型设置不是当前云端页面的已开放功能。`build:social-runtime` 只是构建目录名，不会切换默认产品入口。

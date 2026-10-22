@@ -2,9 +2,17 @@
 
 [总纲](overview.md) · [AI 执行](execution.md) · [存储与迁移](storage.md)
 
-## 云端目标设计（尚未实现）
+## 当前云端与桌面生命周期
 
-按[云端计划](../project/cloud-plan.md)，客户端、服务端、自带 Agent 独立运行，连接器可单独引用；继续一个仓库，但不强制共享一个运行时生命周期。此节是后续实现依据，不代表当前宿主已拆分。
+`cloud-server` 独立运行，不初始化旧 Runtime、AiClient 或 SocialStore。启动读取 PostgreSQL 连接串，完成迁移；邀请 CLI 执行完直接退出。服务模式再校验公开来源、附件与静态目录、邮件配置并监听 HTTP，生产通过反向代理提供 HTTPS。SIGINT 触发 HTTP 优雅关闭；数据库和附件由部署独立持久化。环境变量和容器入口见[云端服务](../../server/cloud/README.md)。
+
+CloudApp 是 Web/Tauri 默认入口。浏览器请求同源云端 API；桌面的 CloudState 原生网络层负责服务器选择、JSON、SSE 和附件传输，不通过 SocialFeature 执行业务。Cookie 仅在桌面进程内存，应用重启需要登录。云端服务器地址与草稿按客户端规则保存；`CLOUD_CA_CERT_FILE` 仅给授权测试站点增加 CA，不取消 TLS 验证。
+
+桌面保留旧 Runtime 的延迟初始化容器，但默认云端页面不调用其初始化命令，因此不会打开旧 SQLite 或加载模型配置。关闭仍先等待草稿保存，释放页面订阅；没有已初始化的本地 Runtime 时不启动一个来收尾。云端服务不受客户端退出影响。独立本机 Agent、节点 WSS 和托盘后台运行尚未实现。
+
+## 完整云端与 Agent 生命周期目标（部分待实现）
+
+按[云端计划](../project/cloud-plan.md)，客户端、服务端、自带 Agent 独立运行，连接器可单独引用；继续一个仓库，但不强制共享一个运行时生命周期。独立真人云端服务和客户端已接通；本节其余 AI 节点、内部资料管理与后台 Agent 仍是后续实现依据。
 
 | 运行部分 | 资源与职责 | 生命周期 |
 | --- | --- | --- |
@@ -31,11 +39,11 @@ Agent 启动先取得本地存储锁，读取配置、凭据引用与执行检�
 
 日志仅记录必要 ID、版本、状态与错误分类；节点内部资料转发正文、模型 Key、凭据与完整模型请求不写云端日志。节点上报的使用量不等同可独立核实的费用。
 
-## 当前本地实现的适用范围
+## 本地 Runtime 参考（待迁移）
 
-以下为现有嵌入式 Runtime、单库资源注入与关闭流程。源码已按 client、server、agent、connector 划分，Agent 纯核心与共享订阅事件已提取；上述独立进程、数据库和节点网络拆分以及后台常驻仍未实现。尤其当前关闭窗口会关闭 Runtime，不能据此声称目标后台运行已可用；旧流程保留用于当前维护与迁移。
+以下为现有嵌入式 Runtime、单库资源注入与关闭流程。源码已按 client、server、agent、connector 划分，Agent 纯核心与共享订阅事件已提取；独立云端服务已经使用 PostgreSQL；下面的本地 Runtime/SQLite 仍供旧实现回归与 Agent 迁移参考，不是默认 CloudApp 生命周期。独立 Agent、节点网络与后台常驻仍未实现。
 
-## Runtime 的职责
+### Runtime 的职责
 
 Runtime 保持共享宿主，负责配置快照、资源注入、Feature 生命周期和关闭。SocialFeature 实现身份、聊天、意识资料管理、参与与调度用例，并负责授权材料读取、事务和执行协调；Runtime 不堆积前端专用的业务条件。`agent/core` 的 ConsciousnessService 是接收 ContextInput 的纯上下文组装服务，生成预算与摘要提示词也归属该库，不读取 SocialStore、Clock 或宿主配置。SocialFeature 将存储材料显式转换后调用它，模型请求仍使用 Runtime 注入的 AiClient；没有新增独立 Runtime、Feature 或数据库。
 
@@ -45,7 +53,7 @@ FeatureContext 必需注入 AiClient 与 SocialResources（SocialStore/Clock）�
 
 Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai、send_message、forget_memory 等作为具体方法暴露。Runtime 注册 Feature 时只依赖 trait，不能反向依赖 `social-feature` Cargo 包。
 
-## 启动顺序
+### 启动顺序
 
 1. 所有宿主先处理 `--llmn-tool-worker`，在配置、Key、日志、UI 和存储初始化前退出 worker 路径。
 2. 准备实际数据目录，按原规则处理旧默认目录复制，解析并冻结 config/data 路径。
@@ -59,7 +67,7 @@ Feature trait 维持生命周期与 Arc downcast；SocialFeature 的 create_ai�
 
 桌面 Runtime 嵌入应用进程，由首次 IPC 初始化请求启动，无需单独启动 Web Server。窗口先展示空白启动层，初始化成功或报错后显示界面；启动失败与订阅重连分别提示，保留具体错误、重试与设置入口。环境与验证见[验证入口](../validation/README.md)。
 
-## 配置分工
+### 配置分工
 
 | 内容 | 权威位置 | 修改边界 |
 | --- | --- | --- |
@@ -77,7 +85,7 @@ GUI 的实际操作者固定为后端的本地真人。账号查看只传被查�
 
 思考强度、模型名和 provider 继续严格校验。ExecutionBinding 是中立描述，运行时转换为 ai-client::ModelSelection 与 GenerationOptions；协议差异不进入社交业务层。
 
-## 快照与热更新
+### 快照与热更新
 
 一次 run 固定 provider 配置、目录、协议路由和内部设定快照，并记录档案、绑定和上下文版本。档案/绑定版本在启动事务复核；普通设定或模型修改不使已开始运行失效，最终提交仍检查消息来源与参与状态。热更新整体校验成功后发布新版本，失败保留原版本；在飞请求继续原模型配置。
 
@@ -91,7 +99,7 @@ GUI 的实际操作者固定为后端的本地真人。账号查看只传被查�
 
 模型图片能力为支持/不支持/未知，按精确 provider/model 采用人工 image_input > 同步目录 > 内置声明 > 未知。目录的输入模态缺失时不推断为不支持；同步覆盖放在内部 catalog_image_input，不序列化成人工配置。Runtime::set_model_image_input 持有配置更新锁，解析当前模型、定点修改 TOML、整体校验、原子保存后再发布；null 只移除人工字段。既有 run 的 AiClient 快照不会改变，新运行在分发前检查实际图片。
 
-## 生命周期与关闭
+### 生命周期与关闭
 
 当前 SocialFeature.initialize 恢复运行并继续持久 queued 计划、Bout 与有效约定调度；重复初始化不能产生多个调度器。Clock 与 mock provider 可注入，业务代码不自行创建真实凭据或新的独立 Runtime。
 
@@ -105,13 +113,13 @@ shutdown 顺序：停止接受新执行 → 停止参与调度和意识后台任
 
 当前 Tauri 主窗口关闭先向已注册前端请求草稿保存确认，最多等 10 秒；前端冻结编辑、等待正在读取的图片和 IndexedDB 事务完成，失败保留窗口与可用后端。匹配当前页面和关闭请求的成功确认后，才实现上述收尾：停止接收新命令、释放并等待 IPC 订阅任务、等待已经开始的初始化、调用 Runtime::shutdown_features（含 writer 排空），成功才退出。20 秒超时或保存失败通过 backend-shutdown-failed 提示并保留窗口，允许再次关闭重试；不创建后台常驻服务。
 
-## 历史数据边界
+### 历史数据边界
 
 Web 与桌面都通过 SocialFeature 读写当前社交数据。历史数据只经显式导入进入只读窗口。
 
 历史 JSON DTO 独立在 `storage::legacy`，导入通过 SocialFeature → SocialStore 执行；复用数据目录锁和 writer，不接受任意路径或客户端操作者。设置页提供显式所选导入，重复导入幂等，失败不改原文件，导入结果在新版只读查看。
 
-## 可观测性
+### 可观测性
 
 日志记录事件、ActorId、ConversationId、RunId、状态、错误分类和用量，默认不记录正文、记忆、完整请求、环境变量值或凭据。调试请求正文需要用户明确开启且限定保存范围。
 

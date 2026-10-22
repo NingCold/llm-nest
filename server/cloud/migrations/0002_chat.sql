@@ -1,0 +1,8 @@
+CREATE TABLE cloud_contacts(owner uuid NOT NULL REFERENCES accounts(id), target uuid NOT NULL REFERENCES accounts(id), PRIMARY KEY(owner,target), CHECK(owner<>target));
+CREATE TABLE cloud_conversations(id uuid PRIMARY KEY, first_id uuid NOT NULL REFERENCES accounts(id), second_id uuid NOT NULL REFERENCES accounts(id), revision bigint NOT NULL DEFAULT 1, CHECK(first_id<second_id), UNIQUE(first_id,second_id));
+CREATE TABLE cloud_list(owner uuid NOT NULL REFERENCES accounts(id), conversation uuid NOT NULL REFERENCES cloud_conversations(id), revision bigint NOT NULL DEFAULT 1, pinned boolean NOT NULL DEFAULT false, manual_unread boolean NOT NULL DEFAULT false, read_position bigint NOT NULL DEFAULT 0, PRIMARY KEY(owner,conversation));
+CREATE TABLE cloud_messages(id uuid PRIMARY KEY, conversation uuid NOT NULL REFERENCES cloud_conversations(id), sender uuid NOT NULL REFERENCES accounts(id), body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), revision bigint NOT NULL DEFAULT 1, position bigserial UNIQUE, withdrawn boolean NOT NULL DEFAULT false, attachments jsonb NOT NULL DEFAULT '[]');
+CREATE INDEX cloud_messages_window ON cloud_messages(conversation,position);
+CREATE TABLE cloud_receipts(owner uuid NOT NULL REFERENCES accounts(id), request uuid NOT NULL, fingerprint text NOT NULL, response jsonb NOT NULL, PRIMARY KEY(owner,request));
+CREATE TABLE cloud_events(id bigserial PRIMARY KEY, owner uuid NOT NULL REFERENCES accounts(id), conversation uuid REFERENCES cloud_conversations(id));
+CREATE INDEX cloud_events_owner ON cloud_events(owner,id);

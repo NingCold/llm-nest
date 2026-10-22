@@ -1,0 +1,42 @@
+name: llmn-cloud
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: llmn
+      POSTGRES_USER: llmn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ${CLOUD_DATA_DIR:?set CLOUD_DATA_DIR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmn -d llmn"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  app:
+    build:
+      context: ../../..
+      dockerfile: server/cloud/Dockerfile
+    environment:
+      CLOUD_DATABASE_URL: postgres://llmn:${POSTGRES_PASSWORD}@postgres:5432/llmn
+      CLOUD_PUBLIC_URL: ${CLOUD_PUBLIC_URL:?set CLOUD_PUBLIC_URL}
+      CLOUD_MAIL_OUTBOX: /data/outbox
+    volumes:
+      - ${CLOUD_DATA_DIR}/attachments:/data/attachments
+      - ${CLOUD_DATA_DIR}/outbox:/data/outbox
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+  https:
+    image: nginx:stable-alpine
+    ports:
+      - "${TAILSCALE_IP:?set TAILSCALE_IP}:8443:8443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${CLOUD_CERT_DIR:?set CLOUD_CERT_DIR}/server.crt:/etc/llmn-tls/server.crt:ro
+      - ${CLOUD_CERT_DIR}/server.key:/etc/llmn-tls/server.key:ro
+    depends_on:
+      - app
+    restart: unless-stopped

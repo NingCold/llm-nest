@@ -4,7 +4,25 @@
 
 这里的脚本帮助检查聊天功能、制作安装包和准备新版本。以下命令都在仓库根目录执行。
 
-## 检查聊天功能
+## 检查云端真人聊天
+
+当前默认界面与服务的部署准备见[云端部署说明](../server/cloud/deploy/README.md)。[cloud_acceptance.py](cloud_acceptance.py) 检查已部署的隔离测试服务，创建受邀测试账号，验证两台客户端之间的私聊、附件、修订、权限、搜索和导出；不调用模型。
+
+```bash
+python scripts/cloud_acceptance.py --url https://测试服务地址:8443 --ca /本机测试CA/ca.crt --server-host 测试服务器 --server-root /测试服务根目录 --client-host 第二台测试机 --output /私有目录/cloud-test-accounts.json
+```
+
+脚本依赖 Python、SSH，以及测试服务器已有的 Compose 部署和私有 outbox。它通过 SSH 在服务器创建邀请、读取测试邮件，并在第二台测试机执行客户端检查；`--server-root` 指向包含 `src/`、`private/` 和 `data/` 的测试目录。输出文件含测试账号与凭据，必须放在忽略的私有目录，不提交或公开。它不是对任意生产服务的只读检查。
+
+[cloud-test-certificate.py](cloud-test-certificate.py) 使用 OpenSSL 为隔离环境生成测试 CA 和 HTTPS 证书：
+
+```bash
+python scripts/cloud-test-certificate.py /私有证书目录 测试主机名 测试IP地址
+```
+
+生成的 `ca.crt` 用于测试客户端信任，`server.crt` 与 `server.key` 供测试 HTTPS 入口使用。私钥留在服务器私有目录，不放进静态文件目录或仓库；证书不会自动安装到系统信任库，也不代替正式站点证书。
+
+## 保留的本地 API 回归
 
 ```bash
 cargo build -p web-server --locked
@@ -20,14 +38,7 @@ python scripts/social_acceptance.py
 
 检查普通文件收发和导出时，运行 `python scripts/social_acceptance.py --only-files`。它会发送文件、重开聊天、下载并核对原始内容，也会检查权限、撤回、大小限制和 AI 实际收到的文件说明；导出检查包括附件选项组合、同名文件、中文链接和 ZIP 中的原文件。
 
-想打开测试页面，可以先构建界面，再运行：
-
-```bash
-pnpm --dir client/web build:social-runtime
-python scripts/social_acceptance.py --dist client/web/.social-runtime-dist --serve
-```
-
-使用脚本打印的地址。检查结束后，在它打印的临时目录中创建 `STOP` 文件即可关闭测试服务。
+这些脚本调用保留的 `web-server` API，不是当前云端真人聊天的验收，也不会证明 AI 节点已经接通。当前默认前端已经改用云端认证与聊天接口，不能通过给旧宿主设置 `--dist` 或运行 `build:social-runtime` 恢复旧本地产品入口。
 
 ## 其他常用脚本
 

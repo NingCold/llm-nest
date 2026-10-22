@@ -1,0 +1,16 @@
+**/.git
+**/node_modules
+**/target
+**/.env
+**/.env.*
+**/*.sqlite*
+**/*.db
+**/config/llmn.toml
+**/.llmn
+**/private
+**/outbox
+**/gen/schemas
+client/desktop/dist
+client/web/.social-runtime-dist
+docs
+target

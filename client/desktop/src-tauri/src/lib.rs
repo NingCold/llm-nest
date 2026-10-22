@@ -7,6 +7,7 @@ use runtime::runtime::Runtime;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
+mod cloud;
 pub mod commands;
 mod config_path;
 mod conversation_export;
@@ -136,6 +137,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             window_frame::setup(app);
+            app.manage(cloud::CloudState::new());
             app.manage(BackendState {
                 paths: config_path::AppPaths::resolve(),
                 inner: Mutex::new(None),
@@ -152,12 +154,20 @@ pub fn run() {
                 && let Some(state) = webview.app_handle().try_state::<BackendState>()
             {
                 state.subscriptions.release_owner(webview.label());
+                webview
+                    .state::<cloud::CloudState>()
+                    .release_owner(webview.label());
                 if webview.label() == "main" {
                     state.drafts.release(None);
                 }
             }
         })
         .invoke_handler(tauri::generate_handler![
+            cloud::cloud_set_server,
+            cloud::cloud_request,
+            cloud::cloud_subscribe,
+            cloud::cloud_unsubscribe,
+            cloud::cloud_save_download,
             draft_close::desktop_register_draft_guard,
             draft_close::desktop_unregister_draft_guard,
             draft_close::desktop_finish_draft_close,
@@ -243,6 +253,7 @@ pub fn run() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app.state::<cloud::CloudState>().release_owner(&label);
                 app.state::<BackendState>()
                     .subscriptions
                     .release_owner(&label);

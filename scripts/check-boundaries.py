@@ -14,9 +14,11 @@ def main():
     packages = {p["name"]: p for p in metadata["packages"]}
     forbidden = {
         "connector": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
-                      "social-feature", "web-server", "tauri-frontend"},
+                      "social-feature", "web-server", "cloud-server", "tauri-frontend"},
         "builtin-agent": {"runtime", "storage", "connector", "social-feature",
-                          "web-server", "tauri-frontend"},
+                          "web-server", "cloud-server", "tauri-frontend"},
+        "cloud-server": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
+                         "social-feature", "web-server", "tauri-frontend"},
     }
     for start, excluded in forbidden.items():
         pending = [(start, [start])]

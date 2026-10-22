@@ -10,6 +10,7 @@ members = [
     "agent/tools",
     "crates/storage",
     "server/http",
+    "server/cloud",
     "server/social",
     "client/desktop/src-tauri",
 ]

@@ -22,8 +22,7 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    // 开发时把 /api 转发到真实后端（web-server，默认 127.0.0.1:8787），
-    // 浏览器同源直连真实 SocialFeature
+    // 开发时把 /api 转发到 cloud-server；CLOUD_PUBLIC_URL 应与浏览器来源一致。
     proxy: {
       "/api": {
         target: process.env.LLMN_API ?? "http://127.0.0.1:8787",

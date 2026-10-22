@@ -8,6 +8,8 @@ Web 与 Tauri 默认共用云端真人聊天界面。当前进度见[当前工�
 
 `client/web/src/App.tsx` 默认加载 `cloud/App.tsx`。Web 与 Tauri 共用 CloudApp，提供邀请注册、邮箱验证、登录/找回密码、公开资料与登录会话管理、通讯录和真人私聊。按名字或完整账号 ID 查找联系人；同一对账号总是打开同一个私聊。AI、群、意识系统、节点管理和本机后台 Agent 尚未接入。
 
+界面持续沿用原有设计：消息与通讯录是两个主入口，自己的账号位于左下角，设置提供外观与关于。`cloud/App.tsx` 管理认证、云端状态、订阅与草稿，`cloud/AuthPage.tsx` 提供登录等认证页面，`cloud/Workspace.tsx` 接入登录后的界面，并复用 `social/components/SocialSidebar`、公共组件与 `social.css`。更换数据来源不另起一套聊天布局，也不加载旧本地业务。此次界面接入先验证 Web，尚未更新已安装桌面程序；此前桌面联调只代表当时版本。
+
 消息页支持文字、PNG/JPEG/WebP、普通文件、自己的消息编辑/撤回、未读与手动未读、置顶、正文搜索及原消息前后定位。图片预览与附件读取始终使用当前消息 revision；修订后丢弃旧加载结果，撤回不显示旧正文或附件。导出从服务端读取完整私聊，附件可选；浏览器下载 Blob，桌面通过系统保存对话框写入原字节。
 
 Web 使用同源 fetch/EventSource；Tauri 使用 `cloud_request`、`cloud_subscribe`、`cloud_unsubscribe`、`cloud_save_download` 和 Channel 转发同一云端 API。原生层仅保存内存 Cookie，退出/重启后需重新登录；服务器地址保存在本机。切换账号或服务器会失效旧请求和订阅。测试 CA 仅通过启动环境 `CLOUD_CA_CERT_FILE` 指定，不关闭证书校验。
@@ -38,7 +40,7 @@ Web 使用同源 fetch/EventSource；Tauri 使用 `cloud_request`、`cloud_subsc
 
 ## 本地社交界面参考（待迁移）
 
-以下所有章节记录 `src/social` 的旧本地界面与 IPC 约定，仅供回归及迁移参考。默认 CloudApp 已接通真人云端登录和聊天，但没有接入以下 AI、群、意识、模型设置及本地运行控制功能。
+以下章节记录 `src/social` 的本地业务与 IPC 约定，供回归及迁移参考；其中侧栏、基础组件和视觉样式已由云端页面复用。默认 CloudApp 已接通真人云端登录和聊天，但没有接入以下 AI、群、意识、模型设置及本地运行控制功能。
 
 ### 信息结构
 

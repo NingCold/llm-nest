@@ -16,7 +16,7 @@
 
 云端维护发言任务与次数，节点维护调用、并发和 token 预算；模型调用前取得云端持久开始确认，已开始而结果不明的调用不自动重做。首轮单机容器部署，客户端 HTTPS/SSE，节点主动 WSS 连接；迁移先备份预览、保留旧库，原文迁云端、意识资料迁节点。细节见[已确认约定](docs/project/cloud-plan.md#已确认的运行与迁移约定)与模块设计。这些是目标约束，不代表现有程序已完成改造。
 
-当前默认入口是 `client/web/src/cloud`，Web 与 Tauri 都连接 `server/cloud` 的 HTTPS JSON/SSE。服务独立使用 PostgreSQL 和附件目录，不加载本地 Runtime、SQLite 或模型配置。桌面 IPC 转发云端请求并保留原生保存、窗口和草稿关闭交互，默认页面不启动保留的延迟 Runtime。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
+当前默认入口是 `client/web/src/cloud`，沿用原有前端的消息/通讯录布局、侧栏和视觉样式，云端账号、聊天和草稿由 CloudApp 管理。登录后复用 `social` 的界面组件不意味着启动本地 Runtime 或开放本地 AI 功能。Web 与 Tauri 都连接 `server/cloud` 的 HTTPS JSON/SSE。服务独立使用 PostgreSQL 和附件目录，不加载本地 Runtime、SQLite 或模型配置。桌面 IPC 转发云端请求并保留原生保存、窗口和草稿关闭交互，默认页面不启动保留的延迟 Runtime。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
 
 首轮邀请由维护者生成，可撤销、默认七天有效且只能注册一次；注册保留三十分钟，验证邮箱后原子创建账号并消耗邀请。密码使用 Argon2，令牌仅存哈希，真人身份来自 HttpOnly 会话 Cookie。网页变更请求检查 `X-LLMN-Client` 与来源，桌面凭据只在原生内存，重启重新登录。测试服务仅在 Tailscale 内网使用，测试 CA 明确信任、私有 outbox 不公开；不关闭 TLS 验证，不提交具体服务器连接资料。
 
@@ -74,7 +74,7 @@ ActorId 同时作为稳定账号 ID；真人/AI 共用公开 Account 资料，�
 | `server/cloud` | 独立云端真人认证、PostgreSQL 社交记录、附件与持久事件；当前默认客户端的后端 |
 | `client/web` | 共用 React GUI、状态管理、HTTP/Tauri backend 适配 |
 | `client/web/src/cloud` | 默认云端账号、私聊、草稿与 HTTPS/SSE 界面 |
-| `client/web/src/social` | 唯一真实社交状态与视图，HTTP/IPC 适配 |
+| `client/web/src/social` | 共用社交样式与基础组件、草稿存储，以及保留的本地社交状态与视图 |
 | `client/desktop/src-tauri` | 桌面 IPC、延迟初始化、平台窗口和打包 |
 | `scripts` / `docs` | 可执行验收/构建流程与证据 |
 

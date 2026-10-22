@@ -6,10 +6,11 @@ import { useUiStore } from "@/store/ui"
 import { Avatar, IconButton } from "./common"
 import type { AvatarStyle } from "../live-types"
 
-export function SocialSidebar({ page, navigate, onAccount, self, name, unread, children }: {
+export function SocialSidebar({ page, navigate, onAccount, onSettings, self, name, unread, children }: {
   page: string
   navigate(page: "messages" | "contacts"): void
   onAccount?(): void
+  onSettings?(): void
   self?: AvatarStyle
   name?: string
   unread?: boolean
@@ -31,7 +32,7 @@ export function SocialSidebar({ page, navigate, onAccount, self, name, unread, c
     <div className="rail-bottom">
       {onAccount ? <button className={`sidebar-account ${["account", "ai-management", "account-view"].includes(page) ? "selected" : ""}`} aria-label="我的账号" onClick={onAccount}><Avatar contact={self} self={!self} size="small" /><span>{name || "我的账号"}</span></button> : <span className="sidebar-account"><Avatar self size="small" /><span>我的空间</span></span>}
       <IconButton label={theme === "light" ? "切换深色主题" : "切换浅色主题"} onClick={toggleTheme}>{theme === "light" ? <Moon /> : <Sun />}</IconButton>
-      <IconButton label="设置" onClick={() => showSettings()}><Settings /></IconButton>
+      <IconButton label="设置" onClick={() => onSettings ? onSettings() : showSettings()}><Settings /></IconButton>
     </div>
   </aside>
 }

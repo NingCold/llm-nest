@@ -8,7 +8,8 @@ function harness(desktop = false) {
     events = [],
     channels = [],
     sources = [],
-    timers = [];
+    timers = [],
+    values = new Map();
   let handler = async () => ({ status: 200, text: async () => '{"ok":true}' });
   class Channel {
     constructor() {
@@ -42,7 +43,12 @@ function harness(desktop = false) {
     {
       exports,
       location: { origin: "https://nest.test" },
-      localStorage: { getItem: () => null, setItem() {} },
+      localStorage: {
+        getItem: (key) => values.get(key) || null,
+        setItem(key, value) {
+          values.set(key, value);
+        },
+      },
       window: { dispatchEvent: (e) => events.push(e.type) },
       Event,
       EventSource,
@@ -81,6 +87,7 @@ function harness(desktop = false) {
     channels,
     sources,
     timers,
+    values,
     setHandler(fn) {
       handler = fn;
     },
@@ -108,6 +115,53 @@ function harness(desktop = false) {
   h.api.invalidate();
   resolve({ status: 200, text: async () => '{"id":"old-account"}' });
   await assert.rejects(old, /账号已切换/);
+  const connection = harness(true);
+  connection.setHandler(async (name, args) => {
+    if (name === "cloud_set_server") {
+      if (new URL(args.url).pathname !== "/")
+        throw new Error("服务器须为 HTTPS origin");
+      return;
+    }
+    return { status: 401, body: '{"message":"请登录"}' };
+  });
+  assert.equal(
+    await connection.api.connectServer("https://EXAMPLE.test:443/"),
+    null,
+  );
+  assert.equal(connection.api.server, "https://example.test");
+  assert.equal(
+    connection.values.get("llmn-cloud-server"),
+    "https://example.test",
+  );
+  assert.equal(connection.calls.at(-1)[0], "cloud_request");
+  assert.equal(connection.calls.at(-1)[1].path, "/api/me");
+  assert.equal(connection.calls.at(-1)[1].method, "GET");
+  await assert.rejects(
+    connection.api.configure("https://example.test/not-an-origin"),
+    /HTTPS origin/,
+  );
+  assert.equal(
+    connection.calls.at(-1)[1].url,
+    "https://example.test/not-an-origin",
+    "native receives the original path for validation",
+  );
+  assert.equal(connection.api.server, "https://example.test");
+  connection.setHandler(async (name) => {
+    if (name === "cloud_request") throw new Error("无法连接服务器");
+  });
+  await assert.rejects(
+    connection.api.connectServer("https://other.test/"),
+    /无法连接服务器/,
+  );
+  connection.setHandler(async (name) =>
+    name === "cloud_request"
+      ? { status: 200, body: '{"id":"current-account"}' }
+      : undefined,
+  );
+  assert.equal(
+    (await connection.api.connectServer("https://other.test")).id,
+    "current-account",
+  );
   const n = harness(true);
   let changes = 0;
   const stop = n.api.subscribe("9", () => changes++, assert.fail);

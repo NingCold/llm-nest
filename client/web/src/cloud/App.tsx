@@ -11,7 +11,7 @@ import { readFiles } from "../social/files";
 import {
   request,
   DownloadCancelled,
-  configure,
+  connectServer,
   server,
   invalidate,
   subscribe,
@@ -24,7 +24,8 @@ const blank = (): DraftRecord => ({ draft: emptyDraft(), pending: null });
 export default function CloudApp() {
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
-  const [connected, setConnected] = useState(!IS_DESKTOP || !!server);
+  const [connected, setConnected] = useState(!IS_DESKTOP);
+  const [connecting, setConnecting] = useState(false);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(
     null,
   );
@@ -186,12 +187,19 @@ export default function CloudApp() {
     const init = async () => {
       try {
         if (IS_DESKTOP && !server) return;
-        if (IS_DESKTOP) await configure(server);
-        setMe(await request<Account>("/me"));
+        if (IS_DESKTOP) {
+          setConnecting(true);
+          const account = await connectServer<Account>(server);
+          setUrl(server);
+          setConnected(true);
+          setMe(account);
+          if (!account) setNotice("服务器已连接，请登录");
+        } else setMe(await request<Account>("/me"));
       } catch (e) {
         if (!(e instanceof Error && "status" in e && e.status === 401))
           report(e);
       } finally {
+        setConnecting(false);
         setReady(true);
       }
     };
@@ -600,24 +608,52 @@ export default function CloudApp() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                void run(async () => {
-                  await configure(url);
-                  setConnected(true);
-                  setNotice("服务地址已保存");
-                });
+                if (connecting || busy) return;
+                setConnecting(true);
+                setConnected(false);
+                setError("");
+                setNotice("");
+                void (async () => {
+                  try {
+                    const account = await connectServer<Account>(url);
+                    setUrl(server);
+                    setConnected(true);
+                    setMe(account);
+                    setNotice(
+                      account ? "服务器已连接" : "服务器已连接，请登录",
+                    );
+                  } catch (error) {
+                    report(error);
+                  } finally {
+                    setConnecting(false);
+                  }
+                })();
               }}
             >
               <label>
                 服务器 HTTPS 地址
                 <input
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    setResume(null);
+                    setConnected(false);
+                    setError("");
+                    setNotice("地址已更改，请先连接服务器");
+                    invalidate();
+                  }}
+                  disabled={connecting || busy}
                   type="url"
                   placeholder="https://您的服务器地址"
                   required
                 />
               </label>
-              <button>连接服务器</button>
+              <button disabled={connecting || busy}>
+                {connecting ? "正在连接…" : "连接服务器"}
+              </button>
+              {!connected && !connecting && (
+                <p className="cloud-muted">请先连接服务器，再注册或登录。</p>
+              )}
             </form>
           )}
           <h1>

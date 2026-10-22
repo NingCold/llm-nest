@@ -27,9 +27,19 @@ export function invalidate() {
 }
 export async function configure(url: string) {
   await invoke("cloud_set_server", { url });
-  server = url;
-  localStorage.setItem("llmn-cloud-server", url);
+  server = new URL(url).origin;
+  localStorage.setItem("llmn-cloud-server", server);
   invalidate();
+}
+// A valid server may be reachable without an authenticated session.
+export async function connectServer<T>(url: string): Promise<T | null> {
+  await configure(url);
+  try {
+    return await request<T>("/me");
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 401) return null;
+    throw error;
+  }
 }
 export async function request<T = unknown>(
   path: string,

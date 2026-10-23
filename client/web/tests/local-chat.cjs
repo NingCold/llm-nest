@@ -12,5 +12,10 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cl
   assert.equal(calls[0].name, 'local_chat_send');
   assert.equal(calls[0].args.requestId, 'same-request');
   assert.equal(Object.keys(calls[0].args).sort().join(','), 'conversationId,requestId,text');
+  const sealed = { version: 1, content: { ciphertext: 'megolm' } }, keyMessages = [{ event_type: 'm.room.encrypted', txn_id: 'frozen', messages: { '@ai:llmn': { node: { ciphertext: 'olm' } } } }];
+  await exportsLocal.sendLocal('direct', 'sealed-request', '', sealed, 'client-message', keyMessages);
+  assert.equal(calls[1].args.sealed, sealed);
+  assert.equal(calls[1].args.keyMessages, keyMessages, 'native receives the original frozen official Olm delivery package');
+  assert.equal(calls[1].args.messageId, 'client-message');
   console.log('PASS: local chat uses native transport, preserves Agent history order and exposes sync state without credentials');
 })().catch(e => { console.error(e); process.exitCode = 1; });

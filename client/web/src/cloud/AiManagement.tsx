@@ -96,11 +96,15 @@ export function AiManagement({ back, openDirect, refresh, operatorId, conversati
                   </div>
                   {ai.account.bio && <p className="cloud-ai-bio">{ai.account.bio}</p>}
                   <div className="cloud-node-description"><Server /><span>{ai.node?.name || "连接 Agent 后，AI 就能回复消息。"}</span></div>
+                  {ai.node?.handoverState === "draining" && <p role="status">正在准备换机：旧节点停止领取新任务，等待当前调用与密文资料、历史密钥同步完成。</p>}
+                  {ai.node?.handoverState === "ready" && <p role="status">旧节点已完成换机准备。可连接新设备，恢复资料并确认当前版本后再运行。</p>}
                   <div className="cloud-actions">
                     <button className="social-button primary" disabled={busy} onClick={() => setSelected(ai.account.id)}><Settings />管理</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => void act(() => submit(`/ai/${ai.account.id}/status`, { expectedStatusRevision: ai.statusRevision, status: ai.account.status === "disabled" ? "active" : "disabled" }, "PUT"))}>{ai.account.status === "disabled" ? "恢复账号" : "停用账号"}</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => void act(() => openDirect(ai.account))}><MessageCircle />发消息</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => { setError(""); setDialog({ kind: "bind", ai }); }}>{ai.node ? "更换节点" : "连接节点"}</button>
+                    {ai.node?.capabilities.includes("sealedV1") && (!ai.node.handoverState || ai.node.handoverState === "active") && <button className="social-button secondary" disabled={busy} onClick={() => void act(() => submit(`/ai/${ai.account.id}/node/handover`, { expectedBindingVersion: ai.bindingVersion }))}>准备更换节点</button>}
+                    {ai.node && ["draining", "ready"].includes(ai.node.handoverState ?? "") && <button className="text-button" disabled={busy} onClick={() => void act(() => submit(`/ai/${ai.account.id}/node/handover/cancel`, { expectedBindingVersion: ai.bindingVersion }))}>取消换机准备</button>}
                     {IS_DESKTOP && <button className="social-button secondary" disabled={busy} onClick={() => setLocalAi(ai)}>在这台电脑上运行</button>}
                     {ai.node && <button className="text-button" disabled={busy} onClick={() => { setError(""); setDialog({ kind: "revoke", ai }); }}><Unplug />撤销连接</button>}
                   </div>
@@ -130,11 +134,15 @@ export function AiManagement({ back, openDirect, refresh, operatorId, conversati
           ) : dialog?.kind === "bind" ? (
             <form className="cloud-form" onSubmit={(e) => {
               e.preventDefault();
-              const code = String(new FormData(e.currentTarget).get("code")).trim();
-              void act(() => submit(`/ai/${dialog.ai.account.id}/node`, { pairingCode: code, expectedBindingVersion: dialog.ai.bindingVersion }));
+              const fields = new FormData(e.currentTarget), code = String(fields.get("code")).trim(), force = fields.get("force") === "on";
+              void act(async () => {
+                if (dialog.ai.node?.capabilities.includes("sealedV1") && dialog.ai.node.handoverState !== "ready" && !force) throw new Error("请先让旧节点完成换机准备；旧节点不可达时，明确勾选强制切换并接受未同步资料可能丢失");
+                return submit(`/ai/${dialog.ai.account.id}/node`, { pairingCode: code, expectedBindingVersion: dialog.ai.bindingVersion, ...(force ? { force: true } : {}) });
+              });
             }}>
               <p>在运行 Agent 的设备上发起连接，再把配对码填在这里。</p>
-              {dialog.ai.node && <p>确认后，旧节点将停止为这个账号回复。更换节点不会自动迁移角色设定和记忆。</p>}
+              {dialog.ai.node && <p>{dialog.ai.node.capabilities.includes("sealedV1") ? "更换后旧绑定不能再上传或发言。新节点经可信授权后恢复已同步资料；旧节点未同步内容不保证恢复。" : "确认后，旧节点将停止为这个账号回复。更换节点不会自动迁移角色设定和记忆。"}</p>}
+              {dialog.ai.node?.capabilities.includes("sealedV1") && <><p>正常换机先点击“准备更换节点”，等待密文与历史密钥同步完成。新节点仍需可信授权和恢复；缺少密钥不能靠登录或配对绕过。</p>{dialog.ai.node.handoverState !== "ready" && <label className="cloud-check"><input name="force" type="checkbox" disabled={busy} />旧节点不可达，明确强制切换；我接受未同步资料可能丢失，旧设备副本无法远程追回</label>}</>}
               <label>配对码<input name="code" required maxLength={64} disabled={busy} autoFocus autoComplete="off" spellCheck={false} /></label>
               {error && <p className="social-error" role="alert">{error}</p>}
               <button className="social-button primary" disabled={busy}>{busy ? "正在连接…" : "确认连接"}</button>

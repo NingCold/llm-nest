@@ -50,8 +50,11 @@ import type {
 import "../social/social.css";
 import "./cloud.css";
 import type { LocalView } from "./local-api";
+import { CryptoDevices } from "./crypto/Devices";
 
 interface Props {
+  cryptoUnlocked?: boolean;
+  enableEncryption?: () => Promise<void>;
   localChat?: LocalView;
   localSelected?: boolean;
   prepareLocal?: () => Promise<void>;
@@ -756,7 +759,7 @@ export function Workspace(p: Props) {
                                 <small>
                                   {c.lastMessage?.status === "withdrawn"
                                     ? "消息已撤回"
-                                    : c.lastMessage?.text ||
+                                    : (c.lastMessage?.cryptoError ? "[加密消息暂不可读]" : c.lastMessage?.text) ||
                                       (c.lastMessage?.attachments.length
                                         ? "[附件]"
                                         : "开启一段对话")}
@@ -895,6 +898,7 @@ export function Workspace(p: Props) {
                       <small>公开资料与登录会话</small>
                     </span>
                   </button>
+                  <button className={`contact-list-item ${accountSection === "crypto" ? "selected" : ""}`} onClick={() => setAccountSection("crypto")}><Settings /><span><strong>可信设备与恢复</strong><small>设备指纹与恢复文件</small></span><ArrowRight /></button>
                   <button className={`contact-list-item ${accountSection === "ai" ? "selected" : ""}`} onClick={() => setAccountSection("ai")}>
                     <Settings /><span><strong>我管理的 AI</strong><small>账号与运行节点</small></span><ArrowRight />
                   </button></>
@@ -992,7 +996,7 @@ export function Workspace(p: Props) {
                 </div>
               </section>
             ) : p.tab === "account" ? (
-              accountSection === "ai" ? <AiManagement operatorId={p.me.id} conversations={p.snapshot?.conversations ?? []} cursor={p.snapshot?.cursor ?? ""} back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
+              accountSection === "crypto" ? <CryptoDevices key={p.me.id} accountId={p.me.id} /> : accountSection === "ai" ? <AiManagement operatorId={p.me.id} conversations={p.snapshot?.conversations ?? []} cursor={p.snapshot?.cursor ?? ""} back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
             ) : p.tab === "contacts" ? (
               selectedContact ? (
                 profile(selectedContact, false)
@@ -1031,6 +1035,8 @@ export function Workspace(p: Props) {
                         <small>{p.localChat ? `同机私聊 · ${p.localChat.syncState === "synced" ? "已同步云端" : p.localChat.syncState === "conflict" ? "云端同步冲突" : "等待云端同步"}` : conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
                       </span>
                     </button>
+                    {conversation.kind === "direct" && !conversation.encryption && p.enableEncryption && <button className="text-button" onClick={() => { if (window.confirm("开启后不可回退明文。请确认双方可信设备及恢复文件已准备好，旧历史留待后续迁移。")) void p.act(p.enableEncryption!); }}>开启端到端加密</button>}
+                    {conversation.encryption && <small role="status">端到端加密 · 旧记录尚未迁移</small>}
                     {conversation.kind === "direct" && conversation.peer?.kind === "ai" && p.prepareLocal && !p.localSelected && <button className="text-button" onClick={() => void p.act(p.prepareLocal!)}>开启同机私聊</button>}
                     {p.localSelected && !p.localChat && <div role="status">同机私聊暂未连接；发送仍使用本机 Agent，不会自动改发云端。<button className="text-button" onClick={() => void p.act(() => p.history())}>重新连接本机</button></div>}
                     {p.localChat && <div role="status"><small>同机私聊仅支持普通文字；附件、回复与群引用请使用云端。{p.localChat.error}{p.localChat.hasMore && "仅显示节点已缓存的历史。"}</small><button className="text-button" onClick={() => void p.act(p.syncLocal!)}>重试云端同步</button><button className="text-button" disabled={p.localChat.running || p.localChat.syncState !== "synced" || !!p.record.pending} onClick={() => void p.act(p.closeLocal!)}>返回云端发送</button>{p.localChat.running && <button className="text-button" onClick={() => void p.act(p.stopLocal!)}>停止本机回复</button>}</div>}
@@ -1107,6 +1113,8 @@ export function Workspace(p: Props) {
                                 {m.senderName}
                               </span>
                               <time>{shortTime(m.createdAt)}</time>
+                              {m.cryptoError && <small role="status">加密内容暂不可读：{m.cryptoError}</small>}
+                              {conversation.encryption && !m.sealed && <small>旧明文记录 · 尚未迁移</small>}
                               {m.importOrigin && <small title="从旧版聊天记录导入">导入历史</small>}
                             </div>
                             {m.contextReference && m.status !== "withdrawn" && <ReferenceCard directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
@@ -1326,13 +1334,13 @@ export function Workspace(p: Props) {
                         aria-label="消息输入框"
                         rows={2}
                         maxLength={20000}
-                        disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}
+                        disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked || (!!conversation.encryption && !p.cryptoUnlocked)}
                         placeholder={
                           dragging
                             ? "松开添加附件"
                             : `给 ${conversation.name} 发消息…`
                         }
-                        value={p.record.draft.text}
+                        value={conversation.encryption && !p.cryptoUnlocked ? "" : p.record.draft.text}
                         onChange={(e) => p.text(e.target.value)}
                         onPaste={(e) => {
                           const files = Array.from(e.clipboardData.items)
@@ -1414,6 +1422,7 @@ export function Workspace(p: Props) {
                           aria-label="发送消息"
                           disabled={
                             !p.draftReady ||
+                            (!!conversation.encryption && !p.cryptoUnlocked) ||
                             conversation.directBlocked ||
                             p.busy ||
                             !!p.record.pending ||
@@ -1517,12 +1526,13 @@ export function Workspace(p: Props) {
                       </section>
                       <section className="cloud-detail-section">
                         <h3>导出聊天记录</h3>
-                        <p>导出完整窗口；附件可以分别选择。</p>
+                        <p>{conversation.encryption ? "加密私聊的完整本机解密导出将在后续批次开放；当前不会向云端请求空白导出。" : "导出完整窗口；附件可以分别选择。"}</p>
                         <form
                           className="cloud-form"
                           onSubmit={(e) => {
                             e.preventDefault();
                             const form = new FormData(e.currentTarget);
+                            if (conversation.encryption) return;
                             void p.act(async () => {
                               await download(
                                 `/chat/conversations/${conversation.id}/export?format=${form.get("format")}&includeImages=${form.has("images")}&includeFiles=${form.has("files")}`,
@@ -1533,7 +1543,7 @@ export function Workspace(p: Props) {
                             });
                           }}
                         >
-                          <select name="format">
+                          <select name="format" disabled={!!conversation.encryption}>
                             <option value="markdown">Markdown</option>
                             <option value="json">JSON</option>
                           </select>
@@ -1545,7 +1555,7 @@ export function Workspace(p: Props) {
                             <input name="files" type="checkbox" />
                             包含普通文件
                           </label>
-                          <button className="social-button secondary">
+                          <button className="social-button secondary" disabled={!!conversation.encryption}>
                             <Download />
                             导出记录
                           </button>

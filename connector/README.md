@@ -10,6 +10,8 @@
 
 ## 独立示例
 
+`crypto` 定义密文封装、设备、公钥投递、备份恢复和 AI 资料 CAS；`NodeClient` 提供传输方法，包本身不实现密码学。节点完成真实密钥初始化、授权与恢复准备后才声明 `sealedV1`，演示节点不能处理加密任务。消息保留设备与账号 master 双签，同机与云端使用相同封装；同机 Olm 密钥投递已通过真实 Windows IPC 验证。详见[加密契约](../docs/design/crypto-contract.md)。
+
 `examples/external_node.rs` 只依赖 connector 的接口。它返回明确标注的固定演示文字，不调用模型，也不是自带 Agent。设置 `LLMN_SERVER`、`LLMN_NODE_ID`、`LLMN_NODE_SECRET`；私有 CA 另设置 `LLMN_CA_FILE` 为 PEM 文件路径。不要把这些值提交到仓库。
 
 ```text

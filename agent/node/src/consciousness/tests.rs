@@ -32,6 +32,7 @@ max_tokens=4096
 }
 fn conversation() -> NodeConversation {
     NodeConversation {
+        encryption: None,
         id: uid(),
         kind: "group".into(),
         name: "group".into(),
@@ -84,6 +85,7 @@ fn record(id: &str) -> SummaryRecord {
 }
 fn message(pos: usize) -> NodeMessage {
     NodeMessage {
+        sealed: None,
         import_origin: None,
         id: uid(),
         position: pos.to_string(),
@@ -626,4 +628,129 @@ async fn selected_management_frame_finishes(provider_timeout: bool) {
     assert_eq!(store.memories(&ai, &c.id).unwrap().len(), 1);
     ws_server.await.unwrap();
     http_server.abort();
+}
+#[tokio::test]
+async fn enrolled_ai_rejects_forged_plain_management_frames_even_when_not_ready() {
+    use futures_util::{SinkExt, StreamExt};
+    let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let ai = uid();
+    let operator = uid();
+    let c = conversation();
+    let mut cfg = config();
+    cfg.profile.persona = "NEVER_EXPOSE_PERSONA".into();
+    let binding = Binding {
+        ai: ai.clone(),
+        version: "1".into(),
+        secret: "test".into(),
+    };
+    store.bind(&binding, &cfg.profile).unwrap();
+    assert!(!crate::crypto::enrolled(&store, &ai).unwrap());
+    store.db.execute("INSERT INTO crypto_devices(ai,device,local_key,ready) VALUES(?1,'pending-device',X'01',0)",[&ai]).unwrap();
+    let mut item = memory(&uid(), None);
+    item.text = "NEVER_EXPOSE_MEMORY".into();
+    store.save_memory(&ai, &c.id, &item).unwrap();
+    let cid = c.id.clone();
+    let (api, http_server, paths) = mock(c.clone(), vec![], false).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let frames = [
+        ServerFrame::ManagementRequest {
+            relay_id: uid(),
+            request_id: uid(),
+            operator_id: operator.clone(),
+            operation: AgentManagementOperation::View,
+        },
+        ServerFrame::ConsciousnessRequest {
+            relay_id: uid(),
+            request_id: uid(),
+            operator_id: operator,
+            conversation: c,
+            operation: ConsciousnessOperation::Memories,
+        },
+    ];
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        for frame in frames {
+            ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                serde_json::to_string(&frame).unwrap().into(),
+            ))
+            .await
+            .unwrap();
+            let response = ws.next().await.unwrap().unwrap();
+            let text = response.to_text().unwrap();
+            let body: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert!(body["view"].is_null());
+            assert_eq!(body["error"]["code"], "encrypted_management_required");
+            assert_eq!(body["error"]["message"], "");
+            assert!(!text.contains("NEVER_EXPOSE"));
+        }
+    });
+    let client = NodeClient::new(&origin, "test", None).unwrap();
+    let mut socket = client.connect().await.unwrap();
+    for _ in 0..2 {
+        let frame = socket.recv().await.unwrap();
+        handle_frame(frame, &mut socket, &api, &store, &cfg, &binding, &[])
+            .await
+            .unwrap();
+    }
+    server.await.unwrap();
+    assert!(paths.lock().unwrap().is_empty());
+    assert_eq!(store.profile(&ai).unwrap().persona, "NEVER_EXPOSE_PERSONA");
+    assert_eq!(
+        store.memories(&ai, &cid).unwrap()[0].text,
+        "NEVER_EXPOSE_MEMORY"
+    );
+    http_server.abort();
+}
+
+#[tokio::test]
+async fn restart_preserves_completed_summary_pending_ciphertext_upload() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("node.db");
+    let ai = uid();
+    let cid = uid();
+    let id = uid();
+    {
+        let store = Store::open(&path).unwrap();
+        let mut row = record(&id);
+        row.item.status = "pending_sync".into();
+        row.item.text = "completed model output".into();
+        row.intent = true;
+        row.confirmation = Some(SummaryConfirmation {
+            id: "cloud".into(),
+            confirmation_id: "confirmation".into(),
+        });
+        store.save_summary(&ai, &cid, &row).unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let mut input = Vec::new();
+        loop {
+            let mut bytes = [0; 4096];
+            let count = tcp.read(&mut bytes).await.unwrap();
+            assert!(count > 0);
+            input.extend_from_slice(&bytes[..count]);
+            if let Some(end) = input.windows(4).position(|w| w == b"\r\n\r\n")
+                && let Ok(body) = serde_json::from_slice::<serde_json::Value>(&input[end + 4..])
+            {
+                assert_eq!(body["status"], "ready");
+                assert!(body["errorCode"].is_null());
+                break;
+            }
+        }
+        tcp.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":true}").await.unwrap();
+    });
+    let api = NodeClient::new(&origin, "test", None).unwrap();
+    recover_summaries(&api, &store, &ai).await.unwrap();
+    recover_summaries(&api, &store, &ai).await.unwrap();
+    server.await.unwrap();
+    let row = store.summaries(&ai, &cid).unwrap().remove(0);
+    assert!(row.finished);
+    assert_eq!(row.item.status, "pending_sync");
+    assert_eq!(row.item.text, "completed model output");
 }

@@ -20,7 +20,10 @@ pub fn export(path: &Path, ai: &str, output: &Path) -> Result<()> {
     )?)?;
     let mut windows = Vec::new();
     let cids = db.prepare("SELECT cid FROM conscious_scopes WHERE ai=?1 UNION SELECT cid FROM conscious_memory WHERE ai=?1 UNION SELECT cid FROM conscious_summaries WHERE ai=?1 UNION SELECT cid FROM conscious_settings WHERE ai=?1")?.query_map([ai], |r| r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    let store = Store { db };
+    let store = Store {
+        db,
+        crypto: Default::default(),
+    };
     // All reads remain in the transaction opened above on this connection.
     for cid in cids {
         let summaries = store

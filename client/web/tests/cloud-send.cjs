@@ -14,7 +14,7 @@ function harness(record, desktop = false, storage = new Map()) {
     useState(initial) { const i = si++; if (!(i in states)) states[i] = typeof initial === "function" ? initial() : initial; return [states[i], value => { states[i] = typeof value === "function" ? value(states[i]) : value; }]; },
     useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
   };
-  const api = { server: "https://example.test", invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
+  const api = { server: "https://example.test", encryptions: 0, invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/App.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
     exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener() {}, removeEventListener() {} },
@@ -22,7 +22,7 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "react") return hooks;
       if (name === "./api") return api;
       if (name === "./local-api") return {
-        sendLocal: async (id, requestId, text) => { calls.push({ local: true, id, requestId, text }); throw new Error("local acknowledgement lost"); },
+        sendLocal: async (id, requestId, text, sealed, messageId, keyMessages) => { calls.push({ local: true, id, requestId, text, sealed, messageId, keyMessages }); throw new Error("local acknowledgement lost"); },
         syncLocal: async () => api.localRespond(),
         localPage: data => ({ messages: data.messages, hasMore: false, latestPosition: "0" }),
       };
@@ -30,6 +30,8 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "./Consciousness") return { clearConsciousnessCommands() {} };
       if (name === "./AiConfiguration") return { clearAiConfigurationCommands() {} };
       if (name === "./Participation") return { clearParticipationCommands() {} };
+      if (name === "./crypto/engine") return { lockCrypto() {}, cryptoDevice: () => undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+      if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => p, projectSnapshot: async s => s };
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
       if (name === "@tauri-apps/api/core") return { invoke: async () => {} };
@@ -99,6 +101,24 @@ function harness(record, desktop = false, storage = new Map()) {
   resolveLocal({ human: { id: "me" }, conversation: { id: "group" }, messages: [] });
   await synchronization;
   assert.equal(oldResponse.render().localChat, undefined, "an already resolved native response cannot restore local data after logout");
+  conversation.encryption = { version: 1, activationPosition: "0" };
+  const encrypted = harness({ draft: { text: "private words", requestId: null, mentions: [], replyTo: null }, pending: null });
+  encrypted.api.respond = async () => { throw Error("lost ciphertext acknowledgement"); };
+  await encrypted.render().send();
+  await encrypted.render().send();
+  assert.equal(encrypted.api.encryptions, 1, "unknown encrypted send retries its frozen envelope instead of advancing the SDK again");
+  assert.deepEqual(encrypted.calls[0].body, encrypted.calls[1].body);
+  assert.equal(encrypted.calls[0].body.text, "");
+  assert.ok(encrypted.calls[0].body.messageId);
+  assert.equal(JSON.stringify(encrypted.calls[0].body).includes("private words"), false, "plaintext is not part of the cloud request");
+  delete conversation.encryption;
+  const frozenLocal = { ...localPending, messageId: "encrypted-local", sealed: { version: 1, ciphertext: "megolm" }, keyMessages: [{ event_type: "m.room.encrypted", txn_id: "original-olm", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+  const ipc = harness({ draft: { ...frozenLocal, text: "later" }, pending: frozenLocal }, true);
+  await ipc.render().send();
+  await ipc.render().send();
+  assert.deepEqual(ipc.calls[0], ipc.calls[1], "lost IPC ack retries frozen Megolm and Olm key package together");
+  assert.deepEqual(ipc.calls[0].keyMessages, frozenLocal.keyMessages);
+  assert.equal(ipc.calls[0].text, "");
   const target = { ...conversation, id: "direct", kind: "direct", peer: { id: "ai-a" } };
   const continuation = harness({ draft, pending: null });
   const targetDraft = { draft: { ...draft, text: "保留私聊输入", reference: null }, pending: null };

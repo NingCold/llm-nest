@@ -53,7 +53,7 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/node/summaries/{id}/finish", post(summary_finish))
 }
 pub(crate) async fn node_conversation(tx: &mut Tx<'_>, cid: Uuid) -> Result<Value> {
-    let row = sqlx::query("SELECT kind,name,revision FROM cloud_conversations WHERE id=$1")
+    let row = sqlx::query("SELECT kind,name,revision,crypto_enabled,crypto_from_position FROM cloud_conversations WHERE id=$1")
         .bind(cid)
         .fetch_optional(&mut **tx)
         .await?
@@ -69,11 +69,11 @@ pub(crate) async fn node_conversation(tx: &mut Tx<'_>, cid: Uuid) -> Result<Valu
         members.push(chat::account(tx, id).await?);
     }
     Ok(
-        json!({"id":cid,"kind":row.get::<String,_>("kind"),"name":row.get::<String,_>("name"),"revision":row.get::<i64,_>("revision").to_string(),"members":members}),
+        json!({"id":cid,"kind":row.get::<String,_>("kind"),"name":row.get::<String,_>("name"),"revision":row.get::<i64,_>("revision").to_string(),"members":members,"encryption":crate::crypto::encryption(&row)}),
     )
 }
 pub(crate) fn node_message(m: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin")})
+    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin"),"sealed":m.get::<Option<Value>,_>("sealed")})
 }
 async fn is_member(tx: &mut Tx<'_>, cid: Uuid, actor: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar(
@@ -171,6 +171,7 @@ pub(crate) async fn message_changed(tx: &mut Tx<'_>, mid: Uuid) -> Result<()> {
         .bind(mid)
         .fetch_one(&mut **tx)
         .await?;
+    crate::crypto_resources::source_changed(tx, mid).await?;
     event(tx, cid, Some(mid), "source_changed", &[]).await?;
     stale_references(tx, Some(mid), cid).await?;
     nodes::source_changed(tx, mid).await?;
@@ -265,6 +266,7 @@ async fn preview(
 ) -> Result<Json<Value>> {
     let p = auth::authenticate(&s, &h).await?;
     let mut tx = s.pool.begin().await?;
+    crate::crypto::plaintext(&mut tx, cid).await?;
     nodes::lock(&mut tx).await?;
     let rows = reference_rows(&mut tx, cid, p.id, &v.reference).await?;
     Ok(Json(
@@ -305,7 +307,7 @@ pub(crate) async fn task_reference(
         .bind(cid)
         .fetch_one(&mut **tx)
         .await?;
-    if ckind != "direct" {
+    if ckind != "direct" || crate::crypto::enabled(tx, cid).await? {
         return Ok(None);
     }
     let human: Uuid = sqlx::query_scalar(
@@ -731,6 +733,7 @@ async fn manage(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     management_permission(&mut tx, cid, ai, p.id, summary).await?;
+    crate::crypto::plaintext(&mut tx, cid).await?;
     if !matches!(
         v.operation,
         ConsciousnessOperation::Memories | ConsciousnessOperation::Summaries
@@ -986,6 +989,10 @@ pub(crate) async fn manage_profile(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     nodes::admin(&mut tx, ai, p.id).await?;
+    let protected:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_conversations c JOIN cloud_members m ON m.conversation=c.id WHERE m.account_id=$1 AND c.crypto_enabled) OR EXISTS(SELECT 1 FROM cloud_crypto_resources WHERE ai_id=$1 AND kind='profile')").bind(ai).fetch_one(&mut *tx).await?;
+    if protected {
+        return Err(crate::crypto::required());
+    }
     let row = sqlx::query("SELECT version,connection_id FROM cloud_ai_bindings WHERE ai_id=$1")
         .bind(ai)
         .fetch_one(&mut *tx)

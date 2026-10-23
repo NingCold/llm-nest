@@ -52,6 +52,7 @@ export function LocalAgentPanel({ ai, changed }: { ai: ManagedAi; changed(): Pro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [forceHandover, setForceHandover] = useState(false);
   const alive = useRef(true);
   const reads = useRef(0);
   const command = useRef({ signature: "", id: "" });
@@ -84,7 +85,7 @@ export function LocalAgentPanel({ ai, changed }: { ai: ManagedAi; changed(): Pro
   };
   const boundHere = !!status?.nodeId && ai.node?.id === status.nodeId && status.aiIds.includes(ai.account.id);
   return <div className="cloud-local-agent">
-    <p>让 {ai.account.name} 在这台电脑上运行。聊天保存在云端，角色、模型密钥与意识资料保存在本机。</p>
+    <p>让 {ai.account.name} 在这台电脑上运行。加密资料可从云端密文恢复，模型密钥始终留在节点本机。</p>
     {error && <p className="social-error" role="alert">{error}</p>}
     {status?.error && <p className="social-error" role="alert">{status.error}</p>}
     {notice && <p role="status">{notice}</p>}
@@ -98,8 +99,10 @@ export function LocalAgentPanel({ ai, changed }: { ai: ManagedAi; changed(): Pro
         {editing && <button className="text-button" disabled={busy} onClick={() => setEditing(false)}>取消修改</button>}
       </>}
       {status.pairing && <div className="cloud-local-pairing"><p>本机节点已准备好，请授权它以 {ai.account.name} 的身份运行。</p>{ai.node && ai.node.id !== status.nodeId && <p>授权后，旧节点将失去这个 AI 的执行资格。更换节点不会自动迁移它的角色和意识资料。</p>}<p>配对码 <strong>{status.pairing.userCode}</strong> · {new Date(status.pairing.expiresAt).toLocaleTimeString()} 到期</p>
+        {ai.node?.capabilities.includes("sealedV1") && ai.node.id !== status.nodeId && ai.node.handoverState !== "ready" && <><p>请先在“我管理的 AI”完成旧节点换机准备。旧节点不可达时，才明确接受未同步资料可能丢失并强制切换。</p><label className="cloud-check"><input type="checkbox" checked={forceHandover} disabled={busy} onChange={e => setForceHandover(e.target.checked)} />旧节点不可达，明确强制切换并接受未同步资料可能丢失</label></>}
         <button className="social-button primary" disabled={busy} onClick={async () => {
-          const body = { pairingCode: status.pairing!.userCode, expectedBindingVersion: ai.bindingVersion };
+          if (ai.node?.capabilities.includes("sealedV1") && ai.node.id !== status.nodeId && ai.node.handoverState !== "ready" && !forceHandover) { setError("请先完成换机准备，或明确确认强制切换的资料风险"); return; }
+          const body = { pairingCode: status.pairing!.userCode, expectedBindingVersion: ai.bindingVersion, ...(forceHandover ? { force: true } : {}) };
           const signature = JSON.stringify(body);
           if (command.current.signature !== signature) command.current = { signature, id: crypto.randomUUID() };
           setBusy(true); setError("");

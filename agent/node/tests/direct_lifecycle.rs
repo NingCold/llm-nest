@@ -235,6 +235,9 @@ async fn offline_text_retry_and_sync_keep_message_ids_without_cloud_start() {
                 &dir,
                 &owner,
                 LocalOperation::Send {
+                    key_messages: vec![],
+                    sealed: None,
+                    message_id: None,
                     conversation_id: cid.clone(),
                     request_id: request.clone(),
                     text: "hello offline".into()
@@ -362,6 +365,9 @@ async fn offline_text_retry_and_sync_keep_message_ids_without_cloud_start() {
             &dir,
             &owner,
             LocalOperation::Send {
+                key_messages: vec![],
+                sealed: None,
+                message_id: None,
                 conversation_id: cid.clone(),
                 request_id: second.clone(),
                 text: "second run".into()
@@ -405,6 +411,9 @@ async fn offline_text_retry_and_sync_keep_message_ids_without_cloud_start() {
             &dir,
             &owner,
             LocalOperation::Send {
+                key_messages: vec![],
+                sealed: None,
+                message_id: None,
                 conversation_id: cid.clone(),
                 request_id: second,
                 text: "second run".into()

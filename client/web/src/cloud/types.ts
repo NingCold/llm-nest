@@ -12,7 +12,7 @@ export interface ManagedAi {
   statusRevision: string;
   profileRevision: string;
   administratorsRevision: string;
-  node: { id: string; name: string; online: boolean; lastSeenAt: string | null; capabilities: string[] } | null;
+  node: { id: string; name: string; online: boolean; lastSeenAt: string | null; capabilities: string[]; handoverState?: "active" | "draining" | "ready" } | null;
 }
 export interface AgentProfile {
   revision: string;
@@ -41,6 +41,8 @@ export interface Attachment {
   byteLength: number;
 }
 export interface Message {
+  sealed?: import("./crypto/content").Sealed | null;
+  cryptoError?: string;
   local?: { synced: boolean };
   id: string;
   conversationId: string;
@@ -59,6 +61,7 @@ export interface Message {
   importOrigin?: { importId: string; sourceMessageId: string; sourceRevision: string } | null;
 }
 export interface Conversation {
+  encryption?: { version: 1; activationPosition: string } | null;
   id: string;
   kind: "direct" | "group";
   name: string;

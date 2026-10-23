@@ -96,7 +96,7 @@ export function AiDetails({ ai, operatorId, conversations, cursor, back, changed
       {tab === "profile" && <PublicProfile ai={ai} changed={changed} />}
       {tab === "configuration" && <AiConfiguration ai={ai} operatorId={operatorId} />}
       {tab === "administrators" && <AdministratorsPanel ai={ai} changed={changed} />}
-      {tab === "view" && <AiAccountView aiId={ai.account.id} />}
+      {tab === "view" && <AiAccountView aiId={ai.account.id} operatorId={operatorId} />}
       {tab === "consciousness" && <div className="cloud-ai-section"><h2>意识</h2><p>选择你和这个 AI 共同参与的聊天，管理该窗口里的记忆与它自己的摘要。</p><label className="cloud-ai-window-select">聊天窗口<select value={windowId} onChange={e => setWindowId(e.target.value)}><option value="">选择一个窗口</option>{common.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>{common.length === 0 && <p>先与这个 AI 开始聊天，再管理你们之间的记忆。</p>}{conversation && <ConsciousnessPanel key={conversation.id} conversation={conversation} cursor={cursor} operatorId={operatorId} onlyAi={ai.account.id} summaryAiIds={[ai.account.id]} summaryError="" />}</div>}
     </div></div>
   </section>;

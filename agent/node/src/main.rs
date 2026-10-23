@@ -1,5 +1,6 @@
 mod consciousness;
 mod context;
+mod crypto;
 mod direct;
 mod direct_runtime;
 mod management;
@@ -98,9 +99,15 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             | "export-ai"
             | "preview-import-ai"
             | "import-ai"
+            | "crypto-init"
+            | "crypto-status"
+            | "crypto-export-recovery"
+            | "crypto-trust"
+            | "crypto-recover"
+            | "crypto-authorize-admin"
     ) {
         println!(
-            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>; export-ai <directory> <AI id> <output.json>; preview-import-ai|import-ai <directory> <AI id> <package.json> <expected-profile-revision>"
+            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>; export-ai <directory> <AI id> <output.json>; preview-import-ai|import-ai <directory> <AI id> <package.json> <expected-profile-revision>; crypto-init|crypto-status <directory> <AI id>; crypto-export-recovery|crypto-recover <directory> <AI id> <recovery.json>; crypto-trust <directory> <AI id> <account id> <device id> <Ed25519> <Curve25519> <master key>; crypto-authorize-admin <directory> <AI id> <account id> <device id>"
         );
         return Ok(());
     }
@@ -153,6 +160,46 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
         }
     }
     let store = Store::open(&directory.join("node.sqlite"))?;
+    if command.starts_with("crypto-") {
+        let ai = args.get(3).context("加密设备操作需要 AI 账号 ID")?;
+        let binding = store
+            .bindings()?
+            .into_iter()
+            .find(|b| &b.ai == ai)
+            .context("此节点尚未绑定指定 AI")?;
+        let api = client(&config, &binding.secret)?;
+        match command {
+            "crypto-init" => println!("{}", crypto::enroll(&api, &store, &config, &binding).await?),
+            "crypto-status" => println!("{}", crypto::status(&store, ai).await?),
+            "crypto-export-recovery" => {
+                let path = args.get(4).context("请指定新的恢复文件保存位置")?;
+                crypto::export_recovery(&api, &store, ai, Path::new(path)).await?;
+                println!("恢复文件已保存，请独立保管，不要发到聊天或上传服务器。");
+            }
+            "crypto-recover" => {
+                let path = args.get(4).context("请指定恢复文件")?;
+                crypto::import_recovery(&api, &store, &config, &binding, Path::new(path)).await?;
+                println!("已恢复加密身份；新节点应用当前资料后才能开始回复。");
+            }
+            "crypto-trust" => {
+                let account = args.get(4).context("请指定待核验的账号 ID")?;
+                let device = args.get(5).context("请指定待核验的设备 ID")?;
+                let ed = args.get(6).context("请提供独立核对的 Ed25519 指纹")?;
+                let curve = args.get(7).context("请提供独立核对的 Curve25519 指纹")?;
+                let master = args.get(8).context("请提供独立核对的账号主密钥指纹")?;
+                crypto::trust(&api, &store, ai, account, device, ed, curve, master).await?;
+                println!("账号主密钥和设备指纹核验通过。");
+            }
+            "crypto-authorize-admin" => {
+                let account = args.get(4).context("请指定已核验的管理员账号 ID")?;
+                let device = args.get(5).context("请指定已核验的管理员设备 ID")?;
+                crypto::authorize_admin(&api, &store, ai, account, device).await?;
+                println!("已向当前可信管理员设备发送加密历史授权。");
+            }
+            _ => unreachable!("validated crypto command"),
+        }
+        return Ok(());
+    }
     if matches!(command, "preview-import-ai" | "import-ai") {
         let ai = args.get(3).context("import requires AI id")?;
         let package = args.get(4).context("import requires package JSON")?;
@@ -247,6 +294,13 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             )
             .await
             {
+                if error
+                    .downcast_ref::<NodeError>()
+                    .is_some_and(|e| matches!(e, NodeError::Api { status: 401, .. }))
+                    && let Err(failure) = crypto::authorization_lost(&store, &binding.ai)
+                {
+                    return Err::<(), anyhow::Error>(failure);
+                }
                 eprintln!("Node cycle failed: {error}");
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -269,7 +323,7 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             futures_util::future::pending::<Result<()>>().await
         }
     };
-    tokio::select! { _=tokio::signal::ctrl_c()=>Ok(()), _=managed_stop(managed.as_ref())=>Ok(()), result=local=>result, _=futures_util::future::join_all(nodes)=>Ok(()) }
+    tokio::select! { _=tokio::signal::ctrl_c()=>Ok(()), _=managed_stop(managed.as_ref())=>Ok(()), result=local=>result, results=futures_util::future::join_all(nodes)=>{for result in results {result?;} Ok(())} }
 }
 fn result(receipt: &StartReceipt, status: &str, text: String, code: Option<&str>) -> ResultRequest {
     ResultRequest {
@@ -279,6 +333,7 @@ fn result(receipt: &StartReceipt, status: &str, text: String, code: Option<&str>
         confirmation_id: receipt.confirmation_id.clone(),
         status: status.into(),
         text,
+        sealed: None,
         error_code: code.map(str::to_string),
         usage: None,
     }
@@ -317,7 +372,16 @@ async fn recover(api: &NodeClient, store: &Store, binding: &Binding) -> Result<(
         }
         if cloud.status == "queued" {
             let start: StartRequest = serde_json::from_str(&start)?;
-            api.reject(&task,&RejectRequest {request_id:start.request_id,task_revision:cloud.revision,code:"node_restart_before_start".into(),message:"Node restarted before the model invocation began; resend manually if needed.".into()}).await?;
+            api.reject(
+                &task,
+                &RejectRequest {
+                    request_id: start.request_id,
+                    task_revision: cloud.revision,
+                    code: "node_restart_before_start".into(),
+                    message: String::new(),
+                },
+            )
+            .await?;
             store.acknowledged(&task)?;
             continue;
         }
@@ -334,7 +398,8 @@ async fn recover(api: &NodeClient, store: &Store, binding: &Binding) -> Result<(
                     .await?
             }
         };
-        let saved = result(&receipt, "uncertain", draft, Some("node_restart_uncertain"));
+        let mut saved = result(&receipt, "uncertain", draft, Some("node_restart_uncertain"));
+        crypto::seal_result(api, store, &cloud.conversation_id, "1", &mut saved).await?;
         store.final_result(&task, &saved)?;
         deliver(api, store, &task, &saved).await?;
     }
@@ -438,7 +503,7 @@ fn preparation_rejection(task: &NodeTask, error: &anyhow::Error) -> Option<Rejec
             "preparation_failed"
         }
         .into(),
-        message,
+        message: "无法准备回复，请在节点检查设备授权、模型配置和所需资料。".into(),
     })
 }
 // The wait must retain the socket, node dependencies, and frozen run scope together.
@@ -458,8 +523,11 @@ async fn while_connected_with<T>(
     loop {
         tokio::select! {
             biased;
-            frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,socket,api,store,config,binding,scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}}},
-            _=invalidations.tick()=>{consciousness::poll_state(api,store,binding,scopes).await?;},
+            frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,socket,api,store,config,binding,scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>{crypto::authorization_lost(store,&binding.ai)?;bail!("node_authorization_lost")},None=>bail!("node_disconnected"),_=>{}}},
+            _=invalidations.tick()=>{
+                crypto::sync(api,store,config,binding).await?;
+                consciousness::poll_state(api,store,binding,scopes).await?;
+            },
             result=&mut work=>return result,
         }
     }
@@ -478,12 +546,17 @@ async fn cycle(
         [&binding.ai],
     )?;
     consciousness::sync(&api, store, &binding.ai).await?;
+    crypto::sync(&api, store, config, binding).await?;
     consciousness::recover_summaries(&api, store, &binding.ai).await?;
     recover(&api, store, binding).await?;
     let mut socket = api.connect().await?;
+    let mut capabilities = vec!["profileManagement".into()];
+    if crypto::capable(store, &binding.ai)? {
+        capabilities.push("sealedV1".into());
+    }
     socket
         .send(&ClientFrame::Hello {
-            capabilities: vec!["profileManagement".into()],
+            capabilities,
             protocol_version: 4,
             node_id: config.node_id.clone(),
             ai_id: binding.ai.clone(),
@@ -498,14 +571,20 @@ async fn cycle(
     }
     loop {
         consciousness::sync(&api, store, &binding.ai).await?;
-        consciousness::summaries_tick(&api, store, config, binding, &mut socket, summary_slot)
-            .await?;
+        crypto::sync(&api, store, config, binding).await?;
+        if !crypto::draining(store, &binding.ai)? {
+            consciousness::summaries_tick(&api, store, config, binding, &mut socket, summary_slot)
+                .await?;
+        }
         let tasks =
             while_connected_with(&mut socket, &api, store, config, binding, &[], "", async {
                 Ok(api.tasks().await?)
             })
             .await?;
         for task in tasks {
+            if crypto::draining(store, &binding.ai)? {
+                break;
+            }
             if task.status != "queued" || store.state(&task.id)?.is_some() {
                 continue;
             }
@@ -519,7 +598,11 @@ async fn cycle(
             let prepared = async {
                 let router = ModelRouter::new(&config.providers)?;
                 let llm = AiClient::from_config(&config.providers)?.snapshot().await;
-                let material = api.materials(&task.id).await?;
+                let mut material = api.materials(&task.id).await?;
+                if material.conversation.encryption.is_some() {
+                    crypto::ensure_ready(store, &binding.ai)?;
+                    crypto::decrypt_materials(&api, store, &mut material).await?;
+                }
                 let material_task = material.task.clone();
                 let sources = material.sources.clone();
                 let conversation_revision = material.conversation.revision.clone();
@@ -559,9 +642,12 @@ async fn cycle(
             ) = match prepared {
                 Ok(value) => value,
                 Err(error) => {
-                    let Some(rejection) = preparation_rejection(&task, &error) else {
+                    let Some(mut rejection) = preparation_rejection(&task, &error) else {
                         break;
                     };
+                    // Materials may fail before this node learns the window's mode.
+                    // Report the stable code without forwarding preparation details.
+                    rejection.message.clear();
                     api.reject(&task.id, &rejection).await?;
                     continue;
                 }
@@ -607,7 +693,11 @@ async fn cycle(
                         request_id: id(),
                         task_revision: task.revision,
                         code: denied.0.into(),
-                        message: error.to_string(),
+                        message: if crypto::encrypted(store, &task.conversation_id)? {
+                            String::new()
+                        } else {
+                            error.to_string()
+                        },
                     },
                 )
                 .await?;
@@ -660,13 +750,27 @@ async fn cycle(
                 loop {
                     tokio::select! {
                         biased;
-                        frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,&mut socket,&api,store,config,binding,&material_scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task.id=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}}},
+                        frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,&mut socket,&api,store,config,binding,&material_scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task.id=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>{crypto::authorization_lost(store,&binding.ai)?;bail!("node_authorization_lost")},None=>bail!("node_disconnected"),_=>{}}},
                         _=tokio::time::sleep_until(deadline)=>bail!("generation_timeout"),
-                        _=invalidations.tick()=>{consciousness::poll_state(&api,store,binding,&material_scopes).await?;},
+                        _=invalidations.tick()=>{
+                            crypto::sync(&api,store,config,binding).await?;
+                            consciousness::poll_state(&api,store,binding,&material_scopes).await?;
+                        },
                         chunk=stream.next()=>match chunk {
                             Some(Ok(ChatChunk::Delta {content}))=>{
                                 if text.len()+content.len()>256*1024 {bail!("output_limit");} text.push_str(&content);
-                                if last.elapsed()>=Duration::from_millis(500) {store.draft(&task.id,&text)?;sequence+=1;socket.send(&ClientFrame::Delta {task_id:task.id.clone(),run_id:receipt.run_id.clone(),message_id:receipt.message_id.clone(),confirmation_id:receipt.confirmation_id.clone(),sequence,text:text.clone()}).await?;last=tokio::time::Instant::now();}
+                                if last.elapsed()>=Duration::from_millis(500) {
+                                    store.draft(&task.id,&text)?;
+                                    sequence+=1;
+                                    let mut frame = ClientFrame::Delta {
+                                        task_id:task.id.clone(),run_id:receipt.run_id.clone(),
+                                        message_id:receipt.message_id.clone(),confirmation_id:receipt.confirmation_id.clone(),
+                                        sequence,text:text.clone(),sealed:None,
+                                    };
+                                    crypto::seal_delta(&api,store,&task.conversation_id,"1",&mut frame).await?;
+                                    socket.send(&frame).await?;
+                                    last=tokio::time::Instant::now();
+                                }
                             },
                             Some(Ok(ChatChunk::Done {usage:reported}))=>{usage=reported;return Ok::<_,anyhow::Error>(());},
                             Some(Ok(ChatChunk::ToolCall {..}))=>bail!("tools_not_enabled"),
@@ -691,6 +795,8 @@ async fn cycle(
                 output_tokens: u.completion_tokens as u64,
                 cached_tokens: u.cached_tokens as u64,
             });
+            store.draft(&task.id, &saved.text)?;
+            crypto::seal_result(&api, store, &task.conversation_id, "1", &mut saved).await?;
             store.final_result(&task.id, &saved)?;
             deliver(&api, store, &task.id, &saved).await?;
         }

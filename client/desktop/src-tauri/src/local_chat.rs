@@ -69,6 +69,9 @@ pub async fn local_chat_send(
     conversation_id: String,
     request_id: String,
     text: String,
+    sealed: Option<connector::crypto::SealedEnvelope>,
+    message_id: Option<String>,
+    key_messages: Option<Vec<serde_json::Value>>,
 ) -> Result<DirectView, String> {
     view(
         call(
@@ -78,6 +81,9 @@ pub async fn local_chat_send(
                 conversation_id,
                 request_id,
                 text,
+                sealed,
+                message_id,
+                key_messages: key_messages.unwrap_or_default(),
             },
         )
         .await?,

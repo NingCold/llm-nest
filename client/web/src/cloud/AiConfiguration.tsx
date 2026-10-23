@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HttpError, request, server } from "./api";
 import type { AgentManagementView, ManagedAi, SaveAgentProfile } from "./types";
+import { EncryptedResourcePanel } from "./crypto/ResourcePanel";
 
 type Pending = { requestId: string; operation: SaveAgentProfile };
 // Keep the exact unconfirmed save across navigation; never persist private settings in the browser.
@@ -113,6 +114,7 @@ function OnlineConfiguration({ ai, operatorId }: { ai: ManagedAi; operatorId: st
 }
 
 export function AiConfiguration(props: { ai: ManagedAi; operatorId: string }) {
+  if (props.ai.node?.capabilities.includes("sealedV1")) return <EncryptedResourcePanel operatorId={props.operatorId} aiId={props.ai.account.id} kind="profile" />;
   if (!props.ai.node?.online) return <div className="cloud-ai-section"><h2>角色与模型</h2><p>节点离线。启动运行 Agent 的设备后，即可读取和修改设置。</p></div>;
   if (!props.ai.node.capabilities.includes("profileManagement")) return <div className="cloud-ai-section"><h2>角色与模型</h2><p>这个 Agent 没有提供在线配置入口，请在它所在的设备上管理。</p></div>;
   return <OnlineConfiguration key={props.ai.account.id} {...props} />;

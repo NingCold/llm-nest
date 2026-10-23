@@ -11,6 +11,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig},
 };
 use url::Url;
+mod crypto;
 
 #[derive(Debug, thiserror::Error)]
 pub enum NodeError {

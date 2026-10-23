@@ -24,6 +24,32 @@ python scripts/social_acceptance.py
 
 `acceptance.py` 检查空配置、旧接口退役、本地访问、显式导入/重启与 worker；`social_acceptance.py` 以模拟 provider 驱动真实业务。编译不证明安装通过，模拟模型不证明真实模型能力，自动输入中文不证明真实输入法候选正常。
 
+## 私聊与 AI 资料加密验证
+
+2026-10-23，使用 Matrix 官方 WebAssembly/Rust SDK、独立 PostgreSQL、真实 `cloud-server` 与 `llmn-agent run-managed` 进程、本机模拟模型完成第二批自动验收。全程没有使用真实模型 API，没有更新内网服务、日常安装版或日常资料。
+
+- `scripts/crypto_acceptance.cjs` 全流程通过：两个受邀真人账号建立独立设备并核验身份，交换 Olm 密钥、发送私聊密文、重试同一请求、拒绝封装篡改；PostgreSQL 不含测试正文，仅登录的新设备不能解密。恢复文件可授权新设备读取历史，已撤销设备不能继续同步。真实 WASM 与 Rust 双向加解密及恢复材料互通通过。
+- 实际 AI 节点配对、建立身份、流式密文回复通过。节点关闭期间保存角色和记忆，重启后应用到新回复；遗忘后不再读取。关闭云端进程后通过真实 Windows 私有 IPC 继续发送密文与 Olm 密钥包，重新启动云端后补传原消息和原结果，没有额外云端任务或模型调用。
+- 实际生成窗口摘要并上传密文，随后正常交接到全新节点。新设备从恢复文件和云端密文恢复角色、历史、摘要与遗忘状态；缩小测试模型窗口后，恢复的摘要确实进入上下文。撤回来源后摘要变为失效墓碑，后续上下文不再使用。全流程共 17 次模拟调用，包含一次摘要，没有重做旧调用。
+- 云端完整 47 项真实 PostgreSQL 测试通过；后续补强的加密专项 5 项全部通过，覆盖资料与权限版本冲突、旧请求重放、来源撤回、管理员历史分享撤权、正常/强制交接和新节点发现已有加密窗口。Agent 39 项单测、3 项进程集成测试，SDK 适配与恢复 6 项测试、连接器 13 项测试通过。
+- 前端完整 30 组测试、类型检查与生产构建通过，涵盖密钥库保护、会话撤销、密文完整性、离线编辑、原命令重试与冲突。构建仍提示部分依赖包较大。桌面 `cargo check -p tauri-frontend --tests` 通过；原生单测启动问题沿用下节记录，未算作通过。严格 no-deps Clippy、修改文件格式、模块依赖边界和文档链接检查通过。
+
+复测入口（需独立测试 PostgreSQL，`psql` 位于 PATH，Web 依赖已安装）：
+
+```bash
+cargo build -p cloud-server -p agent-node --locked
+cargo build -p llmn-crypto --example interop --locked
+# 设置 CLOUD_TEST_DATABASE_URL 后运行；脚本自行新建独立数据库。
+node scripts/crypto_acceptance.cjs
+cargo test -p cloud-server -p agent-node -p llmn-crypto -p connector --locked
+npm --prefix client/web test
+npm --prefix client/web run typecheck
+npm --prefix client/web run build
+cargo check -p tauri-frontend --tests --locked
+```
+
+脚本只启动本机临时服务和模拟模型。恢复文件、临时账号与节点目录保存在忽略的 `target/crypto-acceptance-*`，不提交、不用于日常账号。实际桌面界面操作、Linux 本机通道和独立安全审查仍待完成；自动验收不等同于生产安全认证。旧历史未迁移，群、附件等完整社交加密功能在第三批，日常部署切换在第四批。
+
 ## 同机文字私聊验证
 
 2026-10-23，使用本机独立 PostgreSQL、临时节点目录、真实 `llmn-agent run-managed` 进程和模拟模型验证。未调用真实模型，未更新内网部署或日常安装，未迁移日常数据。

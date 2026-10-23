@@ -1,9 +1,12 @@
 pub mod auth;
 pub mod chat;
 pub mod consciousness;
+mod crypto;
+mod crypto_resources;
 pub mod db;
 mod direct;
 mod groups;
+mod handover;
 mod management;
 mod migration;
 pub mod nodes;
@@ -161,6 +164,9 @@ pub fn router(state: Arc<AppState>, web_dir: PathBuf) -> Router {
         auth_window: Mutex::new((Instant::now(), 0)),
     });
     let api = Router::new()
+        .merge(handover::routes().layer(DefaultBodyLimit::max(16 * 1024)))
+        .merge(crypto::routes().layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
+        .merge(crypto_resources::routes().layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .merge(auth::routes().layer(DefaultBodyLimit::max(16 * 1024)))
         .merge(direct::routes().layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .merge(chat::routes().layer(DefaultBodyLimit::max(40 * 1024 * 1024)))

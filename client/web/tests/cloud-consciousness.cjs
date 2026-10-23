@@ -14,7 +14,7 @@ function harness(file = "Consciousness") {
   const api = { HttpError, async request(path, method, body) { calls.push(structuredClone({ path, method, body })); return api.respond(path, method, body); }, respond: async () => empty };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, `../src/cloud/${file}.tsx`), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText + (file === "Consciousness" ? "\nexports.testSummaries = Summaries;" : ""), {
-    exports, crypto: { randomUUID }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name.startsWith("@/components")) return { Dialog: "dialog", DialogContent: "section", DialogTitle: "h2" }; return require(name); },
+    exports, crypto: { randomUUID }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name === "./crypto/ResourcePanel") return { EncryptedResourcePanel: "encrypted-resources" }; if (name.startsWith("@/components")) return { Dialog: "dialog", DialogContent: "section", DialogTitle: "h2" }; return require(name); },
   });
   return { exports, api, calls, remount() { slots.forEach(slot => slot?.cleanup?.()); slots.length = 0; }, render(fn, ...props) { index = 0; return fn(...props); }, async effects() { while (effects.length) effects.shift()(); await tick(); } };
 }

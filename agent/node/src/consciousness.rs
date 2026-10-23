@@ -543,6 +543,20 @@ pub async fn handle_frame(
             operator_id,
             operation,
         }) => {
+            if crate::crypto::enrolled(store, &binding.ai)? {
+                socket
+                    .send(&ClientFrame::ManagementResponse {
+                        relay_id,
+                        request_id,
+                        view: None,
+                        error: Some(ConsciousnessError {
+                            code: "encrypted_management_required".into(),
+                            message: String::new(),
+                        }),
+                    })
+                    .await?;
+                return Ok(Some(ServerFrame::TasksChanged));
+            }
             let (view, error) = match crate::management::manage(
                 config,
                 store,
@@ -571,6 +585,20 @@ pub async fn handle_frame(
             conversation,
             operation,
         }) => {
+            if crate::crypto::enrolled(store, &binding.ai)? {
+                socket
+                    .send(&ClientFrame::ConsciousnessResponse {
+                        relay_id,
+                        request_id,
+                        view: None,
+                        error: Some(ConsciousnessError {
+                            code: "encrypted_management_required".into(),
+                            message: String::new(),
+                        }),
+                    })
+                    .await?;
+                return Ok(Some(ServerFrame::TasksChanged));
+            }
             let response = manage(
                 api,
                 store,
@@ -742,7 +770,8 @@ async fn make_segment(
     if !manual && !settings.enabled {
         return Ok(None);
     }
-    let history = full_history(api, &c.id).await?;
+    let mut history = full_history(api, &c.id).await?;
+    crate::crypto::decrypt_history(api, store, ai, &mut history).await?;
     ensure!(
         history.conversation.revision == c.revision,
         "source_changed"
@@ -1011,7 +1040,7 @@ async fn run_summary(
             && store.settings(&binding.ai, cid)?.revision == record.settings_revision,
         "summary_stale"
     );
-    let history = crate::while_connected_with(
+    let mut history = crate::while_connected_with(
         socket,
         api,
         store,
@@ -1022,6 +1051,7 @@ async fn run_summary(
         full_history(api, cid),
     )
     .await?;
+    crate::crypto::decrypt_history(api, store, &binding.ai, &mut history).await?;
     let mut messages = Vec::new();
     for source in &record.item.sources {
         let message = history
@@ -1119,6 +1149,11 @@ async fn run_summary(
         Ok((text, usage)) => (text, usage, "ready"),
         _ => (String::new(), None, "interrupted"),
     };
+    if status == "ready" && crate::crypto::encrypted(store, cid)? {
+        record.item.text = text.clone();
+        record.item.status = "pending_sync".into();
+        store.save_summary(&binding.ai, cid, record)?;
+    }
     sync(api, store, &binding.ai).await?;
     let valid = store.scopes_current(&binding.ai, &[scope])?
         && store.settings(&binding.ai, cid)?.revision == record.settings_revision;
@@ -1160,6 +1195,9 @@ async fn run_summary(
     } else {
         Some("summary_interrupted".into())
     };
+    if status == "ready" {
+        crate::crypto::publish_summary(api, store, &binding.ai, cid, record).await?;
+    }
     store.save_summary(&binding.ai, cid, record)?;
     Ok(())
 }
@@ -1216,14 +1254,20 @@ pub async fn recover_summaries(api: &NodeClient, store: &Store, ai: &str) -> Res
                     &receipt.id,
                     &SummaryFinish {
                         confirmation_id: receipt.confirmation_id,
-                        status: if record.item.status == "stale" {
+                        status: if record.item.status == "pending_sync" {
+                            "ready"
+                        } else if record.item.status == "stale" {
                             "stale"
                         } else {
                             "interrupted"
                         }
                         .into(),
                         usage: None,
-                        error_code: Some("node_restarted".into()),
+                        error_code: if record.item.status == "pending_sync" {
+                            None
+                        } else {
+                            Some("node_restarted".into())
+                        },
                     },
                 )
                 .await

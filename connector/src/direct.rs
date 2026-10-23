@@ -32,7 +32,9 @@ dto!(DirectBootstrap {
 });
 dto!(DirectMessage {
     id: String, sender_id: String, text: String, status: String, created_at: String,
-    reply_to: Option<String>, run_id: Option<String>, usage: Option<NodeUsage>, error: Option<String>
+    reply_to: Option<String>, run_id: Option<String>, usage: Option<NodeUsage>, error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sealed: Option<crate::crypto::SealedEnvelope>
 });
 dto!(DirectSyncRequest {
     request_id: String, grant: String, conversation_revision: String, base: Option<DirectHead>,
@@ -53,7 +55,9 @@ dto!(DirectMessageView {
 dto!(DirectView {
     ai: NodeAccount, human: NodeAccount, conversation: NodeConversation,
     messages: Vec<DirectMessageView>, has_more: bool, sync_state: String,
-    error: Option<String>, running: bool
+    error: Option<String>, running: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    key_messages: Vec<serde_json::Value>
 });
 dto!(DirectBinding {
     ai_id: String,
@@ -66,6 +70,8 @@ dto!(DirectBinding {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+// One command is handled at a time; keep the wire DTO directly inspectable.
+#[allow(clippy::large_enum_variant)]
 pub enum LocalOperation {
     Status,
     Prepare {
@@ -79,6 +85,12 @@ pub enum LocalOperation {
         conversation_id: String,
         request_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sealed: Option<crate::crypto::SealedEnvelope>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        key_messages: Vec<serde_json::Value>,
     },
     Stop {
         conversation_id: String,

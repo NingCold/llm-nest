@@ -95,7 +95,14 @@ pub fn turn(store: &Store, request: &str) -> Result<(NodeMessage, NodeMessage, E
         serde_json::from_str(&p)?,
     ))
 }
-pub fn send(store: &Store, owner: &str, cid: &str, request: &str, text: &str) -> Result<()> {
+pub fn send_message(
+    store: &Store,
+    owner: &str,
+    cid: &str,
+    request: &str,
+    text: &str,
+    input: Option<NodeMessage>,
+) -> Result<()> {
     let bootstrap = authorized(store, owner, cid)?;
     ensure!(
         !uuid::Uuid::parse_str(request)?.is_nil(),
@@ -107,7 +114,12 @@ pub fn send(store: &Store, owner: &str, cid: &str, request: &str, text: &str) ->
     );
     let fingerprint = format!(
         "{:x}",
-        Sha256::digest(serde_json::to_vec(&(owner, cid, text))?)
+        Sha256::digest(serde_json::to_vec(&(
+            owner,
+            cid,
+            text,
+            input.as_ref().map(|m| (&m.id, &m.sealed))
+        ))?)
     );
     let tx = store.db.unchecked_transaction()?;
     let previous: Option<String> = tx
@@ -145,8 +157,10 @@ pub fn send(store: &Store, owner: &str, cid: &str, request: &str, text: &str) ->
         created_at: chrono::Utc::now().to_rfc3339(),
         attachments: vec![],
         import_origin: None,
+        sealed: None,
     };
-    let human = message(&bootstrap.human, text.into());
+    let mut human = input.unwrap_or_else(|| message(&bootstrap.human, text.into()));
+    human.sender_name = bootstrap.human.name.clone();
     let mut answer = message(&bootstrap.ai, String::new());
     answer.reply_to = Some(human.id.clone());
     tx.execute("INSERT INTO direct_turns(request,cid,fingerprint,human,answer,state,payload) VALUES(?1,?2,?3,?4,?5,'queued',?6)",params![request,cid,fingerprint,serde_json::to_string(&human)?,serde_json::to_string(&answer)?,serde_json::to_string(&Execution::default())?])?;
@@ -174,9 +188,13 @@ pub fn save(
     text: &str,
     state: &str,
     execution: &Execution,
+    sealed: Option<connector::crypto::SealedEnvelope>,
 ) -> Result<()> {
     let (_, mut answer, _) = turn(store, request)?;
     answer.text = text.into();
+    if sealed.is_some() {
+        answer.sealed = sealed;
+    }
     // A stop or permission invalidation wins over a late provider chunk.
     store.db.execute("UPDATE direct_turns SET answer=?2,state=?3,payload=?4 WHERE request=?1 AND state IN ('queued','running')",params![request,serde_json::to_string(&answer)?,state,serde_json::to_string(execution)?])?;
     Ok(())
@@ -186,7 +204,7 @@ pub fn stop(store: &Store, owner: &str, cid: &str) -> Result<()> {
     store.db.execute("UPDATE direct_turns SET state='interrupted',payload=json_set(payload,'$.error','user_stopped') WHERE cid=?1 AND state IN ('queued','running')",[cid])?;
     Ok(())
 }
-fn conflict(store: &Store, cid: &str, message: &str) -> Result<()> {
+pub(crate) fn conflict(store: &Store, cid: &str, message: &str) -> Result<()> {
     let tx = store.db.unchecked_transaction()?;
     tx.execute(
         "UPDATE direct_windows SET state='conflict',error=?2 WHERE cid=?1",
@@ -239,6 +257,7 @@ pub fn view(store: &Store, owner: &str, cid: &str) -> Result<DirectView> {
             let mut message: NodeMessage = serde_json::from_str(&json)?;
             position += 1;
             message.position = position.to_string();
+
             messages.push(DirectMessageView {
                 message,
                 status,
@@ -261,6 +280,7 @@ pub fn view(store: &Store, owner: &str, cid: &str) -> Result<DirectView> {
         human: bootstrap.human,
         conversation: bootstrap.conversation,
         messages,
+        key_messages: crate::crypto::local_key_messages(store, owner, cid)?,
         has_more,
         sync_state,
         error,
@@ -268,7 +288,7 @@ pub fn view(store: &Store, owner: &str, cid: &str) -> Result<DirectView> {
     })
 }
 
-fn unfinished(store: &Store, cid: &str) -> Result<bool> {
+pub(crate) fn unfinished(store: &Store, cid: &str) -> Result<bool> {
     Ok(store.db.query_row(
         "SELECT EXISTS(SELECT 1 FROM direct_turns WHERE cid=?1 AND synced=0)",
         [cid],
@@ -362,16 +382,18 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
     // A lost acceptance reply is retried verbatim before inspecting the now-changed cloud tail.
     if let Some(json) = frozen {
         let request: DirectSyncRequest = serde_json::from_str(&json)?;
-        let receipt = client.direct_sync(&request).await?;
+        let mut receipt = client.direct_sync(&request).await?;
+        crate::crypto::decrypt_receipt(client, store, &ai, cid, &mut receipt).await?;
         accept(store, cid, &request, receipt)?;
         return Ok(());
     }
     crate::consciousness::sync(client, store, &ai).await?;
-    let current = client
+    let mut current = client
         .direct_prepare(&DirectPrepare {
             grant: grant.clone(),
         })
         .await?;
+    crate::crypto::decrypt_bootstrap(client, store, &mut current).await?;
     if !unfinished(store, cid)? {
         return cache(store, &owner, &grant, &current);
     }
@@ -389,7 +411,12 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
     if state == "queued" || state == "running" {
         return Ok(());
     }
-    let (human, answer, execution) = turn(store, &request_id)?;
+    let (mut human, mut answer, execution) = turn(store, &request_id)?;
+    if bootstrap.conversation.encryption.is_some() {
+        crate::crypto::seal_direct_message(client, store, &ai, cid, &mut human, None).await?;
+        crate::crypto::seal_direct_message(client, store, &ai, cid, &mut answer, Some(&request_id))
+            .await?;
+    }
     ensure!(
         store.scopes_current(&ai, &execution.scopes)?,
         "direct_material_changed"
@@ -403,6 +430,7 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
         id: m.id,
         sender_id: m.sender_id,
         text: m.text,
+        sealed: m.sealed,
         status,
         created_at: m.created_at,
         reply_to: m.reply_to,
@@ -438,7 +466,8 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
         "UPDATE direct_windows SET sync_json=?2 WHERE cid=?1",
         params![cid, serde_json::to_string(&request)?],
     )?;
-    let receipt = client.direct_sync(&request).await?;
+    let mut receipt = client.direct_sync(&request).await?;
+    crate::crypto::decrypt_receipt(client, store, &ai, cid, &mut receipt).await?;
     accept(store, cid, &request, receipt)
 }
 fn accept(

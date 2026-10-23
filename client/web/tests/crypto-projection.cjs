@@ -1,0 +1,25 @@
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
+const projected = {}, cache = new Map();
+let decrypted;
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/content.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: projected, crypto: require('node:crypto').webcrypto, localStorage: { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) }, require(name) { if (name === '../api') return { server: 'https://fixture.invalid' }; if (name === './engine') return { matrixRoom: id => `!${id}:llmn`, matrixUser: id => `@${id}:llmn`, unseal: async () => decrypted }; throw Error(name); } });
+(async () => {
+  const conversation = { id: 'room', encryption: { version: 1, activationPosition: '5' }, lastMessage: null };
+  const message = { id: 'message', conversationId: 'room', senderId: 'human', revision: '1', position: '6', status: 'committed', text: 'server injected plaintext', mentions: [], replyTo: null, attachments: [] };
+  assert.match((await projected.projectMessage(message, conversation)).cryptoError, /明文回退/);
+  assert.equal((await projected.projectMessage({ ...message, position: '5' }, conversation)).text, message.text, 'pre-activation legacy history remains explicit plaintext');
+  const sealed = { version: 1, roomId: '!room:llmn', sender: '@human:llmn', deviceId: 'device', eventId: '$message.1.final', content: { device_id: 'device' } };
+  const payload = { version: 1, server: 'https://fixture.invalid', kind: 'message', conversationId: 'room', messageId: 'message', senderId: 'human', revision: '1', text: 'authentic', replyTo: null, mentions: [], runId: null, sequence: null };
+  decrypted = { type: 'com.llmn.content.v1', content: payload };
+  assert.equal((await projected.projectMessage({ ...message, sealed }, conversation)).text, 'authentic');
+  decrypted.content = { ...payload, conversationId: 'other' };
+  assert.equal((await projected.projectMessage({ ...message, sealed }, conversation)).text, '', 'cross-window substituted plaintext is withheld');
+  decrypted.content = payload;
+  assert.ok((await projected.projectMessage({ ...message, sealed: { ...sealed, deviceId: 'other' } }, conversation)).cryptoError);
+  decrypted.content = { ...payload, kind: 'delta', runId: 'run', sequence: 2, text: 'partial' };
+  assert.equal((await projected.projectMessage({ ...message, status: 'interrupted', sealed: { ...sealed, eventId: '$message.1.2' } }, conversation)).text, 'partial', 'interrupted status keeps the last authenticated delta envelope');
+  await projected.projectConversations([conversation], 'owner');
+  const pinned = await projected.projectConversations([{ ...conversation, encryption: null, lastMessage: message }], 'owner');
+  assert.ok(pinned[0].encryption, 'server omission cannot undo a locally known encryption boundary');
+  assert.ok(pinned[0].lastMessage.cryptoError);
+  console.log('PASS: encrypted projection verifies scope/device/revision/stream binding and refuses stripped ciphertext or activation metadata');
+})().catch(e => { console.error(e); process.exitCode = 1; });

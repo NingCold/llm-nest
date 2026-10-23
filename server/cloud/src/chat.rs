@@ -92,11 +92,11 @@ pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     )
 }
 pub(crate) fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin")})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin"),"sealed":r.get::<Option<Value>,_>("sealed")})
 }
 pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
-    let c = sqlx::query("SELECT kind,name,revision,read_only FROM cloud_conversations WHERE id=$1")
+    let c = sqlx::query("SELECT kind,name,revision,read_only,crypto_enabled,crypto_from_position FROM cloud_conversations WHERE id=$1")
         .bind(id)
         .fetch_one(&mut **tx)
         .await?;
@@ -137,7 +137,7 @@ pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Resu
     .await?;
     let unread:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1 AND sender<>$2 AND position>$3 AND NOT EXISTS(SELECT 1 FROM cloud_import_reads ir WHERE ir.owner=$2 AND ir.message_id=cloud_messages.id) AND NOT withdrawn AND status<>'generating'").bind(id).bind(owner).bind(pos).fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":id,"kind":kind,"name":name,"peer":peer,"members":members,"directBlocked":blocked,"readOnly":c.get::<bool,_>("read_only"),"revision":c.get::<i64,_>("revision").to_string(),"lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
+        json!({"id":id,"kind":kind,"name":name,"peer":peer,"members":members,"directBlocked":blocked,"readOnly":c.get::<bool,_>("read_only"),"revision":c.get::<i64,_>("revision").to_string(),"encryption":crate::crypto::encryption(&c),"lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
     )
 }
 async fn init(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value>> {
@@ -309,6 +309,8 @@ pub(crate) async fn read_messages(
 #[serde(rename_all = "camelCase")]
 struct Input {
     request_id: Uuid,
+    message_id: Option<Uuid>,
+    sealed: Option<connector::crypto::SealedEnvelope>,
     text: Option<String>,
     reference: Option<connector::node::ReferenceSelection>,
     reply_to: Option<Uuid>,
@@ -361,6 +363,11 @@ async fn receipt(
     };
     let fingerprint = if let Some(reference) = &v.reference {
         format!("{fingerprint}:{}", json!(reference))
+    } else {
+        fingerprint
+    };
+    let fingerprint = if v.sealed.is_some() || v.message_id.is_some() {
+        format!("{fingerprint}:{}", json!([v.message_id, v.sealed]))
     } else {
         fingerprint
     };
@@ -422,6 +429,11 @@ async fn save_receipt(
     };
     let fingerprint = if let Some(reference) = &v.reference {
         format!("{fingerprint}:{}", json!(reference))
+    } else {
+        fingerprint
+    };
+    let fingerprint = if v.sealed.is_some() || v.message_id.is_some() {
+        format!("{fingerprint}:{}", json!([v.message_id, v.sealed]))
     } else {
         fingerprint
     };
@@ -524,15 +536,39 @@ async fn send(
         return Ok(Json(r));
     }
     let text = v.text.as_deref().unwrap_or("");
+    let mid = v.message_id.unwrap_or_else(Uuid::new_v4);
+    if v.sealed.is_some()
+        && (v.message_id.is_none()
+            || !v.images.is_empty()
+            || !v.files.is_empty()
+            || v.reference.is_some())
+    {
+        return Err(AppError::conflict(
+            "密文私聊暂不支持附件与引用，发送需固定消息ID",
+        ));
+    }
+    crate::crypto::content(
+        &mut tx,
+        id,
+        &crate::crypto::Actor {
+            id: p.id,
+            node: None,
+        },
+        mid,
+        1,
+        None,
+        text,
+        v.sealed.as_ref(),
+    )
+    .await?;
     if text.len() > 1024 * 1024
-        || text.trim().is_empty() && v.images.is_empty() && v.files.is_empty()
+        || text.trim().is_empty() && v.images.is_empty() && v.files.is_empty() && v.sealed.is_none()
     {
         return Err(bad("消息为空或过长"));
     }
     crate::groups::validate_send(&mut tx, id, &pair, v.reply_to, &v.mentions).await?;
-    let mid = Uuid::new_v4();
     let attachments = uploads(&s, mid, &v).await?;
-    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments,sender_name,reply_to,mentions) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).bind(v.reply_to).bind(&v.mentions).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments,sender_name,reply_to,mentions,sealed) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7,$8)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).bind(v.reply_to).bind(&v.mentions).bind(v.sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
     if let Some(reference) = &v.reference {
         crate::consciousness::save_reference(&mut tx, id, mid, p.id, reference).await?;
     }
@@ -582,9 +618,39 @@ async fn mutate(
     } else {
         v.text.as_deref().ok_or_else(|| bad("缺少正文"))?
     };
+    if !remove
+        && v.sealed.is_some()
+        && (!row
+            .get::<Value, _>("attachments")
+            .as_array()
+            .unwrap()
+            .is_empty()
+            || row.get::<Option<Value>, _>("context_reference").is_some())
+    {
+        return Err(AppError::conflict(
+            "旧附件和群引用尚未迁移，不能在密文编辑中丢弃",
+        ));
+    }
+    if !remove {
+        crate::crypto::content(
+            &mut tx,
+            cid,
+            &crate::crypto::Actor {
+                id: p.id,
+                node: None,
+            },
+            id,
+            row.get::<i64, _>("revision") + 1,
+            None,
+            text,
+            v.sealed.as_ref(),
+        )
+        .await?;
+    }
     if text.len() > 1024 * 1024
         || !remove
             && text.trim().is_empty()
+            && v.sealed.is_none()
             && row
                 .get::<Value, _>("attachments")
                 .as_array()
@@ -593,7 +659,7 @@ async fn mutate(
     {
         return Err(bad("消息为空或过长"));
     }
-    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,context_reference=CASE WHEN $3 THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).execute(&mut *tx).await?;
+    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,context_reference=CASE WHEN $3 OR $4::jsonb IS NOT NULL THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,sealed=CASE WHEN $3 THEN NULL ELSE $4 END,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).bind(v.sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
     crate::consciousness::message_changed(&mut tx, id).await?;
     let r = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
         .bind(id)
@@ -684,6 +750,7 @@ async fn search(
     if let Some(cid) = q.conversation_id {
         let mut tx = s.pool.begin().await?;
         member(&mut tx, cid, p.id).await?;
+        crate::crypto::plaintext(&mut tx, cid).await?;
     }
     let query = q.query.unwrap_or_default();
     if query.trim().is_empty() {
@@ -807,6 +874,7 @@ async fn export(
         .execute(&mut *tx)
         .await?;
     member(&mut tx, id, p.id).await?;
+    crate::crypto::plaintext(&mut tx, id).await?;
     let rows = sqlx::query(
         "SELECT * FROM cloud_messages WHERE conversation=$1 ORDER BY position FOR SHARE",
     )

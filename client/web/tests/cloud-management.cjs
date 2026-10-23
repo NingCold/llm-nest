@@ -14,7 +14,7 @@ function harness(file = "AiConfiguration") {
   const api = { server: "https://fixture.invalid", HttpError, async request(path, method, body) { calls.push(structuredClone({ path, method, body })); return api.respond(path, method, body); }, respond: async () => view };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, `../src/cloud/${file}.tsx`), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText + (file === "LocalAgentPanel" ? "\nexports.LocalSetup = LocalSetup;" : ""), {
-    exports, crypto: { randomUUID }, FormData: class { constructor(form) { this.fields = form; } get(name) { return this.fields[name]; } }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name === "@tauri-apps/api/core") return { invoke() { throw Error("unexpected native call"); } }; return require(name); },
+    exports, crypto: { randomUUID }, FormData: class { constructor(form) { this.fields = form; } get(name) { return this.fields[name]; } }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name === "./crypto/ResourcePanel") return { EncryptedResourcePanel: "encrypted-resources" }; if (name === "@tauri-apps/api/core") return { invoke() { throw Error("unexpected native call"); } }; return require(name); },
   });
   return { exports, api, calls, remount() { slots.forEach(slot => slot?.cleanup?.()); slots.length = 0; }, render(fn, ...props) { index = 0; return fn(...props); }, async effects() { while (effects.length) effects.shift()(); await tick(); } };
 }

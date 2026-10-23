@@ -5,6 +5,7 @@ members = [
     "crates/social",
     "agent/ai-client",
     "agent/core",
+    "agent/crypto",
     "agent/node",
     "connector",
     "crates/runtime",

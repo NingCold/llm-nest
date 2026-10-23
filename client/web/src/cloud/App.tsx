@@ -25,6 +25,10 @@ import {
 import type { Account, Conversation, Snapshot, Page, Message, CloudDraftRecord as DraftRecord, DraftReference, ReferencePreview } from "./types";
 import "./cloud.css";
 import { localView, prepareLocal, sendLocal, syncLocal, stopLocal, localPage, type LocalView } from "./local-api";
+import { encryptMessage, projectPage, projectSnapshot, enableEncryption } from "./crypto/content";
+import { cryptoDevice, lockCrypto, localKeyMessages, receiveLocalKeys } from "./crypto/engine";
+import { synchronizeResources } from "./crypto/resources";
+import { mutateEncrypted } from "./crypto/mutations";
 const db = new DraftDatabase<DraftReference>();
 const blank = (): DraftRecord => ({ draft: emptyDraft<DraftReference>(), pending: null });
 export default function CloudApp() {
@@ -98,7 +102,11 @@ export default function CloudApp() {
     if (expectedEpoch !== epoch.current || ownerRef.current !== `${server}/${data.human.id}`) return;
     localRef.current = { ...localRef.current, [data.conversation.id]: data };
     setLocalChats(localRef.current);
-    if (activeRef.current === data.conversation.id) setPage(localPage(data));
+    if (activeRef.current === data.conversation.id) {
+      const page = localPage(data);
+      if (page.messages.some(m => m.sealed) || snapshotRef.current?.conversations.some(c => c.id === data.conversation.id && c.encryption)) void receiveLocalKeys(data.ai.id, data.keyMessages ?? []).then(() => projectPage(page, snapshotRef.current?.conversations.find(c => c.id === data.conversation.id))).then(value => { if (expectedEpoch === epoch.current && activeRef.current === data.conversation.id) setPage(value); }).catch(report);
+      else setPage(page);
+    }
   };
   const loadLocal = async (id: string) => {
     const e = epoch.current;
@@ -124,6 +132,7 @@ export default function CloudApp() {
     }
   };
   const clear = () => {
+    lockCrypto();
     localRef.current = {};
     setLocalChats({});
     clearConsciousnessCommands();
@@ -147,7 +156,8 @@ export default function CloudApp() {
   const refresh = async () => {
     const e = epoch.current,
       sequence = ++refreshSeq.current;
-    const data = await request<Snapshot>("/chat/init");
+    const raw = await request<Snapshot>("/chat/init");
+    const data = await projectSnapshot(raw);
     if (e === epoch.current && sequence === refreshSeq.current) {
       setSnapshot(data);
       snapshotRef.current = data;
@@ -164,11 +174,17 @@ export default function CloudApp() {
     }
     return data.cursor;
   };
+  const requestPage = async (path: string) => {
+    const data = await request<Page>(path);
+    const id = path.match(/\/conversations\/([^/]+)\/messages/)?.[1];
+    const conversation = snapshotRef.current?.conversations.find(c => c.id === id);
+    return data.messages?.some(m => m.sealed) || conversation?.encryption ? projectPage(data, conversation) : data;
+  };
   const history = async (id: string, older = false) => {
     if (localRef.current[id] || savedLocal(id)) { await loadLocal(id); return; }
     const e = epoch.current,
       v = view.current;
-    const data = await request<Page>(
+    const data = await requestPage(
       `/chat/conversations/${id}/messages${older && page?.messages.length ? `?before=${page.messages[0].position}` : ""}`,
     );
     if (e === epoch.current && v === view.current && id === activeRef.current)
@@ -196,7 +212,7 @@ export default function CloudApp() {
       latestPosition = old.latestPosition,
       hasMore = old.hasMore;
     do {
-      const data = await request<Page>(
+      const data = await requestPage(
         `/chat/conversations/${id}/messages?limit=100${before ? `&before=${before}` : ""}`,
       );
       latestPosition = data.latestPosition;
@@ -218,6 +234,22 @@ export default function CloudApp() {
       });
   };
   useDesktopReady(ready);
+  useEffect(() => {
+    if (!me) return;
+    const update = () => {
+      if (!cryptoDevice(me.id)) {
+        const hide = (message: Message) => message.sealed ? { ...message, text: "", cryptoError: "本机加密资料已锁定" } : message;
+        setPage(previous => previous ? { ...previous, messages: previous.messages.map(hide) } : previous);
+        setSnapshot(previous => previous ? { ...previous, conversations: previous.conversations.map(c => ({ ...c, lastMessage: c.lastMessage ? hide(c.lastMessage) : null })) } : previous);
+        setResults(previous => previous.map(hide)); setEditing(null); setPreview(undefined);
+        return;
+      }
+      void run(async () => { await refresh(); await syncHistory(); });
+    };
+    const timer = setInterval(() => { if (cryptoDevice(me.id)) void synchronizeResources(me.id).catch(report); }, 3000);
+    window.addEventListener("llmn-crypto-change", update);
+    return () => { clearInterval(timer); window.removeEventListener("llmn-crypto-change", update); };
+  }, [me?.id]);
   useEffect(() => {
     if (!IS_DESKTOP || !me || !active || !(localChats[active] || savedLocal(active))) return;
     const e = epoch.current;
@@ -260,8 +292,10 @@ export default function CloudApp() {
       if (ownerRef.current) clear();
     };
     window.addEventListener("cloud-unauthorized", unauthorized);
+    window.addEventListener("cloud-crypto-lock", lockCrypto);
     return () => {
       window.removeEventListener("cloud-unauthorized", unauthorized);
+      window.removeEventListener("cloud-crypto-lock", lockCrypto);
       window.removeEventListener("hashchange", hash);
     };
   }, []);
@@ -465,17 +499,24 @@ export default function CloudApp() {
           owner = ownerRef.current,
           e = epoch.current,
           v = view.current;
+        if (target?.encryption && !current.pending) {
+          if (pending.images?.length || pending.files?.length || pending.reference) throw new Error("本批加密私聊仅支持文字，附件和群话题引用请等待后续支持");
+          pending.messageId = crypto.randomUUID();
+          pending.sealed = await encryptMessage(target, me!.id, pending.messageId, pending.text, "1", pending.replyTo ?? null, pending.mentions ?? [], pending.route === "local");
+          if (pending.route === "local") pending.keyMessages = localKeyMessages(target.members.map(m => m.account.id));
+        }
+        if (target?.encryption && !pending.sealed) throw new Error("当前窗口已经启用加密，原明文待确认发送不能降级或重新加密重试，请先核对旧发送结果");
         await save({ ...current, pending });
         try {
           if (pending.route === "local") {
             if (pending.images?.length || pending.files?.length || pending.replyTo || pending.reference || pending.mentions?.length)
               throw new HttpError(422, "同机私聊本批仅支持普通文字，请清除附件、回复、提及和群引用后再发送；这些内容可使用云端发送。");
-            const data = await sendLocal(id, pending.requestId, pending.text);
+            const data = await sendLocal(id, pending.requestId, pending.sealed ? "" : pending.text, pending.sealed, pending.messageId, pending.keyMessages);
             if (e !== epoch.current) return;
             acceptLocal(data, e);
           } else await request(`/chat/conversations/${id}/messages`, "POST", {
             requestId: pending.requestId,
-            text: pending.text,
+            ...(pending.sealed ? { messageId: pending.messageId, sealed: pending.sealed, text: "" } : { text: pending.text }),
             mentions: pending.mentions ?? [],
             replyTo: pending.replyTo ?? null,
             ...(pending.reference ? { reference: pending.reference.selection } : {}),
@@ -589,7 +630,9 @@ export default function CloudApp() {
 
   const mutation = async (m: Message, withdraw: boolean, text?: string) => {
     if (localRef.current[m.conversationId] || savedLocal(m.conversationId)) throw new Error("同机私聊暂不支持编辑与撤回");
-    await request(
+    const target = snapshotRef.current?.conversations.find(c => c.id === m.conversationId);
+    if (target?.encryption) await mutateEncrypted(target, m, me!.id, withdraw, text);
+    else await request(
       `/chat/messages/${m.id}${withdraw ? "/withdraw" : ""}`,
       withdraw ? "POST" : "PATCH",
       {
@@ -606,11 +649,18 @@ export default function CloudApp() {
     const sequence = ++searchSeq.current,
       id = active,
       v = view.current;
+    if (snapshotRef.current?.conversations.some(c => c.encryption)) {
+      const messages = pageRef.current?.messages ?? [];
+      setResults(messages.filter(m => !m.cryptoError && m.status !== "withdrawn" && m.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())));
+      setSearchMore(false);
+      setNotice("加密搜索仅检查当前已解密页面；更早历史和其他窗口尚未建立本机索引。搜索词没有上传云端。");
+      return;
+    }
     const before =
       older && results.length
         ? `&beforePosition=${results[results.length - 1].position}`
         : "";
-    const found = await request<Page>(
+    const found = await requestPage(
       `/chat/search?query=${encodeURIComponent(query)}${scope === "current" ? `&conversationId=${id}` : ""}${before}`,
     );
     if (
@@ -626,9 +676,12 @@ export default function CloudApp() {
   const locate = async (m: Pick<Message, "id">) => {
     const sequence = ++searchSeq.current,
       v = view.current;
-    const data = await request<Page & { conversationId: string }>(
+    const raw = await request<Page & { conversationId: string }>(
       `/chat/messages/${m.id}/context`,
     );
+    const conversation = snapshotRef.current?.conversations.find(c => c.id === raw.conversationId);
+    const decoded = raw.messages.some(m => m.sealed) || conversation?.encryption ? await projectPage(raw, conversation) : raw;
+    const data = { ...raw, ...decoded };
     if (v !== view.current || sequence !== searchSeq.current) return;
     const target = { ...data, hasMore: true };
     setMessageLocation({
@@ -814,7 +867,9 @@ export default function CloudApp() {
       locate={locate}
       act={run}
       refresh={refresh}
+      enableEncryption={async () => { const target = snapshotRef.current?.conversations.find(c => c.id === active); if (target) { await enableEncryption(target, me!.id); await refresh(); } }}
       localChat={localChats[active]}
+      cryptoUnlocked={!!cryptoDevice(me.id)}
       localSelected={!!localChats[active] || savedLocal(active)}
       prepareLocal={IS_DESKTOP ? async () => {
         if (recordRef.current.pending) throw new Error("请先确认原发送结果，再开启同机私聊");
@@ -832,7 +887,7 @@ export default function CloudApp() {
         if (recordRef.current.pending || localRef.current[active]?.running || localRef.current[active]?.syncState !== "synced")
           throw new Error("请先完成本机回复并同步云端，再返回云端发送");
         const e = epoch.current, id = active, key = localRouteKey(active);
-        const data = await request<Page>(`/chat/conversations/${id}/messages`);
+        const data = await requestPage(`/chat/conversations/${id}/messages`);
         if (e !== epoch.current) return;
         window.localStorage.removeItem(key);
         const next = { ...localRef.current }; delete next[id];

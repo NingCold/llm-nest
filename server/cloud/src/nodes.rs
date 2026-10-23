@@ -112,10 +112,10 @@ async fn account(tx: &mut Tx<'_>, ai: Uuid) -> Result<Value> {
     crate::chat::account(tx, ai).await
 }
 pub(crate) async fn view(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<Value> {
-    let r=sqlx::query("SELECT a.initial,ac.status_revision,ac.profile_revision,ac.administrators_revision,jsonb_build_object('id',ac.id,'name',ac.name,'bio',ac.bio,'kind',ac.kind,'status',ac.status) AS account,b.version,b.capabilities,b.node_id,b.node_name,b.last_seen_at,b.connection_id IS NOT NULL AND b.last_seen_at>now()-interval '45 seconds' AS online FROM cloud_ai_admins a JOIN cloud_ai_bindings b ON b.ai_id=a.ai_id JOIN accounts ac ON ac.id=a.ai_id WHERE a.ai_id=$1 AND a.administrator=$2").bind(ai).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::forbidden)?;
+    let r=sqlx::query("SELECT a.initial,ac.status_revision,ac.profile_revision,ac.administrators_revision,jsonb_build_object('id',ac.id,'name',ac.name,'bio',ac.bio,'kind',ac.kind,'status',ac.status) AS account,b.version,b.capabilities,b.handover_state,b.node_id,b.node_name,b.last_seen_at,b.connection_id IS NOT NULL AND b.last_seen_at>now()-interval '45 seconds' AS online FROM cloud_ai_admins a JOIN cloud_ai_bindings b ON b.ai_id=a.ai_id JOIN accounts ac ON ac.id=a.ai_id WHERE a.ai_id=$1 AND a.administrator=$2").bind(ai).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::forbidden)?;
     let nid: Option<Uuid> = r.get("node_id");
     Ok(
-        json!({"account":r.get::<Value,_>("account"),"role":if r.get::<bool,_>("initial"){"initial"}else{"admin"},"statusRevision":r.get::<i64,_>("status_revision").to_string(),"profileRevision":r.get::<i64,_>("profile_revision").to_string(),"administratorsRevision":r.get::<i64,_>("administrators_revision").to_string(),"bindingVersion":r.get::<i64,_>("version").to_string(),"node":nid.map(|nid|json!({"id":nid,"name":r.get::<Option<String>,_>("node_name"),"online":r.get::<bool,_>("online"),"capabilities":r.get::<Value,_>("capabilities"),"lastSeenAt":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_seen_at")}))}),
+        json!({"account":r.get::<Value,_>("account"),"role":if r.get::<bool,_>("initial"){"initial"}else{"admin"},"statusRevision":r.get::<i64,_>("status_revision").to_string(),"profileRevision":r.get::<i64,_>("profile_revision").to_string(),"administratorsRevision":r.get::<i64,_>("administrators_revision").to_string(),"bindingVersion":r.get::<i64,_>("version").to_string(),"node":nid.map(|nid|json!({"id":nid,"name":r.get::<Option<String>,_>("node_name"),"online":r.get::<bool,_>("online"),"capabilities":r.get::<Value,_>("capabilities"),"handoverState":r.get::<String,_>("handover_state"),"lastSeenAt":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_seen_at")}))}),
     )
 }
 pub(crate) async fn admin_receipt(
@@ -308,12 +308,26 @@ async fn change_binding(
     if old != revision(&v, "expectedBindingVersion")? {
         return Err(AppError::conflict("节点绑定已变化"));
     }
+    if !revoke && crate::handover::encrypted(&mut tx, ai).await? {
+        let b = sqlx::query("SELECT node_id,handover_state FROM cloud_ai_bindings WHERE ai_id=$1")
+            .bind(ai)
+            .fetch_one(&mut *tx)
+            .await?;
+        if b.get::<Option<Uuid>, _>("node_id").is_some()
+            && b.get::<String, _>("handover_state") != "ready"
+            && v.get("force").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(AppError::conflict(
+                "加密节点尚未完成移交；旧节点失联时需明确强制更换",
+            ));
+        }
+    }
     invalidate_ai(&mut tx, ai, "node_changed").await?;
     if revoke {
-        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=NULL,node_name=NULL,token_hash=NULL,last_seen_at=NULL,connection_id=NULL,capabilities='[]' WHERE ai_id=$1").bind(ai).execute(&mut *tx).await?;
+        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=NULL,node_name=NULL,token_hash=NULL,last_seen_at=NULL,connection_id=NULL,capabilities='[]',handover_state='active' WHERE ai_id=$1").bind(ai).execute(&mut *tx).await?;
     } else {
         let r=sqlx::query("SELECT * FROM cloud_node_pairings WHERE user_code=$1 AND expires_at>now() AND ai_id IS NULL").bind(field(&v,"pairingCode")?.trim().to_uppercase()).fetch_optional(&mut *tx).await?.ok_or_else(||AppError::bad("配对码无效、已使用或已过期"))?;
-        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=$2,node_name=$3,token_hash=$4,last_seen_at=NULL,connection_id=NULL,capabilities='[]' WHERE ai_id=$1").bind(ai).bind(r.get::<Uuid,_>("node_id")).bind(r.get::<String,_>("node_name")).bind(r.get::<String,_>("token_hash")).execute(&mut *tx).await?;
+        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=$2,node_name=$3,token_hash=$4,last_seen_at=NULL,connection_id=NULL,capabilities='[]',handover_state='active' WHERE ai_id=$1").bind(ai).bind(r.get::<Uuid,_>("node_id")).bind(r.get::<String,_>("node_name")).bind(r.get::<String,_>("token_hash")).execute(&mut *tx).await?;
         sqlx::query("UPDATE cloud_node_pairings SET ai_id=$2,binding_version=$3 WHERE id=$1")
             .bind(r.get::<Uuid, _>("id"))
             .bind(ai)
@@ -438,7 +452,7 @@ pub(crate) async fn enqueue(tx: &mut Tx<'_>, cid: Uuid, mid: Uuid, sender: Uuid)
         if p.get::<Vec<Uuid>, _>("paused_ai").contains(&ai) {
             continue;
         }
-        let binding:Option<i64>=sqlx::query_scalar("SELECT b.version FROM cloud_ai_bindings b JOIN accounts a ON a.id=b.ai_id JOIN cloud_members m ON m.account_id=a.id AND m.conversation=$2 WHERE a.id=$1 AND a.kind='ai' AND a.status='active'").bind(ai).bind(cid).fetch_optional(&mut **tx).await?;
+        let binding:Option<i64>=sqlx::query_scalar("SELECT b.version FROM cloud_ai_bindings b JOIN accounts a ON a.id=b.ai_id JOIN cloud_members m ON m.account_id=a.id AND m.conversation=$2 WHERE a.id=$1 AND a.kind='ai' AND a.status='active' AND b.handover_state='active'").bind(ai).bind(cid).fetch_optional(&mut **tx).await?;
         if let Some(version) = binding {
             let tid = Uuid::new_v4();
             sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at,conversation_revision) VALUES($1,$2,$3,$4,1,$5,now()+interval '5 minutes',$6)").bind(tid).bind(ai).bind(cid).bind(mid).bind(version).bind(c.get::<i64,_>("revision")).execute(&mut **tx).await?;
@@ -521,7 +535,7 @@ async fn tasks(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Valu
     lock(&mut tx).await?;
     let n = authenticate(&mut tx, &h).await?;
     expire(&mut tx, n.ai).await?;
-    let rows=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN accounts a ON a.id=t.ai_id JOIN cloud_members m ON m.account_id=t.ai_id AND m.conversation=t.conversation WHERE t.ai_id=$1 AND t.binding_version=$2 AND a.status='active' AND (t.state='running' OR t.state='queued' AND t.not_before<=now() AND NOT EXISTS(SELECT 1 FROM cloud_node_tasks q WHERE q.conversation=t.conversation AND (q.state='running' OR q.state='queued' AND (q.contact_intent_id IS NULL OR q.not_before<=now()) AND q.queue_position<t.queue_position))) ORDER BY t.queue_position").bind(n.ai).bind(n.version).fetch_all(&mut *tx).await?;
+    let rows=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN accounts a ON a.id=t.ai_id JOIN cloud_members m ON m.account_id=t.ai_id AND m.conversation=t.conversation WHERE t.ai_id=$1 AND t.binding_version=$2 AND a.status='active' AND (t.state='running' OR t.state='queued' AND EXISTS(SELECT 1 FROM cloud_ai_bindings b WHERE b.ai_id=t.ai_id AND b.handover_state='active') AND t.not_before<=now() AND NOT EXISTS(SELECT 1 FROM cloud_node_tasks q WHERE q.conversation=t.conversation AND (q.state='running' OR q.state='queued' AND (q.contact_intent_id IS NULL OR q.not_before<=now()) AND q.queue_position<t.queue_position))) ORDER BY t.queue_position").bind(n.ai).bind(n.version).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!(rows.iter().map(task_value).collect::<Vec<_>>())))
 }
@@ -574,6 +588,15 @@ fn sources(rows: &[sqlx::postgres::PgRow]) -> Value {
 async fn check_conversation(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
     crate::participation::validate_task(tx, r).await?;
     let cid = r.get::<Uuid, _>("conversation");
+    if crate::crypto::enabled(tx, cid).await? {
+        let capable:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_ai_bindings WHERE ai_id=$1 AND version=$2 AND capabilities ? 'sealedV1')").bind(r.get::<Uuid,_>("ai_id")).bind(r.get::<i64,_>("binding_version")).fetch_one(&mut **tx).await?;
+        if !capable {
+            return Err(crate::crypto::required());
+        }
+        if r.get::<Option<Uuid>, _>("contact_intent_id").is_some() {
+            return Err(crate::crypto::required());
+        }
+    }
     let rev: i64 = sqlx::query_scalar("SELECT revision FROM cloud_conversations WHERE id=$1")
         .bind(cid)
         .fetch_one(&mut **tx)
@@ -622,6 +645,7 @@ async fn materials(
     if !matches!(r.get::<String, _>("state").as_str(), "queued" | "running") {
         return Err(AppError::conflict("任务已结束"));
     }
+    crate::crypto_resources::ready(&mut tx, n.ai, r.get("conversation")).await?;
     let rows = if r.get::<String, _>("state") == "running" {
         frozen_history(&mut tx, &r).await?
     } else {
@@ -657,6 +681,7 @@ async fn attachment(
     {
         return Err(AppError::conflict("任务不再有效"));
     }
+    crate::crypto_resources::ready(&mut tx, n.ai, r.get("conversation")).await?;
     let rows = if r.get::<String, _>("state") == "running" {
         frozen_history(&mut tx, &r).await?
     } else {
@@ -739,6 +764,7 @@ async fn start(
         tx.commit().await?;
         return Ok(Json(response));
     }
+    crate::handover::active(&mut tx, n.ai).await?;
     if state != "queued" {
         return Err(AppError::conflict("任务已开始或失效"));
     }
@@ -761,6 +787,7 @@ async fn start(
         e.code = "task_not_ready";
         return Err(e);
     }
+    crate::crypto_resources::ready(&mut tx, n.ai, r.get("conversation")).await?;
     let rows = if r.get::<String, _>("state") == "running" {
         frozen_history(&mut tx, &r).await?
     } else {
@@ -825,13 +852,14 @@ pub(crate) async fn finish_message(
     status: &str,
 ) -> Result<()> {
     let mid: Uuid = r.get("message_id");
-    if text.is_empty() {
+    let sealed: Option<Value> = r.get("delta_sealed");
+    if text.is_empty() && sealed.is_none() {
         sqlx::query("DELETE FROM cloud_messages WHERE id=$1 AND status='generating'")
             .bind(mid)
             .execute(&mut **tx)
             .await?;
     } else {
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3)) ON CONFLICT(id) DO UPDATE SET body=$4,status=$5,position=nextval(pg_get_serial_sequence('cloud_messages','position')),updated_at=now(),revision=cloud_messages.revision+1").bind(mid).bind(r.get::<Uuid,_>("conversation")).bind(r.get::<Uuid,_>("ai_id")).bind(text).bind(status).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name,sealed) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6) ON CONFLICT(id) DO UPDATE SET body=$4,status=$5,sealed=$6,position=nextval(pg_get_serial_sequence('cloud_messages','position')),updated_at=now(),revision=CASE WHEN $6 IS NULL THEN cloud_messages.revision+1 ELSE 1 END").bind(mid).bind(r.get::<Uuid,_>("conversation")).bind(r.get::<Uuid,_>("ai_id")).bind(text).bind(status).bind(sealed).execute(&mut **tx).await?;
     }
     Ok(())
 }
@@ -848,7 +876,7 @@ async fn result(
     let text = field(&v, "text")?;
     if !matches!(status, "completed" | "failed" | "interrupted" | "uncertain")
         || text.len() > 256 * 1024
-        || status == "completed" && text.trim().is_empty()
+        || status == "completed" && text.trim().is_empty() && v["sealed"].is_null()
     {
         return Err(AppError::bad("执行终态或正文无效"));
     }
@@ -872,6 +900,22 @@ async fn result(
         return Ok(Json(task_value(&r)));
     }
     check_sources(&mut tx, &r).await?;
+    let sealed: Option<connector::crypto::SealedEnvelope> =
+        serde_json::from_value(v["sealed"].clone()).unwrap();
+    crate::crypto::content(
+        &mut tx,
+        r.get("conversation"),
+        &crate::crypto::Actor {
+            id: n.ai,
+            node: Some(n.clone()),
+        },
+        r.get("message_id"),
+        1,
+        None,
+        text,
+        sealed.as_ref(),
+    )
+    .await?;
     if !matches!(
         r.get::<String, _>("state").as_str(),
         "running" | "uncertain"
@@ -879,6 +923,11 @@ async fn result(
     {
         return Err(AppError::conflict("任务不接受结果或已过期"));
     }
+    let r = sqlx::query("UPDATE cloud_node_tasks SET delta_sealed=$2 WHERE id=$1 RETURNING *")
+        .bind(tid)
+        .bind(sealed.as_ref().map(|e| json!(e)))
+        .fetch_one(&mut *tx)
+        .await?;
     finish_message(
         &mut tx,
         &r,
@@ -919,6 +968,9 @@ async fn reject(
     let n = authenticate(&mut tx, &h).await?;
     expire(&mut tx, n.ai).await?;
     let r = authorized_task(&mut tx, &n, tid).await?;
+    if crate::crypto::enabled(&mut tx, r.get("conversation")).await? && !message.is_empty() {
+        return Err(crate::crypto::required());
+    }
     if r.get::<Option<Uuid>, _>("result_request") == Some(rid)
         && r.get::<Option<String>, _>("result_fingerprint").as_deref() == Some(&fp)
     {
@@ -1042,6 +1094,7 @@ async fn delta(
         confirmation_id,
         sequence,
         text,
+        sealed,
     } = frame
     else {
         return Err(AppError::bad("预期草稿帧"));
@@ -1062,21 +1115,42 @@ async fn delta(
         return Err(AppError::conflict("任务不接受草稿"));
     }
     check_sources(&mut tx, &r).await?;
+    crate::crypto::content(
+        &mut tx,
+        r.get("conversation"),
+        &crate::crypto::Actor {
+            id: n.ai,
+            node: Some(n.clone()),
+        },
+        r.get("message_id"),
+        1,
+        Some(sequence),
+        &text,
+        sealed.as_ref(),
+    )
+    .await?;
     let old = r.get::<i64, _>("delta_sequence") as u64;
-    if sequence < old || sequence == old && text != r.get::<String, _>("delta_text") {
+    if sequence < old
+        || sequence == old
+            && (text != r.get::<String, _>("delta_text")
+                || sealed.as_ref().map(|e| json!(e)) != r.get::<Option<Value>, _>("delta_sealed"))
+    {
         return Err(AppError::conflict("草稿序号已过期"));
     }
     if sequence == old {
         return Ok((tid, sequence));
     }
-    sqlx::query("UPDATE cloud_node_tasks SET delta_sequence=$2,delta_text=$3 WHERE id=$1")
-        .bind(tid)
-        .bind(sequence as i64)
-        .bind(&text)
-        .execute(&mut *tx)
-        .await?;
-    if !text.is_empty() {
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name) VALUES($1,$2,$3,$4,'generating',(SELECT name FROM accounts WHERE id=$3)) ON CONFLICT(id) DO UPDATE SET body=$4,updated_at=now(),revision=cloud_messages.revision+1").bind(r.get::<Uuid,_>("message_id")).bind(r.get::<Uuid,_>("conversation")).bind(n.ai).bind(text).execute(&mut *tx).await?;
+    sqlx::query(
+        "UPDATE cloud_node_tasks SET delta_sequence=$2,delta_text=$3,delta_sealed=$4 WHERE id=$1",
+    )
+    .bind(tid)
+    .bind(sequence as i64)
+    .bind(&text)
+    .bind(sealed.as_ref().map(|e| json!(e)))
+    .execute(&mut *tx)
+    .await?;
+    if !text.is_empty() || sealed.is_some() {
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name,sealed) VALUES($1,$2,$3,$4,'generating',(SELECT name FROM accounts WHERE id=$3),$5) ON CONFLICT(id) DO UPDATE SET body=$4,sealed=$5,updated_at=now(),revision=CASE WHEN $5 IS NULL THEN cloud_messages.revision+1 ELSE 1 END").bind(r.get::<Uuid,_>("message_id")).bind(r.get::<Uuid,_>("conversation")).bind(n.ai).bind(text).bind(sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
     } else {
         sqlx::query("DELETE FROM cloud_messages WHERE id=$1 AND status='generating'")
             .bind(r.get::<Uuid, _>("message_id"))

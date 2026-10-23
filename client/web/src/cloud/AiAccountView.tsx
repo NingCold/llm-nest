@@ -5,8 +5,9 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DownloadCancelled, download, request } from "./api";
 import { fileSize } from "../social/files";
 import type { Account, Conversation, Message, Page } from "./types";
+import { projectPage, projectConversations } from "./crypto/content";
 
-export function AiAccountView({ aiId }: { aiId: string }) {
+export function AiAccountView({ aiId, operatorId }: { aiId: string; operatorId?: string }) {
   const [view, setView] = useState<{ account: Account; conversations: Conversation[] } | null>(null);
   const [active, setActive] = useState("");
   const [page, setPage] = useState<Page | null>(null);
@@ -19,7 +20,7 @@ export function AiAccountView({ aiId }: { aiId: string }) {
   const load = async () => {
     const ticket = ++sequence.current;
     setBusy(true); setError(""); setView(null); setPage(null); setActive(""); setPreview(undefined);
-    try { const result = await request<{ account: Account; conversations: Conversation[] }>(root); if (ticket === sequence.current) setView(result); }
+    try { const result = await request<{ account: Account; conversations: Conversation[] }>(root); if (operatorId || result.conversations.some(c => c.encryption || c.lastMessage?.sealed)) result.conversations = await projectConversations(result.conversations, operatorId); if (ticket === sequence.current) setView(result); }
     catch (e) { if (ticket === sequence.current) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (ticket === sequence.current) setBusy(false); }
   };
@@ -31,7 +32,7 @@ export function AiAccountView({ aiId }: { aiId: string }) {
     if (!older) setPage(null);
     try {
       const before = previous?.messages[0]?.position;
-      const result = await request<Page>(`${root}/conversations/${conversationId}/messages${before ? `?before=${before}` : ""}`);
+      const result = await projectPage(await request<Page>(`${root}/conversations/${conversationId}/messages${before ? `?before=${before}` : ""}`), view?.conversations.find(c => c.id === conversationId));
       if (ticket === sequence.current) setPage({ ...result, messages: [...result.messages, ...(previous?.messages ?? [])] });
     } catch (e) {
       if (ticket === sequence.current) { setView(null); setPage(null); setError(e instanceof Error ? e.message : String(e)); }
@@ -65,7 +66,7 @@ export function AiAccountView({ aiId }: { aiId: string }) {
         <div className="live-message-label"><strong>{message.senderName}</strong><time>{new Date(message.createdAt).toLocaleString()}</time>{message.importOrigin && <small>导入历史</small>}</div>
         {message.status === "withdrawn" ? <p className="withdrawn-message">消息已撤回</p> : <>
           {message.replyTo && <small>回复消息 {message.replyTo}</small>}
-          <MarkdownView content={message.text} />
+          {message.cryptoError ? <p role="status">加密内容暂不可读：{message.cryptoError}</p> : <MarkdownView content={message.text} />}
           {message.status === "generating" && <p>正在回复，刷新后查看最新内容。</p>}
           {["failed", "interrupted"].includes(message.status) && <p>这条回复未完成。</p>}
           {message.attachments.map(a => <div className="cloud-actions" key={a.index}>

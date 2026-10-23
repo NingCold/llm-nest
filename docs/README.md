@@ -16,7 +16,7 @@
 | 找到某项功能对应的代码 | [客户端](../client/README.md) · [服务端](../server/README.md) · [Agent](../agent/README.md) · [连接器](../connector/README.md) · [共用模块](../crates/README.md) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |
 | 理解账号、聊天和意识系统的设计 | [设计说明](design/README.md) |
-| 了解同机文字私聊、断网续聊和后续加密安排 | [同机聊天与加密执行计划](project/secure-local-plan.md)（第一批已实现并通过自动验证，实际桌面操作仍待验收）；规则见[加密方案](design/encryption.md) |
+| 了解同机文字私聊、断网续聊和加密安排 | [同机聊天与加密执行计划](project/secure-local-plan.md)；设备、恢复和资料同步规则见[加密方案](design/encryption.md)，实际验证与部署状态见[当前安排](project/current.md) |
 | 了解已做完什么、现在做什么、以后可能做什么 | [已完成](project/completed.md) · [当前安排](project/current.md) · [待办与候选](project/backlog.md) |
 | 查看云端社交、独立 AI 账号与 Agent 接入的分步安排 | [云端社交与 Agent 接入计划](project/cloud-plan.md) |
 | 检查功能，了解 Windows 和 Linux 的验证情况 | [验证指南](validation/README.md) |

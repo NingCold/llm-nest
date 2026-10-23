@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { HttpError, request, server } from "./api";
 import type { Account, ConsciousnessOperation, ConsciousnessView, Conversation, MemoryItem, MemoryKind, Message, Page, SourceRevision, SummarySettings, SummaryModelChoice } from "./types";
+import { EncryptedResourcePanel } from "./crypto/ResourcePanel";
 
 const kinds: Record<MemoryKind, string> = { preference: "偏好", fact: "事实", shared_experience: "共同经历", open_topic: "未完话题" };
 const statuses = { queued: "等待整理", running: "正在整理", ready: "可用于此 AI 的上下文", failed: "整理失败", interrupted: "已中断", stale: "来源已变化 · 暂不使用" };
@@ -176,6 +177,7 @@ export function ConsciousnessPanel({ conversation, cursor, operatorId, summaryAi
   const [summaryLocked, setSummaryLocked] = useState(false);
   const ai = ais.find(a => a.id === selected) || ais[0];
   if (!ai) return <section className="cloud-detail-section"><p>当前窗口没有 AI 成员。</p></section>;
+  if (conversation.encryption) return <section className="cloud-consciousness"><h2>加密意识资料</h2><EncryptedResourcePanel operatorId={operatorId} aiId={ai.id} kind="memory" conversation={conversation} />{summaryAiIds?.includes(ai.id) && <><EncryptedResourcePanel operatorId={operatorId} aiId={ai.id} kind="summarySettings" conversation={conversation} /><EncryptedResourcePanel operatorId={operatorId} aiId={ai.id} kind="summary" conversation={conversation} /></>}</section>;
   return <section className="cloud-consciousness"><h2>意识与记忆</h2>{ais.length > 1 && <label className="memory-owner">归属 AI<select value={ai.id} disabled={memoryLocked || summaryLocked} onChange={e => setSelected(e.target.value)}>{ais.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}<Memories key={`${conversation.id}/${ai.id}`} conversationId={conversation.id} ai={ai} cursor={cursor} operatorId={operatorId} onLock={setMemoryLocked} />{summaryAiIds?.includes(ai.id) && <Summaries key={`summary/${conversation.id}/${ai.id}`} conversationId={conversation.id} ai={ai} cursor={cursor} operatorId={operatorId} onLock={setSummaryLocked} />}{summaryError && <p role="alert" className="social-error">摘要管理权限未能读取：{summaryError}</p>}{summaryAiIds && !summaryAiIds.includes(ai.id) && <p className="memory-note">此 AI 的私有摘要仅向其管理员开放。</p>}</section>;
 }
 
@@ -186,5 +188,6 @@ export function RememberMessage({ conversation, message, cursor, operatorId }: {
   const [selected, setSelected] = useState("");
   const ai = ais.find(a => a.id === selected) || ais[0];
   if (!ai) return null;
+  if (conversation.encryption) return <><button className="text-button" onClick={() => setOpen(true)}>记住</button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="social-dialog" aria-describedby={undefined}><DialogTitle>加密保存这条消息的记忆</DialogTitle><EncryptedResourcePanel operatorId={operatorId} aiId={ai.id} kind="memory" conversation={conversation} source={{ messageId: message.id, revision: message.revision }} /></DialogContent></Dialog></>;
   return <><button className="text-button" onClick={() => setOpen(true)}>记住</button><Dialog open={open} onOpenChange={value => { if (!locked) setOpen(value); }}><DialogContent className="social-dialog" aria-describedby={undefined}><DialogTitle>让 AI 记住当前窗口的消息</DialogTitle><label>归属 AI<select disabled={locked} value={ai.id} onChange={e => setSelected(e.target.value)}>{ais.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>{open && <Memories key={ai.id} conversationId={conversation.id} ai={ai} cursor={cursor} operatorId={operatorId} message={message} onLock={setLocked} />}</DialogContent></Dialog></>;
 }

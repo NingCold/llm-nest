@@ -2,10 +2,10 @@
 use serde::{Deserialize, Serialize};
 pub mod transfer;
 
-macro_rules! dto { ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
+macro_rules! dto { ($name:ident { $( $(#[$field_meta:meta])* $field:ident : $ty:ty),* $(,)? }) => {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct $name { $(pub $field: $ty),* }
+pub struct $name { $( $(#[$field_meta])* pub $field: $ty),* }
 }; }
 dto!(PairingRequest {
     node_id: String,
@@ -66,6 +66,8 @@ pub struct NodeMessage {
     pub reply_to: Option<String>,
     pub mentions: Vec<String>,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<crate::crypto::SealedEnvelope>,
     pub revision: String,
     pub created_at: String,
     pub attachments: Vec<NodeAttachment>,
@@ -76,7 +78,10 @@ dto!(SourceRevision {
     message_id: String,
     revision: String
 });
-dto!(NodeConversation { id: String, kind: String, name: String, revision: String, members: Vec<NodeAccount> });
+dto!(NodeConversation { id: String, kind: String, name: String, revision: String, members: Vec<NodeAccount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    encryption: Option<crate::crypto::ConversationEncryption>
+});
 dto!(TaskMaterials { task: NodeTask, ai: NodeAccount, conversation: NodeConversation, reference: Option<NodeReference>, messages: Vec<NodeMessage>, sources: Vec<SourceRevision> });
 dto!(StartRequest { request_id: String, task_revision: String, conversation_revision: String, sources: Vec<SourceRevision>, configuration_revision: String, derived_sources: Vec<ScopedSource>, material_scopes: Vec<MaterialScope> });
 dto!(StartReceipt {
@@ -91,7 +96,10 @@ dto!(NodeUsage {
     output_tokens: u64,
     cached_tokens: u64
 });
-dto!(ResultRequest { request_id: String, run_id: String, message_id: String, confirmation_id: String, status: String, text: String, error_code: Option<String>, usage: Option<NodeUsage> });
+dto!(ResultRequest { request_id: String, run_id: String, message_id: String, confirmation_id: String, status: String, text: String, error_code: Option<String>, usage: Option<NodeUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sealed: Option<crate::crypto::SealedEnvelope>
+});
 dto!(RejectRequest {
     request_id: String,
     task_revision: String,
@@ -133,6 +141,8 @@ pub enum ClientFrame {
         confirmation_id: String,
         sequence: u64,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sealed: Option<crate::crypto::SealedEnvelope>,
     },
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -259,6 +269,7 @@ mod tests {
             confirmation_id: "confirmation".into(),
             status: "uncertain".into(),
             text: "partial".into(),
+            sealed: None,
             error_code: Some("transport_lost".into()),
             usage: Some(NodeUsage {
                 input_tokens: 12,

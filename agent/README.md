@@ -1,5 +1,7 @@
 # 自带 Agent
 
+加密私聊由官方 Matrix SDK 处理 Olm/Megolm，消息强制核验设备与账号 master 双签。节点解密后复用上下文与模型调用；角色、模型、记忆和每 AI 摘要以分范围密文资源同步。设备授权与恢复见[节点说明](node/README.md)，协议见[加密契约](../docs/design/crypto-contract.md)。
+
 [项目首页](../README.md) · [接入计划](../docs/project/cloud-plan.md)
 
 这里放 AI 如何准备上下文、连接模型和生成回复的代码。

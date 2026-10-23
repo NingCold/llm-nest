@@ -322,6 +322,7 @@ async fn source_edits_cancel_and_node_replacement_fences_results() {
     )
     .await;
     let frame = connector::node::ClientFrame::Delta {
+        sealed: None,
         task_id: tid.into(),
         run_id: receipt["runId"].as_str().unwrap().into(),
         message_id: receipt["messageId"].as_str().unwrap().into(),
@@ -468,6 +469,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     .await;
     outgoing
         .send(connector::node::ClientFrame::Delta {
+            sealed: None,
             task_id: tid.into(),
             run_id: receipt["runId"].as_str().unwrap().into(),
             message_id: receipt["messageId"].as_str().unwrap().into(),
@@ -726,6 +728,7 @@ async fn explicit_cancel_preserves_partial_and_revoke_invalidates_credential() {
         &f.state,
         &h,
         connector::node::ClientFrame::Delta {
+            sealed: None,
             task_id: tid.into(),
             run_id: receipt["runId"].as_str().unwrap().into(),
             message_id: receipt["messageId"].as_str().unwrap().into(),
@@ -1054,6 +1057,7 @@ async fn groups_roles_versions_block_and_ai_disable_do_not_replay() {
         &f.state,
         &node_headers,
         connector::node::ClientFrame::Delta {
+            sealed: None,
             task_id: tid.into(),
             run_id: receipt["runId"].as_str().unwrap().into(),
             message_id: receipt["messageId"].as_str().unwrap().into(),

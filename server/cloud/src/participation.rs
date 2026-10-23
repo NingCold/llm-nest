@@ -292,6 +292,7 @@ async fn create(
     nodes::lock(&mut tx).await?;
     permission(&mut tx, cid, p.id).await?;
     chat::writable(&mut tx, cid).await?;
+    crate::crypto::plaintext(&mut tx, cid).await?;
     ensure(&mut tx, cid).await?;
     let iid = if let Some(iid) = receipt(&mut tx, p.id, cid, &v, "create").await? {
         iid
@@ -552,7 +553,7 @@ pub(crate) async fn automatic(
     .fetch_optional(&mut **tx)
     .await?;
     let cursor_ai = running_ai.or(p.get::<Option<Uuid>, _>("last_ai"));
-    let candidate=sqlx::query("SELECT a.id,b.version,c.revision FROM cloud_members m JOIN accounts a ON a.id=m.account_id JOIN cloud_ai_bindings b ON b.ai_id=a.id JOIN cloud_conversations c ON c.id=m.conversation WHERE m.conversation=$1 AND a.kind='ai' AND a.status='active' AND NOT (a.id=ANY($2)) AND ($3::uuid IS NULL OR a.id<>$3) ORDER BY CASE WHEN a.id>$3 THEN 0 ELSE 1 END,a.id LIMIT 1").bind(cid).bind(p.get::<Vec<Uuid>,_>("paused_ai")).bind(cursor_ai).fetch_optional(&mut **tx).await?;
+    let candidate=sqlx::query("SELECT a.id,b.version,c.revision FROM cloud_members m JOIN accounts a ON a.id=m.account_id JOIN cloud_ai_bindings b ON b.ai_id=a.id JOIN cloud_conversations c ON c.id=m.conversation WHERE m.conversation=$1 AND a.kind='ai' AND a.status='active' AND b.handover_state='active' AND NOT (a.id=ANY($2)) AND ($3::uuid IS NULL OR a.id<>$3) ORDER BY CASE WHEN a.id>$3 THEN 0 ELSE 1 END,a.id LIMIT 1").bind(cid).bind(p.get::<Vec<Uuid>,_>("paused_ai")).bind(cursor_ai).fetch_optional(&mut **tx).await?;
     if let Some(a) = candidate {
         let tid = Uuid::new_v4();
         let inserted=sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at,conversation_revision,automatic,not_before,policy_revision,input_ids,trigger) SELECT $1,$2,$3,$4,revision,$5,$6,$7,true,$8,$9,ARRAY[$4],jsonb_build_object('type','message','messageId',$4::text,'inputIds',ARRAY[$4]) FROM cloud_messages WHERE id=$4 ON CONFLICT(ai_id,input_id) DO NOTHING").bind(tid).bind(a.get::<Uuid,_>("id")).bind(cid).bind(mid).bind(a.get::<i64,_>("version")).bind(now+Duration::minutes(5)).bind(a.get::<i64,_>("revision")).bind(now+Duration::milliseconds(800)).bind(p.get::<i64,_>("revision")).execute(&mut **tx).await?;
@@ -622,7 +623,14 @@ pub async fn tick(pool: &sqlx::PgPool, now: DateTime<Utc>) -> Result<()> {
             continue;
         }
         let due = i.get::<DateTime<Utc>, _>("due_at");
-        let paused = p.get::<bool, _>("paused")
+        let draining: bool = sqlx::query_scalar(
+            "SELECT handover_state<>'active' FROM cloud_ai_bindings WHERE ai_id=$1",
+        )
+        .bind(i.get::<Uuid, _>("ai_id"))
+        .fetch_one(&mut *tx)
+        .await?;
+        let paused = draining
+            || p.get::<bool, _>("paused")
             || p.get::<Vec<Uuid>, _>("paused_ai").contains(&i.get("ai_id"));
         let quiet = p
             .get::<Option<DateTime<Utc>>, _>("quiet_until")

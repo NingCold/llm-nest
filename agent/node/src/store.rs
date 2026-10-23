@@ -64,6 +64,8 @@ pub struct PendingTask {
 }
 pub struct Store {
     pub db: Connection,
+    pub crypto:
+        std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<crate::crypto::Session>>>,
 }
 #[derive(Debug)]
 pub struct BudgetDenied(pub &'static str);
@@ -86,7 +88,10 @@ CREATE TABLE IF NOT EXISTS automatic_budget(ai TEXT NOT NULL,cid TEXT NOT NULL,d
 CREATE TABLE IF NOT EXISTS model_reservations(task TEXT PRIMARY KEY,day TEXT NOT NULL,ai TEXT NOT NULL,cid TEXT,tokens INTEGER NOT NULL CHECK(tokens>=0));
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
         crate::consciousness::initialize(&db)?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            crypto: Default::default(),
+        })
     }
     pub fn bind(&self, binding: &Binding, profile: &Profile) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;

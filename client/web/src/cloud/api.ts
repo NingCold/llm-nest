@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { IS_DESKTOP } from "@/lib/desktop";
 export class DownloadCancelled extends Error {}
+export class ConnectionError extends Error {}
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -27,6 +28,7 @@ export let server = IS_DESKTOP
 let generation = 0;
 export function invalidate() {
   generation++;
+  window.dispatchEvent(new Event("cloud-crypto-lock"));
 }
 export async function configure(url: string) {
   await invoke("cloud_set_server", { url });
@@ -56,7 +58,7 @@ export async function request<T = unknown>(
       method,
       path: `/api${path}`,
       body,
-    });
+    }).catch(error => { throw new ConnectionError(String(error)); });
     status = r.status;
     text = r.body;
   } else {
@@ -68,7 +70,7 @@ export async function request<T = unknown>(
         ...(method !== "GET" ? { "X-LLMN-Client": "1" } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-    });
+    }).catch(error => { throw new ConnectionError(error instanceof Error ? error.message : String(error)); });
     status = r.status;
     text = await r.text();
   }

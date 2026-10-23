@@ -3,6 +3,9 @@ import type { ReferenceInput, SendInput } from "./live-types"
 
 export interface Draft<R = ReferenceInput> {
   route?: "local";
+  messageId?: string;
+  sealed?: import("../cloud/crypto/content").Sealed;
+  keyMessages?: Record<string, unknown>[];
   text: string
   requestId: string | null
   images?: DraftImage[]

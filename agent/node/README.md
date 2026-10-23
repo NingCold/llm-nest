@@ -58,6 +58,12 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 
 桌面托管使用 `run-managed <directory>`。取得目录锁、校验并准备完成后，输出 `{type:"ready",instanceId}`；调用方收到这行确认后再查询状态。`status <directory>` 输出 `{type:"status",running,instanceId,aiIds}`，未运行时 instanceId 为 null，aiIds 只读查询已配对账号。`stop <directory>` 请求停止当前托管实例，随后可用 status 确认退出；普通命令行 run 不接受这种停止。关闭桌面不影响独立托管进程，系统休眠或关机会使本机 AI 离线。
 
+### 加密设备与资料
+
+新私聊可显式启用 `sealedV1`。节点使用官方 Matrix SDK，验证设备与账号 master 双签后解密材料；角色、模型、记忆和每 AI 摘要按范围保存密文资源 CAS，离线待同步，当前绑定节点应用后另发确认。云端不保管恢复解密材料或模型 Key。
+
+使用 `crypto-init <directory> <AI id>` 建立身份，`crypto-status` 查看状态；`crypto-trust` 需独立核对账号 master、设备 Ed25519 和 Curve25519 指纹。`crypto-export-recovery` 保存私有恢复文件，换节点用 `crypto-recover` 恢复；仅登录或重新配对不能获得历史解密能力。向新管理员分享历史前，先确认当前管理员身份与设备信任，再用 `crypto-authorize-admin` 明确授权。恢复文件不提交、分享或交给服务管理员。参数与传输契约见[加密契约](../../docs/design/crypto-contract.md)，联调状态见[当前安排](../../docs/project/current.md)。
+
 ### 同机文字私聊
 
 `run-managed` 还提供只供桌面原生层使用的同机通道：Windows 使用命名管道，Unix 使用本机 socket，不监听公网或局域网端口。通道地址和认证 token 留在受限节点目录；模型 Key 和节点凭据不交给网页。普通 `run` 仍只运行原有云端任务，不开放这个通道。
@@ -66,7 +72,7 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 
 真人消息先在 `node.sqlite` 落盘，再返回发送确认。模型开始前保存执行材料和预算，定期保存片段；同一窗口的云端任务和本机回复共用串行控制，所有调用共用节点次数、token 预算与社交并发槽。停止或重启保留中断片段，已开始的调用不会自动重做。联网后后台补传已有结果，云端接纳历史不会再次启动模型；网络失败保留待同步，权限、来源或云端历史冲突则保留本机记录并明确提示冲突。
 
-首批只支持普通文字，不支持附件、结构化提及、回复目标和群话题引用。此功能没有实现端到端加密，也不提供局域网连接或完整离线社交。桌面重启仍须在线重新登录，之后可恢复该账号已保存的同机窗口。
+首批只支持普通文字，不支持附件、结构化提及、回复目标和群话题引用。第二批为显式启用 sealedV1 的私聊使用与云端相同的密文封装，Olm 密钥投递已通过真实 Windows IPC 验证；未启用窗口仍使用明文路径。不提供局域网连接或完整离线社交。桌面重启仍须在线重新登录，之后可恢复该账号已保存的同机窗口。
 
 AI 资料迁移使用独立 JSON 包，不复制节点目录：
 

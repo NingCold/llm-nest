@@ -654,6 +654,7 @@ mod tests {
                 kind: "ai".into(),
             },
             conversation: NodeConversation {
+                encryption: None,
                 id: conversation,
                 kind: "direct".into(),
                 name: String::new(),
@@ -667,6 +668,7 @@ mod tests {
             },
             messages: vec![NodeMessage {
                 import_origin: None,
+                sealed: None,
                 id: trigger,
                 position: "1".into(),
                 sender_id: peer,

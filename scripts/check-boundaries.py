@@ -14,11 +14,13 @@ def main():
     packages = {p["name"]: p for p in metadata["packages"]}
     forbidden = {
         "connector": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
-                      "social-feature", "web-server", "cloud-server", "tauri-frontend"},
+                      "social-feature", "web-server", "cloud-server", "tauri-frontend", "llmn-crypto"},
         "builtin-agent": {"runtime", "storage", "connector", "social-feature",
                           "web-server", "cloud-server", "tauri-frontend"},
         "cloud-server": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
-                         "social-feature", "web-server", "tauri-frontend"},
+                         "social-feature", "web-server", "tauri-frontend", "llmn-crypto"},
+        "llmn-crypto": {"runtime", "storage", "connector", "ai-client", "builtin-agent",
+                        "tools", "social-feature", "web-server", "cloud-server", "tauri-frontend"},
         "agent-node": {"runtime", "storage", "social-feature", "web-server",
                        "cloud-server", "tauri-frontend"},
     }

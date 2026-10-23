@@ -73,6 +73,13 @@ pub fn migrator() -> sqlx_core::migrate::Migrator {
                 include_str!("../migrations/0009_direct.sql").into(),
                 false,
             ),
+            Migration::new(
+                10,
+                "crypto".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/0010_crypto.sql").into(),
+                false,
+            ),
         ]
         .into(),
         ..Migrator::DEFAULT

@@ -43,7 +43,7 @@ async fn operation(
                 .find(|b| b.ai == ai_id)
                 .ok_or_else(|| anyhow::anyhow!("AI is not bound to this node"))?;
             let api = client(config, &binding.secret)?;
-            let bootstrap = api
+            let mut bootstrap = api
                 .direct_prepare(&DirectPrepare {
                     grant: grant.clone(),
                 })
@@ -55,6 +55,8 @@ async fn operation(
                 "direct_owner_or_binding_mismatch"
             );
             consciousness::sync(&api, store, &ai_id).await?;
+            crate::crypto::sync(&api, store, config, binding).await?;
+            crate::crypto::decrypt_bootstrap(&api, store, &mut bootstrap).await?;
             direct::cache(store, owner, &grant, &bootstrap)?;
             bootstrap.conversation.id
         }
@@ -63,8 +65,42 @@ async fn operation(
             conversation_id,
             request_id,
             text,
+            sealed,
+            message_id,
+            key_messages,
         } => {
-            direct::send(store, owner, &conversation_id, &request_id, &text)?;
+            direct::view(store, owner, &conversation_id)?;
+            let (_, ai, _, _) = direct::binding(store, &conversation_id)?;
+            ensure!(
+                !crate::crypto::draining(store, &ai)?,
+                "node handover is draining"
+            );
+            let binding = bindings
+                .iter()
+                .find(|b| b.ai == ai)
+                .ok_or_else(|| anyhow::anyhow!("AI is not bound"))?;
+            let api = client(config, &binding.secret)?;
+            let input = crate::crypto::direct_input(
+                &api,
+                store,
+                &ai,
+                &conversation_id,
+                owner,
+                &text,
+                sealed,
+                message_id,
+                key_messages,
+            )
+            .await?;
+            let decoded = input.as_ref().map(|m| m.text.as_str()).unwrap_or(&text);
+            direct::send_message(
+                store,
+                owner,
+                &conversation_id,
+                &request_id,
+                decoded,
+                input.clone(),
+            )?;
             conversation_id
         }
         LocalOperation::Stop { conversation_id } => {
@@ -99,7 +135,7 @@ async fn handle_connection(
     sync_windows: &direct::Windows,
 ) -> Result<()> {
     let request = tokio::time::timeout(Duration::from_secs(10), connection.receive()).await??;
-    let reply = match operation(config, store, bindings, sync_windows, request).await {
+    let mut reply = match operation(config, store, bindings, sync_windows, request).await {
         Ok(reply) => reply,
         Err(error) => LocalReply::Error {
             error: DirectError {
@@ -108,6 +144,24 @@ async fn handle_connection(
             },
         },
     };
+    if let LocalReply::View { view } = &mut reply
+        && let Some(encryption) = &view.conversation.encryption
+    {
+        let activation = encryption.activation_position.parse::<u64>()?;
+        view.messages.retain(|row| {
+            row.message.sealed.is_some()
+                || row
+                    .message
+                    .position
+                    .parse::<u64>()
+                    .is_ok_and(|position| position <= activation)
+        });
+        for row in &mut view.messages {
+            if row.message.sealed.is_some() {
+                row.message.text.clear();
+            }
+        }
+    }
     connection.respond(&reply).await?;
     Ok(())
 }
@@ -131,11 +185,15 @@ async fn generate(
 ) -> Result<()> {
     let mut execution = direct::Execution::default();
     let mut text = String::new();
+    let mut sequence = 0u64;
     let outcome = async {
         let (_, ai, _, bootstrap) = direct::binding(store, cid)?;
         let binding = bindings.iter().find(|b| b.ai == ai).ok_or_else(|| anyhow::anyhow!("AI is not bound to this node"))?;
         ensure!(bootstrap.binding_version == binding.version, "direct_binding_changed");
+        ensure!(!crate::crypto::draining(store,&ai)?,"node handover is draining");
+        if bootstrap.conversation.encryption.is_some(){crate::crypto::ensure_ready(store,&ai)?;}
         let api = client(config, &binding.secret)?;
+        crate::crypto::prepare_direct_run(store,&ai,cid,request_id,&bootstrap.conversation.members).await?;
         let profile = store.profile(&ai)?;
         let (human, _, _) = direct::turn(store, request_id)?;
         let view = direct::view(store, owner, cid)?;
@@ -172,7 +230,10 @@ async fn generate(
                 biased;
                 _ = checks.tick() => {
                     current(store, request_id, &ai, &execution)?;
-                    direct::save(store, request_id, &text, "running", &execution)?;
+                    direct::save(store, request_id, &text, "running", &execution,None)?;
+                    sequence+=1;
+                    let sealed=crate::crypto::direct_output(&api,store,&ai,cid,request_id,Some(sequence)).await?;
+                    direct::save(store,request_id,&text,"running",&execution,sealed)?;
                 },
                 _ = tokio::time::sleep_until(deadline) => anyhow::bail!("generation_timeout"),
                 chunk = stream.next() => match chunk {
@@ -192,6 +253,19 @@ async fn generate(
     }.await;
     let (state, error) = crate::generation_outcome(outcome, &text);
     execution.error = error.map(str::to_string);
+    let (_, ai, _, _) = direct::binding(store, cid)?;
+    let binding = bindings.iter().find(|b| b.ai == ai).unwrap();
+    let api = client(config, &binding.secret)?;
+    direct::save(store, request_id, &text, "running", &execution, None)?;
+    let sealed = crate::crypto::direct_output(&api, store, &ai, cid, request_id, None).await;
+    let sealed = match sealed {
+        Ok(value) => value,
+        Err(error) => {
+            execution.error = Some("encryption_failed".into());
+            direct::save(store, request_id, &text, "uncertain", &execution, None)?;
+            return Err(error);
+        }
+    };
     direct::save(
         store,
         request_id,
@@ -202,6 +276,7 @@ async fn generate(
             state
         },
         &execution,
+        sealed,
     )
 }
 

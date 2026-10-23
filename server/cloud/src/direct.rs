@@ -105,6 +105,7 @@ async fn grant(
         version,
     };
     permitted(&mut tx, &a, true).await?;
+    crate::handover::active(&mut tx, a.ai).await?;
     let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_ai_bindings WHERE ai_id=$1 AND node_id=$2 AND version=$3 AND token_hash IS NOT NULL)").bind(ai).bind(uid(&v.node_id)?).bind(version).fetch_one(&mut *tx).await?;
     if !valid {
         return Err(conflict());
@@ -136,6 +137,7 @@ async fn prepare(
     nodes::lock(&mut tx).await?;
     let a = access(&mut tx, &h, &v.grant).await?;
     permitted(&mut tx, &a, true).await?;
+    crate::handover::active(&mut tx, a.ai).await?;
     let mut rows=sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND status IN ('committed','failed','interrupted') AND NOT withdrawn ORDER BY position DESC LIMIT 65").bind(a.cid).fetch_all(&mut *tx).await?;
     let has_more = rows.len() > 64;
     rows.truncate(64);
@@ -227,6 +229,14 @@ async fn sync(
         return Ok(Json(receipt(&mut tx, a.cid, r.get("message_ids")).await?));
     }
     permitted(&mut tx, &a, true).await?;
+    let ready: bool =
+        sqlx::query_scalar("SELECT handover_state='ready' FROM cloud_ai_bindings WHERE ai_id=$1")
+            .bind(a.ai)
+            .fetch_one(&mut *tx)
+            .await?;
+    if ready {
+        return Err(AppError::conflict("节点已声明移交就绪，不能新增补传"));
+    }
     let revision: i64 = sqlx::query_scalar("SELECT revision FROM cloud_conversations WHERE id=$1")
         .bind(a.cid)
         .fetch_one(&mut *tx)
@@ -273,7 +283,7 @@ async fn sync(
         if (sender != a.ai && !human)
             || human == awaiting
             || m.text.len() > 256 * 1024
-            || (human || m.status == "committed") && m.text.trim().is_empty()
+            || (human || m.status == "committed") && m.text.trim().is_empty() && m.sealed.is_none()
             || !matches!(m.status.as_str(), "committed" | "failed" | "interrupted")
             || human
                 && (m.status != "committed"
@@ -285,6 +295,25 @@ async fn sync(
         {
             return Err(AppError::bad("直连消息顺序、执行标识或正文无效"));
         }
+        let actor = crate::crypto::Actor {
+            id: sender,
+            node: if human {
+                None
+            } else {
+                Some(crate::nodes::authenticate(&mut tx, &h).await?)
+            },
+        };
+        crate::crypto::content(
+            &mut tx,
+            a.cid,
+            &actor,
+            mid,
+            1,
+            None,
+            &m.text,
+            m.sealed.as_ref(),
+        )
+        .await?;
         let created = m
             .created_at
             .parse::<chrono::DateTime<chrono::Utc>>()
@@ -300,7 +329,7 @@ async fn sync(
         {
             return Err(conflict());
         }
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,created_at,updated_at,sender_name,reply_to) VALUES($1,$2,$3,$4,$5,$6,$6,(SELECT name FROM accounts WHERE id=$3),$7)").bind(mid).bind(a.cid).bind(sender).bind(&m.text).bind(&m.status).bind(created).bind(reply).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,created_at,updated_at,sender_name,reply_to,sealed) VALUES($1,$2,$3,$4,$5,$6,$6,(SELECT name FROM accounts WHERE id=$3),$7,$8)").bind(mid).bind(a.cid).bind(sender).bind(&m.text).bind(&m.status).bind(created).bind(reply).bind(m.sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
         if let Some(run) = &m.run_id {
             let run = uid(run)?;
             if sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM cloud_direct_runs WHERE run_id=$1 UNION ALL SELECT 1 FROM cloud_node_tasks WHERE run_id=$1)").bind(run).fetch_one(&mut *tx).await? {return Err(conflict());}
@@ -420,6 +449,7 @@ mod tests {
                 DirectMessage {
                     id: Uuid::new_v4().to_string(),
                     sender_id: f.users[0].0.to_string(),
+                    sealed: None,
                     text: "hello".into(),
                     status: "committed".into(),
                     created_at: chrono::Utc::now().to_rfc3339(),
@@ -431,6 +461,7 @@ mod tests {
                 DirectMessage {
                     id: Uuid::new_v4().to_string(),
                     sender_id: ai.to_string(),
+                    sealed: None,
                     text: "reply".into(),
                     status: "committed".into(),
                     created_at: chrono::Utc::now().to_rfc3339(),

@@ -127,6 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 confirmation_id: receipt.confirmation_id,
                                 status: "completed".into(),
                                 text: demonstration,
+                                sealed: None,
                                 error_code: None,
                                 usage: None,
                             },

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Account, Message, Page } from "./types";
 export interface LocalView {
+  keyMessages?: Record<string, unknown>[];
   ai: Account;
   human: Account;
   conversation: { id: string };
@@ -12,7 +13,7 @@ export interface LocalView {
 }
 export const localView = (conversationId: string) => invoke<LocalView>("local_chat_view", { conversationId });
 export const prepareLocal = (conversationId: string, aiId: string) => invoke<LocalView>("local_chat_prepare", { conversationId, aiId });
-export const sendLocal = (conversationId: string, requestId: string, text: string) => invoke<LocalView>("local_chat_send", { conversationId, requestId, text });
+export const sendLocal = (conversationId: string, requestId: string, text: string, sealed?: import("./crypto/content").Sealed, messageId?: string, keyMessages?: Record<string, unknown>[]) => invoke<LocalView>("local_chat_send", { conversationId, requestId, text, ...(sealed ? { sealed, messageId, keyMessages: keyMessages ?? [] } : {}) });
 export const syncLocal = (conversationId: string) => invoke<LocalView>("local_chat_sync", { conversationId });
 export const stopLocal = (conversationId: string) => invoke<LocalView>("local_chat_stop", { conversationId });
 export function localPage(view: LocalView): Page {

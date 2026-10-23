@@ -1,0 +1,12 @@
+ALTER TABLE cloud_messages ADD COLUMN context_reference jsonb;
+CREATE TABLE cloud_reference_sources(message_id uuid NOT NULL REFERENCES cloud_messages(id) ON DELETE CASCADE, conversation uuid NOT NULL REFERENCES cloud_conversations(id), source_id uuid NOT NULL REFERENCES cloud_messages(id), source_revision bigint NOT NULL, PRIMARY KEY(message_id,source_id));
+CREATE INDEX cloud_reference_source ON cloud_reference_sources(source_id);
+CREATE INDEX cloud_reference_group ON cloud_reference_sources(conversation);
+CREATE TABLE cloud_source_changes(id bigserial PRIMARY KEY, ai_id uuid NOT NULL REFERENCES accounts(id), conversation uuid NOT NULL REFERENCES cloud_conversations(id), message_id uuid, reason text NOT NULL);
+CREATE INDEX cloud_source_changes_ai ON cloud_source_changes(ai_id,id);
+CREATE TABLE cloud_material_epochs(ai_id uuid NOT NULL REFERENCES accounts(id), conversation uuid NOT NULL REFERENCES cloud_conversations(id), revision uuid NOT NULL, PRIMARY KEY(ai_id,conversation));
+ALTER TABLE cloud_node_tasks ADD COLUMN derived_sources jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cloud_node_tasks ADD COLUMN material_scopes jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cloud_node_tasks ADD COLUMN reference jsonb;
+CREATE TABLE cloud_summary_calls(id uuid PRIMARY KEY, ai_id uuid NOT NULL REFERENCES accounts(id), request_id uuid NOT NULL, fingerprint text NOT NULL, binding_version bigint NOT NULL, conversation uuid NOT NULL REFERENCES cloud_conversations(id), conversation_revision bigint NOT NULL, sources jsonb NOT NULL, settings_revision text NOT NULL, material_scope jsonb NOT NULL, confirmation_id uuid NOT NULL UNIQUE, state text NOT NULL DEFAULT 'running', usage jsonb, error_code text, started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz, UNIQUE(ai_id,request_id));
+ALTER TABLE cloud_summary_calls ADD COLUMN finish_fingerprint text;

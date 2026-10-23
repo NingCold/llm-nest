@@ -5,6 +5,7 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
   }
@@ -12,11 +13,13 @@ export class HttpError extends Error {
 function responseError(status: number, text: string) {
   if (status === 401) window.dispatchEvent(new Event("cloud-unauthorized"));
   let message = text;
+  let code: string | undefined;
   try {
     const body = JSON.parse(text);
     message = body.message || body.error || text;
+    code = body.code;
   } catch {}
-  return new HttpError(status, message);
+  return new HttpError(status, message, code);
 }
 export let server = IS_DESKTOP
   ? localStorage.getItem("llmn-cloud-server") || ""

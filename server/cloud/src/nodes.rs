@@ -20,6 +20,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(crate::consciousness::routes())
         .route("/ai", get(managed).post(create))
         .route("/ai/{id}/status", put(status))
         .route("/ai/{id}/node", post(bind))
@@ -75,12 +76,12 @@ pub(crate) async fn lock(tx: &mut Tx<'_>) -> Result<()> {
     Ok(())
 }
 #[derive(Clone)]
-struct Node {
-    ai: Uuid,
-    node: Uuid,
-    version: i64,
+pub(crate) struct Node {
+    pub(crate) ai: Uuid,
+    pub(crate) node: Uuid,
+    pub(crate) version: i64,
 }
-async fn authenticate(tx: &mut Tx<'_>, h: &HeaderMap) -> Result<Node> {
+pub(crate) async fn authenticate(tx: &mut Tx<'_>, h: &HeaderMap) -> Result<Node> {
     let row =
         sqlx::query("SELECT ai_id,node_id,version FROM cloud_ai_bindings WHERE token_hash=$1")
             .bind(hash(bearer(h)?))
@@ -93,7 +94,7 @@ async fn authenticate(tx: &mut Tx<'_>, h: &HeaderMap) -> Result<Node> {
         version: row.get(2),
     })
 }
-async fn admin(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<()> {
+pub(crate) async fn admin(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<()> {
     if !sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM cloud_ai_admins WHERE ai_id=$1 AND administrator=$2)",
     )
@@ -411,7 +412,7 @@ pub(crate) async fn conversation_changed(tx: &mut Tx<'_>, cid: Uuid, reason: &st
     let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE conversation=$1 AND state IN ('queued','running','uncertain')").bind(cid).fetch_all(&mut **tx).await?;
     invalidate_rows(tx, rows, reason).await
 }
-async fn invalidate_rows(
+pub(crate) async fn invalidate_rows(
     tx: &mut Tx<'_>,
     rows: Vec<sqlx::postgres::PgRow>,
     reason: &str,
@@ -434,11 +435,12 @@ async fn invalidate_rows(
     Ok(())
 }
 async fn invalidate_ai(tx: &mut Tx<'_>, ai: Uuid, reason: &str) -> Result<()> {
+    sqlx::query("UPDATE cloud_summary_calls SET state='stale',error_code=$2,finished_at=now() WHERE ai_id=$1 AND state='running'").bind(ai).bind(reason).execute(&mut **tx).await?;
     let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE ai_id=$1 AND state IN ('queued','running','uncertain')").bind(ai).fetch_all(&mut **tx).await?;
     invalidate_rows(tx, rows, reason).await
 }
 pub(crate) async fn source_changed(tx: &mut Tx<'_>, mid: Uuid) -> Result<()> {
-    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE state IN ('queued','running','uncertain') AND (input_id=$1 OR EXISTS(SELECT 1 FROM cloud_messages m WHERE m.id=cloud_node_tasks.input_id AND m.reply_to=$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements(sources) s WHERE s->>'messageId'=$1::text))").bind(mid).fetch_all(&mut **tx).await?;
+    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE state IN ('queued','running','uncertain') AND (input_id=$1 OR reference->>'messageId'=$1::text OR EXISTS(SELECT 1 FROM cloud_messages m WHERE m.id=cloud_node_tasks.input_id AND m.reply_to=$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements(sources || derived_sources) s WHERE s->>'messageId'=$1::text))").bind(mid).fetch_all(&mut **tx).await?;
     invalidate_rows(tx, rows, "source_changed").await
 }
 async fn expire(tx: &mut Tx<'_>, ai: Uuid) -> Result<()> {
@@ -534,7 +536,14 @@ async fn frozen_history(
 }
 async fn check_sources(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
     frozen_history(tx, r).await?;
-    Ok(())
+    let reference = crate::consciousness::task_reference(tx, r, true).await?;
+    let derived =
+        serde_json::from_value::<Vec<connector::node::ScopedSource>>(r.get("derived_sources"))
+            .unwrap();
+    let scopes =
+        serde_json::from_value::<Vec<connector::node::MaterialScope>>(r.get("material_scopes"))
+            .unwrap();
+    crate::consciousness::task_materials_valid(tx, r, &derived, &scopes, reference.as_ref()).await
 }
 async fn materials(
     State(s): State<Arc<AppState>>,
@@ -556,22 +565,11 @@ async fn materials(
     };
     let src = sources(&rows);
     let cid: Uuid = r.get("conversation");
-    let c = sqlx::query("SELECT kind,name,revision FROM cloud_conversations WHERE id=$1")
-        .bind(cid)
-        .fetch_one(&mut *tx)
-        .await?;
-    let members: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT account_id FROM cloud_members WHERE conversation=$1 ORDER BY account_id",
-    )
-    .bind(cid)
-    .fetch_all(&mut *tx)
-    .await?;
-    let mut accounts = vec![];
-    for member in members {
-        accounts.push(account(&mut tx, member).await?);
-    }
-    let messages:Vec<Value>=rows.iter().map(|m|json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"text":m.get::<String,_>("body"),"revision":m.get::<i64,_>("revision").to_string(),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments")})).collect();
-    let out = json!({"task":task_value(&r),"ai":account(&mut tx,n.ai).await?,"conversation":{"id":cid,"kind":c.get::<String,_>("kind"),"name":c.get::<String,_>("name"),"revision":c.get::<i64,_>("revision").to_string(),"members":accounts},"messages":messages,"sources":src});
+    let conversation = crate::consciousness::node_conversation(&mut tx, cid).await?;
+    let reference =
+        crate::consciousness::task_reference(&mut tx, &r, r.get::<String, _>("state") == "running")
+            .await?;
+    let out = json!({"task":task_value(&r),"ai":account(&mut tx,n.ai).await?,"conversation":conversation,"messages":rows.iter().map(crate::consciousness::node_message).collect::<Vec<_>>(),"sources":src,"reference":reference});
     tx.commit().await?;
     Ok(Json(out))
 }
@@ -600,6 +598,21 @@ async fn attachment(
     } else {
         history(&mut tx, &r).await?
     };
+    let mut rows = rows;
+    if let Some(reference) =
+        crate::consciousness::task_reference(&mut tx, &r, r.get::<String, _>("state") == "running")
+            .await?
+    {
+        for source in reference["sources"].as_array().unwrap() {
+            let mid: Uuid = source["messageId"].as_str().unwrap().parse().unwrap();
+            rows.push(
+                sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
+                    .bind(mid)
+                    .fetch_one(&mut *tx)
+                    .await?,
+            );
+        }
+    }
     let m = rows
         .iter()
         .find(|m| m.get::<Uuid, _>("id") == mid)
@@ -693,6 +706,21 @@ async fn start(
         e.code = "conversation_busy";
         return Err(e);
     }
+    let reference = crate::consciousness::task_reference(&mut tx, &r, false).await?;
+    let derived: Vec<connector::node::ScopedSource> =
+        serde_json::from_value(v["derivedSources"].clone()).unwrap();
+    let scopes: Vec<connector::node::MaterialScope> =
+        serde_json::from_value(v["materialScopes"].clone()).unwrap();
+    crate::consciousness::task_materials_valid(&mut tx, &r, &derived, &scopes, reference.as_ref())
+        .await?;
+    let used_reference = reference.filter(|reference| {
+        reference["required"] == true
+            || derived
+                .iter()
+                .any(|s| s.conversation_id == reference["conversation"]["id"])
+    });
+    let reference_metadata=used_reference.map(|reference|json!({"messageId":reference["messageId"],"revision":reference["revision"],"required":reference["required"]}));
+    sqlx::query("UPDATE cloud_node_tasks SET derived_sources=$2,material_scopes=$3,reference=$4 WHERE id=$1").bind(tid).bind(&v["derivedSources"]).bind(&v["materialScopes"]).bind(reference_metadata).execute(&mut *tx).await?;
     let r=sqlx::query("UPDATE cloud_node_tasks SET state='running',revision=revision+1,start_request=$2,start_fingerprint=$3,sources=$4,snapshot_id=$5,run_id=$6,message_id=$7,confirmation_id=$8,started_at=now() WHERE id=$1 RETURNING *").bind(tid).bind(rid).bind(fp).bind(&v["sources"]).bind(config).bind(Uuid::new_v4()).bind(Uuid::new_v4()).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?;
     let response = start_receipt(&r);
     publish(&mut tx, tid).await?;
@@ -858,6 +886,7 @@ async fn cancel(
 pub async fn recover(pool: &sqlx::PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
     lock(&mut tx).await?;
+    sqlx::query("UPDATE cloud_summary_calls SET state='interrupted',finished_at=now() WHERE state='running'").execute(&mut *tx).await?;
     sqlx::query("UPDATE cloud_ai_bindings SET connection_id=NULL")
         .execute(&mut *tx)
         .await?;
@@ -978,7 +1007,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
     let valid = match hello {
         Ok(Some(Ok(Message::Text(text)))) => {
-            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:2,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
+            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:3,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
         }
         _ => false,
     };
@@ -1004,27 +1033,37 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     let Ok(mut cursor) = initialized else {
         return;
     };
+    let (relay_sender, mut relay_receiver) = tokio::sync::mpsc::channel(32);
+    s.relay.register(n.ai, n.version, connection, relay_sender);
     if send_frame(
         &mut socket,
         ServerFrame::Ready {
-            protocol_version: 2,
+            protocol_version: 3,
         },
     )
     .await
     .is_err()
     {
+        s.relay.disconnect(n.ai, connection);
         return;
     }
+
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut ticks = 0;
     let mut last_received = tokio::time::Instant::now();
     let mut last_received_at = chrono::Utc::now();
     loop {
         tokio::select! {
+            frame=relay_receiver.recv()=>{match frame {Some(frame)=>if send_frame(&mut socket,frame).await.is_err(){break;},None=>break,}}
             incoming=socket.recv()=>{
                 match incoming {
                     Some(Ok(Message::Text(text)))=>{
-                        let result=match serde_json::from_str::<ClientFrame>(&text){Ok(frame)=>delta(&s,&h,frame).await,Err(_)=>Err(AppError::bad("节点帧格式无效"))};
+                        let parsed=serde_json::from_str::<ClientFrame>(&text);
+                        if let Ok(ClientFrame::ConsciousnessResponse{relay_id,request_id,view,error})=parsed {
+                            if let Ok(relay)=relay_id.parse(){s.relay.response(n.ai,n.version,connection,relay,json!({"requestId":request_id,"view":view,"error":error}));}
+                            last_received=tokio::time::Instant::now();last_received_at=chrono::Utc::now();continue;
+                        }
+                        let result=match parsed{Ok(frame)=>delta(&s,&h,frame).await,Err(_)=>Err(AppError::bad("节点帧格式无效"))};
                         if result.is_ok() { last_received = tokio::time::Instant::now(); last_received_at = chrono::Utc::now(); }
                         let frame=match result {Ok((tid,sequence))=>ServerFrame::DeltaAccepted{task_id:tid.to_string(),sequence},Err(e)=>ServerFrame::Error{code:e.code.into(),message:e.message}};
                         if send_frame(&mut socket,frame).await.is_err(){break;}
@@ -1061,6 +1100,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
             }
         }
     }
+    s.relay.disconnect(n.ai, connection);
     let _:Result<()>=async {
         let mut tx=s.pool.begin().await?;lock(&mut tx).await?;
         let updated=sqlx::query("UPDATE cloud_ai_bindings SET connection_id=NULL WHERE ai_id=$1 AND connection_id=$2").bind(n.ai).bind(connection).execute(&mut *tx).await?;

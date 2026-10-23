@@ -656,13 +656,15 @@ mod tests {
                 include_str!("../migrations/0001_accounts.sql"),
                 include_str!("../migrations/0002_chat.sql"),
                 include_str!("../migrations/0003_nodes.sql"),
-                include_str!("../migrations/0004_groups.sql")
+                include_str!("../migrations/0004_groups.sql"),
+                include_str!("../migrations/0005_consciousness.sql")
             ))
             .execute(&pool)
             .await
             .unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
+                relay: Default::default(),
                 pool,
                 attachments: dir.path().join("attachments"),
                 public_url: "https://nest.test".into(),

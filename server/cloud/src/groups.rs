@@ -277,6 +277,7 @@ async fn command(
         .execute(&mut *tx)
         .await?;
     nodes::conversation_changed(&mut tx, cid, "membership_changed").await?;
+    crate::consciousness::membership_changed(&mut tx, cid, &old).await?;
     let mut recipients = old;
     let current: Vec<Uuid> =
         sqlx::query_scalar("SELECT account_id FROM cloud_members WHERE conversation=$1")

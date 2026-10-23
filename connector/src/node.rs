@@ -1,4 +1,4 @@
-//! Version two cloud node protocol. Identifiers and revisions are opaque strings.
+//! Version three cloud node protocol. Identifiers and revisions are opaque strings.
 use serde::{Deserialize, Serialize};
 
 macro_rules! dto { ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
@@ -35,14 +35,14 @@ dto!(NodeTask {
     expires_at: String
 });
 dto!(NodeAttachment { index: usize, kind: String, mime: String, byte_length: u64, name: Option<String> });
-dto!(NodeMessage { id: String, sender_id: String, sender_name: String, reply_to: Option<String>, mentions: Vec<String>, text: String, revision: String, created_at: String, attachments: Vec<NodeAttachment> });
+dto!(NodeMessage { id: String, position: String, sender_id: String, sender_name: String, reply_to: Option<String>, mentions: Vec<String>, text: String, revision: String, created_at: String, attachments: Vec<NodeAttachment> });
 dto!(SourceRevision {
     message_id: String,
     revision: String
 });
 dto!(NodeConversation { id: String, kind: String, name: String, revision: String, members: Vec<NodeAccount> });
-dto!(TaskMaterials { task: NodeTask, ai: NodeAccount, conversation: NodeConversation, messages: Vec<NodeMessage>, sources: Vec<SourceRevision> });
-dto!(StartRequest { request_id: String, task_revision: String, conversation_revision: String, sources: Vec<SourceRevision>, configuration_revision: String });
+dto!(TaskMaterials { task: NodeTask, ai: NodeAccount, conversation: NodeConversation, reference: Option<NodeReference>, messages: Vec<NodeMessage>, sources: Vec<SourceRevision> });
+dto!(StartRequest { request_id: String, task_revision: String, conversation_revision: String, sources: Vec<SourceRevision>, configuration_revision: String, derived_sources: Vec<ScopedSource>, material_scopes: Vec<MaterialScope> });
 dto!(StartReceipt {
     task_id: String,
     run_id: String,
@@ -70,6 +70,12 @@ dto!(RejectRequest {
     rename_all_fields = "camelCase"
 )]
 pub enum ClientFrame {
+    ConsciousnessResponse {
+        relay_id: String,
+        request_id: String,
+        view: Option<ConsciousnessView>,
+        error: Option<ConsciousnessError>,
+    },
     Hello {
         protocol_version: u32,
         node_id: String,
@@ -91,14 +97,35 @@ pub enum ClientFrame {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+// Keep the public wire DTO unboxed for independent connector callers.
+#[allow(clippy::large_enum_variant)]
 pub enum ServerFrame {
-    Ready { protocol_version: u32 },
+    ConsciousnessRequest {
+        relay_id: String,
+        request_id: String,
+        operator_id: String,
+        conversation: NodeConversation,
+        operation: ConsciousnessOperation,
+    },
+    Ready {
+        protocol_version: u32,
+    },
     TasksChanged,
-    Cancel { task_id: String },
-    DeltaAccepted { task_id: String, sequence: u64 },
-    Error { code: String, message: String },
+    Cancel {
+        task_id: String,
+    },
+    DeltaAccepted {
+        task_id: String,
+        sequence: u64,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
+mod consciousness;
+pub use consciousness::*;
 mod transport;
 pub use transport::{NodeClient, NodeConnection, NodeError};
 #[cfg(test)]
@@ -107,7 +134,7 @@ mod tests {
     #[test]
     fn frame_wire_names() {
         let frame = ClientFrame::Hello {
-            protocol_version: 2,
+            protocol_version: 3,
             node_id: "node".into(),
             ai_id: "ai".into(),
             binding_version: "2".into(),
@@ -115,7 +142,7 @@ mod tests {
         let json = serde_json::to_value(&frame).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"type":"hello","protocolVersion":2,"nodeId":"node","aiId":"ai","bindingVersion":"2"})
+            serde_json::json!({"type":"hello","protocolVersion":3,"nodeId":"node","aiId":"ai","bindingVersion":"2"})
         );
         assert_eq!(serde_json::from_value::<ClientFrame>(json).unwrap(), frame);
         assert_eq!(
@@ -124,8 +151,8 @@ mod tests {
         );
     }
     #[test]
-    fn start_v2_requires_conversation_revision() {
-        let wire = serde_json::json!({"requestId":"r", "taskRevision":"1", "conversationRevision":"7", "sources":[], "configurationRevision":"1"});
+    fn start_v3_requires_conversation_revision() {
+        let wire = serde_json::json!({"requestId":"r", "taskRevision":"1", "conversationRevision":"7", "sources":[], "configurationRevision":"1", "derivedSources":[], "materialScopes":[]});
         let request: StartRequest = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(request.conversation_revision, "7");
         assert_eq!(serde_json::to_value(request).unwrap(), wire);
@@ -180,5 +207,31 @@ mod tests {
         assert!(
             serde_json::from_value::<ServerFrame>(serde_json::json!({"type":"unknown"})).is_err()
         );
+    }
+    #[test]
+    fn management_wire_requires_relay_identity_and_start_epochs() {
+        let frame = ClientFrame::ConsciousnessResponse {
+            relay_id: "relay".into(),
+            request_id: "command".into(),
+            view: None,
+            error: Some(ConsciousnessError {
+                code: "source_changed".into(),
+                message: "source changed".into(),
+            }),
+        };
+        let value = serde_json::to_value(&frame).unwrap();
+        assert_eq!(value["relayId"], "relay");
+        assert_eq!(value["requestId"], "command");
+        assert_eq!(
+            serde_json::from_value::<ClientFrame>(value.clone()).unwrap(),
+            frame
+        );
+        let mut missing = value;
+        missing.as_object_mut().unwrap().remove("relayId");
+        assert!(serde_json::from_value::<ClientFrame>(missing).is_err());
+        let mut start = serde_json::json!({"requestId":"r","taskRevision":"1","conversationRevision":"1","configurationRevision":"1","sources":[],"derivedSources":[],"materialScopes":[]});
+        assert!(serde_json::from_value::<StartRequest>(start.clone()).is_ok());
+        start.as_object_mut().unwrap().remove("materialScopes");
+        assert!(serde_json::from_value::<StartRequest>(start).is_err());
     }
 }

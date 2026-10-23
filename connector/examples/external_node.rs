@@ -41,6 +41,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
                     let material = client.materials(&task.id).await?;
+                    // This fixed-response demonstration implements no consciousness management.
+                    if material
+                        .reference
+                        .as_ref()
+                        .is_some_and(|reference| reference.required)
+                    {
+                        client.reject(&task.id,&RejectRequest{request_id:task.id.clone(),task_revision:task.revision.clone(),code:"reference_unsupported".into(),message:"The fixed-response demonstration does not handle required topic references.".into()}).await?;
+                        continue;
+                    }
+                    let scope = MaterialScope {
+                        conversation_id: task.conversation_id.clone(),
+                        revision: task.conversation_id.clone(),
+                    };
+                    client.announce(&scope).await?;
                     // Stable IDs allow repeated start/result submissions with identical content.
                     let started = client
                         .start(
@@ -50,6 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 task_revision: task.revision.clone(),
                                 conversation_revision: material.conversation.revision,
                                 sources: material.sources,
+                                derived_sources: vec![],
+                                material_scopes: vec![scope],
                                 configuration_revision: "deterministic-example-v1".into(),
                             },
                         )

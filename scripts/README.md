@@ -22,6 +22,18 @@ python scripts/cloud-test-certificate.py /私有证书目录 测试主机名 测
 
 生成的 `ca.crt` 用于测试客户端信任，`server.crt` 与 `server.key` 供测试 HTTPS 入口使用。私钥留在服务器私有目录，不放进静态文件目录或仓库；证书不会自动安装到系统信任库，也不代替正式站点证书。
 
+## 检查云端 AI 与意识系统
+
+先构建 `agent-node`，再使用上面生成的独立测试账号。以下脚本都运行真实 Agent 进程，模型由本机模拟服务提供，不读取真实模型密钥：
+
+```bash
+python scripts/agent_acceptance.py --binary /Agent程序路径 --accounts /私有目录/cloud-test-accounts.json --ca /测试CA/ca.crt --workdir /新的私有测试目录
+python scripts/cloud_group_acceptance.py --binary /Agent程序路径 --accounts /私有目录/cloud-test-accounts.json --ca /测试CA/ca.crt --workdir /另一私有测试目录
+python scripts/cloud_consciousness_acceptance.py --binary /Agent程序路径 --accounts /私有目录/cloud-test-accounts.json --ca /测试CA/ca.crt --workdir /意识测试目录
+```
+
+它们分别检查私聊恢复、跨节点群聊，以及记忆隔离、各 AI 摘要、群话题接续、遗忘和离线来源失效。群聊和意识脚本可加 `--serve-ui` 保持模拟节点在线，方便接着检查网页；完成后在对应工作目录创建 `stop` 文件。脚本结束会停止模拟节点并撤销测试绑定，云端测试聊天保留。
+
 ## 保留的本地 API 回归
 
 ```bash

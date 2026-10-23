@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { IS_DESKTOP } from "@/lib/desktop";
+import { clearConsciousnessCommands } from "./Consciousness";
 import { Workspace } from "./Workspace";
 import { AuthPage } from "./AuthPage";
 import { StartupSurface } from "@/components/StartupSurface";
 import { useDesktopReady } from "@/hooks/useDesktopReady";
 import { DraftDatabase } from "../social/draft-storage";
-import { emptyDraft, type DraftRecord } from "../social/drafts";
+import { emptyDraft } from "../social/drafts";
 import { readImages } from "../social/images";
 import { readFiles } from "../social/files";
 import {
@@ -19,10 +20,10 @@ import {
   invalidate,
   subscribe,
 } from "./api";
-import type { Account, Conversation, Snapshot, Page, Message } from "./types";
+import type { Account, Conversation, Snapshot, Page, Message, CloudDraftRecord as DraftRecord, DraftReference, ReferencePreview } from "./types";
 import "./cloud.css";
-const db = new DraftDatabase();
-const blank = (): DraftRecord => ({ draft: emptyDraft(), pending: null });
+const db = new DraftDatabase<DraftReference>();
+const blank = (): DraftRecord => ({ draft: emptyDraft<DraftReference>(), pending: null });
 export default function CloudApp() {
   const [connected, setConnected] = useState(!IS_DESKTOP);
   const [connecting, setConnecting] = useState(false);
@@ -105,6 +106,7 @@ export default function CloudApp() {
     }
   };
   const clear = () => {
+    clearConsciousnessCommands();
     epoch.current++;
     view.current++;
     invalidate();
@@ -423,6 +425,7 @@ export default function CloudApp() {
             text: pending.text,
             mentions: pending.mentions ?? [],
             replyTo: pending.replyTo ?? null,
+            ...(pending.reference ? { reference: pending.reference.selection } : {}),
             images: pending.images?.map(({ mime, data }) => ({ mime, data })),
             files: pending.files?.map(({ name, mime, data }) => ({
               name,
@@ -442,8 +445,8 @@ export default function CloudApp() {
         }
         if (e !== epoch.current) return;
         if (v === view.current && activeRef.current === id)
-          await save({ draft: emptyDraft(), pending: null });
-        else await db.save(owner, id, { draft: emptyDraft(), pending: null });
+          await save({ draft: emptyDraft<DraftReference>(), pending: null });
+        else await db.save(owner, id, { draft: emptyDraft<DraftReference>(), pending: null });
         await history(id);
         await refresh();
       } finally {
@@ -469,6 +472,22 @@ export default function CloudApp() {
     setTab("messages");
     setMessageLocation(null);
     setActive(c.id);
+  };
+  const continuePrivately = async (ai: Account, reference: DraftReference) => {
+    const accountEpoch = epoch.current, owner = ownerRef.current, originView = view.current;
+    const direct = await request<Conversation>("/chat/direct", "POST", { accountId: ai.id });
+    await request<ReferencePreview>(`/chat/conversations/${direct.id}/reference-preview`, "POST", { reference: reference.selection });
+    if (accountEpoch !== epoch.current || originView !== view.current) throw new Error("窗口已变化，请重新选择话题来源");
+    await Promise.all(pendingReads.current);
+    await writes.current;
+    const loaded = await db.load(owner, [direct.id]);
+    if (accountEpoch !== epoch.current || originView !== view.current) throw new Error("窗口已变化，请重新选择话题来源");
+    const current = direct.id === activeRef.current ? recordRef.current : loaded[direct.id] || blank();
+    if (current.pending) throw new Error("这个私聊有尚未确认的发送，请先确认原发送结果，再添加群话题引用。");
+    await db.save(owner, direct.id, { ...current, draft: { ...current.draft, reference, requestId: null } });
+    await refresh();
+    if (accountEpoch !== epoch.current || originView !== view.current) throw new Error("引用已保存至私聊草稿，但当前窗口已变化，请重新打开该私聊。");
+    setActive(direct.id); setTab("messages"); setMessageLocation(null);
   };
   const conversation = snapshot?.conversations.find((c) => c.id === active);
   const acknowledge = () => {
@@ -746,6 +765,7 @@ export default function CloudApp() {
         return history(active, older);
       }}
       openDirect={openDirect}
+      continuePrivately={continuePrivately}
       list={list}
       mutate={mutation}
       edit={setEditing}

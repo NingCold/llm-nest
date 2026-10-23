@@ -27,4 +27,4 @@ pnpm --dir client/web build
 
 构建输出 `dist`，由 `cloud-server` 提供。云端状态、网络和样式位于 [src/cloud](src/cloud/App.tsx)；公共入口见 [src/App.tsx](src/App.tsx)。
 
-`src/social` 的侧栏、公共组件、视觉样式和草稿存储已由云端页面复用；其本地业务页面和图片处理组件继续保留，供回归及后续迁移使用。其 AI、群、记忆、摘要、约定联系和模型设置不是当前云端页面的已开放功能。`build:social-runtime` 只是构建目录名，不会切换默认产品入口。
+`src/social` 的侧栏、公共组件、视觉样式和草稿存储由云端页面复用。云端聊天详情已提供节点记忆、AI 私有摘要和群话题接续；它们使用云端权限与独立节点，不启动本地聊天服务。本地业务页面和图片处理组件仍供回归及后续迁移使用，`build:social-runtime` 不会切换默认产品入口。

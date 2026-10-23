@@ -256,3 +256,17 @@
 .cloud-mention-picker .cloud-check { font-size: 12px; }
 .cloud-mentions, .cloud-reply-draft { font-size: 12px; color: var(--s-accent); padding: 6px 0; }
 .cloud-reply-draft { display: flex; justify-content: space-between; gap: 12px; }
+
+.cloud-consciousness { padding: 0 16px 16px; border-bottom: 1px solid var(--s-line); }
+.cloud-consciousness h2 { font-size: 14px; font-weight: 500; margin: 18px 0 12px; }
+.cloud-consciousness .cloud-detail-section { padding: 16px 0; }
+.cloud-consciousness .memory-owner { display: grid; gap: 8px; }
+.cloud-reference-dialog { max-height: 85vh; overflow: auto; }
+.cloud-reference-dialog .reference-choices { max-height: 280px; overflow: auto; }
+.social-dialog .social-form-fields { display: grid; gap: 12px; border: 0; padding: 0; margin: 0; }
+.social-dialog .social-form-fields label { display: grid; gap: 7px; }
+.social-dialog .social-form-fields .cloud-check { display: flex; }
+
+.cloud-workspace .live-message-content > .text-button { margin-inline-end: 12px; }
+.cloud-consciousness .summary-panel .cloud-actions { flex-wrap: wrap; gap: 10px; }
+.cloud-consciousness .summary-panel .cloud-actions > button { flex: 0 0 auto; white-space: nowrap; }

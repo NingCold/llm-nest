@@ -1,3 +1,4 @@
+mod consciousness;
 mod context;
 mod store;
 use ai_client::{AiClient, ChatChunk, ModelRouter};
@@ -292,16 +293,25 @@ fn generation_outcome(
         Err(_) => ("interrupted", Some("generation_timeout")),
     }
 }
-async fn while_connected<T>(
+// The wait must retain the socket, node dependencies, and frozen run scope together.
+#[allow(clippy::too_many_arguments)]
+async fn while_connected_with<T>(
     socket: &mut NodeConnection,
+    api: &NodeClient,
+    store: &Store,
+    config: &Config,
+    binding: &Binding,
+    scopes: &[MaterialScope],
     task: &str,
     work: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     tokio::pin!(work);
+    let mut invalidations = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             biased;
-            frame=socket.recv()=>match frame? {Some(ServerFrame::Cancel {task_id}) if task_id==task=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}},
+            frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,socket,api,store,config,binding,scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}}},
+            _=invalidations.tick()=>{consciousness::poll_state(api,store,binding,scopes).await?;},
             result=&mut work=>return result,
         }
     }
@@ -313,11 +323,17 @@ async fn cycle(
     model_slot: &tokio::sync::Mutex<()>,
 ) -> Result<()> {
     let api = client(config, &binding.secret)?;
+    store.db.execute(
+        "UPDATE conscious_scopes SET announced='' WHERE ai=?1",
+        [&binding.ai],
+    )?;
+    consciousness::sync(&api, store, &binding.ai).await?;
+    consciousness::recover_summaries(&api, store, &binding.ai).await?;
     recover(&api, store, binding).await?;
     let mut socket = api.connect().await?;
     socket
         .send(&ClientFrame::Hello {
-            protocol_version: 2,
+            protocol_version: 3,
             node_id: config.node_id.clone(),
             ai_id: binding.ai.clone(),
             binding_version: binding.version.clone(),
@@ -325,12 +341,20 @@ async fn cycle(
         .await?;
     match socket.recv().await? {
         Some(ServerFrame::Ready {
-            protocol_version: 2,
+            protocol_version: 3,
         }) => {}
         _ => bail!("node handshake failed"),
     }
     loop {
-        for task in api.tasks().await? {
+        consciousness::sync(&api, store, &binding.ai).await?;
+        consciousness::summaries_tick(&api, store, config, binding, &mut socket, model_slot)
+            .await?;
+        let tasks =
+            while_connected_with(&mut socket, &api, store, config, binding, &[], "", async {
+                Ok(api.tasks().await?)
+            })
+            .await?;
+        for task in tasks {
             if task.status != "queued" || store.state(&task.id)?.is_some() {
                 continue;
             }
@@ -344,11 +368,38 @@ async fn cycle(
                 let material = api.materials(&task.id).await?;
                 let sources = material.sources.clone();
                 let conversation_revision = material.conversation.revision.clone();
-                let (request, tokens) = context::prepare(&api, &router, &profile, material).await?;
-                Ok::<_, anyhow::Error>((llm, request, tokens, sources, conversation_revision))
+                let (request, tokens, derived_sources, material_scopes) =
+                    context::prepare_scoped(&api, &router, &profile, material, Some(store)).await?;
+                Ok::<_, anyhow::Error>((
+                    llm,
+                    request,
+                    tokens,
+                    sources,
+                    conversation_revision,
+                    derived_sources,
+                    material_scopes,
+                ))
             };
-            let prepared = while_connected(&mut socket, &task.id, prepared).await;
-            let (llm, request, tokens, sources, conversation_revision) = match prepared {
+            let prepared = while_connected_with(
+                &mut socket,
+                &api,
+                store,
+                config,
+                binding,
+                &[],
+                &task.id,
+                prepared,
+            )
+            .await;
+            let (
+                llm,
+                request,
+                tokens,
+                sources,
+                conversation_revision,
+                derived_sources,
+                material_scopes,
+            ) = match prepared {
                 Ok(value) => value,
                 Err(error) => {
                     let message = error.to_string();
@@ -374,9 +425,18 @@ async fn cycle(
                 request_id: id(),
                 task_revision: task.revision.clone(),
                 conversation_revision,
+                derived_sources,
+                material_scopes: material_scopes.clone(),
                 sources,
                 configuration_revision: profile.revision,
             };
+            for scope in &material_scopes {
+                api.announce(scope).await?;
+            }
+            anyhow::ensure!(
+                store.scopes_current(&binding.ai, &material_scopes)?,
+                "source_cancelled"
+            );
             let budget_day = chrono::Utc::now().format("%Y-%m-%d").to_string();
             if let Err(error) = store.reserve(
                 &task.id,
@@ -404,7 +464,18 @@ async fn cycle(
                 .await?;
                 continue;
             }
-            let receipt = match api.start(&task.id, &start).await {
+            let started = while_connected_with(
+                &mut socket,
+                &api,
+                store,
+                config,
+                binding,
+                &material_scopes,
+                &task.id,
+                async { Ok(api.start(&task.id, &start).await) },
+            )
+            .await?;
+            let receipt = match started {
                 Ok(receipt) => receipt,
                 Err(error) if error.is_queue_wait() => {
                     store.defer_unstarted(&task.id, &budget_day, tokens)?;
@@ -418,13 +489,22 @@ async fn cycle(
             let mut sequence = 0;
             let mut last = tokio::time::Instant::now();
             let work = async {
-                let mut stream = while_connected(&mut socket, &task.id, async {
-                    Ok(llm.complete_stream(request).await?)
-                })
+                let mut invalidations = tokio::time::interval(Duration::from_secs(1));
+                let mut stream = while_connected_with(
+                    &mut socket,
+                    &api,
+                    store,
+                    config,
+                    binding,
+                    &material_scopes,
+                    &task.id,
+                    async { Ok(llm.complete_stream(request).await?) },
+                )
                 .await?;
                 loop {
                     tokio::select! {
-                        frame=socket.recv()=>match frame? {Some(ServerFrame::Cancel {task_id}) if task_id==task.id=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}},
+                        frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,&mut socket,&api,store,config,binding,&material_scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task.id=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}}},
+                        _=invalidations.tick()=>{consciousness::poll_state(&api,store,binding,&material_scopes).await?;},
                         chunk=stream.next()=>match chunk {
                             Some(Ok(ChatChunk::Delta {content}))=>{
                                 if text.len()+content.len()>256*1024 {bail!("output_limit");} text.push_str(&content);
@@ -442,6 +522,11 @@ async fn cycle(
             if let Some(code) = code {
                 eprintln!("Generation ended: {code}");
             }
+            let (status, code) = if !store.scopes_current(&binding.ai, &material_scopes)? {
+                ("interrupted", Some("source_cancelled"))
+            } else {
+                (status, code)
+            };
             let mut saved = result(&receipt, status, text, code);
             saved.usage = usage.map(|u| NodeUsage {
                 input_tokens: u.prompt_tokens as u64,
@@ -452,7 +537,7 @@ async fn cycle(
             deliver(&api, store, &task.id, &saved).await?;
         }
         tokio::select! {
-            frame=socket.recv()=>match frame? {Some(ServerFrame::Error {..})|None=>bail!("node connection closed"),_=>{}},
+            frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,&mut socket,&api,store,config,binding,&[]).await?;match frame {Some(ServerFrame::Error {..})|None=>bail!("node connection closed"),_=>{}}},
             _=tokio::time::sleep(Duration::from_secs(2))=>{}
         }
     }
@@ -652,6 +737,8 @@ mod recovery_tests {
             request_id: "original-start".into(),
             task_revision: "1".into(),
             conversation_revision: "1".into(),
+            derived_sources: vec![],
+            material_scopes: vec![],
             sources: vec![],
             configuration_revision: "1".into(),
         };

@@ -130,6 +130,67 @@ impl NodeClient {
         }
         Ok(response.json().await?)
     }
+    pub async fn changes(&self, after: &str) -> Result<ConsciousnessChanges, NodeError> {
+        let mut url = self.endpoint(&["node", "consciousness", "changes"]);
+        url.query_pairs_mut().append_pair("after", after);
+        let response = self.http.get(url).send().await?;
+        if !response.status().is_success() {
+            return Err(NodeError::Api {
+                status: response.status().as_u16(),
+                body: response.text().await?,
+            });
+        }
+        Ok(response.json().await?)
+    }
+    pub async fn history(&self, cid: &str, after: &str) -> Result<NodeHistory, NodeError> {
+        let mut url = self.endpoint(&["node", "conversations", cid, "history"]);
+        url.query_pairs_mut()
+            .append_pair("after", after)
+            .append_pair("limit", "100");
+        let response = self.http.get(url).send().await?;
+        if !response.status().is_success() {
+            return Err(NodeError::Api {
+                status: response.status().as_u16(),
+                body: response.text().await?,
+            });
+        }
+        Ok(response.json().await?)
+    }
+    pub async fn validate(&self, body: &ValidateSources) -> Result<ValidationResult, NodeError> {
+        self.request(
+            Method::POST,
+            &["node", "consciousness", "validate"],
+            Some(body),
+        )
+        .await
+    }
+    pub async fn announce(&self, body: &MaterialScope) -> Result<serde_json::Value, NodeError> {
+        self.request(
+            Method::POST,
+            &["node", "consciousness", "state"],
+            Some(body),
+        )
+        .await
+    }
+    pub async fn summary_start(
+        &self,
+        body: &SummaryStart,
+    ) -> Result<SummaryConfirmation, NodeError> {
+        self.request(Method::POST, &["node", "summaries", "start"], Some(body))
+            .await
+    }
+    pub async fn summary_finish(
+        &self,
+        id: &str,
+        body: &SummaryFinish,
+    ) -> Result<serde_json::Value, NodeError> {
+        self.request(
+            Method::POST,
+            &["node", "summaries", id, "finish"],
+            Some(body),
+        )
+        .await
+    }
     pub async fn pair(&self, body: &PairingRequest) -> Result<PairingCreated, NodeError> {
         self.request(Method::POST, &["node", "pairings"], Some(body))
             .await
@@ -319,13 +380,13 @@ mod tests {
                 assert!(matches!(
                     serde_json::from_str::<ClientFrame>(&text).unwrap(),
                     ClientFrame::Hello {
-                        protocol_version: 2,
+                        protocol_version: 3,
                         ..
                     }
                 ));
                 ws.send(Message::Text(
                     serde_json::to_string(&ServerFrame::Ready {
-                        protocol_version: 2,
+                        protocol_version: 3,
                     })
                     .unwrap()
                     .into(),
@@ -340,7 +401,7 @@ mod tests {
             let mut connection = client.connect().await.unwrap();
             connection
                 .send(&ClientFrame::Hello {
-                    protocol_version: 2,
+                    protocol_version: 3,
                     node_id: "n".into(),
                     ai_id: "a".into(),
                     binding_version: "1".into(),
@@ -350,7 +411,7 @@ mod tests {
             assert_eq!(
                 connection.recv().await.unwrap(),
                 Some(ServerFrame::Ready {
-                    protocol_version: 2
+                    protocol_version: 3
                 })
             );
             assert_eq!(connection.recv().await.unwrap(), None);

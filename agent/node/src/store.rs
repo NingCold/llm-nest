@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS profiles(ai TEXT PRIMARY KEY,json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,ai TEXT NOT NULL,state TEXT NOT NULL,start_json TEXT,receipt_json TEXT,result_json TEXT,draft TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS budget(day TEXT PRIMARY KEY,calls INTEGER NOT NULL CHECK(calls>=0),tokens INTEGER NOT NULL CHECK(tokens>=0));
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
+        crate::consciousness::initialize(&db)?;
         Ok(Self { db })
     }
     pub fn bind(&self, binding: &Binding, profile: &Profile) -> Result<()> {
@@ -184,6 +185,8 @@ mod tests {
             request_id: "r".into(),
             task_revision: "1".into(),
             conversation_revision: "1".into(),
+            derived_sources: vec![],
+            material_scopes: vec![],
             sources: vec![],
             configuration_revision: "1".into(),
         }

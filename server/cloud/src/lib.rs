@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod chat;
+pub mod consciousness;
 pub mod db;
 mod groups;
 pub mod nodes;
@@ -19,6 +20,7 @@ use std::{
 };
 
 pub struct AppState {
+    pub relay: consciousness::RelayHub,
     pub pool: sqlx::PgPool,
     pub attachments: PathBuf,
     pub public_url: String,

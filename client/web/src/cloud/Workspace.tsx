@@ -31,7 +31,9 @@ import {
   shortTime,
 } from "../social/components/common";
 import { useUiStore } from "@/store/ui";
-import type { DraftRecord } from "../social/drafts";
+import type { CloudDraftRecord as DraftRecord, DraftReference } from "./types";
+import { ConsciousnessPanel, RememberMessage } from "./Consciousness";
+import { ContinuePrivately, ReferenceCard } from "./References";
 import { fileSize } from "../social/files";
 import { download, request } from "./api";
 import { CreateGroup, GroupDetails, ContactBlock } from "./Groups";
@@ -73,6 +75,7 @@ interface Props {
   refresh(): Promise<unknown>;
   history(older?: boolean): Promise<unknown>;
   openDirect(account: Account): Promise<unknown>;
+  continuePrivately(ai: Account, reference: DraftReference): Promise<void>;
   list(conversation: Conversation, patch: object): Promise<unknown>;
   mutate(message: Message, withdraw: boolean, text?: string): Promise<unknown>;
   edit(value: { id: string; text: string } | null): void;
@@ -211,6 +214,8 @@ export function Workspace(p: Props) {
     [directoryBusy, setDirectoryBusy] = useState(false),
     [details, setDetails] = useState(false),
     [creatingGroup, setCreatingGroup] = useState(false),
+    [managedAiIds, setManagedAiIds] = useState<string[] | null>(null),
+    [managementError, setManagementError] = useState(""),
     [unreadOnly, setUnreadOnly] = useState(false),
     [scope, setScope] = useState("all"),
     [searchBusy, setSearchBusy] = useState(false),
@@ -235,6 +240,12 @@ export function Workspace(p: Props) {
     const source = p.page?.messages.find(message => message.id === id);
     return source ? source.status === "withdrawn" ? "已撤回的消息" : `${source.senderName}：${source.text.slice(0, 80) || "附件消息"}` : "查看回复的消息";
   };
+  useEffect(() => {
+    let current = true;
+    setManagedAiIds(null); setManagementError("");
+    request<{ account: Account }[]>("/ai").then(items => { if (current) setManagedAiIds(items.map(item => item.account.id)); }, error => { if (current) setManagementError(error instanceof Error ? error.message : String(error)); });
+    return () => { current = false; };
+  }, [p.me.id]);
   const located = p.location?.conversationId === p.active;
   const theme = useUiStore((s) => s.theme),
     setTheme = useUiStore((s) => s.setTheme);
@@ -488,6 +499,10 @@ export function Workspace(p: Props) {
             </section>
             {!own ? (
               <section>
+                {account.kind === "ai" && (() => {
+                  const direct = p.snapshot?.conversations.find(c => c.kind === "direct" && c.peer?.id === account.id);
+                  return direct ? <ConsciousnessPanel operatorId={p.me.id} key={`${p.me.id}/${direct.id}`} conversation={direct} onlyAi={account.id} cursor={p.snapshot!.cursor} summaryAiIds={managedAiIds} summaryError={managementError} /> : <p>先打开与此 AI 的唯一私聊，再管理你们之间的记忆与私有摘要。</p>;
+                })()}
                 <ContactBlock key={account.id} account={account} busy={p.busy} act={p.act} refresh={p.refresh} />
                 <h2>联系人</h2>
                 <p>通讯录只记录自己的联系人，移除不会删除聊天历史。</p>
@@ -1082,6 +1097,9 @@ export function Workspace(p: Props) {
                               </span>
                               <time>{shortTime(m.createdAt)}</time>
                             </div>
+                            {m.contextReference && m.status !== "withdrawn" && <ReferenceCard directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
+                            {m.status === "committed" && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
+                            {m.status === "committed" && conversation.kind === "group" && <ContinuePrivately conversation={conversation} message={m} messages={p.page!.messages} continueWith={p.continuePrivately} />}
                             {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo! }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
                             {!!m.mentions.length && <div className="cloud-mentions">{m.mentions.map(id => <span key={id}>@{conversation.members.find(member => member.account.id === id)?.account.name || id} </span>)}</div>}
                             {m.status === "committed" && <button className="text-button" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
@@ -1281,6 +1299,7 @@ export function Workspace(p: Props) {
                           ))}
                         </div>
                       )}
+                      {p.record.draft.reference && <ReferenceCard directId={conversation.id} selection={p.record.draft.reference.selection} cursor={p.snapshot!.cursor} remove={p.draftReady && !p.busy && !p.record.pending ? () => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, reference: null } })) : undefined} />}
                       {conversation.directBlocked && <p role="status">双方私聊已屏蔽，历史和草稿保留。解除屏蔽后可发送新消息。</p>}
                       {p.record.draft.replyTo && <div className="cloud-reply-draft">回复：{replyLabel(p.record.draft.replyTo)}<button className="text-button" disabled={p.busy || !!p.record.pending || !p.draftReady} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: null } }))}>取消回复</button></div>}
                       {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
@@ -1434,6 +1453,7 @@ export function Workspace(p: Props) {
                       </IconButton>
                     </header>
                     <div className="details-scroll">
+                      <ConsciousnessPanel operatorId={p.me.id} key={`${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} summaryAiIds={managedAiIds} summaryError={managementError} />
                       {conversation.kind === "group" && <GroupDetails key={conversation.id + conversation.revision} conversation={conversation} me={p.me.id} busy={p.busy} act={p.act} refresh={p.refresh} leave={() => p.selectConversation("")} />}
                       <div className="details-hero">
                         <Avatar

@@ -1,10 +1,11 @@
 use crate::store::Profile;
+use crate::store::Store;
 use ai_client::{ChatRequest, ModelRouter, image_input::ImageSupport};
 use anyhow::{Result, bail};
 use builtin_agent::{
     ContactInput, ContextInput, ContextTrigger, consciousness::ConsciousnessService, generation,
 };
-use connector::node::{NodeClient, NodeMessage, TaskMaterials};
+use connector::node::{MaterialScope, NodeClient, NodeMessage, ScopedSource, TaskMaterials};
 use social::*;
 
 const IMAGE_BYTES: u64 = 4 * 1024 * 1024;
@@ -28,7 +29,16 @@ fn image_cost(message: &NodeMessage) -> Result<(usize, u64)> {
     Ok((count, bytes))
 }
 /// Keep whole messages: required trigger first, then newest history within image limits.
+#[cfg(test)]
 fn select_image_history(messages: Vec<NodeMessage>, trigger: &str) -> Result<Vec<NodeMessage>> {
+    select_images(messages, trigger, 0, 0)
+}
+fn select_images(
+    messages: Vec<NodeMessage>,
+    trigger: &str,
+    reserved_count: usize,
+    reserved_bytes: u64,
+) -> Result<Vec<NodeMessage>> {
     let trigger_message = messages
         .iter()
         .find(|m| m.id == trigger)
@@ -44,7 +54,7 @@ fn select_image_history(messages: Vec<NodeMessage>, trigger: &str) -> Result<Vec
         .iter()
         .map(|m| m.id == trigger || Some(m.id.as_str()) == reply)
         .collect::<Vec<_>>();
-    let (mut count, mut bytes) = (0, 0);
+    let (mut count, mut bytes) = (reserved_count, reserved_bytes);
     for (message, required) in messages.iter().zip(&selected) {
         if *required {
             let cost = image_cost(message)?;
@@ -81,51 +91,19 @@ fn validate_image_download(bytes: &[u8], expected: u64) -> Result<()> {
     Ok(())
 }
 
-pub async fn prepare(
+pub async fn messages(
     client: &NodeClient,
-    router: &ModelRouter,
-    profile: &Profile,
-    mut material: TaskMaterials,
-) -> Result<(ChatRequest, u64)> {
-    let resolved = router.resolve(&profile.selection)?;
-    let options = generation::options(
-        &generation::Parameters {
-            temperature: profile.temperature,
-            max_tokens: profile.max_tokens,
-        },
-        &resolved,
-    )?;
-    material.messages = select_image_history(material.messages, &material.task.trigger_message_id)?;
-    let has_images = material
-        .messages
-        .iter()
-        .any(|m| m.attachments.iter().any(|a| a.kind == "image"));
-    if has_images && resolved.spec.image_input.support == ImageSupport::Unsupported {
-        bail!("image_input_unsupported");
-    }
-    let ai: ActorId = material.ai.id.parse()?;
-    let conversation_id: ConversationId = material.task.conversation_id.parse()?;
-    let trigger = material.task.trigger_message_id.parse()?;
-    anyhow::ensure!(
-        material.conversation.id == material.task.conversation_id,
-        "conversation mismatch"
-    );
-    let conversation_revision = serde_json::from_value(serde_json::Value::String(
-        material.conversation.revision.clone(),
-    ))?;
-    let now = chrono::Utc::now();
+    task: &str,
+    conversation_id: ConversationId,
+    raw: &[NodeMessage],
+) -> Result<Vec<SocialMessage>> {
     let mut messages = Vec::new();
-    for (index, message) in material.messages.iter().enumerate() {
+    for message in raw {
         let mut body = MessageBody::text(&message.text);
         for attachment in &message.attachments {
             if attachment.kind == "image" {
                 let bytes = client
-                    .attachment(
-                        &material.task.id,
-                        &message.id,
-                        attachment.index,
-                        &message.revision,
-                    )
+                    .attachment(task, &message.id, attachment.index, &message.revision)
                     .await?;
                 validate_image_download(&bytes, attachment.byte_length)?;
                 body.0.push(SocialContent::Image {
@@ -148,7 +126,7 @@ pub async fn prepare(
             conversation_id,
             sender_id: message.sender_id.parse()?,
             sender_name: message.sender_name.clone(),
-            sequence: Sequence::new(index as u64 + 1)?,
+            sequence: Sequence::new(message.position.parse()?)?,
             body,
             reply_to: message.reply_to.as_deref().map(str::parse).transpose()?,
             context_reference: None,
@@ -163,11 +141,211 @@ pub async fn prepare(
             created_at: message.created_at.parse()?,
         });
     }
+    Ok(messages)
+}
+pub fn text_message(cid: &str, message: &NodeMessage) -> Result<SocialMessage> {
+    let mut body = MessageBody::text(&message.text);
+    for a in &message.attachments {
+        body.0.push(SocialContent::Text {
+            text: social::attachment::placeholder(
+                a.name.as_deref(),
+                &a.mime,
+                a.byte_length as usize,
+            ),
+        });
+    }
+    Ok(SocialMessage {
+        id: message.id.parse()?,
+        conversation_id: cid.parse()?,
+        sender_id: message.sender_id.parse()?,
+        sender_name: message.sender_name.clone(),
+        sequence: Sequence::new(message.position.parse()?)?,
+        body,
+        reply_to: message.reply_to.as_deref().map(str::parse).transpose()?,
+        context_reference: None,
+        mentions: vec![],
+        run_id: None,
+        status: MessageStatus::Committed,
+        revision: crate::consciousness::revision(&message.revision)?,
+        created_at: message.created_at.parse()?,
+    })
+}
+
+#[cfg(test)]
+pub async fn prepare(
+    client: &NodeClient,
+    router: &ModelRouter,
+    profile: &Profile,
+    material: TaskMaterials,
+) -> Result<(ChatRequest, u64)> {
+    let (request, tokens, _, _) = prepare_scoped(client, router, profile, material, None).await?;
+    Ok((request, tokens))
+}
+pub async fn prepare_scoped(
+    client: &NodeClient,
+    router: &ModelRouter,
+    profile: &Profile,
+    mut material: TaskMaterials,
+    store: Option<&Store>,
+) -> Result<(ChatRequest, u64, Vec<ScopedSource>, Vec<MaterialScope>)> {
+    let resolved = router.resolve(&profile.selection)?;
+    let options = generation::options(
+        &generation::Parameters {
+            temperature: profile.temperature,
+            max_tokens: profile.max_tokens,
+        },
+        &resolved,
+    )?;
+    let (mut ref_count, mut ref_bytes) = (0, 0);
+    if let Some(reference) = &material.reference {
+        for message in &reference.messages {
+            let (count, bytes) = image_cost(message)?;
+            ref_count += count;
+            ref_bytes += bytes;
+        }
+    }
+    let trigger_message = material
+        .messages
+        .iter()
+        .find(|m| m.id == material.task.trigger_message_id)
+        .ok_or_else(|| anyhow::anyhow!("missing trigger message"))?;
+    let mut required_count = 0;
+    let mut required_bytes = 0;
+    for message in material.messages.iter().filter(|m| {
+        m.id == material.task.trigger_message_id || Some(&m.id) == trigger_message.reply_to.as_ref()
+    }) {
+        let (count, bytes) = image_cost(message)?;
+        required_count += count;
+        required_bytes += bytes;
+    }
+    if ref_count + required_count > 16 || ref_bytes + required_bytes > REQUEST_IMAGE_BYTES {
+        if material.reference.as_ref().is_some_and(|r| r.required) {
+            bail!("required_images_exceed_budget");
+        }
+        material.reference = None;
+        ref_count = 0;
+        ref_bytes = 0;
+    }
+    material.messages = select_images(
+        material.messages,
+        &material.task.trigger_message_id,
+        ref_count,
+        ref_bytes,
+    )?;
+    let has_images = material
+        .messages
+        .iter()
+        .any(|m| m.attachments.iter().any(|a| a.kind == "image"))
+        || ref_count > 0;
+    if has_images && resolved.spec.image_input.support == ImageSupport::Unsupported {
+        bail!("image_input_unsupported");
+    }
+    let ai: ActorId = material.ai.id.parse()?;
+    let conversation_id: ConversationId = material.task.conversation_id.parse()?;
+    let trigger = material.task.trigger_message_id.parse()?;
+    anyhow::ensure!(
+        material.conversation.id == material.task.conversation_id,
+        "conversation mismatch"
+    );
+    let conversation_revision = serde_json::from_value(serde_json::Value::String(
+        material.conversation.revision.clone(),
+    ))?;
+    let now = chrono::Utc::now();
+    let messages = messages(
+        client,
+        &material.task.id,
+        conversation_id,
+        &material.messages,
+    )
+    .await?;
+    let mut reference = None;
+    let mut reference_summary = None;
+    if let Some(r) = &material.reference {
+        if let Some(store) = store {
+            reference_summary = store
+                .summaries(&material.ai.id, &r.conversation.id)?
+                .into_iter()
+                .find(|s| {
+                    s.item.status == "ready"
+                        && r.sources.iter().any(|src| {
+                            s.item.sources.iter().any(|own| {
+                                own.message_id == src.message_id && own.revision == src.revision
+                            })
+                        })
+                });
+        }
+        reference = Some(builtin_agent::ReferenceInput {
+            message_id: r.message_id.parse()?,
+            revision: crate::consciousness::revision(&r.revision)?,
+            required: r.required,
+            preview: builtin_agent::ReferenceInputPreview {
+                conversation: Conversation {
+                    id: r.conversation.id.parse()?,
+                    kind: ConversationKind::Group,
+                    relationship_id: None,
+                    title: r.conversation.name.clone(),
+                    status: EntityStatus::Active,
+                    paused: false,
+                    revision: crate::consciousness::revision(&r.conversation.revision)?,
+                    context_epoch: Epoch::ONE,
+                    participation_epoch: Epoch::ONE,
+                    last_sequence: Sequence::new(
+                        r.messages
+                            .last()
+                            .map(|m| m.position.parse())
+                            .transpose()?
+                            .unwrap_or(0),
+                    )?,
+                    created_at: now,
+                    legacy: false,
+                },
+                messages: self::messages(
+                    client,
+                    &material.task.id,
+                    r.conversation.id.parse()?,
+                    &r.messages,
+                )
+                .await?,
+                summary: reference_summary
+                    .as_ref()
+                    .map(|s| crate::consciousness::summary_record(&r.conversation.id, s))
+                    .transpose()?,
+                dependencies: vec![],
+            },
+        });
+    }
+    let local_memories = store
+        .map(|s| s.memories(&material.ai.id, &material.conversation.id))
+        .transpose()?
+        .unwrap_or_default();
+    let local_summaries = store
+        .map(|s| s.summaries(&material.ai.id, &material.conversation.id))
+        .transpose()?
+        .unwrap_or_default();
+    let memories = local_memories
+        .iter()
+        .filter(|m| m.status == "confirmed")
+        .map(|m| crate::consciousness::memory_record(&material.ai.id, &material.conversation.id, m))
+        .collect::<Result<Vec<_>>>()?;
+    let summaries = local_summaries
+        .iter()
+        .filter(|m| m.item.status == "ready")
+        .map(|m| crate::consciousness::summary_record(&material.conversation.id, m))
+        .collect::<Result<Vec<_>>>()?;
+    let mut scopes = if let Some(store) = store {
+        let mut scopes = vec![store.material_scope(&material.ai.id, &material.conversation.id)?];
+        if let Some(r) = &material.reference {
+            scopes.push(store.material_scope(&material.ai.id, &r.conversation.id)?);
+        }
+        scopes
+    } else {
+        vec![]
+    };
     let input = ContextInput {
         required_message_ids: vec![trigger],
-        reference: None,
-        summaries: vec![],
-        memories: vec![],
+        reference,
+        summaries,
+        memories,
         contact: ContactInput {
             actor: Actor {
                 id: ai,
@@ -206,13 +384,16 @@ pub async fn prepare(
                 _ => bail!("invalid conversation kind"),
             },
             relationship_id: None,
-            title: material.conversation.name,
+            title: material.conversation.name.clone(),
             status: EntityStatus::Active,
             paused: false,
             revision: conversation_revision,
             context_epoch: Epoch::ONE,
             participation_epoch: Epoch::ONE,
-            last_sequence: Sequence::new(messages.len() as u64)?,
+            last_sequence: messages
+                .last()
+                .map(|m| m.sequence)
+                .unwrap_or(Sequence::ZERO),
             created_at: now,
             legacy: false,
         },
@@ -234,14 +415,74 @@ pub async fn prepare(
         participant_names: material
             .conversation
             .members
-            .into_iter()
-            .map(|member| member.name)
+            .iter()
+            .map(|member| member.name.clone())
             .collect(),
         messages,
         trigger: ContextTrigger::Message(trigger),
     };
     let prepared =
         ConsciousnessService::prepare(input, &resolved.spec, options.max_tokens.unwrap())?;
+    let mut derived = Vec::new();
+    let mut add = |cid: &str, src: &connector::node::SourceRevision| {
+        let source = ScopedSource {
+            conversation_id: cid.into(),
+            message_id: src.message_id.clone(),
+            revision: src.revision.clone(),
+        };
+        if !derived.contains(&source) {
+            derived.push(source);
+        }
+    };
+    for source in &prepared.snapshot.sources {
+        match source {
+            SourceRef::Memory { memory_id, .. } => {
+                if let Some(m) = local_memories
+                    .iter()
+                    .find(|m| m.id == memory_id.to_string())
+                    && let Some(source) = &m.source
+                {
+                    add(&material.conversation.id, source);
+                }
+            }
+            SourceRef::Summary { summary_id, .. } => {
+                if let Some(m) = local_summaries
+                    .iter()
+                    .find(|m| m.item.id == summary_id.to_string())
+                {
+                    for source in &m.item.sources {
+                        add(&material.conversation.id, source);
+                    }
+                } else if let (Some(s), Some(r)) = (&reference_summary, &material.reference)
+                    && s.item.id == summary_id.to_string()
+                {
+                    for source in &s.item.sources {
+                        add(&r.conversation.id, source);
+                    }
+                }
+            }
+            SourceRef::Message {
+                conversation_id,
+                message_id,
+                revision,
+            } if *conversation_id != material.task.conversation_id.parse()? => add(
+                &conversation_id.to_string(),
+                &connector::node::SourceRevision {
+                    message_id: message_id.to_string(),
+                    revision: revision.to_string(),
+                },
+            ),
+            _ => {}
+        }
+    }
+    if !prepared
+        .snapshot
+        .sources
+        .iter()
+        .any(|s| matches!(s, SourceRef::Reference { .. }))
+    {
+        scopes.retain(|s| s.conversation_id == material.task.conversation_id);
+    }
     let reserve = resolved.spec.context_window.unwrap_or(8192) as u64;
     // The request and client are frozen for the entire invocation.
     Ok((
@@ -253,6 +494,8 @@ pub async fn prepare(
             resolved: Some(resolved),
         },
         reserve,
+        derived,
+        scopes,
     ))
 }
 
@@ -296,6 +539,7 @@ mod tests {
             },
             messages: vec![NodeMessage {
                 id: trigger,
+                position: "1".into(),
                 sender_id: peer,
                 sender_name: "Human".into(),
                 reply_to: None,
@@ -311,6 +555,7 @@ mod tests {
                     name: Some("readme.txt".into()),
                 }],
             }],
+            reference: None,
             sources: vec![],
         }
     }
@@ -501,5 +746,106 @@ image_input=false
         );
         assert!(validate_image_download(&[1, 2, 3], 2).is_err());
         validate_image_download(&[1, 2, 3], 3).unwrap();
+    }
+    #[tokio::test]
+    async fn scoped_context_uses_only_confirmed_memory_and_expands_actual_source_ids() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let material = materials();
+        let ai = &material.ai.id;
+        let cid = &material.conversation.id;
+        let memory = connector::node::MemoryItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            revision: "1".into(),
+            kind: "fact".into(),
+            text: "confirmed useful fact".into(),
+            status: "confirmed".into(),
+            source: Some(SourceRevision {
+                message_id: material.messages[0].id.clone(),
+                revision: "1".into(),
+            }),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store
+            .db
+            .execute(
+                "INSERT INTO conscious_memory VALUES(?1,?2,?3,?4)",
+                rusqlite::params![ai, cid, memory.id, serde_json::to_string(&memory).unwrap()],
+            )
+            .unwrap();
+        let mut stale = memory.clone();
+        stale.id = uuid::Uuid::new_v4().to_string();
+        stale.text = "stale hidden fact".into();
+        stale.status = "stale".into();
+        store
+            .db
+            .execute(
+                "INSERT INTO conscious_memory VALUES(?1,?2,?3,?4)",
+                rusqlite::params![ai, cid, stale.id, serde_json::to_string(&stale).unwrap()],
+            )
+            .unwrap();
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let (request, _, sources, scopes) =
+            prepare_scoped(&api, &router(), &profile(), material.clone(), Some(&store))
+                .await
+                .unwrap();
+        let text = format!("{:?}", request.messages);
+        assert!(text.contains("confirmed useful fact"));
+        assert!(!text.contains("stale hidden fact"));
+        assert_eq!(
+            sources,
+            vec![ScopedSource {
+                conversation_id: cid.clone(),
+                message_id: material.messages[0].id.clone(),
+                revision: "1".into()
+            }]
+        );
+        let unrelated = store
+            .material_scope(ai, &uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        store
+            .db
+            .execute(
+                "UPDATE conscious_scopes SET epoch=?3 WHERE ai=?1 AND cid=?2",
+                rusqlite::params![
+                    ai,
+                    unrelated.conversation_id,
+                    uuid::Uuid::new_v4().to_string()
+                ],
+            )
+            .unwrap();
+        assert!(store.scopes_current(ai, &scopes).unwrap());
+        store
+            .db
+            .execute(
+                "UPDATE conscious_scopes SET epoch=?3 WHERE ai=?1 AND cid=?2",
+                rusqlite::params![ai, cid, uuid::Uuid::new_v4().to_string()],
+            )
+            .unwrap();
+        assert!(!store.scopes_current(ai, &scopes).unwrap());
+    }
+    #[tokio::test]
+    async fn optional_reference_images_never_displace_required_trigger_images() {
+        let mut material = materials();
+        material.messages[0].attachments = image_message("source", 4, IMAGE_BYTES).attachments;
+        let reference = NodeReference {
+            message_id: material.messages[0].id.clone(),
+            revision: "1".into(),
+            required: false,
+            conversation: material.conversation.clone(),
+            messages: vec![image_message("reference", 1, 1)],
+            sources: vec![],
+        };
+        material.reference = Some(reference);
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let error = prepare_scoped(&api, &router(), &profile(), material.clone(), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "image_input_unsupported");
+        material.reference.as_mut().unwrap().required = true;
+        let error = prepare_scoped(&api, &router(), &profile(), material, None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "required_images_exceed_budget");
     }
 }

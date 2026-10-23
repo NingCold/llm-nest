@@ -81,7 +81,7 @@ pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     )
 }
 fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses")})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference")})
 }
 pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
@@ -291,6 +291,7 @@ async fn messages(
 struct Input {
     request_id: Uuid,
     text: Option<String>,
+    reference: Option<connector::node::ReferenceSelection>,
     reply_to: Option<Uuid>,
     #[serde(default)]
     mentions: Vec<Uuid>,
@@ -338,6 +339,11 @@ async fn receipt(
         fingerprint
     } else {
         format!("{fingerprint}:{}", json!([v.reply_to, v.mentions]))
+    };
+    let fingerprint = if let Some(reference) = &v.reference {
+        format!("{fingerprint}:{}", json!(reference))
+    } else {
+        fingerprint
     };
     let fingerprint = format!("{:x}", Sha256::digest(fingerprint.as_bytes()));
     if let Some(r) =
@@ -394,6 +400,11 @@ async fn save_receipt(
         fingerprint
     } else {
         format!("{fingerprint}:{}", json!([v.reply_to, v.mentions]))
+    };
+    let fingerprint = if let Some(reference) = &v.reference {
+        format!("{fingerprint}:{}", json!(reference))
+    } else {
+        fingerprint
     };
     let fingerprint = format!("{:x}", Sha256::digest(fingerprint.as_bytes()));
     sqlx::query("INSERT INTO cloud_receipts VALUES($1,$2,$3,$4)")
@@ -494,6 +505,9 @@ async fn send(
     let mid = Uuid::new_v4();
     let attachments = uploads(&s, mid, &v).await?;
     sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments,sender_name,reply_to,mentions) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).bind(v.reply_to).bind(&v.mentions).execute(&mut *tx).await?;
+    if let Some(reference) = &v.reference {
+        crate::consciousness::save_reference(&mut tx, id, mid, p.id, reference).await?;
+    }
     crate::nodes::enqueue(&mut tx, id, mid, p.id).await?;
     let row = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
         .bind(mid)
@@ -550,8 +564,8 @@ async fn mutate(
     {
         return Err(bad("消息为空或过长"));
     }
-    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).execute(&mut *tx).await?;
-    crate::nodes::source_changed(&mut tx, id).await?;
+    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,context_reference=CASE WHEN $3 THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).execute(&mut *tx).await?;
+    crate::consciousness::message_changed(&mut tx, id).await?;
     let r = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
         .bind(id)
         .fetch_one(&mut *tx)
@@ -787,6 +801,26 @@ async fn export(
                 m["text"].as_str().unwrap()
             }
         ));
+        if let Some(reference) = m["contextReference"].as_object() {
+            md.push_str(&format!(
+                "[群引用：窗口 {}，版本 {}{}]\n\n",
+                reference["conversationId"].as_str().unwrap(),
+                reference["revision"].as_str().unwrap(),
+                if reference["stale"] == true {
+                    "，已失效"
+                } else {
+                    ""
+                }
+            ));
+            for source in reference["sources"].as_array().unwrap() {
+                md.push_str(&format!(
+                    "- 来源 {} / 修订 {}\n",
+                    source["messageId"].as_str().unwrap(),
+                    source["revision"].as_str().unwrap()
+                ));
+            }
+            md.push('\n');
+        }
         let mid: Uuid = row.get("id");
         for part in m["attachments"].as_array_mut().unwrap() {
             let index = part["index"].as_u64().unwrap();
@@ -955,8 +989,13 @@ mod tests {
                 .execute(&pool)
                 .await
                 .unwrap();
+            sqlx::raw_sql(include_str!("../migrations/0005_consciousness.sql"))
+                .execute(&pool)
+                .await
+                .unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
+                relay: Default::default(),
                 pool,
                 attachments: dir.path().join("attachments"),
                 public_url: "https://test.example".into(),

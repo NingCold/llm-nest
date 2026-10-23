@@ -304,3 +304,9 @@ console.log("PASS: real group conversations, historical sender names, independen
 
 html = render({ ...groupProps, record: { draft: { ...groupProps.record.draft, mentions: ["former-member"] }, pending: null } });
 assert.match(html, /移除已离群提及：former-member/);
+
+const { ConsciousnessPanel } = load("cloud/Consciousness");
+const consciousness = ids => renderToStaticMarkup(React.createElement(ConsciousnessPanel, { conversation: group, cursor: "1", summaryAiIds: ids, summaryError: "" }));
+html = consciousness([]); assert.match(html, /当前窗口记忆/); assert.doesNotMatch(html, /私有窗口摘要|摘要设置/);
+html = consciousness([ai1.id]); assert.match(html, /蓝雀 · 私有窗口摘要/); assert.match(html, /仅其管理员且仍有本窗口访问权/); assert.doesNotMatch(html, /本群当前成员共享/);
+console.log("PASS: cloud memory is member scoped and summaries are private per AI with an administrator-only entry");

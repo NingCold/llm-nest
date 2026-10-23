@@ -1,18 +1,18 @@
 import type { DraftImage } from "./images"
 import type { ReferenceInput, SendInput } from "./live-types"
 
-export interface Draft {
+export interface Draft<R = ReferenceInput> {
   text: string
   requestId: string | null
   images?: DraftImage[]
   files?: import("./files").DraftFile[]
   mentions?: string[]
   replyTo?: string | null
-  reference?: ReferenceInput | null
+  reference?: R | null
 }
-export type PendingDraft = Draft & { requestId: string }
-export interface DraftRecord { draft: Draft; pending: PendingDraft | null }
-export const emptyDraft = (): Draft => ({ text: "", requestId: null, mentions: [], replyTo: null })
+export type PendingDraft<R = ReferenceInput> = Draft<R> & { requestId: string }
+export interface DraftRecord<R = ReferenceInput> { draft: Draft<R>; pending: PendingDraft<R> | null }
+export const emptyDraft = <R = ReferenceInput>(): Draft<R> => ({ text: "", requestId: null, mentions: [], replyTo: null })
 
 export function sendInput(draft: PendingDraft): SendInput {
   return {

@@ -46,6 +46,7 @@ impl Fixture {
         sqlx::migrator().run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let state = Arc::new(AppState {
+            relay: Default::default(),
             pool,
             attachments: dir.path().join("attachments"),
             public_url: "https://test.example".into(),
@@ -149,14 +150,31 @@ impl Fixture {
             .find(|t| t["status"] == "queued")
             .unwrap()
             .clone();
+        let req = self.start_request(secret, &task).await;
+        (task, req)
+    }
+    async fn scope(&self, secret: &str, cid: &str) -> Value {
+        let old:Option<Uuid>=sqlx::query_scalar("SELECT e.revision FROM cloud_material_epochs e JOIN cloud_ai_bindings b ON b.ai_id=e.ai_id WHERE b.token_hash=$1 AND e.conversation=$2").bind(hash(secret)).bind(cid.parse::<Uuid>().unwrap()).fetch_optional(&self.state.pool).await.unwrap();
+        let scope = json!({"conversationId":cid,"revision":old.unwrap_or_else(Uuid::new_v4)});
+        value(
+            self.node(secret, Method::POST, "/node/consciousness/state")
+                .json(&scope),
+        )
+        .await;
+        scope
+    }
+    async fn start_request(&self, secret: &str, task: &Value) -> Value {
         let mat = value(self.node(
             secret,
             Method::GET,
             &format!("/node/tasks/{}/materials", task["id"].as_str().unwrap()),
         ))
         .await;
-        let req = json!({"requestId":Uuid::new_v4(),"taskRevision":task["revision"],"sources":mat["sources"],"configurationRevision":"test-v2","conversationRevision":mat["conversation"]["revision"]});
-        (task, req)
+        let scope = self
+            .scope(secret, task["conversationId"].as_str().unwrap())
+            .await;
+        let derived=mat["reference"].get("sources").and_then(Value::as_array).map(|sources|sources.iter().map(|source|json!({"conversationId":mat["reference"]["conversation"]["id"],"messageId":source["messageId"],"revision":source["revision"]})).collect::<Vec<_>>()).unwrap_or_default();
+        json!({"requestId":Uuid::new_v4(),"taskRevision":task["revision"],"sources":mat["sources"],"configurationRevision":"test-v3","conversationRevision":mat["conversation"]["revision"],"derivedSources":derived,"materialScopes":[scope]})
     }
     async fn close(self) {
         self.server.abort();
@@ -401,7 +419,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     );
     let mut ws = client.connect().await.unwrap();
     ws.send(&connector::node::ClientFrame::Hello {
-        protocol_version: 2,
+        protocol_version: 3,
         node_id: node.to_string(),
         ai_id: aid.into(),
         binding_version: "1".into(),
@@ -411,7 +429,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     assert_eq!(
         ws.recv().await.unwrap(),
         Some(connector::node::ServerFrame::Ready {
-            protocol_version: 2
+            protocol_version: 3
         })
     );
     let (outgoing, mut commands) = tokio::sync::mpsc::unbounded_channel();
@@ -804,7 +822,7 @@ async fn groups_fifo_multiple_nodes_frozen_sources_and_member_permissions() {
     );
     let second = trigger["aiResponses"][1]["taskId"].as_str().unwrap();
     let mb = value(f.node(&sb, Method::GET, &format!("/node/tasks/{second}/materials"))).await;
-    let premature = json!({"requestId":Uuid::new_v4(),"taskRevision":mb["task"]["revision"],"configurationRevision":"test","conversationRevision":mb["conversation"]["revision"],"sources":mb["sources"]});
+    let premature = f.start_request(&sb, &mb["task"]).await;
     let response = f
         .node(&sb, Method::POST, &format!("/node/tasks/{second}/start"))
         .json(&premature)
@@ -1248,5 +1266,507 @@ async fn groups_old_reply_required_membership_cancellation_and_concurrent_comman
     );
     let statuses = [a.unwrap().status().as_u16(), b.unwrap().status().as_u16()];
     assert!(statuses == [200, 409] || statuses == [409, 200]);
+    f.close().await;
+}
+
+async fn connect_node(
+    f: &Fixture,
+    secret: &str,
+    node: Uuid,
+    ai: &str,
+) -> connector::node::NodeConnection {
+    let client = connector::node::NodeClient::new(&f.url, secret, None).unwrap();
+    let mut ws = client.connect().await.unwrap();
+    ws.send(&connector::node::ClientFrame::Hello {
+        protocol_version: 3,
+        node_id: node.to_string(),
+        ai_id: ai.into(),
+        binding_version: "1".into(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        ws.recv().await.unwrap(),
+        Some(connector::node::ServerFrame::Ready {
+            protocol_version: 3
+        })
+    );
+    ws
+}
+async fn relay_request(ws: &mut connector::node::NodeConnection) -> Value {
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(30), ws.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let frame = serde_json::to_value(frame).unwrap();
+        if frame["type"] == "consciousnessRequest" {
+            return frame;
+        }
+    }
+}
+async fn relay_response(
+    ws: &mut connector::node::NodeConnection,
+    request: &Value,
+) -> std::result::Result<(), connector::node::NodeError> {
+    let frame=serde_json::from_value(json!({"type":"consciousnessResponse","relayId":request["relayId"],"requestId":request["requestId"],"view":{"memories":[],"summaries":[],"settings":null,"models":[]},"error":null})).unwrap();
+    ws.send(&frame).await
+}
+#[tokio::test]
+async fn consciousness_relay_offline_members_admins_connection_fencing_and_response_reauth() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, node, _) = f.bind_ai(aid, "0").await;
+    let cid = f.conversation(aid).await;
+    let path = format!("/chat/conversations/{cid}/ai/{aid}/consciousness");
+    let command = json!({"requestId":Uuid::new_v4(),"operation":{"type":"memories"}});
+    let offline = f
+        .human(0, Method::POST, &path)
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(offline.status(), 409);
+    assert_eq!(
+        offline.json::<Value>().await.unwrap()["code"],
+        "node_offline"
+    );
+    assert_eq!(
+        f.human(1, Method::POST, &path)
+            .json(&command)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let mut ws = connect_node(&f, &secret, node, aid).await;
+    let request = f.human(0, Method::POST, &path).json(&command);
+    let response = tokio::spawn(async move { request.send().await.unwrap() });
+    let old = relay_request(&mut ws).await;
+    assert_eq!(old["operatorId"], f.humans[0].0.to_string());
+    let mut replacement = connect_node(&f, &secret, node, aid).await;
+    let disconnected = response.await.unwrap();
+    assert_eq!(disconnected.status(), 409);
+    assert_eq!(
+        disconnected.json::<Value>().await.unwrap()["code"],
+        "node_disconnected"
+    );
+    let request = f.human(0, Method::POST, &path).json(&command);
+    let response = tokio::spawn(async move { request.send().await.unwrap() });
+    let fresh = relay_request(&mut replacement).await;
+    assert_ne!(old["relayId"], fresh["relayId"]);
+    let _ = relay_response(&mut ws, &old).await;
+    assert!(!response.is_finished());
+    relay_response(&mut replacement, &fresh).await.unwrap();
+    assert!(response.await.unwrap().status().is_success());
+    let rid = command["requestId"]
+        .as_str()
+        .unwrap()
+        .parse::<Uuid>()
+        .unwrap();
+    let persisted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cloud_ai_receipts WHERE request=$1")
+            .bind(rid)
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted, 0);
+    let group = value(f.human(0, Method::POST, "/chat/groups").json(
+        &json!({"requestId":Uuid::new_v4(),"name":"relay权限","memberIds":[aid,f.humans[1].0]}),
+    ))
+    .await;
+    let gid = group["id"].as_str().unwrap();
+    let path = format!("/chat/conversations/{gid}/ai/{aid}/consciousness");
+    assert_eq!(
+        f.human(1, Method::POST, &path)
+            .json(&json!({"requestId":Uuid::new_v4(),"operation":{"type":"summaries"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let request = f
+        .human(1, Method::POST, &path)
+        .json(&json!({"requestId":Uuid::new_v4(),"operation":{"type":"memories"}}));
+    let response = tokio::spawn(async move { request.send().await.unwrap() });
+    let pending = relay_request(&mut replacement).await;
+    value(
+        f.human(
+            0,
+            Method::DELETE,
+            &format!("/chat/groups/{gid}/members/{}", f.humans[1].0),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1"})),
+    )
+    .await;
+    relay_response(&mut replacement, &pending).await.unwrap();
+    assert_eq!(response.await.unwrap().status(), 403);
+    let _ = replacement.close().await;
+    f.close().await;
+}
+#[tokio::test]
+async fn references_preview_start_epoch_source_and_membership_staleness() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let group = value(f.human(0, Method::POST, "/chat/groups").json(
+        &json!({"requestId":Uuid::new_v4(),"name":"引用来源","memberIds":[aid,f.humans[1].0]}),
+    ))
+    .await;
+    let gid = group["id"].as_str().unwrap();
+    let source = f.send(gid, "群原文").await;
+    let mid = source["id"].as_str().unwrap();
+    let cid = f.conversation(aid).await;
+    let reference = json!({"conversationId":gid,"sources":[{"messageId":mid,"revision":"1"}]});
+    let preview = format!("/chat/conversations/{cid}/reference-preview");
+    let shown = value(
+        f.human(0, Method::POST, &preview)
+            .json(&json!({"reference":reference})),
+    )
+    .await;
+    assert_eq!(shown["messages"][0]["text"], "群原文");
+    assert!(shown["messages"][0]["position"].is_string());
+    assert_eq!(
+        f.human(1, Method::POST, &preview)
+            .json(&json!({"reference":reference}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let trigger = value(
+        f.human(
+            0,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"text":"延续群话题","reference":reference})),
+    )
+    .await;
+    assert_eq!(trigger["contextReference"]["stale"], false);
+    for format in ["json", "markdown"] {
+        let exported = f
+            .human(
+                0,
+                Method::GET,
+                &format!("/chat/conversations/{cid}/export?format={format}"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert!(exported.status().is_success());
+        let text = exported.text().await.unwrap();
+        assert!(text.contains(mid));
+        assert!(text.contains(gid));
+        assert!(!text.contains("群原文"));
+    }
+
+    let (task, start) = f.prepare(&secret).await;
+    let tid = task["id"].as_str().unwrap();
+    let materials = value(f.node(
+        &secret,
+        Method::GET,
+        &format!("/node/tasks/{tid}/materials"),
+    ))
+    .await;
+    assert_eq!(materials["reference"]["required"], true);
+    assert_eq!(materials["reference"]["messages"][0]["id"], mid);
+    let mut omitted = start.clone();
+    omitted["derivedSources"] = json!([]);
+    assert_eq!(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+            .json(&omitted)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let receipt = value(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+            .json(&start),
+    )
+    .await;
+    value(
+        f.node(&secret, Method::POST, "/node/consciousness/state")
+            .json(&json!({"conversationId":cid,"revision":Uuid::new_v4()})),
+    )
+    .await;
+    assert_eq!(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/result"))
+            .json(&final_result(&receipt, "旧材料结果"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    value(
+        f.human(0, Method::PATCH, &format!("/chat/messages/{mid}"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","text":"修订群原文"})),
+    )
+    .await;
+    let changes = value(f.node(&secret, Method::GET, "/node/consciousness/changes?after=0")).await;
+    assert!(
+        changes["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["messageId"] == mid)
+    );
+    assert!(
+        changes["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["messageId"] == trigger["id"])
+    );
+    assert!(!changes.to_string().contains("修订群原文"));
+    let page = value(f.human(
+        0,
+        Method::GET,
+        &format!("/chat/conversations/{cid}/messages"),
+    ))
+    .await;
+    assert_eq!(page["messages"][0]["contextReference"]["stale"], true);
+    assert_eq!(
+        f.human(0, Method::POST, &preview)
+            .json(&json!({"reference":reference}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let fresh = json!({"conversationId":gid,"sources":[{"messageId":mid,"revision":"2"}]});
+    let next = value(
+        f.human(
+            0,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"text":"新引用","reference":fresh})),
+    )
+    .await;
+    // An unrelated human leaving does not destroy valid reference metadata.
+    value(
+        f.human(1, Method::POST, &format!("/chat/groups/{gid}/leave"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1"})),
+    )
+    .await;
+    let reference: Value =
+        sqlx::query_scalar("SELECT context_reference FROM cloud_messages WHERE id=$1")
+            .bind(next["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(reference["stale"], false);
+    value(
+        f.human(
+            0,
+            Method::DELETE,
+            &format!("/chat/groups/{gid}/members/{aid}"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2"})),
+    )
+    .await;
+    let denied=value(f.node(&secret,Method::POST,"/node/consciousness/validate").json(&json!({"sources":[{"conversationId":gid,"messageId":mid,"revision":"2"}],"conversations":[]}))).await;
+    assert_eq!(denied["valid"], false);
+    let changes = value(f.node(&secret, Method::GET, "/node/consciousness/changes?after=0")).await;
+    assert!(
+        changes["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["reason"] == "permission_revoked" && c["messageId"].is_null())
+    );
+    assert!(
+        changes["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["reason"] == "window_changed")
+    );
+    value(
+        f.human(0, Method::POST, &format!("/chat/groups/{gid}/members"))
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3","accountId":aid})),
+    )
+    .await;
+    let reference: Value =
+        sqlx::query_scalar("SELECT context_reference FROM cloud_messages WHERE id=$1")
+            .bind(next["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(reference["stale"], true);
+    f.close().await;
+}
+#[tokio::test]
+async fn summary_confirmations_metadata_only_idempotence_and_late_ready_fenced() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let group = value(
+        f.human(0, Method::POST, "/chat/groups")
+            .json(&json!({"requestId":Uuid::new_v4(),"name":"独立摘要","memberIds":[aid]})),
+    )
+    .await;
+    let cid = group["id"].as_str().unwrap();
+    let source = f.send(cid, "只有云端原文，不是摘要正文").await;
+    let scope = f.scope(&secret, cid).await;
+    let start = json!({"requestId":Uuid::new_v4(),"conversationId":cid,"conversationRevision":"1","sources":[{"messageId":source["id"],"revision":"1"}],"settingsRevision":"settings-1","materialScope":scope});
+    let receipt = value(
+        f.node(&secret, Method::POST, "/node/summaries/start")
+            .json(&start),
+    )
+    .await;
+    assert_eq!(
+        receipt,
+        value(
+            f.node(&secret, Method::POST, "/node/summaries/start")
+                .json(&start)
+        )
+        .await
+    );
+    let mut different = start.clone();
+    different["settingsRevision"] = json!("settings-2");
+    assert_eq!(
+        f.node(&secret, Method::POST, "/node/summaries/start")
+            .json(&different)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let finish = json!({"confirmationId":receipt["confirmationId"],"status":"ready","usage":{"inputTokens":12,"outputTokens":4,"cachedTokens":0},"errorCode":null,"text":"NODE-PRIVATE-SUMMARY-BODY"});
+    let path = format!("/node/summaries/{}/finish", receipt["id"].as_str().unwrap());
+    value(f.node(&secret, Method::POST, &path).json(&finish)).await;
+    value(f.node(&secret, Method::POST, &path).json(&finish)).await;
+    let row: Value =
+        sqlx::query_scalar("SELECT to_jsonb(c) FROM cloud_summary_calls c WHERE id=$1")
+            .bind(receipt["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert!(!row.to_string().contains("NODE-PRIVATE"));
+    assert!(row.get("text").is_none());
+    assert_eq!(row["state"], "ready");
+    assert_eq!(
+        f.node(&secret, Method::POST, "/node/summaries/start")
+            .json(&start)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let messages: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1")
+            .bind(cid.parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(messages, 1);
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM cloud_node_tasks")
+        .fetch_one(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(tasks, 0);
+    let mut second = start.clone();
+    second["requestId"] = json!(Uuid::new_v4());
+    let other = value(
+        f.node(&secret, Method::POST, "/node/summaries/start")
+            .json(&second),
+    )
+    .await;
+    value(
+        f.human(
+            0,
+            Method::PATCH,
+            &format!("/chat/messages/{}", source["id"].as_str().unwrap()),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","text":"来源修订"})),
+    )
+    .await;
+    assert_eq!(
+        f.node(&secret, Method::POST, &path)
+            .json(&finish)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let path = format!("/node/summaries/{}/finish", other["id"].as_str().unwrap());
+    assert_eq!(f.node(&secret,Method::POST,&path).json(&json!({"confirmationId":other["confirmationId"],"status":"ready","usage":null,"errorCode":null})).send().await.unwrap().status(),409);
+    f.close().await;
+}
+#[tokio::test]
+async fn consciousness_history_full_pagination_and_stable_change_cursor() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let group = value(
+        f.human(0, Method::POST, "/chat/groups")
+            .json(&json!({"requestId":Uuid::new_v4(),"name":"完整来源分页","memberIds":[aid]})),
+    )
+    .await;
+    let cid = group["id"].as_str().unwrap();
+    let cid_uuid = cid.parse::<Uuid>().unwrap();
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,sender_name,body) SELECT md5($1::text||g::text)::uuid,$1,$2,'human0','history '||g::text FROM generate_series(1,105) g").bind(cid_uuid).bind(f.humans[0].0).execute(&f.state.pool).await.unwrap();
+    let first = value(f.node(
+        &secret,
+        Method::GET,
+        &format!("/node/conversations/{cid}/history?after=0&limit=100"),
+    ))
+    .await;
+    assert_eq!(first["messages"].as_array().unwrap().len(), 100);
+    let last = first["messages"][99]["position"].as_str().unwrap();
+    let next = value(f.node(
+        &secret,
+        Method::GET,
+        &format!("/node/conversations/{cid}/history?after={last}&limit=100"),
+    ))
+    .await;
+    assert_eq!(next["messages"].as_array().unwrap().len(), 5);
+    assert_eq!(first["recentBoundary"], "94");
+    sqlx::query("INSERT INTO cloud_source_changes(ai_id,conversation,reason) SELECT $1,$2,'window_changed' FROM generate_series(1,201)").bind(aid.parse::<Uuid>().unwrap()).bind(cid_uuid).execute(&f.state.pool).await.unwrap();
+    let first = value(f.node(&secret, Method::GET, "/node/consciousness/changes?after=0")).await;
+    assert_eq!(first["changes"].as_array().unwrap().len(), 200);
+    assert_eq!(first["hasMore"], true);
+    let cursor = first["cursor"].as_str().unwrap();
+    let next = value(f.node(
+        &secret,
+        Method::GET,
+        &format!("/node/consciousness/changes?after={cursor}"),
+    ))
+    .await;
+    assert_eq!(next["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(next["hasMore"], false);
+    let (new_secret, _, _) = f.bind_ai(aid, "1").await;
+    let replay = value(f.node(
+        &new_secret,
+        Method::GET,
+        "/node/consciousness/changes?after=0",
+    ))
+    .await;
+    assert_eq!(replay["cursor"], first["cursor"]);
     f.close().await;
 }

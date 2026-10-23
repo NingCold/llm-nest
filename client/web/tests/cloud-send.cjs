@@ -2,9 +2,10 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), vm = requ
 class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); this.status = status; } }
 const me = { id: "me", name: "自己", kind: "human", status: "active" };
 const conversation = { id: "group", kind: "group", directBlocked: false };
-const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
+const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
 function harness(record) {
   const states = [], refs = [], calls = [], saves = [];
+  const repository = { records: {} };
   let si = 0, ri = 0;
   // Seed an authenticated, open conversation and a recovered draft. Effects stay off:
   // these cases exercise explicit sends, without any automatic network work.
@@ -22,13 +23,13 @@ function harness(record) {
       if (name === "./api") return api;
       if (name === "./Workspace") return { Workspace: "workspace" };
       if (name === "../social/drafts") return { emptyDraft: () => ({ text: "", requestId: null, mentions: [], replyTo: null }) };
-      if (name === "../social/draft-storage") return { DraftDatabase: class { async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); } } };
+      if (name === "../social/draft-storage") return { DraftDatabase: class { async load(owner, ids) { return Object.fromEntries(ids.filter(id => repository.records[id]).map(id => [id, repository.records[id]])); } async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); } } };
       if (name === "@/hooks/useDesktopReady") return { useDesktopReady() {} };
       if (name.startsWith("@/") || name.startsWith("./") || name.startsWith("../") || name.startsWith("@tauri")) return {};
       return require(name);
     },
   });
-  return { calls, saves, api, render() { si = ri = 0; return exports.default().props; } };
+  return { calls, saves, api, repository, render() { si = ri = 0; return exports.default().props; } };
 }
 (async () => {
   const first = harness({ draft, pending: null });
@@ -52,6 +53,8 @@ function harness(record) {
   assert.deepEqual(uncertain.calls[0].body, uncertain.calls[1].body, "manual retry sends the exact original snapshot including ordered mentions, reply and images");
   assert.equal(JSON.stringify(uncertain.calls[0].body.mentions), '["ai-b","ai-a"]');
   assert.equal(uncertain.calls[0].body.replyTo, "earlier");
+  assert.deepEqual(uncertain.calls[0].body.reference, draft.reference.selection);
+  assert.equal(JSON.stringify(uncertain.calls[0].body.reference).includes(draft.text), false, "reference sends identifiers and revisions only");
 
   const recovered = harness({ draft: { ...draft, text: "later input", mentions: ["new-ai"], replyTo: "new-reply" }, pending });
   assert.equal(recovered.calls.length, 0, "recovery never sends automatically");
@@ -61,5 +64,26 @@ function harness(record) {
   assert.equal(recovered.calls[0].body.replyTo, draft.replyTo);
   assert.equal(JSON.stringify(recovered.calls[0].body.mentions), JSON.stringify(draft.mentions));
   assert.equal(recovered.render().record.draft.text, "later input");
+  const target = { ...conversation, id: "direct", kind: "direct", peer: { id: "ai-a" } };
+  const continuation = harness({ draft, pending: null });
+  const targetDraft = { draft: { ...draft, text: "保留私聊输入", reference: null }, pending: null };
+  continuation.repository.records.direct = targetDraft;
+  continuation.api.respond = async path => path === "/chat/direct" ? target : path.endsWith("reference-preview") ? { conversation: { id: "source-group" }, messages: [] } : { self: me, contacts: [], conversations: [conversation, target], cursor: "2" };
+  await continuation.render().continuePrivately({ id: "ai-a" }, draft.reference);
+  assert.equal(continuation.saves.length, 1);
+  assert.equal(continuation.saves[0].id, "direct");
+  assert.equal(continuation.saves[0].next.draft.text, "保留私聊输入");
+  assert.deepEqual(continuation.saves[0].next.draft.reference, draft.reference);
+  assert.equal(continuation.render().active, "direct");
+  assert.equal(continuation.calls.some(call => call.method === "POST" && call.path.endsWith("/messages")), false, "continuation never auto-sends");
+  const blocked = harness({ draft, pending: null });
+  blocked.repository.records.direct = { ...targetDraft, pending };
+  blocked.api.respond = continuation.api.respond;
+  await assert.rejects(blocked.render().continuePrivately({ id: "ai-a" }, draft.reference), /尚未确认的发送/);
+  assert.equal(blocked.saves.length, 0, "continuation cannot replace an uncertain target command");
+  const invalid = harness({ draft, pending: null });
+  invalid.api.respond = async path => { if (path === "/chat/direct") return target; throw new HttpError(403); };
+  await assert.rejects(invalid.render().continuePrivately({ id: "ai-a" }, draft.reference), /HTTP 403/);
+  assert.equal(invalid.saves.length, 0, "preview rejection cannot put invalid source metadata into a draft");
   console.log("PASS: cloud structured sends persist before dispatch, unlock only first explicit rejections and preserve uncertain/recovered command snapshots");
 })().catch(error => { console.error(error); process.exitCode = 1; });

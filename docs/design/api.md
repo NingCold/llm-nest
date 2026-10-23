@@ -25,17 +25,19 @@
 | 原消息前后记录 | GET `/chat/messages/{id}/context` |
 | 附件读取 / 图片预览 | GET `/chat/messages/{id}/attachments/{index}?revision=…`；图片可加 `inline=true` |
 | 单窗口导出 | GET `/chat/conversations/{id}/export?format=markdown\|json&includeImages=true\|false&includeFiles=true\|false` |
+| 群话题来源预览 | POST `/chat/conversations/{id}/reference-preview` |
+| 在线节点记忆与摘要 | POST `/chat/conversations/{id}/ai/{aiId}/consciousness` |
 | 持久变更提示 SSE | GET `/chat/events?after=…` |
 
 ID 是 UUID，revision、position、listRevision、readPosition、cursor 是十进制字符串。公开 Account 为 `{id,name,bio,kind,status}`，status 为 active/disabled。Conversation 为 `{id,kind,name,peer,members,revision,directBlocked,lastMessage,latestPosition,unreadCount,manualUnread,pinned,readPosition,listRevision}`；kind 为 direct/group，私聊 name 为当前对方名字，peer 为对方 Account、成员角色均为 member，群聊 peer 为 null。members 为 `[{account,role:owner|admin|member}]`，不使用虚拟账号代表群。消息返回稳定 id/conversationId/senderId、senderName、replyTo、mentions、aiResponses、text、createdAt/updatedAt、revision/position、committed、generating、interrupted、failed 或 withdrawn 状态，以及 `attachments[{index,kind,name,mime,byteLength}]`。index 是该云端消息的附件索引，不是旧本地 MessageBody 的 part index。
 
-消息发送使用 `{requestId,text,replyTo?,mentions?,images:[{mime,data}],files:[{name,mime,data}]}`，data 为原字节 base64，不接受路径或 URL。图片支持 PNG/JPEG/WebP，每条最多 4 张、单张 4 MiB、合计 8 MiB、边长 4096；文件最多 4 个、单个 10 MiB、合计 20 MiB。发送 HTTP 正文上限 40 MiB，服务端检查真实图片格式及解码。编辑使用 `{requestId,expectedRevision,text}`，保留附件；撤回使用相同 ID/版本字段，清空正文和附件。下载复核当前成员和当前 revision，普通文件仅 attachment/octet-stream，响应 no-store/nosniff；图片下载采用稳定消息 ID、索引和识别扩展名。
+消息发送使用 `{requestId,text,replyTo?,mentions?,reference?,images:[{mime,data}],files:[{name,mime,data}]}`，data 为原字节 base64，不接受路径或 URL。图片支持 PNG/JPEG/WebP，每条最多 4 张、单张 4 MiB、合计 8 MiB、边长 4096；文件最多 4 个、单个 10 MiB、合计 20 MiB。发送 HTTP 正文上限 40 MiB，服务端检查真实图片格式及解码。编辑使用 `{requestId,expectedRevision,text}`，保留附件；撤回使用相同 ID/版本字段，清空正文和附件。下载复核当前成员和当前 revision，普通文件仅 attachment/octet-stream，响应 no-store/nosniff；图片下载采用稳定消息 ID、索引和识别扩展名。
 
 replyTo 为同窗口未撤回的 committed 消息 ID 或 null，mentions 为有序当前成员 ID 数组，可提及真人；只认结构化字段，正文中的名字或 `@名字` 不触发模型。senderName 保留消息署名，不依赖发送者仍在群内。群聊按 mentions 顺序选出有效 AI，再追加被回复消息的 AI 发送者并去重；没有明确目标不调用模型，AI 完成回复不自动触发其他 AI。私聊沿用对方 AI 的触发方式。
 
 列表修改使用 `{requestId,expectedRevision,pinned?,readPosition?,manualUnread?}`，其中 expectedRevision 指 listRevision。已读位置必须属于当前窗口且单调，自发和撤回消息不计未读。分页 `before`/`limit` 返回升序 messages、hasMore、同一快照的 latestPosition；搜索按 position 倒序、每页 50，中文/符号按字面、ASCII 英文不区分大小写。
 
-消息和列表命令以实际账号/requestId 去重；同 ID 不同内容冲突。回执只存规范化命令的 SHA256 与实体 ID，重试复核身份后返回当前权威实体，不能借旧回执恢复撤回内容。导出读取完整窗口一致快照，包含稳定发送者 ID、当前正文/状态；replyTo 仅指同窗口，当前云端没有跨窗口引用。附件选项任一开启返回同时含 chat.md、chat.json 与所选原字节的 ZIP，JSON filePath 对应实际路径；它不是整库备份。
+消息和列表命令以实际账号/requestId 去重；同 ID 不同内容冲突。回执只存规范化命令的 SHA256 与实体 ID，重试复核身份后返回当前权威实体，不能借旧回执恢复撤回内容。导出读取完整窗口一致快照，包含稳定发送者 ID、当前正文/状态；replyTo 仅指同窗口，跨窗口引用只导出来源标识，不展开原文或内部记忆。附件选项任一开启返回同时含 chat.md、chat.json 与所选原字节的 ZIP，JSON filePath 对应实际路径；它不是整库备份。
 
 SSE 的事件名为 `change`，SSE id 与数据 cursor 一致，数据为 `{cursor,conversationId?}`，只表示需要重读，不携带正文。事件按登录账号过滤，服务端持续复核会话；客户端仅在快照应用成功后推进 cursor，断线后用最新 cursor 重连，也支持标准 Last-Event-ID。快照与 cursor 一致读取，事件分配前取得事务 advisory lock，避免提交顺序倒置导致漏事件。AI 的生成片段也通过持久检查点和 change 提示刷新，节点侧协议见下节。
 
@@ -61,7 +63,7 @@ GET `/chat/contacts/{accountId}` 返回 `{account,listed,blocked,revision,direct
 
 ## 云端 AI 与节点接口
 
-以下路由已实现，均省略 `/api`，共享类型见 `connector::node`，服务端入口为 `server/cloud/src/nodes.rs`。当前协议版本为 2，JSON 字段与 tagged frame 的 `type` 均为 camelCase；UUID 和版本为字符串，时间为 RFC3339。实现与联调状态见[验证指南](../validation/README.md#云端-ai-节点验证)。
+以下路由均省略 `/api`，共享类型见 `connector::node`，服务端入口为 `server/cloud/src/nodes.rs` 与 `consciousness.rs`。当前协议版本为 3，JSON 字段与 tagged frame 的 `type` 均为 camelCase；UUID 和版本为字符串，时间为 RFC3339。实现与联调状态见[验证指南](../validation/README.md#云端-ai-节点验证)。
 
 ### AI 账号与配对
 
@@ -74,7 +76,7 @@ GET `/chat/contacts/{accountId}` 返回 `{account,listed,blocked,revision,direct
 | 配对秘密 Bearer | POST `/node/pairings` | `{nodeId,nodeName}` → `{pairingId,userCode,expiresAt}`，有效期十分钟 |
 | 同一配对秘密 | GET `/node/pairings/{id}` | `{state:pending\|authorized,aiId?,bindingVersion?}`；已授权且仍有效绑定可安全重查 |
 
-`ManagedAi` 返回 `{account:{id,name,bio,kind,status},role:initial|admin,bindingVersion,statusRevision,node}`，未绑定的版本为 `"0"`，node 为 null 或 `{id,name,online,lastSeenAt}`。当前实现创建者的初始管理权和节点管理；增删普通管理员、管理员只读账号视角及在线内部配置尚未开放。
+`ManagedAi` 返回 `{account:{id,name,bio,kind,status},role:initial|admin,bindingVersion,statusRevision,node}`，未绑定的版本为 `"0"`，node 为 null 或 `{id,name,online,lastSeenAt}`。当前实现创建者的初始管理权和节点管理；增删普通管理员、管理员只读账号视角及角色/模型在线配置尚未开放。
 
 停用 AI 保留账号、历史和节点绑定，取消该 AI 所有未完成任务并保留有效累计片段为 interrupted，拒绝旧任务继续执行/提交；其他 AI 的任务独立。停用期间仍保存发给该 AI 的真人私聊消息，但不为它创建新任务。恢复只响应新消息，不重放旧任务。
 
@@ -88,9 +90,9 @@ GET `/chat/contacts/{accountId}` 返回 `{account,listed,blocked,revision,direct
 | --- | --- |
 | GET `/node/tasks` | 当前绑定的 running 或未过期且轮到本窗口队首的 queued 任务，按持久顺序返回 |
 | GET `/node/tasks/{id}` | 查询当前绑定任务，包括终态，供恢复与回执核对 |
-| GET `/node/tasks/{id}/materials` | `{task,ai,conversation,messages,sources}`；触发位置以内的 committed 原文，及本窗更早队列且其触发位置不晚于当前的已完成 AI 输出，取最近最多 100 条，再补必要触发/回复来源，有序返回 |
+| GET `/node/tasks/{id}/materials` | `{task,ai,conversation,messages,sources,reference}`；触发位置以内的 committed 原文，及本窗更早队列且其触发位置不晚于当前的已完成 AI 输出，取最近最多 100 条，再补必要触发/回复来源，有序返回 |
 | GET `/node/tasks/{id}/messages/{messageId}/attachments/{index}?revision=…` | 当前授权与来源版本复核后的图片原字节；普通文件只提供元信息 |
-| POST `/node/tasks/{id}/start` | `{requestId,taskRevision,conversationRevision,sources:[{messageId,revision}],configurationRevision}` → 持久开始确认 |
+| POST `/node/tasks/{id}/start` | `{requestId,taskRevision,conversationRevision,sources:[{messageId,revision}],derivedSources,materialScopes,configurationRevision}` → 持久开始确认 |
 | POST `/node/tasks/{id}/result` | `{requestId,runId,messageId,confirmationId,status,text,errorCode?,usage?}` → 当前任务 |
 | POST `/node/tasks/{id}/reject` | `{requestId,taskRevision,code,message}`，用于模型调用前的配置、材料、预算或能力错误 |
 | POST `/chat/ai-tasks/{id}/cancel` | 当前真人成员会话，`{requestId}`，停止该任务 |
@@ -105,20 +107,39 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 
 ### WSS 与重连
 
-`/node/ws` 使用同一 Bearer，单帧上限 1 MiB。客户端先发送 `{type:"hello",protocolVersion:2,nodeId,aiId,bindingVersion}`，服务端复核后返回 `{type:"ready",protocolVersion:2}`；旧版本 1 明确拒绝，不提供伪兼容。
+`/node/ws` 使用同一 Bearer，单帧上限 1 MiB。客户端先发送 `{type:"hello",protocolVersion:3,nodeId,aiId,bindingVersion}`，服务端复核后返回 `{type:"ready",protocolVersion:3}`；旧版本明确拒绝。
 
 | 方向 | type 与内容 |
 | --- | --- |
 | 服务端 → 节点 | `tasksChanged`；`cancel:{taskId}`；`deltaAccepted:{taskId,sequence}`；`error:{code,message}` |
 | 节点 → 服务端 | `delta:{taskId,runId,messageId,confirmationId,sequence,text}` |
+| 服务端 → 节点 | `consciousnessRequest:{relayId,requestId,operatorId,conversation,operation}` |
+| 节点 → 服务端 | `consciousnessResponse:{relayId,requestId,view,error}` |
 
 delta 是完整累计正文检查点，最多 256 KiB，每 500ms 至多一次。服务端复核绑定、开始与来源状态，序号单调，同一序号同正文幂等，保存后通知聊天刷新并确认序号。最终 HTTP result 为权威结果；不传思考、内部 persona 或 Key。原生 ping/pong 用于存活检查。
 
-每次连接/重连都重新读取权威任务列表，版本 2 不暴露节点游标，不依赖通知补齐来决定是否再次调用模型。已开始且结果不明不自动重做；节点可重交本地持久保存的原结果。服务端重启把遗留 running 标 uncertain，保留可见片段而不重排。关闭聊天客户端不取消独立节点任务。
+每次连接/重连都重新读取权威任务列表，并按稳定 AI 账号的来源游标补齐意识材料变更；WSS 通知本身不作为完整来源记录。已开始且结果不明不自动重做；节点可重交本地持久保存的原结果。服务端重启把遗留 running 标 uncertain，保留可见片段而不重排。关闭聊天客户端不取消独立节点任务。
 
-### 后续管理与意识接口
+### 记忆、摘要与群话题接续
 
-在线内部配置、管理员授权界面、显式记忆和每 AI 摘要属于后续步骤，不预设为已开放路由。目标仍是云端逐次复核权限后转发在线节点，节点保存才成功，内部正文不写云端存储或日志，离线不排队修改；模型 Key 只在节点本地配置。详细范围见[账号](accounts.md)、[意识系统](consciousness.md)与[云端计划](../project/cloud-plan.md)。
+真人通过 POST `/chat/conversations/{cid}/ai/{aiId}/consciousness` 发送 `{requestId,operation}`。操作的 `type` 为 `memories`、`createMemory`、`editMemory`、`forgetMemory`、`summaries`、`configureSummaries` 或 `generateSummary`；具体字段以 `connector::node::ConsciousnessOperation` 为准。记忆写入带类别、正文、可空的 `{messageId,revision}` 来源，编辑和遗忘还带条目 id/revision。摘要设置带版本、enabled 和独立模型绑定；手动整理带可空 retryId。
+
+记忆操作要求实际真人与目标 AI 都是当前窗口成员，摘要操作还要求真人为该 AI 管理员。返回 `ConsciousnessView`，记忆操作只提供 memories，摘要操作提供 summaries/settings/models。节点离线直接报错，超时或断开后显示结果未确认；写操作以原 requestId/operation 重试。每次转发另有新的 relayId，并绑定当前节点连接，迟到响应不能替代新的请求。云端只在内存中转发正文；节点保存完成并宣布材料版本后才能返回成功。
+
+预览与消息发送使用 `reference:{conversationId,sources:[{messageId,revision}]}`，只允许选取双方共同群的 1–8 条 committed 原文。发送成功的消息返回 `contextReference:{conversationId,sources,revision,stale}`，无引用时为 null。云端保存来源标识，不复制正文。任务材料的 `reference` 提供这次获准读取的原文、源窗口和 required；必要引用必须完整带入，普通追问只考虑最近 12 条私聊里的最新有效引用。
+
+| 节点方法与路径 | 内容 |
+| --- | --- |
+| GET `/node/consciousness/changes?after=…` | 按稳定 AI 账号读取 `{cursor,hasMore,changes}`，变化只含窗口、消息标识和原因 |
+| POST `/node/consciousness/validate` | 检查来源 ID/revision 与窗口成员/版本，返回 `{valid}` |
+| GET `/node/conversations/{id}/history?after=…&limit=100` | 递增 position 原文及 recentBoundary，供节点分段整理 |
+| POST `/node/consciousness/state` | 宣布 `{conversationId,revision}`，revision 为节点上下文 UUID；变化使依赖旧版本的运行失效 |
+| POST `/node/summaries/start` | 持久确认独立摘要调用，保存来源、配置版本及节点材料版本，返回 id/confirmationId |
+| POST `/node/summaries/{id}/finish` | 提交 ready/failed/interrupted/stale、用量和错误码，不发送摘要正文 |
+
+协议 v3 的 NodeMessage 增加稳定 position，TaskMaterials 增加可空 reference，StartRequest 增加必需的 derivedSources 与 materialScopes。原有 sources 保持近期原文快照；derivedSources 只列实际读到的记忆、摘要和引用的原文依赖，materialScopes 是实际窗口的节点版本。云端只接受本窗口或当前有效引用的来源群，开始、流式提交与最终结果都复核冻结来源和版本。来源游标用于同步，不因其他窗口发生变化而否定当前运行。
+
+角色/模型参数的在线编辑、管理员名单界面仍属于第 4 步；模型 Key 只在节点本地配置。详细行为见[意识系统](consciousness.md)。
 
 ## 当前本地实现的适用范围
 

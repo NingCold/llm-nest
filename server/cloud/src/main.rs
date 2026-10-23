@@ -81,6 +81,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("云端聊天服务已启动：{bind}");
     let maintenance = tokio::spawn(cloud_server::nodes::maintain(pool.clone()));
     let state = Arc::new(AppState {
+        relay: Default::default(),
         pool,
         attachments,
         public_url,

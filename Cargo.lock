@@ -24,9 +24,11 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "social",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "toml 0.8.2",
  "uuid",
 ]

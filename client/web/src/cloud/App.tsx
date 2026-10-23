@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { IS_DESKTOP } from "@/lib/desktop";
 import { clearConsciousnessCommands } from "./Consciousness";
+import { clearAiConfigurationCommands } from "./AiConfiguration";
 import { clearParticipationCommands } from "./Participation";
 import { Workspace } from "./Workspace";
 import { AuthPage } from "./AuthPage";
@@ -108,6 +109,7 @@ export default function CloudApp() {
   };
   const clear = () => {
     clearConsciousnessCommands();
+    clearAiConfigurationCommands();
     clearParticipationCommands();
     epoch.current++;
     view.current++;
@@ -324,10 +326,14 @@ export default function CloudApp() {
       const failed = await listen("backend-shutdown-failed", () => {
         closing.current = false;
       });
+      const retained = await listen("desktop-close-retained", () => {
+        closing.current = false;
+      });
       await invoke("desktop_register_draft_guard", { page: pageId });
       return () => {
         unlisten();
         failed();
+        retained();
       };
     };
     const p = setup().catch(report);

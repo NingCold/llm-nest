@@ -401,6 +401,7 @@ mod tests {
             let mut connection = client.connect().await.unwrap();
             connection
                 .send(&ClientFrame::Hello {
+                    capabilities: vec![],
                     protocol_version: 4,
                     node_id: "n".into(),
                     ai_id: "a".into(),

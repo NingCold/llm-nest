@@ -4451,6 +4451,7 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "sha2",
  "social",
  "social-feature",
  "storage",
@@ -4461,6 +4462,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "toml 0.8.2",
  "uuid",
  "windows-sys 0.61.2",
 ]

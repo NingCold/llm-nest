@@ -59,13 +59,15 @@ pnpm --dir client/desktop exec tauri dev
 
 在页面填写云端 HTTPS 服务器地址。原生网络层持有内存 Cookie，重启需重新登录；默认不读取 `config/llmn.toml` 或打开旧 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
 
+Tauri 开发和构建入口会先准备独立 `llmn-agent` 可执行文件，再构建共用前端；生成文件不进 Git。桌面运行时从资源目录启动 Agent，界面本身不调用模型。验收本机配置、配对与托盘时，设置临时 `LLMN_DATA_DIR`，按服务器和真人账号隔离节点，避免使用日常资料。构建细节见[桌面说明](../client/desktop/README.md)。
+
 旧本地服务仍可用 `cargo run -p web-server --locked` 维护 Runtime/SocialFeature 与 SQLite，需要独立的 `LLMN_DATA_DIR` 和模型配置，见[模型配置](configuration.md)。默认 CloudApp 不消费其 `/api/social` 接口；不要把两个服务当成同一个后端，也不要为测试启动真实模型调用。
 
 ### 独立 Agent 与外部接入
 
 `agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点说明](../agent/node/README.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
 
-外部程序可只依赖[连接器](../connector/README.md)，仓库提供明确标注固定回答的最小示例；该示例不调用模型，也不代替持久恢复的自带 Agent。
+外部程序可只依赖[连接器](../connector/README.md)。固定回答示例覆盖任务接收、回复、取消、撤权及不支持的管理请求，有独立的模拟 WSS 测试；不调用模型，也不代替持久恢复的自带 Agent。在线角色与模型管理由节点声明 `profileManagement` 能力，旧节点和示例不会被当成支持该能力。
 
 ## 检查改动
 
@@ -103,7 +105,7 @@ cargo test -p cloud-server --locked -- --nocapture
 node client/web/tests/cloud-api.cjs
 ```
 
-数据库测试逐例使用隔离 schema，覆盖认证、并发唯一私聊、幂等回执、权限、读态、附件修订/撤回、导出、持久事件与本地样本映射。实际 PostgreSQL 的 10 项测试已通过；没有设置连接串时数据库用例会跳过，不能以此报告完整通过。桌面原生转发可用 `cargo test -p tauri-frontend --lib cloud::tests` 检查。
+数据库测试逐例使用隔离 schema，覆盖认证、私聊与群聊、节点执行、意识来源、接话约定、账号管理、附件和持久事件。共享调度测试按 `--test-threads=1` 顺序运行；没有设置连接串时数据库用例会跳过，不能以此报告完整通过。当前实际结果见[验证记录](validation/README.md)，桌面原生转发可用 `cargo test -p tauri-frontend --lib cloud::tests` 检查。
 
 远端测试服务当前只通过 Tailscale HTTPS 8443 开放，使用测试 CA 和私有 outbox；不在文档记录真实地址、证书私钥、路径或凭据。浏览器与桌面端到端和部署验收范围见[验证指南](validation/README.md)。
 

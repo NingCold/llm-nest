@@ -2,7 +2,7 @@
 
 [开发指南](development.md) · [验证指南](validation/README.md) · [全部文档](README.md)
 
-本页描述现有本地版本的打包与发布。云端服务容器、独立 Agent 和连接器属于[改造计划](project/cloud-plan.md)，目前尚无对应发布产物。
+本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent；已发布安装包仍是此前版本，云端版尚未正式发布。云端服务独立部署，见[部署说明](../server/cloud/deploy/README.md)。
 
 ## 安装包范围
 
@@ -11,7 +11,7 @@
 | Windows x64 | Windows + MSVC | NSIS `.exe`、`.msi` |
 | Linux x64 | Ubuntu 24.04 + WebKitGTK 4.1 | `.deb`、`.AppImage` |
 
-安装包嵌入共用前端，不携带个人配置、模型密钥或聊天记录。目前没有配置系统代码签名、应用内自动更新，也没有 macOS 或 ARM 的打包流程。
+安装包嵌入共用前端与独立 Agent 可执行文件，不携带个人配置、模型密钥或聊天记录。Tauri 构建前运行 `build:agent`，将本平台 release Agent 复制到忽略的资源目录，打包到 `agent/`；开发入口使用 debug Agent。不要用用户的节点目录作为打包资源。当前没有配置系统代码签名、应用内自动更新，也没有 macOS 或 ARM 的打包流程。
 
 Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行库兼容性，AppImage 也有宿主依赖。
 

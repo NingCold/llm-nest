@@ -16,7 +16,7 @@ cargo run -p connector --example external_node -- status PAIRING_ID
 cargo run -p connector --example external_node -- run
 ```
 
-授权后 `run` 每两秒读取任务，读取材料、取得持久开始确认，然后提交固定回答。它用于确认外部节点能接入，不支持持久恢复；运行中断后，不重做已开始的任务。需要真实模型、预算和持久检查点时使用 `agent/node`。
+授权后把查询结果的 AI ID 与绑定版本分别保存为 `LLMN_AI_ID`、`LLMN_BINDING_VERSION`。`run` 建立 WSS、发送 v4 Hello，并每两秒读取任务，读取材料、取得持久开始确认，然后提交固定回答。它用于确认外部节点能接入，不支持持久恢复；运行中断后，不重做已开始的任务。需要真实模型、预算和持久检查点时使用 `agent/node`。
 
 ## 实现自己的 Agent
 
@@ -31,3 +31,7 @@ cargo run -p connector --example external_node -- run
 模型调用前保存原始 start 请求，取得并保存开始回执。已经开始但结果不明的任务不能自动重做。最终结果先保存在节点，再通过原 request ID 和正文重传。`Delta` 是最多每 500ms 一次的完整文字检查点，最终 HTTP result 才是权威结果。附件接口只为已授权材料提供原字节，普通文件只给模型元信息。
 
 自带节点的自动 token 账本按 AI、窗口和 UTC 日区分，显式消息仍受整体节点预算约束。外部 Agent 自行管理模型并发与预算；无法执行时使用 `RejectRequest` 返回明确原因，例如 `token_limit`。已开始或网络结果不明确的调用不退还预算，不自动重调模型。
+
+`Hello.capabilities` 可省略，外部示例发送空能力；自带节点声明 `profileManagement`。`ManagementRequest` / `ManagementResponse` 使用 relayId 匹配连接、requestId 去重，`AgentManagementOperation` 支持 view/saveProfile。远程 DTO 不含地址和凭据；不支持管理的外部节点应明确返回 management_unsupported。示例在等待与固定回答待提交期间处理取消、连接结束与撤权，不调用模型、不自动重试已开始任务；最终提交仍由云端校验当前权限。
+
+固定回答待提交期间的取消、撤权及不支持管理响应，可用独立回环 WebSocket 验收，不连接云端或模型：`cargo test -p connector --example external_node --locked`。测试使用临时监听端口，向实际连接发送管理、Cancel 和撤权 Error 帧。

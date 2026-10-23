@@ -38,3 +38,11 @@ cargo run -p cloud-server --locked
 设置独立测试库的 `CLOUD_TEST_DATABASE_URL` 后运行 `cargo test -p cloud-server -- --nocapture`。测试为每例建立隔离 schema，未设置变量时数据库测试会跳过，不能当成完整验证。当前验证结果集中在[验证指南](../../docs/validation/README.md)。
 
 [本地数据样本](tests/fixtures/README.md) 只做测试映射，验证稳定 UUID、公开名字/简介、消息相对顺序和原始附件字节。它不是正式迁移器，不读取用户旧库。ActorId 可直接保留为 PostgreSQL UUID；旧 sequence 与附件 part index 需要明确映射。AI、群、旧状态及内部资料迁移按后续计划完成。
+
+## AI 在线管理与只读查看
+
+`GET /api/ai` 保留实际真人身份，返回管理角色、公开资料/管理员版本及节点声明的能力。`PUT /api/ai/{id}/profile` 按 `expectedProfileRevision` 修改名称/简介；`GET /api/ai/{id}/administrators` 读取管理员，只有初始管理员可用 `PUT /api/ai/{id}/administrators/{accountId}` 按 `expectedRevision` 授予或撤销真人管理员，不能移除初始管理员。写操作使用 `requestId` 去重，重放先复核当前权限并返回当前权威结果。
+
+`POST /api/ai/{id}/management` 转发 `view`/`saveProfile` 给声明 `profileManagement` 的当前在线节点，使用节点档案的独立版本。正文仅在内存转发；离线不排队，返回前再次复核会话、管理权与当前绑定。返回 DTO 仅有角色、模型选择与运行参数，不含服务地址和凭据，模型 Key 在节点本地配置。
+
+`GET /api/ai/{id}/view` 读取该 AI 当前窗口列表；其 `/conversations/{cid}/messages` 与 `/messages/{mid}/attachments/{index}?revision=...` 仅提供分页读取和下载。每次读取检查真人管理权及 AI 当前成员身份，不更换登录身份，不改变已读，不提供代发或全局事件订阅。

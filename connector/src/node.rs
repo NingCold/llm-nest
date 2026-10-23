@@ -90,6 +90,12 @@ dto!(RejectRequest {
     rename_all_fields = "camelCase"
 )]
 pub enum ClientFrame {
+    ManagementResponse {
+        relay_id: String,
+        request_id: String,
+        view: Option<AgentManagementView>,
+        error: Option<ConsciousnessError>,
+    },
     ConsciousnessResponse {
         relay_id: String,
         request_id: String,
@@ -97,6 +103,8 @@ pub enum ClientFrame {
         error: Option<ConsciousnessError>,
     },
     Hello {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<String>,
         protocol_version: u32,
         node_id: String,
         ai_id: String,
@@ -120,6 +128,12 @@ pub enum ClientFrame {
 // Keep the public wire DTO unboxed for independent connector callers.
 #[allow(clippy::large_enum_variant)]
 pub enum ServerFrame {
+    ManagementRequest {
+        relay_id: String,
+        request_id: String,
+        operator_id: String,
+        operation: AgentManagementOperation,
+    },
     ConsciousnessRequest {
         relay_id: String,
         request_id: String,
@@ -144,6 +158,8 @@ pub enum ServerFrame {
     },
 }
 
+mod management;
+pub use management::*;
 mod consciousness;
 pub use consciousness::*;
 mod transport;
@@ -154,6 +170,7 @@ mod tests {
     #[test]
     fn frame_wire_names() {
         let frame = ClientFrame::Hello {
+            capabilities: vec![],
             protocol_version: 4,
             node_id: "node".into(),
             ai_id: "ai".into(),

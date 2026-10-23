@@ -80,7 +80,7 @@ ContactIntent 提供 `{id,creatorId,aiId,content,dueAt,expiresAt,utcOffsetMinute
 
 ## 云端 AI 与节点接口
 
-以下路由均省略 `/api`，共享类型见 `connector::node`，服务端入口为 `server/cloud/src/nodes.rs` 与 `consciousness.rs`。当前协议版本为 4，JSON 字段与 tagged frame 的 `type` 均为 camelCase；UUID 和版本为字符串，时间为 RFC3339。实现与联调状态见[验证指南](../validation/README.md#云端-ai-节点验证)。
+以下路由均省略 `/api`，共享类型见 `connector::node`，服务端入口为 `server/cloud/src/nodes.rs`、`management.rs` 与 `consciousness.rs`。当前协议版本为 4，JSON 字段与 tagged frame 的 `type` 均为 camelCase；UUID 和版本为字符串，时间为 RFC3339。实现与联调状态见[验证指南](../validation/README.md#云端-ai-节点验证)。
 
 ### AI 账号与配对
 
@@ -93,11 +93,29 @@ ContactIntent 提供 `{id,creatorId,aiId,content,dueAt,expiresAt,utcOffsetMinute
 | 配对秘密 Bearer | POST `/node/pairings` | `{nodeId,nodeName}` → `{pairingId,userCode,expiresAt}`，有效期十分钟 |
 | 同一配对秘密 | GET `/node/pairings/{id}` | `{state:pending\|authorized,aiId?,bindingVersion?}`；已授权且仍有效绑定可安全重查 |
 
-`ManagedAi` 返回 `{account:{id,name,bio,kind,status},role:initial|admin,bindingVersion,statusRevision,node}`，未绑定的版本为 `"0"`，node 为 null 或 `{id,name,online,lastSeenAt}`。当前实现创建者的初始管理权和节点管理；增删普通管理员、管理员只读账号视角及角色/模型在线配置尚未开放。
+`ManagedAi` 返回 `{account:{id,name,bio,kind,status},role:initial|admin,bindingVersion,statusRevision,profileRevision,administratorsRevision,node}`，未绑定的版本为 `"0"`，node 为 null 或 `{id,name,online,lastSeenAt,capabilities}`。初始管理员可维护真人管理员名单，任一当前管理员可管理公开资料、节点、状态与在线档案，并打开只读账号视角。
 
 停用 AI 保留账号、历史和节点绑定，取消该 AI 所有未完成任务并保留有效累计片段为 interrupted，拒绝旧任务继续执行/提交；其他 AI 的任务独立。停用期间仍保存发给该 AI 的真人私聊消息，但不为它创建新任务。恢复只响应新消息，不重放旧任务。
 
 节点先生成 UUID nodeId 与 32 随机字节的 64 位小写十六进制 secret，作为配对请求的 `Authorization: Bearer …`，授权后沿用该秘密。服务端仅保存哈希。一个 AI 只有一个有效绑定，一个 nodeId 可承载多个 AI 各自的凭据；替换/撤销提升绑定版本，旧资格及未完成任务同事务失效。节点不得保存或使用真人登录凭据。
+
+### 云端账号管理与只读查看
+
+| 方法与路径 | 请求与结果 |
+| --- | --- |
+| PUT `/ai/{id}/profile` | `{requestId,expectedProfileRevision,name,bio}` → 当前 ManagedAi |
+| GET `/ai/{id}/administrators` | `{revision,administrators:[{account,role:initial|admin}]}` |
+| PUT `/ai/{id}/administrators/{target}` | 仅初始管理员，`{requestId,expectedRevision,enabled}` → 当前名单；target 必须为真人，不能修改初始管理员 |
+| GET `/ai/{id}/view` | `{account,conversations}`，目标 AI 当前窗口的一致快照 |
+| GET `/ai/{id}/view/conversations/{cid}/messages?before=…&limit=…` | 当前窗口消息分页，使用与普通历史相同的 Page 格式 |
+| GET `/ai/{id}/view/conversations/{cid}/messages/{mid}/attachments/{index}?revision=…&inline=…` | 当前消息版本的附件，inline 仅用于支持的图片预览 |
+| POST `/ai/{id}/management` | `{requestId,operation}` → AgentManagementView，仅当前支持该能力的在线节点 |
+
+所有请求保留真实真人会话。公开资料与管理员修改在事务内检查预期版本并写入指纹回执；同 ID/同内容重试返回当前结果，当前授权失效后不能重用旧回执。账号视角每次快照、分页、附件读取都复核管理员权限与目标 AI 当前成员身份；附件另复核消息窗口、revision 与撤回状态。读取不改变个人已读或事件，不提供代发、独立订阅、通讯录快照或账号视角导出。
+
+`operation` 为 `{type:"view"}` 或 `{type:"saveProfile",expectedRevision,persona,providerId,modelId,reasoningEffort,temperature,maxTokens,autoDailyTokens}`。可空参数以 null 表示默认值。AgentManagementView 为 `{profile:{revision,persona,providerId,modelId,reasoningEffort,temperature,maxTokens,autoDailyTokens},models:[{providerId,modelId,name,reasoningEfforts,imageInput}]}`，imageInput 为 supported/unsupported/unknown。远程 DTO 不含供应商地址、Key 或环境变量名。
+
+云端复核管理员、绑定版本和当前连接后，在内存转发，等待至多 30 秒；返回前再次复核会话、管理权、绑定与连接。节点离线不排队，不支持时返回明确能力错误；超时或连接变化表示结果未确认，保留原 requestId 和原操作重试。节点保存完整档案与指纹回执同事务，重放返回当前视图，普通配置只影响新任务；模型/参数无效返回具体原因或可用候选，版本冲突要求刷新。模型 Key 仍只在节点本机配置。
 
 ### 节点任务与材料
 
@@ -126,7 +144,7 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 
 ### WSS 与重连
 
-`/node/ws` 使用同一 Bearer，单帧上限 1 MiB。客户端先发送 `{type:"hello",protocolVersion:4,nodeId,aiId,bindingVersion}`，服务端复核后返回 `{type:"ready",protocolVersion:4}`；旧版本明确拒绝。
+`/node/ws` 使用同一 Bearer，单帧上限 1 MiB。客户端先发送 `{type:"hello",protocolVersion:4,nodeId,aiId,bindingVersion,capabilities?}`，服务端复核后返回 `{type:"ready",protocolVersion:4}`；旧版本明确拒绝。
 
 | 方向 | type 与内容 |
 | --- | --- |
@@ -134,6 +152,10 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 | 节点 → 服务端 | `delta:{taskId,runId,messageId,confirmationId,sequence,text}` |
 | 服务端 → 节点 | `consciousnessRequest:{relayId,requestId,operatorId,conversation,operation}` |
 | 节点 → 服务端 | `consciousnessResponse:{relayId,requestId,view,error}` |
+| 服务端 → 节点 | `managementRequest:{relayId,requestId,operatorId,operation}` |
+| 节点 → 服务端 | `managementResponse:{relayId,requestId,view,error}` |
+
+capabilities 缺省为空列表；自带节点声明 `["profileManagement"]`，外部 Agent 可以不实现在线档案管理并继续使用 v4 任务协议，这不是 v5 握手。平台按当前连接的实际能力派发请求；relayId 区分每次连接上的派发，requestId 用于节点写入去重。不支持的节点应明确返回 management_unsupported，不能模拟保存成功。节点选中控制帧后完整处理写入，再继续生成循环，不能把已消费命令的异步保存放入可取消分支。
 
 delta 是完整累计正文检查点，最多 256 KiB，每 500ms 至多一次。服务端复核绑定、开始与来源状态，序号单调，同一序号同正文幂等，保存后通知聊天刷新并确认序号。最终 HTTP result 为权威结果；不传思考、内部 persona 或 Key。原生 ping/pong 用于存活检查。
 
@@ -158,7 +180,7 @@ delta 是完整累计正文检查点，最多 256 KiB，每 500ms 至多一次�
 
 当前 v4 协议沿用 NodeMessage 的稳定 position、TaskMaterials 的可空 reference，以及 StartRequest 必需的 derivedSources 与 materialScopes。sources 保持近期原文快照；derivedSources 只列实际读到的记忆、摘要和引用的原文依赖，materialScopes 是实际窗口的节点版本。云端只接受本窗口或当前有效引用的来源群，开始、流式提交与最终结果都复核冻结来源和版本。来源游标用于同步，不因其他窗口发生变化而否定当前运行。
 
-角色/模型参数的在线编辑、管理员名单界面仍属于第 4 步；模型 Key 只在节点本地配置。详细行为见[意识系统](consciousness.md)。
+角色/模型参数的在线编辑与管理员名单使用上文云端管理接口；模型 Key 只在节点本地配置。详细行为见[意识系统](consciousness.md)。
 
 ## 当前本地实现的适用范围
 
@@ -382,4 +404,4 @@ HTTP 与 IPC 共用 SocialSubscription：先监听临时广播，再以 after=cu
 
 群话题接续的规则见 [意识系统](consciousness.md#从群聊接续到私聊)：打开唯一私聊不发消息，引用只传来源标识并复核双方权限；独立转发仍为候选，未来共享选定内容也不能授予源空间读取权。
 
-本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；云端真人认证见本文顶部实际接口，节点接入仍按后续目标设计实施。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。
+本地 HTTP 继续保留 loopback、Host/Origin 和客户端 Header 保护；云端真人认证见本文顶部实际接口，节点接入使用上文独立 v4 协议，不经过这里的本地接口。响应和事件不返回 Key、环境变量值或完整私人配置。目录打开 IPC 仍只接受 config/data 枚举，Web 无服务器目录打开接口。

@@ -542,6 +542,7 @@ struct Live {
     version: i64,
     connection: Uuid,
     sender: mpsc::Sender<connector::node::ServerFrame>,
+    capabilities: Vec<String>,
 }
 struct Pending {
     ai: Uuid,
@@ -574,8 +575,36 @@ impl RelayHub {
                 version,
                 connection,
                 sender,
+                capabilities: vec![],
             },
         );
+    }
+    pub(crate) fn set_capabilities(&self, ai: Uuid, connection: Uuid, capabilities: Vec<String>) {
+        if let Some(live) = self
+            .inner
+            .lock()
+            .unwrap()
+            .live
+            .get_mut(&ai)
+            .filter(|l| l.connection == connection)
+        {
+            live.capabilities = capabilities;
+        }
+    }
+    fn supports_profile(&self, ai: Uuid, version: i64, connection: Uuid) -> Result<()> {
+        let h = self.inner.lock().unwrap();
+        let live = h
+            .live
+            .get(&ai)
+            .filter(|l| l.version == version && l.connection == connection)
+            .ok_or_else(|| error("node_offline", "节点不在线，未排队修改"))?;
+        if !live.capabilities.iter().any(|v| v == "profileManagement") {
+            return Err(error(
+                "unsupported_capability",
+                "节点不支持角色和模型在线管理",
+            ));
+        }
+        Ok(())
     }
     pub(crate) fn disconnect(&self, ai: Uuid, connection: Uuid) {
         let mut h = self.inner.lock().unwrap();
@@ -872,6 +901,21 @@ async fn summary_finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn profile_capability_is_scoped_to_current_connection_and_binding() {
+        let hub = RelayHub::default();
+        let ai = Uuid::new_v4();
+        let connection = Uuid::new_v4();
+        let (sender, _outgoing) = mpsc::channel(2);
+        hub.register(ai, 1, connection, sender);
+        assert!(hub.supports_profile(ai, 1, connection).is_err());
+        hub.set_capabilities(ai, connection, vec!["profileManagement".into()]);
+        assert!(hub.supports_profile(ai, 1, connection).is_ok());
+        assert!(hub.supports_profile(ai, 2, connection).is_err());
+        assert!(hub.supports_profile(ai, 1, Uuid::new_v4()).is_err());
+        hub.disconnect(ai, connection);
+        assert!(hub.supports_profile(ai, 1, connection).is_err());
+    }
     #[tokio::test]
     async fn cancelled_http_owner_releases_pending_without_node_response() {
         let hub = Arc::new(RelayHub::default());
@@ -905,4 +949,86 @@ mod tests {
         assert!(owner.await.unwrap_err().is_cancelled());
         assert!(hub.inner.lock().unwrap().pending.is_empty());
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProfileManagement {
+    request_id: Uuid,
+    operation: connector::node::AgentManagementOperation,
+}
+pub(crate) async fn manage_profile(
+    State(s): State<Arc<AppState>>,
+    h: HeaderMap,
+    Path(ai): Path<Uuid>,
+    Json(v): Json<ProfileManagement>,
+) -> Result<axum::response::Response> {
+    use axum::response::IntoResponse;
+    let p = auth::authenticate(&s, &h).await?;
+    if serde_json::to_vec(&v.operation).unwrap().len() > 64 * 1024 {
+        return Err(AppError::bad("管理请求过大"));
+    }
+    let mut tx = s.pool.begin().await?;
+    nodes::lock(&mut tx).await?;
+    nodes::admin(&mut tx, ai, p.id).await?;
+    let row = sqlx::query("SELECT version,connection_id FROM cloud_ai_bindings WHERE ai_id=$1")
+        .bind(ai)
+        .fetch_one(&mut *tx)
+        .await?;
+    let version: i64 = row.get("version");
+    let connection: Uuid = row
+        .get::<Option<Uuid>, _>("connection_id")
+        .ok_or_else(|| error("node_offline", "节点不在线，未排队修改"))?;
+    s.relay.supports_profile(ai, version, connection)?;
+    let relay = Uuid::new_v4();
+    let frame=serde_json::from_value(json!({"type":"managementRequest","relayId":relay,"requestId":v.request_id,"operatorId":p.id,"operation":v.operation})).map_err(|_|AppError::internal())?;
+    let receiver = s.relay.dispatch(ai, version, connection, relay, frame)?;
+    let _lease = RelayLease {
+        hub: &s.relay,
+        id: relay,
+    };
+    tx.commit().await?;
+    let response = match tokio::time::timeout(Duration::from_secs(30), receiver).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(_)) => {
+            return Err(error(
+                "node_disconnected",
+                "节点连接中断，保存结果尚未确认，请保留原命令重试",
+            ));
+        }
+        Err(_) => {
+            return Err(error(
+                "node_timeout",
+                "节点响应超时，保存结果尚未确认，请保留原命令重试",
+            ));
+        }
+    };
+    let current = auth::authenticate(&s, &h).await?;
+    let mut tx = s.pool.begin().await?;
+    nodes::lock(&mut tx).await?;
+    nodes::admin(&mut tx, ai, current.id).await?;
+    let same:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_ai_bindings WHERE ai_id=$1 AND version=$2 AND connection_id=$3)").bind(ai).bind(version).bind(connection).fetch_one(&mut *tx).await?;
+    if !same {
+        return Err(error("node_replaced", "节点连接已变化，未确认此次结果"));
+    }
+    s.relay.supports_profile(ai, version, connection)?;
+    if response["requestId"] != json!(v.request_id) {
+        return Err(AppError::bad("节点管理响应标识无效"));
+    }
+    if let Some(e) = response.get("error").filter(|v| !v.is_null()) {
+        let e: connector::node::ConsciousnessError =
+            serde_json::from_value(e.clone()).map_err(|_| AppError::bad("节点错误响应无效"))?;
+        if e.code.len() > 128 || e.message.len() > 4096 {
+            return Err(AppError::bad("节点错误响应过长"));
+        }
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(json!({"code":e.code,"message":e.message})),
+        )
+            .into_response());
+    }
+    let view: connector::node::AgentManagementView =
+        serde_json::from_value(response["view"].clone())
+            .map_err(|_| AppError::bad("节点未返回有效管理结果"))?;
+    Ok(Json(view).into_response())
 }

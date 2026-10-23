@@ -2,7 +2,7 @@
 
 [设计入口](README.md) · [当前工作](../project/current.md) · [开发约束](../../AGENTS.md)
 
-云端社交与用户托管 Agent 的设计已经确认，四部分代码目录与核心库已拆分，实施顺序见[云端计划](../project/cloud-plan.md)。默认 Web 和桌面入口已经使用独立云端真人服务，支持邀请注册、邮箱认证、联系人和真人私聊。独立 Agent、云端 AI 创建/配对及私聊回复已实现，已完成本机 Agent 与云端 Web 闭环验证；群聊、显式 @/回复、多 AI 串行任务、屏蔽与 AI 启停已实现；节点显式记忆、各 AI 窗口摘要与群话题接续已接入，有限自动接话、一次性约定、免打扰和额度已接入。
+云端社交与用户托管 Agent 的设计已经确认，四部分代码目录与核心库已拆分，实施顺序见[云端计划](../project/cloud-plan.md)。默认 Web 和桌面入口已经使用独立云端真人服务，支持邀请注册、邮箱认证、联系人和真人私聊。独立 Agent、云端 AI 创建/配对及私聊回复已实现，已完成本机 Agent 与云端 Web 闭环验证；群聊、显式 @/回复、多 AI 串行任务、屏蔽与 AI 启停已实现；节点显式记忆、各 AI 窗口摘要与群话题接续已接入，有限自动接话、一次性约定、免打扰和额度已接入；公开资料与管理员管理、只读账号视角、在线角色/模型配置及桌面本机 Agent 后台入口已实现。
 
 ## 云端目标架构
 
@@ -42,7 +42,7 @@ flowchart LR
 
 消息支持文字、图片与普通文件。图片可以作为模型输入；普通文件目前只提供名称、类型、大小和未读取说明。聊天可完整导出，附件分别选择。软件管理的上下文、摘要、记忆、召回和遗忘统一称为[意识系统（Consciousness）](consciousness.md)。完整历史、可确认的记忆与一次请求的有限上下文各有职责，按目标 AI 与窗口组织。
 
-真人远程登录、云端消息同步与 AI 节点私聊已经实现；有限自动接话与约定已经接入，完整管理和数据迁移按[云端改造计划](../project/cloud-plan.md)继续推进。自动记忆巩固、文档正文理解、MCP、通用编码代理、任意 Shell/文件工具、插件市场和知识库也尚未实现，仍在本轮范围之外。工具 worker 是独立底层能力，社交执行尚未开放工具。其他候选与待验收项见[候选清单](../project/backlog.md)，不由目录名或预留类型推断能力。
+真人远程登录、云端消息同步与 AI 节点私聊已经实现；有限自动接话与约定已经接入，正式数据迁移按[云端改造计划](../project/cloud-plan.md)继续推进。自动记忆巩固、文档正文理解、MCP、通用编码代理、任意 Shell/文件工具、插件市场和知识库也尚未实现，仍在本轮范围之外。工具 worker 是独立底层能力，社交执行尚未开放工具。其他候选与待验收项见[候选清单](../project/backlog.md)，不由目录名或预留类型推断能力。
 
 ## 核心对象
 
@@ -94,15 +94,15 @@ flowchart TD
 | `server/cloud` | 当前独立真人服务，认证、联系人、私聊/群聊、群角色、屏蔽/启停、附件与同步 |
 | `server/social` | 保留的本地 AI 业务，意识材料适配、参与调度、执行协调与业务 DTO |
 | `server/http` | 保留的本地 HTTP/SSE API 回归宿主 |
-| `client/desktop/src-tauri` | 当前云端 HTTPS/SSE 转发、会话保管与系统能力；保留旧本地 IPC 供回归 |
+| `client/desktop/src-tauri` | 云端 HTTPS/SSE 转发、会话保管、系统保存、独立本机 Agent 配置/配对/启停和托盘；保留旧本地 IPC 供回归 |
 | `client/web` | 唯一 React 界面、状态、草稿和两种客户端适配 |
 | `agent/tools` | 固定白名单工具 worker，当前不接入社交执行 |
 
-`social` 不依赖 Runtime、存储或 GUI；`connector` 只依赖 serde 和中立 social 类型，storage 使用连接器的事件定义。`builtin-agent` 依赖模型客户端和中立类型，不读取 Runtime、存储或服务端。上述边界及云端服务不依赖本地运行时、存储和模型的约束由 `scripts/check-boundaries.py` 检查。
+`social` 不依赖 Runtime、存储或 GUI；`connector` 提供中立社交类型与独立 HTTP/WSS 节点传输，不依赖 Runtime、存储、模型执行器或 GUI；storage 使用连接器的事件定义。`builtin-agent` 依赖模型客户端和中立类型，不读取 Runtime、存储或服务端。上述边界及云端服务不依赖本地运行时、存储和模型的约束由 `scripts/check-boundaries.py` 检查。
 
 在保留的本地链路中，Runtime 通过 trait 管理 Feature，不反向依赖具体 SocialFeature。SocialFeature 读取和检查材料，再转换为 Agent 核心输入；权限、事务、运行调度和流式保存仍在现有本地用例里。两种 GUI 适配器调用相同业务方法，不复制规则。
 
-`crates/runtime` 和 `crates/storage` 仍服务于保留的本地 AI 代码。桌面保留这些依赖和旧 IPC，但当前云端页面不启动本地聊天 Runtime。独立真人服务、Agent 节点与节点意识资料已接入；参与规则、完整管理与旧数据迁移仍按主计划完成。
+`crates/runtime` 和 `crates/storage` 仍服务于保留的本地 AI 代码。桌面保留这些依赖和旧 IPC，但当前云端页面不启动本地聊天 Runtime。独立真人服务、Agent 节点与节点意识资料已接入；参与规则与账号管理使用云端契约，正式旧数据迁移仍按主计划推进。
 
 ## 一致性与隐私
 

@@ -99,27 +99,51 @@ impl CloudState {
             generation: s.generation,
         })
     }
+    pub(crate) async fn local_identity(&self) -> Result<(String, Uuid), String> {
+        let ctx = self.context("/api/me", false)?;
+        let response = request(&ctx, Method::GET)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(connection_error)?;
+        self.reject_session(&ctx, response.status());
+        if !response.status().is_success() {
+            return Err("请先登录云端真人账号".into());
+        }
+        let account: serde_json::Value = response.json().await.map_err(|_| "云端身份响应无效")?;
+        if account["kind"] != "human" {
+            return Err("本机节点管理需要实际登录的真人账号".into());
+        }
+        let owner = account["id"]
+            .as_str()
+            .and_then(|v| v.parse::<Uuid>().ok())
+            .ok_or("云端身份响应无效")?;
+        let s = self.shared.lock().unwrap();
+        if s.generation != ctx.generation {
+            return Err("登录身份已变化，请重试".into());
+        }
+        Ok((ctx.url.origin().ascii_serialization(), owner))
+    }
     fn cookies(&self, ctx: &RequestContext, response: &reqwest::Response) {
         let mut s = self.shared.lock().unwrap();
         if s.generation != ctx.generation {
             return;
         }
         for h in response.headers().get_all(header::SET_COOKIE) {
-            if let Ok(v) = h.to_str() {
-                if let Some(value) = v
+            if let Ok(v) = h.to_str()
+                && let Some(value) = v
                     .split(';')
                     .next()
                     .and_then(|p| p.strip_prefix("nest_session="))
-                {
-                    let cookie = if value.is_empty() {
-                        None
-                    } else {
-                        Some(format!("nest_session={value}"))
-                    };
-                    if s.cookie != cookie {
-                        advance(&mut s);
-                        s.cookie = cookie;
-                    }
+            {
+                let cookie = if value.is_empty() {
+                    None
+                } else {
+                    Some(format!("nest_session={value}"))
+                };
+                if s.cookie != cookie {
+                    advance(&mut s);
+                    s.cookie = cookie;
                 }
             }
         }
@@ -374,10 +398,9 @@ pub fn cloud_unsubscribe(
     if s.subscriptions
         .get(&id)
         .is_some_and(|v| v.owner == window.label())
+        && let Some(v) = s.subscriptions.remove(&id)
     {
-        if let Some(v) = s.subscriptions.remove(&id) {
-            v.cancel.cancel();
-        }
+        v.cancel.cancel();
     }
 }
 #[derive(Default)]

@@ -13,6 +13,8 @@ mod config_path;
 mod conversation_export;
 mod directories;
 mod draft_close;
+mod local_agent;
+mod local_agent_tray;
 mod social_commands;
 mod social_subscription;
 mod window_frame;
@@ -91,7 +93,7 @@ impl BackendState {
     }
 }
 
-fn request_shutdown(app: &tauri::AppHandle) {
+fn request_shutdown(app: &tauri::AppHandle, force_exit: bool) {
     let state = app.state::<BackendState>();
     if state.shutdown_started.swap(true, Ordering::AcqRel) {
         return;
@@ -104,6 +106,54 @@ fn request_shutdown(app: &tauri::AppHandle) {
                 "backend-shutdown-failed",
                 format!("退出保存失败：{error}。应用仍保持打开。"),
             );
+            state.shutdown_started.store(false, Ordering::Release);
+            return;
+        }
+        let local = app.state::<local_agent::LocalAgentState>();
+        let running = match local.any_running(&app).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = app.emit("backend-shutdown-failed", e);
+                state.shutdown_started.store(false, Ordering::Release);
+                return;
+            }
+        };
+        if !force_exit && running {
+            match local_agent_tray::background_choice(&app, &local).await {
+                Ok(local_agent_tray::CloseChoice::Continue) => {
+                    match app
+                        .get_webview_window("main")
+                        .ok_or_else(|| "主窗口不可用".to_owned())
+                        .and_then(|window| {
+                            window
+                                .hide()
+                                .map_err(|_| "隐藏窗口失败，请重试关闭".to_owned())
+                        }) {
+                        Ok(()) => {
+                            let _ = app.emit("desktop-close-retained", ());
+                        }
+                        Err(error) => {
+                            let _ = app.emit("backend-shutdown-failed", error);
+                        }
+                    }
+                    state.shutdown_started.store(false, Ordering::Release);
+                    return;
+                }
+                Ok(local_agent_tray::CloseChoice::Cancel) => {
+                    let _ = app.emit("desktop-close-retained", ());
+                    state.shutdown_started.store(false, Ordering::Release);
+                    return;
+                }
+                Ok(local_agent_tray::CloseChoice::Stop) => {}
+                Err(error) => {
+                    let _ = app.emit("backend-shutdown-failed", error);
+                    state.shutdown_started.store(false, Ordering::Release);
+                    return;
+                }
+            }
+        }
+        if let Err(error) = local.stop_all(&app).await {
+            let _ = app.emit("backend-shutdown-failed", error);
             state.shutdown_started.store(false, Ordering::Release);
             return;
         }
@@ -138,6 +188,8 @@ pub fn run() {
         .setup(|app| {
             window_frame::setup(app);
             app.manage(cloud::CloudState::new());
+            app.manage(local_agent::LocalAgentState::new());
+            local_agent_tray::setup(app)?;
             app.manage(BackendState {
                 paths: config_path::AppPaths::resolve(),
                 inner: Mutex::new(None),
@@ -163,6 +215,12 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            local_agent::local_agent_status,
+            local_agent::local_agent_setup,
+            local_agent::local_agent_pair,
+            local_agent::local_agent_start,
+            local_agent::local_agent_stop,
+            local_agent::local_agent_models,
             cloud::cloud_set_server,
             cloud::cloud_request,
             cloud::cloud_subscribe,
@@ -245,7 +303,7 @@ pub fn run() {
             } => {
                 if label == "main" {
                     api.prevent_close();
-                    request_shutdown(app);
+                    request_shutdown(app, false);
                 }
             }
             tauri::RunEvent::WindowEvent {
@@ -268,7 +326,7 @@ pub fn run() {
                     .load(Ordering::Acquire) =>
             {
                 api.prevent_exit();
-                request_shutdown(app);
+                request_shutdown(app, true);
             }
             _ => {}
         });

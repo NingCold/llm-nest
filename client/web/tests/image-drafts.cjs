@@ -122,6 +122,8 @@ const reopen=h=>harness({factory:h.factory,values:h.values});
   dirty=false;warned=false;events.beforeunload({preventDefault(){warned=true}});assert.equal(warned,false);
   const close=listeners['drafts-prepare-close']({payload:'close-1'});await tick();assert.equal(state.draftsClosing,true);assert.equal(invocations.length,1);
   flushGate.resolve();await close;assert.equal(invocations[1].name,'desktop_finish_draft_close');assert.equal(invocations[1].args.error,null);
+  listeners['desktop-close-retained']();assert.equal(state.draftsClosing,false,'background/cancel releases the editor after native draft drain');
+  state.draftsClosing=true;
   listeners['backend-shutdown-failed']();assert.equal(state.draftsClosing,false);
   flushGate=defer();const failedClose=listeners['drafts-prepare-close']({payload:'close-2'});flushGate.reject(new Error('quota'));await failedClose;
   assert.match(invocations.at(-1).args.error,/quota/);assert.equal(state.draftsClosing,false);unmount();await tick();assert.equal(invocations.at(-1).name,'desktop_unregister_draft_guard');

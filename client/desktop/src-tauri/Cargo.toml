@@ -16,7 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["devtools", "tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tempfile = "3"
@@ -30,6 +30,8 @@ reqwest.workspace = true
 base64.workspace = true
 futures-util.workspace = true
 percent-encoding = "2"
+toml.workspace = true
+sha2 = "0.10"
 
 social-feature = { path = "../../../server/social" }
 social.workspace = true

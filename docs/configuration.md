@@ -2,9 +2,9 @@
 
 [使用指南](usage.md) · [开发指南](development.md) · [全部文档](README.md)
 
-当前默认网页和桌面连接云端服务，不读取本页的旧 Runtime 模型配置；AI 账号和节点连接在“我管理的 AI”中维护，角色与模型参数目前由独立 Agent 的本机 CLI 配置。服务端配置见[云端服务](../server/cloud/README.md#启动)与[部署说明](../server/cloud/deploy/README.md)，桌面在登录页填写服务地址。
+当前默认网页和桌面连接云端服务，不读取本页的旧 Runtime 模型配置。AI 账号、节点连接、在线角色与模型在“我管理的 AI”中维护；桌面可以配置并启动本机 Agent，独立 CLI 也可管理节点。模型 Key 始终在运行设备填写，操作见[使用指南](usage.md#创建-ai-并连接-agent)。服务端配置见[云端服务](../server/cloud/README.md#启动)与[部署说明](../server/cloud/deploy/README.md)，桌面在登录页填写服务地址。
 
-本页保留本地模型库、Runtime 和旧本地宿主的配置参考，用于回归与后续 Agent 接入。下文的 GUI 设置路径属于保留的本地界面，不是当前云端页面的操作入口。独立 Agent 与云端 AI 私聊、群聊已实现，模型配置与环境变量 Key 的当前用法见[节点说明](../agent/node/README.md)。本文后续的模型库格式仍供底层协议和旧本地宿主参考，生命周期区别见[运行与配置设计](design/runtime.md)。
+本页保留本地模型库、Runtime 和旧本地宿主的配置参考，用于回归与后续数据迁移。下文的 GUI 设置路径属于保留的本地界面，不是当前云端页面的操作入口。独立 Agent 的配置格式与环境变量用法见[节点说明](../agent/node/README.md)，生命周期区别见[运行与配置设计](design/runtime.md)。
 
 ## 配置和数据的位置
 

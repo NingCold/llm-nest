@@ -409,6 +409,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     let mut obsolete = client.connect().await.unwrap();
     obsolete
         .send(&connector::node::ClientFrame::Hello {
+            capabilities: vec![],
             protocol_version: 1,
             node_id: node.to_string(),
             ai_id: aid.into(),
@@ -421,6 +422,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     );
     let mut ws = client.connect().await.unwrap();
     ws.send(&connector::node::ClientFrame::Hello {
+        capabilities: vec![],
         protocol_version: 4,
         node_id: node.to_string(),
         ai_id: aid.into(),
@@ -1280,6 +1282,7 @@ async fn connect_node(
     let client = connector::node::NodeClient::new(&f.url, secret, None).unwrap();
     let mut ws = client.connect().await.unwrap();
     ws.send(&connector::node::ClientFrame::Hello {
+        capabilities: vec![],
         protocol_version: 4,
         node_id: node.to_string(),
         ai_id: ai.into(),
@@ -2224,5 +2227,233 @@ async fn cloud_group_auto_rotation_quota_explicit_bypass_and_human_input_during_
             .await
             .unwrap();
     assert_eq!(day, tomorrow.date_naive());
+    f.close().await;
+}
+
+#[tokio::test]
+async fn managed_profile_and_administrators_use_current_permissions_and_replay() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let admin_path = format!("/ai/{aid}/administrators/{}", f.humans[1].0);
+    let grant = json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","enabled":true});
+    let admins = value(f.human(0, Method::PUT, &admin_path).json(&grant)).await;
+    assert_eq!(admins["revision"], "2");
+    assert_eq!(admins["administrators"].as_array().unwrap().len(), 2);
+    let path = format!("/ai/{aid}/profile");
+    let edit = json!({"requestId":Uuid::new_v4(),"expectedProfileRevision":"1","name":"New name","bio":"New bio"});
+    assert_eq!(
+        value(f.human(1, Method::PUT, &path).json(&edit)).await["profileRevision"],
+        "2"
+    );
+    value(f.human(0, Method::PUT, &path).json(
+        &json!({"requestId":Uuid::new_v4(),"expectedProfileRevision":"2","name":"Latest","bio":""}),
+    ))
+    .await;
+    assert_eq!(
+        value(f.human(1, Method::PUT, &path).json(&edit)).await["account"]["name"],
+        "Latest"
+    );
+    assert_eq!(
+        f.human(1, Method::PUT, &admin_path)
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","enabled":false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let initial_path = format!("/ai/{aid}/administrators/{}", f.humans[0].0);
+    assert_eq!(
+        f.human(0, Method::PUT, &initial_path)
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","enabled":false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    value(
+        f.human(0, Method::PUT, &admin_path)
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","enabled":false})),
+    )
+    .await;
+    assert_eq!(
+        f.human(1, Method::PUT, &path)
+            .json(&edit)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let replay = value(f.human(0, Method::PUT, &admin_path).json(&grant)).await;
+    assert_eq!(replay["revision"], "3");
+    assert_eq!(replay["administrators"].as_array().unwrap().len(), 1);
+    f.close().await;
+}
+#[tokio::test]
+async fn managed_account_view_is_read_only_and_checks_membership_and_attachments() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let cid = f.conversation(aid).await;
+    let sent=value(f.human(0,Method::POST,&format!("/chat/conversations/{cid}/messages")).json(&json!({"requestId":Uuid::new_v4(),"text":"private file","files":[{"name":"private.txt","mime":"text/plain","data":"aGVsbG8="}]}))).await;
+    let before: Vec<(Uuid, i64)> = sqlx::query(
+        "SELECT owner,read_position FROM cloud_list WHERE conversation=$1 ORDER BY owner",
+    )
+    .bind(cid.parse::<Uuid>().unwrap())
+    .fetch_all(&f.state.pool)
+    .await
+    .unwrap()
+    .iter()
+    .map(|r| (r.get(0), r.get(1)))
+    .collect();
+    let view = value(f.human(0, Method::GET, &format!("/ai/{aid}/view"))).await;
+    assert_eq!(view["account"]["id"], aid);
+    assert_eq!(view["conversations"].as_array().unwrap().len(), 1);
+    let path = format!("/ai/{aid}/view/conversations/{cid}/messages");
+    assert_eq!(
+        value(f.human(0, Method::GET, &path)).await["messages"][0]["text"],
+        "private file"
+    );
+    assert_eq!(
+        f.human(0, Method::POST, &path)
+            .json(&json!({"text":"impersonation"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        405
+    );
+    let download = format!(
+        "{path}/{}/attachments/0?revision={}",
+        sent["id"].as_str().unwrap(),
+        sent["revision"].as_str().unwrap()
+    );
+    assert_eq!(
+        f.human(0, Method::GET, &download)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap()
+            .as_ref(),
+        b"hello"
+    );
+    assert_eq!(
+        f.human(1, Method::GET, &download)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let after: Vec<(Uuid, i64)> = sqlx::query(
+        "SELECT owner,read_position FROM cloud_list WHERE conversation=$1 ORDER BY owner",
+    )
+    .bind(cid.parse::<Uuid>().unwrap())
+    .fetch_all(&f.state.pool)
+    .await
+    .unwrap()
+    .iter()
+    .map(|r| (r.get(0), r.get(1)))
+    .collect();
+    assert_eq!(before, after);
+    sqlx::query("DELETE FROM cloud_members WHERE conversation=$1 AND account_id=$2")
+        .bind(cid.parse::<Uuid>().unwrap())
+        .bind(aid.parse::<Uuid>().unwrap())
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.human(0, Method::GET, &path)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    assert_eq!(
+        f.human(0, Method::GET, &download)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    f.close().await;
+}
+#[tokio::test]
+async fn managed_profile_relay_requires_capability_and_rechecks_administration() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, node, _) = f.bind_ai(aid, "0").await;
+    let path = format!("/ai/{aid}/management");
+    let command = json!({"requestId":Uuid::new_v4(),"operation":{"type":"view"}});
+    let response = f
+        .human(0, Method::POST, &path)
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 409);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["code"],
+        "node_offline"
+    );
+    let mut ws = connect_node(&f, &secret, node, aid).await;
+    let response = f
+        .human(0, Method::POST, &path)
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 409);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["code"],
+        "unsupported_capability"
+    );
+    ws.close().await.unwrap();
+    let client = connector::node::NodeClient::new(&f.url, &secret, None).unwrap();
+    let mut ws = client.connect().await.unwrap();
+    ws.send(&connector::node::ClientFrame::Hello {
+        protocol_version: 4,
+        node_id: node.to_string(),
+        ai_id: aid.into(),
+        binding_version: "1".into(),
+        capabilities: vec!["profileManagement".into()],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        ws.recv().await.unwrap(),
+        Some(connector::node::ServerFrame::Ready { .. })
+    ));
+    let pending = tokio::spawn(f.human(0, Method::POST, &path).json(&command).send());
+    let request = loop {
+        let v = serde_json::to_value(ws.recv().await.unwrap().unwrap()).unwrap();
+        if v["type"] == "managementRequest" {
+            break v;
+        }
+    };
+    assert_eq!(request["operatorId"], json!(f.humans[0].0));
+    sqlx::query("DELETE FROM cloud_ai_admins WHERE ai_id=$1 AND administrator=$2")
+        .bind(aid.parse::<Uuid>().unwrap())
+        .bind(f.humans[0].0)
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    let response=serde_json::from_value(json!({"type":"managementResponse","relayId":request["relayId"],"requestId":request["requestId"],"view":{"profile":{"revision":"1","persona":"private","providerId":"test","modelId":"test","reasoningEffort":null,"temperature":null,"maxTokens":null,"autoDailyTokens":null},"models":[]},"error":null})).unwrap();
+    ws.send(&response).await.unwrap();
+    assert_eq!(pending.await.unwrap().unwrap().status(), 403);
     f.close().await;
 }

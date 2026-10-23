@@ -1,5 +1,6 @@
 mod consciousness;
 mod context;
+mod management;
 mod store;
 use ai_client::{AiClient, ChatChunk, ModelRouter};
 use anyhow::{Context, Result, bail};
@@ -81,11 +82,23 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
         );
         return Ok(());
     }
-    if command != "pair" && command != "run" && command != "profile" {
+    if !matches!(
+        command,
+        "pair" | "pair-json" | "run" | "run-managed" | "stop" | "status" | "profile" | "check"
+    ) {
         println!(
-            "llmn-agent init|pair|run [directory]; profile <directory> <AI id> <profile.json>"
+            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>"
         );
         return Ok(());
+    }
+    if command == "status" || command == "stop" {
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(directory.join("node.lock"))?;
+        return managed_control(&directory, &lock, command == "stop");
     }
     let config: Config = toml::from_str(&fs::read_to_string(directory.join("node.toml"))?)?;
     anyhow::ensure!(
@@ -95,6 +108,14 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             .all(|provider| matches!(provider.api_key, ai_client::ApiKey::FromEnv { .. })),
         "node provider keys must use environment references"
     );
+    if command == "check" {
+        management::validate(&config, &config.profile)?;
+        println!(
+            "{}",
+            serde_json::json!({"type":"checked","models":management::models(&config)?})
+        );
+        return Ok(());
+    }
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -102,6 +123,15 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
         .write(true)
         .open(directory.join("node.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock).context("node directory already in use")?;
+    {
+        for name in ["desktop-agent.json", "desktop-stop.json"] {
+            match fs::remove_file(directory.join(name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
     let store = Store::open(&directory.join("node.sqlite"))?;
     if command == "profile" {
         let ai = args.get(3).context("profile requires AI id")?;
@@ -127,12 +157,27 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
         println!("AI profile saved. New tasks use the saved profile.");
         return Ok(());
     }
-    if command == "pair" {
-        return pair(&config, &store).await;
+    if command == "pair" || command == "pair-json" {
+        return pair(&config, &store, command == "pair-json").await;
     }
     let bindings = store.bindings()?;
     if bindings.is_empty() {
         bail!("no AI binding; run pair first");
+    }
+    let managed = if command == "run-managed" {
+        for binding in &bindings {
+            management::validate(&config, &store.profile(&binding.ai)?)?;
+        }
+        Some(ManagedRun::start(&directory, &bindings)?)
+    } else {
+        None
+    };
+    if let Some(managed) = &managed {
+        println!(
+            "{}",
+            serde_json::json!({"type":"ready","instanceId":managed.instance})
+        );
+        std::io::Write::flush(&mut std::io::stdout())?;
     }
     let social_slots = tokio::sync::Semaphore::new(4);
     let summary_slot = tokio::sync::Semaphore::new(1);
@@ -145,7 +190,7 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
-    tokio::select! { _=tokio::signal::ctrl_c()=>Ok(()), _=futures_util::future::join_all(nodes)=>Ok(()) }
+    tokio::select! { _=tokio::signal::ctrl_c()=>Ok(()), _=managed_stop(managed.as_ref())=>Ok(()), _=futures_util::future::join_all(nodes)=>Ok(()) }
 }
 fn result(receipt: &StartReceipt, status: &str, text: String, code: Option<&str>) -> ResultRequest {
     ResultRequest {
@@ -358,6 +403,7 @@ async fn cycle(
     let mut socket = api.connect().await?;
     socket
         .send(&ClientFrame::Hello {
+            capabilities: vec!["profileManagement".into()],
             protocol_version: 4,
             node_id: config.node_id.clone(),
             ai_id: binding.ai.clone(),
@@ -602,7 +648,7 @@ struct PendingPair {
     pairing: PairingCreated,
     secret: String,
 }
-async fn pair(config: &Config, store: &Store) -> Result<()> {
+async fn pair(config: &Config, store: &Store, json: bool) -> Result<()> {
     let pending: Option<String> = store
         .db
         .query_row("SELECT value FROM meta WHERE key='pending_pair'", [], |r| {
@@ -628,14 +674,23 @@ async fn pair(config: &Config, store: &Store) -> Result<()> {
             pending = Some(fresh);
         }
         let current = pending.as_ref().expect("pairing established");
-        println!(
-            "Authorize pairing code {} in My account / My AI accounts (expires {}).",
-            current.pairing.user_code, current.pairing.expires_at
-        );
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"type":"pairing","pairingId":current.pairing.pairing_id,"userCode":current.pairing.user_code,"expiresAt":current.pairing.expires_at})
+            );
+        } else {
+            println!(
+                "Authorize pairing code {} in My account / My AI accounts (expires {}).",
+                current.pairing.user_code, current.pairing.expires_at
+            );
+        }
         let api = client(config, &current.secret)?;
         loop {
             match api.pairing_status(&current.pairing.pairing_id).await {
                 Ok(status) if status.state == "authorized" => {
+                    let ai_id = status.ai_id.clone();
+                    let binding_version = status.binding_version.clone();
                     store.bind(
                         &Binding {
                             ai: status.ai_id.context("authorized pairing missing AI")?,
@@ -649,7 +704,14 @@ async fn pair(config: &Config, store: &Store) -> Result<()> {
                     store
                         .db
                         .execute("DELETE FROM meta WHERE key='pending_pair'", [])?;
-                    println!("AI binding saved.");
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::json!({"type":"paired","aiId":ai_id,"bindingVersion":binding_version})
+                        );
+                    } else {
+                        println!("AI binding saved.");
+                    }
                     return Ok(());
                 }
                 Ok(status) if status.state == "pending" => {}
@@ -969,5 +1031,179 @@ mod outcome_tests {
             generation_failure(&anyhow::anyhow!("source_cancelled")),
             ("interrupted", "source_cancelled")
         );
+    }
+}
+
+fn atomic_control_write(directory: &Path, name: &str, value: &serde_json::Value) -> Result<()> {
+    use std::io::Write;
+    let temporary = directory.join(format!(".{name}.{}.tmp", id()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(&serde_json::to_vec(value)?)?;
+    file.sync_all()?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary, directory.join(name)) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(())
+}
+struct ManagedRun {
+    directory: PathBuf,
+    instance: String,
+}
+impl ManagedRun {
+    fn start(directory: &Path, bindings: &[Binding]) -> Result<Self> {
+        let instance = id();
+        let descriptor = serde_json::json!({"instanceId":instance,"pid":std::process::id(),"status":"running","aiIds":bindings.iter().map(|b| &b.ai).collect::<Vec<_>>()});
+        atomic_control_write(directory, "desktop-agent.json", &descriptor)?;
+        Ok(Self {
+            directory: directory.into(),
+            instance,
+        })
+    }
+}
+impl Drop for ManagedRun {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.directory.join("desktop-agent.json"));
+        let _ = fs::remove_file(self.directory.join("desktop-stop.json"));
+    }
+}
+async fn managed_stop(managed: Option<&ManagedRun>) {
+    let Some(managed) = managed else {
+        return std::future::pending().await;
+    };
+    loop {
+        if let Ok(bytes) = fs::read(managed.directory.join("desktop-stop.json"))
+            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+            && value["instanceId"].as_str() == Some(&managed.instance)
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+fn stopped_ai_ids(directory: &Path) -> Result<Vec<String>> {
+    Ok({
+        let path = directory.join("node.sqlite");
+        if path.exists() {
+            let db = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            db.prepare("SELECT ai FROM bindings ORDER BY ai")?
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            vec![]
+        }
+    })
+}
+fn managed_control(directory: &Path, lock: &std::fs::File, stop: bool) -> Result<()> {
+    let running = match fs2::FileExt::try_lock_exclusive(lock) {
+        Ok(()) => false,
+        Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => true,
+        Err(error) => return Err(error.into()),
+    };
+    let descriptor = if running {
+        match fs::read(directory.join("desktop-agent.json")) {
+            Ok(bytes) => Some(serde_json::from_slice::<serde_json::Value>(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        None
+    };
+    if stop && running {
+        let descriptor = descriptor
+            .as_ref()
+            .context("running node is not desktop managed")?;
+        atomic_control_write(
+            directory,
+            "desktop-stop.json",
+            &serde_json::json!({"instanceId":descriptor["instanceId"]}),
+        )?;
+    }
+    let ai_ids = if !running {
+        stopped_ai_ids(directory)?
+    } else {
+        descriptor
+            .as_ref()
+            .and_then(|d| d["aiIds"].as_array())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    println!(
+        "{}",
+        serde_json::json!({"type":"status","running":running,"instanceId":descriptor.as_ref().map(|d| &d["instanceId"]),"aiIds":ai_ids})
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod managed_tests {
+    use super::*;
+    #[test]
+    fn stopped_status_reads_paired_accounts_without_recovery_or_migration() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(&directory.path().join("node.sqlite")).unwrap();
+        store
+            .db
+            .execute("INSERT INTO bindings VALUES('paired-ai','1','private')", [])
+            .unwrap();
+        store
+            .db
+            .execute(
+                "INSERT INTO tasks(id,ai,state,draft) VALUES('task','paired-ai','running','draft')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(stopped_ai_ids(directory.path()).unwrap(), vec!["paired-ai"]);
+        let state: String = store
+            .db
+            .query_row("SELECT state FROM tasks WHERE id='task'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(state, "running");
+    }
+    #[tokio::test]
+    async fn stop_requires_live_managed_lock_and_matching_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(dir.path().join("node.lock"))
+            .unwrap();
+        fs2::FileExt::try_lock_exclusive(&owner).unwrap();
+        let observer = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.path().join("node.lock"))
+            .unwrap();
+        assert!(managed_control(dir.path(), &observer, true).is_err());
+        let managed = ManagedRun::start(dir.path(), &[]).unwrap();
+        fs::write(
+            dir.path().join("desktop-stop.json"),
+            br#"{"instanceId":"old-instance"}"#,
+        )
+        .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), managed_stop(Some(&managed)))
+                .await
+                .is_err()
+        );
+        managed_control(dir.path(), &observer, true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), managed_stop(Some(&managed)))
+            .await
+            .unwrap();
+        drop(managed);
+        assert!(!dir.path().join("desktop-agent.json").exists());
     }
 }

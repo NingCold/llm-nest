@@ -2,8 +2,10 @@
 
 [桌面应用](../README.md)
 
-这里负责打开桌面窗口、启动本地聊天服务，以及在关闭窗口时保存数据。修改页面内容请到 [Web 界面](../../web/README.md)。
+这里负责桌面窗口、云端网络请求、独立本机 Agent 管理，以及关闭前的草稿保存与托盘后台运行。默认云端入口不启动保留的本地 Runtime。修改页面内容请到 [Web 界面](../../web/README.md)。
 
+- [src/local_agent.rs](src/local_agent.rs)：按实际登录身份隔离本机配置、配对和独立进程控制。
+- [src/local_agent_tray.rs](src/local_agent_tray.rs)：首次关闭说明、托盘打开与停止。
 - [src/lib.rs](src/lib.rs)：应用启动和关闭。
 - [src/draft_close.rs](src/draft_close.rs)：关闭前等待页面保存未发送的草稿。
 - [src/social_commands.rs](src/social_commands.rs)：页面调用的聊天操作。

@@ -9,7 +9,9 @@
     "build": "pnpm --dir ../web exec vite build --outDir ../desktop/dist --emptyOutDir",
     "typecheck": "pnpm --dir ../web typecheck",
     "icons": "node ../../scripts/generate-icons.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:agent": "node scripts/prepare-agent.mjs",
+    "build:agent:dev": "node scripts/prepare-agent.mjs --dev"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

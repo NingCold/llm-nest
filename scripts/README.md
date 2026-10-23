@@ -34,6 +34,18 @@ python scripts/cloud_consciousness_acceptance.py --binary /Agent程序路径 --a
 
 它们分别检查私聊恢复、跨节点群聊，以及记忆隔离、各 AI 摘要、群话题接续、遗忘和离线来源失效。群聊和意识脚本可加 `--serve-ui` 保持模拟节点在线，方便接着检查网页；完成后在对应工作目录创建 `stop` 文件。脚本结束会停止模拟节点并撤销测试绑定，云端测试聊天保留。
 
+## 检查云端在线管理
+
+部署包含在线管理接口的当前服务、构建当前 `agent-node` 后，可用三个独立测试账号运行以下脚本（不使用真实模型 Key）：
+
+```bash
+python scripts/cloud_management_acceptance.py --binary /Agent程序路径 --accounts /私有目录/cloud-test-accounts.json --ca /测试CA/ca.crt --workdir /新的私有测试目录
+```
+
+脚本仅创建并管理新的验收 AI，使用本机两个模拟模型检查角色/模型在线修改、进行中请求快照、当前结果重放、公开资料版本、初始/普通管理员权限、管理员撤销、另一真人私聊的只读查看与附件，以及 `run-managed/status/stop` 和离线不排队。它还检查远程管理及读取到的云端 DTO 不包含模拟端点或凭据；这不代替服务端数据库/日志的独立审计。工作目录在仓库内时必须被 Git 忽略，并且必须尚不存在。
+
+可加 `--serve-ui` 留下在线模拟节点，随后在工作目录创建 `stop` 文件结束。脚本退出会停止本次进程并撤销本次 AI 的节点绑定，测试聊天保留；结果保存在工作目录的 `result.json`。运行记录以实际执行输出为准。
+
 ## 保留的本地 API 回归
 
 ```bash

@@ -52,6 +52,13 @@ pub fn migrator() -> sqlx_core::migrate::Migrator {
                 include_str!("../migrations/0006_participation.sql").into(),
                 false,
             ),
+            Migration::new(
+                7,
+                "management".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/0007_management.sql").into(),
+                false,
+            ),
         ]
         .into(),
         ..Migrator::DEFAULT

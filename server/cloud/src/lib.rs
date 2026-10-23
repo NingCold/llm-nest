@@ -3,6 +3,7 @@ pub mod chat;
 pub mod consciousness;
 pub mod db;
 mod groups;
+mod management;
 pub mod nodes;
 pub mod participation;
 use db as sqlx;

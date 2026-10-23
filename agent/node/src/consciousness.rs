@@ -537,6 +537,33 @@ pub async fn handle_frame(
     scopes: &[MaterialScope],
 ) -> Result<Option<ServerFrame>> {
     match frame {
+        Some(ServerFrame::ManagementRequest {
+            relay_id,
+            request_id,
+            operator_id,
+            operation,
+        }) => {
+            let (view, error) = match crate::management::manage(
+                config,
+                store,
+                &binding.ai,
+                &request_id,
+                &operator_id,
+                operation,
+            ) {
+                Ok(view) => (Some(view), None),
+                Err(error) => (None, Some(crate::management::public_error(&error))),
+            };
+            socket
+                .send(&ClientFrame::ManagementResponse {
+                    relay_id,
+                    request_id,
+                    view,
+                    error,
+                })
+                .await?;
+            Ok(Some(ServerFrame::TasksChanged))
+        }
         Some(ServerFrame::ConsciousnessRequest {
             relay_id,
             request_id,

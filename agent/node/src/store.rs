@@ -79,6 +79,7 @@ impl Store {
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
 CREATE TABLE IF NOT EXISTS bindings(ai TEXT PRIMARY KEY,version TEXT NOT NULL,secret TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS profiles(ai TEXT PRIMARY KEY,json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS profile_receipts(ai TEXT NOT NULL,request TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(ai,request));
 CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,ai TEXT NOT NULL,state TEXT NOT NULL,start_json TEXT,receipt_json TEXT,result_json TEXT,draft TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS budget(day TEXT PRIMARY KEY,calls INTEGER NOT NULL CHECK(calls>=0),tokens INTEGER NOT NULL CHECK(tokens>=0));
 CREATE TABLE IF NOT EXISTS automatic_budget(ai TEXT NOT NULL,cid TEXT NOT NULL,day TEXT NOT NULL,tokens INTEGER NOT NULL CHECK(tokens>=0),PRIMARY KEY(ai,cid,day));

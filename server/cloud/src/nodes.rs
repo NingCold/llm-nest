@@ -21,6 +21,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .merge(crate::consciousness::routes())
+        .merge(crate::management::routes())
         .route("/ai", get(managed).post(create))
         .route("/ai/{id}/status", put(status))
         .route("/ai/{id}/node", post(bind))
@@ -110,14 +111,14 @@ pub(crate) async fn admin(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<()> 
 async fn account(tx: &mut Tx<'_>, ai: Uuid) -> Result<Value> {
     crate::chat::account(tx, ai).await
 }
-async fn view(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<Value> {
-    let r=sqlx::query("SELECT a.initial,ac.status_revision,jsonb_build_object('id',ac.id,'name',ac.name,'bio',ac.bio,'kind',ac.kind,'status',ac.status) AS account,b.version,b.node_id,b.node_name,b.last_seen_at,b.connection_id IS NOT NULL AND b.last_seen_at>now()-interval '45 seconds' AS online FROM cloud_ai_admins a JOIN cloud_ai_bindings b ON b.ai_id=a.ai_id JOIN accounts ac ON ac.id=a.ai_id WHERE a.ai_id=$1 AND a.administrator=$2").bind(ai).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::forbidden)?;
+pub(crate) async fn view(tx: &mut Tx<'_>, ai: Uuid, owner: Uuid) -> Result<Value> {
+    let r=sqlx::query("SELECT a.initial,ac.status_revision,ac.profile_revision,ac.administrators_revision,jsonb_build_object('id',ac.id,'name',ac.name,'bio',ac.bio,'kind',ac.kind,'status',ac.status) AS account,b.version,b.capabilities,b.node_id,b.node_name,b.last_seen_at,b.connection_id IS NOT NULL AND b.last_seen_at>now()-interval '45 seconds' AS online FROM cloud_ai_admins a JOIN cloud_ai_bindings b ON b.ai_id=a.ai_id JOIN accounts ac ON ac.id=a.ai_id WHERE a.ai_id=$1 AND a.administrator=$2").bind(ai).bind(owner).fetch_optional(&mut **tx).await?.ok_or_else(AppError::forbidden)?;
     let nid: Option<Uuid> = r.get("node_id");
     Ok(
-        json!({"account":r.get::<Value,_>("account"),"role":if r.get::<bool,_>("initial"){"initial"}else{"admin"},"statusRevision":r.get::<i64,_>("status_revision").to_string(),"bindingVersion":r.get::<i64,_>("version").to_string(),"node":nid.map(|nid|json!({"id":nid,"name":r.get::<Option<String>,_>("node_name"),"online":r.get::<bool,_>("online"),"lastSeenAt":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_seen_at")}))}),
+        json!({"account":r.get::<Value,_>("account"),"role":if r.get::<bool,_>("initial"){"initial"}else{"admin"},"statusRevision":r.get::<i64,_>("status_revision").to_string(),"profileRevision":r.get::<i64,_>("profile_revision").to_string(),"administratorsRevision":r.get::<i64,_>("administrators_revision").to_string(),"bindingVersion":r.get::<i64,_>("version").to_string(),"node":nid.map(|nid|json!({"id":nid,"name":r.get::<Option<String>,_>("node_name"),"online":r.get::<bool,_>("online"),"capabilities":r.get::<Value,_>("capabilities"),"lastSeenAt":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("last_seen_at")}))}),
     )
 }
-async fn admin_receipt(
+pub(crate) async fn admin_receipt(
     tx: &mut Tx<'_>,
     owner: Uuid,
     v: &Value,
@@ -141,7 +142,7 @@ async fn admin_receipt(
     }
     Ok(None)
 }
-async fn save_admin_receipt(
+pub(crate) async fn save_admin_receipt(
     tx: &mut Tx<'_>,
     owner: Uuid,
     v: &Value,
@@ -189,7 +190,9 @@ async fn create(
     let mut tx = s.pool.begin().await?;
     lock(&mut tx).await?;
     if let Some(r) = admin_receipt(&mut tx, p.id, &v, "create", p.id).await? {
-        return Ok(Json(r));
+        let ai = id(&r["account"], "id")?;
+        admin(&mut tx, ai, p.id).await?;
+        return Ok(Json(view(&mut tx, ai, p.id).await?));
     }
     let ai = Uuid::new_v4();
     sqlx::query("INSERT INTO accounts(id,name,bio,kind) VALUES($1,$2,$3,'ai')")
@@ -307,10 +310,10 @@ async fn change_binding(
     }
     invalidate_ai(&mut tx, ai, "node_changed").await?;
     if revoke {
-        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=NULL,node_name=NULL,token_hash=NULL,last_seen_at=NULL,connection_id=NULL WHERE ai_id=$1").bind(ai).execute(&mut *tx).await?;
+        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=NULL,node_name=NULL,token_hash=NULL,last_seen_at=NULL,connection_id=NULL,capabilities='[]' WHERE ai_id=$1").bind(ai).execute(&mut *tx).await?;
     } else {
         let r=sqlx::query("SELECT * FROM cloud_node_pairings WHERE user_code=$1 AND expires_at>now() AND ai_id IS NULL").bind(field(&v,"pairingCode")?.trim().to_uppercase()).fetch_optional(&mut *tx).await?.ok_or_else(||AppError::bad("配对码无效、已使用或已过期"))?;
-        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=$2,node_name=$3,token_hash=$4,last_seen_at=NULL,connection_id=NULL WHERE ai_id=$1").bind(ai).bind(r.get::<Uuid,_>("node_id")).bind(r.get::<String,_>("node_name")).bind(r.get::<String,_>("token_hash")).execute(&mut *tx).await?;
+        sqlx::query("UPDATE cloud_ai_bindings SET version=version+1,node_id=$2,node_name=$3,token_hash=$4,last_seen_at=NULL,connection_id=NULL,capabilities='[]' WHERE ai_id=$1").bind(ai).bind(r.get::<Uuid,_>("node_id")).bind(r.get::<String,_>("node_name")).bind(r.get::<String,_>("token_hash")).execute(&mut *tx).await?;
         sqlx::query("UPDATE cloud_node_pairings SET ai_id=$2,binding_version=$3 WHERE id=$1")
             .bind(r.get::<Uuid, _>("id"))
             .bind(ai)
@@ -1087,13 +1090,25 @@ async fn delta(
 async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSocket) {
     use connector::node::{ClientFrame, ServerFrame};
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
-    let valid = match hello {
-        Ok(Some(Ok(Message::Text(text)))) => {
-            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:4,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
-        }
-        _ => false,
+    let capabilities = match hello {
+        Ok(Some(Ok(Message::Text(text)))) => match serde_json::from_str::<ClientFrame>(&text) {
+            Ok(ClientFrame::Hello {
+                protocol_version: 4,
+                node_id,
+                ai_id,
+                binding_version,
+                capabilities,
+            }) if node_id == n.node.to_string()
+                && ai_id == n.ai.to_string()
+                && binding_version == n.version.to_string() =>
+            {
+                Some(capabilities)
+            }
+            _ => None,
+        },
+        _ => None,
     };
-    if !valid {
+    if capabilities.is_none() {
         let _ = send_frame(
             &mut socket,
             ServerFrame::Error {
@@ -1104,10 +1119,11 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
         .await;
         return;
     }
+    let capabilities = capabilities.unwrap();
     let connection = Uuid::new_v4();
     let initialized:Result<i64>=async {
         let mut tx=s.pool.begin().await?; lock(&mut tx).await?; authenticate(&mut tx,&h).await?;
-        sqlx::query("UPDATE cloud_ai_bindings SET connection_id=$2,last_seen_at=now() WHERE ai_id=$1").bind(n.ai).bind(connection).execute(&mut *tx).await?;
+        sqlx::query("UPDATE cloud_ai_bindings SET connection_id=$2,last_seen_at=now(),capabilities=$3 WHERE ai_id=$1").bind(n.ai).bind(connection).bind(json!(capabilities)).execute(&mut *tx).await?;
         let cursor=sqlx::query_scalar("SELECT COALESCE(max(id),0) FROM cloud_node_events WHERE ai_id=$1").bind(n.ai).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO cloud_events(owner) SELECT administrator FROM cloud_ai_admins WHERE ai_id=$1").bind(n.ai).execute(&mut *tx).await?;
         tx.commit().await?; Ok(cursor)
@@ -1117,6 +1133,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     };
     let (relay_sender, mut relay_receiver) = tokio::sync::mpsc::channel(32);
     s.relay.register(n.ai, n.version, connection, relay_sender);
+    s.relay.set_capabilities(n.ai, connection, capabilities);
     if send_frame(
         &mut socket,
         ServerFrame::Ready {
@@ -1141,6 +1158,10 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
                 match incoming {
                     Some(Ok(Message::Text(text)))=>{
                         let parsed=serde_json::from_str::<ClientFrame>(&text);
+                        if let Ok(ClientFrame::ManagementResponse{relay_id,request_id,view,error})=&parsed {
+                            if let Ok(relay)=relay_id.parse(){s.relay.response(n.ai,n.version,connection,relay,json!({"requestId":request_id,"view":view,"error":error}));}
+                            last_received=tokio::time::Instant::now();last_received_at=chrono::Utc::now();continue;
+                        }
                         if let Ok(ClientFrame::ConsciousnessResponse{relay_id,request_id,view,error})=parsed {
                             if let Ok(relay)=relay_id.parse(){s.relay.response(n.ai,n.version,connection,relay,json!({"requestId":request_id,"view":view,"error":error}));}
                             last_received=tokio::time::Instant::now();last_received_at=chrono::Utc::now();continue;

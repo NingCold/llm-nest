@@ -985,7 +985,7 @@ export function Workspace(p: Props) {
                 </div>
               </section>
             ) : p.tab === "account" ? (
-              accountSection === "ai" ? <AiManagement back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
+              accountSection === "ai" ? <AiManagement operatorId={p.me.id} conversations={p.snapshot?.conversations ?? []} cursor={p.snapshot?.cursor ?? ""} back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
             ) : p.tab === "contacts" ? (
               selectedContact ? (
                 profile(selectedContact, false)

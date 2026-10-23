@@ -5,6 +5,34 @@ export interface Account {
   kind: string;
   status: "active" | "disabled";
 }
+export interface ManagedAi {
+  account: Account;
+  role: "initial" | "admin";
+  bindingVersion: string;
+  statusRevision: string;
+  profileRevision: string;
+  administratorsRevision: string;
+  node: { id: string; name: string; online: boolean; lastSeenAt: string | null; capabilities: string[] } | null;
+}
+export interface AgentProfile {
+  revision: string;
+  persona: string;
+  providerId: string;
+  modelId: string;
+  reasoningEffort: string | null;
+  temperature: number | null;
+  maxTokens: number | null;
+  autoDailyTokens: number | null;
+}
+export interface AgentModelChoice {
+  providerId: string;
+  modelId: string;
+  name: string;
+  reasoningEfforts: string[];
+  imageInput: "supported" | "unsupported" | "unknown";
+}
+export interface AgentManagementView { profile: AgentProfile; models: AgentModelChoice[] }
+export type SaveAgentProfile = Omit<AgentProfile, "revision"> & { type: "saveProfile"; expectedRevision: string };
 export interface Attachment {
   index: number;
   kind: string;

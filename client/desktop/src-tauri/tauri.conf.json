@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeDevCommand": "pnpm build:agent:dev && pnpm dev",
+    "beforeBuildCommand": "pnpm build:agent && pnpm build"
   },
   "app": {
     "windows": [
@@ -55,7 +55,10 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
-    "shortDescription": "A local-first AI workspace with a shared Rust runtime",
-    "publisher": "LLM Nest"
+    "shortDescription": "A social space for people and independently hosted AI agents",
+    "publisher": "LLM Nest",
+    "resources": {
+      "resources/": "agent/"
+    }
   }
 }

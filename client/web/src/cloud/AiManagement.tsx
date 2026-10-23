@@ -1,28 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, MessageCircle, Plus, RefreshCw, Server, Unplug } from "lucide-react";
-import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop";
+import { ArrowLeft, MessageCircle, Plus, RefreshCw, Server, Settings, Unplug } from "lucide-react";
+import { CUSTOM_WINDOW_CHROME, IS_DESKTOP } from "@/lib/desktop";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, IconButton } from "../social/components/common";
 import { request } from "./api";
-import type { Account } from "./types";
-
-interface ManagedAi {
-  account: Account;
-  role: "initial" | "admin";
-  bindingVersion: string;
-  statusRevision: string;
-  node: { id: string; name: string; online: boolean; lastSeenAt: string | null } | null;
-}
+import { AiDetails } from "./AiDetails";
+import { LocalAgentPanel } from "./LocalAgentPanel";
+import type { Account, Conversation, ManagedAi } from "./types";
 interface Props {
   back(): void;
   openDirect(account: Account): Promise<unknown>;
   refresh(): Promise<unknown>;
+  operatorId: string;
+  conversations: Conversation[];
+  cursor: string;
 }
 
-export function AiManagement({ back, openDirect, refresh }: Props) {
+export function AiManagement({ back, openDirect, refresh, operatorId, conversations, cursor }: Props) {
   const [accounts, setAccounts] = useState<ManagedAi[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState("");
+  const [localAi, setLocalAi] = useState<ManagedAi | null>(null);
   const [dialog, setDialog] = useState<
     { kind: "create" } | { kind: "bind" | "revoke"; ai: ManagedAi } | null
   >(null);
@@ -32,7 +31,11 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
   const load = async () => {
     const version = ++loadVersion.current;
     const result = await request<ManagedAi[]>("/ai");
-    if (alive.current && version === loadVersion.current) setAccounts(result);
+    if (alive.current && version === loadVersion.current) {
+      setAccounts(result);
+      setSelected(id => result.some(ai => ai.account.id === id) ? id : "");
+      setLocalAi(current => current ? result.find(ai => ai.account.id === current.account.id) ?? null : null);
+    }
   };
   useEffect(() => {
     alive.current = true;
@@ -42,7 +45,7 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
     update();
     const timer = setInterval(update, 10000);
     return () => { alive.current = false; clearInterval(timer); };
-  }, []);
+  }, [cursor]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -55,12 +58,16 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
     const signature = JSON.stringify([path, method, body]);
     if (command.current.signature !== signature)
       command.current = { signature, id: crypto.randomUUID() };
-    await request(path, method, { ...body, requestId: command.current.id });
+    const result = await request<ManagedAi>(path, method, { ...body, requestId: command.current.id });
     command.current = { signature: "", id: "" };
     if (alive.current) setDialog(null);
     await load();
     await refresh();
+    return result;
   };
+
+  const selectedAi = accounts?.find(ai => ai.account.id === selected);
+  if (selectedAi) return <AiDetails key={selectedAi.account.id} ai={selectedAi} operatorId={operatorId} conversations={conversations} cursor={cursor} back={() => setSelected("")} changed={async () => { await load(); await refresh(); }} />;
 
   return (
     <section className="contact-view cloud-ai-management">
@@ -90,9 +97,11 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
                   {ai.account.bio && <p className="cloud-ai-bio">{ai.account.bio}</p>}
                   <div className="cloud-node-description"><Server /><span>{ai.node?.name || "连接 Agent 后，AI 就能回复消息。"}</span></div>
                   <div className="cloud-actions">
+                    <button className="social-button primary" disabled={busy} onClick={() => setSelected(ai.account.id)}><Settings />管理</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => void act(() => submit(`/ai/${ai.account.id}/status`, { expectedStatusRevision: ai.statusRevision, status: ai.account.status === "disabled" ? "active" : "disabled" }, "PUT"))}>{ai.account.status === "disabled" ? "恢复账号" : "停用账号"}</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => void act(() => openDirect(ai.account))}><MessageCircle />发消息</button>
                     <button className="social-button secondary" disabled={busy} onClick={() => { setError(""); setDialog({ kind: "bind", ai }); }}>{ai.node ? "更换节点" : "连接节点"}</button>
+                    {IS_DESKTOP && <button className="social-button secondary" disabled={busy} onClick={() => setLocalAi(ai)}>在这台电脑上运行</button>}
                     {ai.node && <button className="text-button" disabled={busy} onClick={() => { setError(""); setDialog({ kind: "revoke", ai }); }}><Unplug />撤销连接</button>}
                   </div>
                 </section>
@@ -108,11 +117,13 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
             <form className="cloud-form" onSubmit={(e) => {
               e.preventDefault();
               const data = new FormData(e.currentTarget);
-              void act(() => submit("/ai", { name: String(data.get("name")).trim(), bio: String(data.get("bio")).trim() }));
+              const local = data.get("local") === "on";
+              void act(async () => { const created = await submit("/ai", { name: String(data.get("name")).trim(), bio: String(data.get("bio")).trim() }); if (local && alive.current) setLocalAi(created); });
             }}>
               <p>这里填写所有人都能看到的资料。创建后，你将成为它的初始管理员。</p>
               <label>名字<input name="name" required maxLength={80} disabled={busy} autoFocus /></label>
               <label>公开简介<textarea name="bio" maxLength={2000} disabled={busy} placeholder="简单介绍一下它" /></label>
+              {IS_DESKTOP && <label className="cloud-check"><input name="local" type="checkbox" disabled={busy} />创建后在这台电脑上运行</label>}
               {error && <p className="social-error" role="alert">{error}</p>}
               <button className="social-button primary" disabled={busy}>{busy ? "正在创建…" : "创建账号"}</button>
             </form>
@@ -137,6 +148,7 @@ export function AiManagement({ back, openDirect, refresh }: Props) {
           ) : null}
         </DialogContent>
       </Dialog>
+      <Dialog open={!!localAi} onOpenChange={open => { if (!open) setLocalAi(null); }}><DialogContent className="social-dialog cloud-local-agent-dialog" aria-describedby={undefined}><DialogTitle>在这台电脑上运行</DialogTitle>{localAi && <LocalAgentPanel key={localAi.account.id} ai={localAi} changed={async () => { await load(); await refresh(); }} />}</DialogContent></Dialog>
     </section>
   );
 }

@@ -80,7 +80,7 @@ pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
         json!({"id":r.get::<Uuid,_>(0),"name":r.get::<String,_>(1),"bio":r.get::<String,_>(2),"kind":r.get::<String,_>(3),"status":r.get::<String,_>(4)}),
     )
 }
-fn message(r: &sqlx::postgres::PgRow) -> Value {
+pub(crate) fn message(r: &sqlx::postgres::PgRow) -> Value {
     json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference")})
 }
 pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
@@ -271,8 +271,16 @@ async fn messages(
         .execute(&mut *tx)
         .await?;
     member(&mut tx, id, p.id).await?;
-    let limit = q.limit.unwrap_or(50).clamp(1, 100);
-    let mut rows=sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND position<$2 ORDER BY position DESC LIMIT $3").bind(id).bind(q.before.unwrap_or(i64::MAX)).bind(limit+1).fetch_all(&mut *tx).await?;
+    read_messages(&mut tx, id, q.before, q.limit).await
+}
+pub(crate) async fn read_messages(
+    tx: &mut Tx<'_>,
+    id: Uuid,
+    before: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Json<Value>> {
+    let limit = limit.unwrap_or(50).clamp(1, 100);
+    let mut rows=sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND position<$2 ORDER BY position DESC LIMIT $3").bind(id).bind(before.unwrap_or(i64::MAX)).bind(limit+1).fetch_all(&mut **tx).await?;
     let more = rows.len() > limit as usize;
     rows.truncate(limit as usize);
     rows.reverse();
@@ -280,7 +288,7 @@ async fn messages(
         "SELECT coalesce(max(position),0) FROM cloud_messages WHERE conversation=$1 AND status<>'generating'",
     )
     .bind(id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     Ok(Json(
         json!({"messages":rows.iter().map(message).collect::<Vec<_>>(),"hasMore":more,"latestPosition":latest.to_string()}),
@@ -689,7 +697,7 @@ async fn context(
         json!({"conversationId":cid,"messages":rows.iter().map(message).collect::<Vec<_>>()}),
     ))
 }
-fn image_extension(mime: &str) -> &str {
+pub(crate) fn image_extension(mime: &str) -> &str {
     match mime {
         "image/png" => "png",
         "image/webp" => "webp",
@@ -697,7 +705,7 @@ fn image_extension(mime: &str) -> &str {
         _ => unreachable!("validated image format"),
     }
 }
-fn binary(bytes: Vec<u8>, mime: &str, name: &str, inline: bool) -> Response {
+pub(crate) fn binary(bytes: Vec<u8>, mime: &str, name: &str, inline: bool) -> Response {
     let mut r = bytes.into_response();
     r.headers_mut()
         .insert(header::CONTENT_TYPE, mime.parse().unwrap());

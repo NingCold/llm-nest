@@ -42,7 +42,7 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 
 编辑、遗忘和来源变化会停止依赖旧资料的回复。节点重连先补齐来源变化，再使用记忆和摘要；未完成摘要在重启后标为中断，不自动重复调用模型。更换运行设备仍需单独迁移这些资料，当前没有迁移包入口。
 
-普通文件只进入名称、类型和大小说明；图片经授权接口读取后作为原生图片材料，明确不支持图片的模型在调用前拒绝。当前没有工具执行；角色和模型参数仍由上述本机档案命令调整。
+普通文件只进入名称、类型和大小说明；图片经授权接口读取后作为原生图片材料，明确不支持图片的模型在调用前拒绝。当前没有工具执行；角色和模型参数可以由上述本机档案命令或在线管理入口调整。
 
 图片下载前先按元信息选材：保留所有合并输入、触发消息和被回复原文的必要图片，再从最近历史向前选取，最多 16 张、16 MiB。超过剩余预算的普通历史消息整条略去，保留的消息不单独丢图；必要图片超限会明确失败。实际下载长度还要匹配元信息。准备材料与下载期间继续处理 WSS 心跳和取消。
 
@@ -51,3 +51,9 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 自动接话与一次性约定另外按每个 AI、窗口、UTC 日预留完整模型容量，`profile.auto_daily_tokens` 可省略（默认 262144），范围 1024–4000000；该 AI 的 JSON 档案可独立调整。明确点名不扣这份自动额度，所有调用仍受节点顶层 `daily_calls/daily_tokens` 约束。两份额度与开始意图在同一 SQLite 事务预留；仅明确未开始的队列 409 同时释放它们，开始后失败、取消和重启不返还。预算拒绝区分 `token_limit`（窗口自动额度）、`node_call_limit`、`node_token_limit` 和 `budget_clock_rollback`。
 
 消息触发的 `inputIds` 均为必要材料，容量不足时明确失败。约定使用独立触发来源，把授权内容作为一次性约定提供给模型，可在聊天历史为空时执行；不会虚构真人消息，也不沿用共同群引用，当前窗口的有效记忆与摘要照常参与选材。
+
+在线配置管理通过 v4 `Hello.capabilities = ["profileManagement"]` 声明。云端仅转发角色、节点已经配置的模型选项及生成参数，响应不包含模型地址、Key 或环境变量名。管理员的写入由节点校验完整模型选择与参数，按预期版本原子保存；相同 requestId 重试只读取当前档案，回执仅存指纹。保存后的新任务使用新档案，已开始任务保持冻结设置。供应商和 Key 仍只能在节点本机配置。
+
+桌面使用 `pair-json <directory>` 获取 JSON 行：`{type:"pairing",pairingId,userCode,expiresAt}`，授权并持久保存后输出 `{type:"paired",aiId,bindingVersion}`；凭据不输出。`check <directory>` 无网络校验模板及模型参数，输出 `{type:"checked",models:[...]}`，不读取 Key 值。
+
+桌面托管使用 `run-managed <directory>`。取得目录锁、校验并准备完成后，输出 `{type:"ready",instanceId}`；调用方收到这行确认后再查询状态。`status <directory>` 输出 `{type:"status",running,instanceId,aiIds}`，未运行时 instanceId 为 null，aiIds 只读查询已配对账号。`stop <directory>` 请求停止当前托管实例，随后可用 status 确认退出；普通命令行 run 不接受这种停止。关闭桌面不影响独立托管进程，系统休眠或关机会使本机 AI 离线。

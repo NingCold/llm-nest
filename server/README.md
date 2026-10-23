@@ -8,4 +8,4 @@
 
 角色、模型参数、记忆和摘要保存在 Agent。管理员可在线维护这些资料，云端只转发请求；模型 Key 留在运行设备。节点的运行方法见[节点说明](../agent/node/README.md)。
 
-[http](http/README.md) 与 [social](social/README.md) 保留原来的本地 HTTP/SocialFeature、SQLite 和模型协调实现，供回归和后续迁移参考。`web-server` 不是默认云端客户端的后端；下一步按计划处理旧数据迁移。
+[http](http/README.md) 与 [social](social/README.md) 保留原来的本地 HTTP/SocialFeature、SQLite 和模型协调实现，供回归及旧库迁移核对。`web-server` 不是默认云端客户端的后端；旧记录通过[迁移工具](../docs/migration.md)进入云端，内部意识资料交给节点。

@@ -151,6 +151,7 @@ async fn command(
         }));
     }
     let old = chat::member(&mut tx, cid, p.id).await?;
+    chat::writable(&mut tx, cid).await?;
     let c = sqlx::query("SELECT kind,revision FROM cloud_conversations WHERE id=$1")
         .bind(cid)
         .fetch_one(&mut *tx)

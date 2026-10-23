@@ -1097,13 +1097,14 @@ export function Workspace(p: Props) {
                                 {m.senderName}
                               </span>
                               <time>{shortTime(m.createdAt)}</time>
+                              {m.importOrigin && <small title="从旧版聊天记录导入">导入历史</small>}
                             </div>
                             {m.contextReference && m.status !== "withdrawn" && <ReferenceCard directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
-                            {m.status === "committed" && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
+                            {m.status === "committed" && !conversation.readOnly && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
                             {m.status === "committed" && conversation.kind === "group" && <ContinuePrivately conversation={conversation} message={m} messages={p.page!.messages} continueWith={p.continuePrivately} />}
                             {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo! }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
                             {!!m.mentions.length && <div className="cloud-mentions">{m.mentions.map(id => <span key={id}>@{conversation.members.find(member => member.account.id === id)?.account.name || id} </span>)}</div>}
-                            {m.status === "committed" && <button className="text-button" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
+                            {m.status === "committed" && !conversation.readOnly && <button className="text-button" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
                             {p.editing?.id === m.id ? (
                               <form
                                 className="live-message-editor cloud-form"
@@ -1191,6 +1192,7 @@ export function Workspace(p: Props) {
                               </div>
                             ))}
                             {m.senderId === p.me.id &&
+                              !conversation.readOnly &&
                               m.status !== "withdrawn" && (
                                 <div className="live-message-actions">
                                   <button
@@ -1215,7 +1217,7 @@ export function Workspace(p: Props) {
                       ))
                     )}
                   </div>
-                  <div className="composer-area">
+                  {conversation.readOnly ? <div className="composer-area"><p role="status">这是从旧版导入的只读聊天，可以查看、搜索和导出记录。</p></div> : <div className="composer-area">
                     <div
                       className={`composer ${dragging ? "image-drop-active" : ""}`}
                       onDragOver={(e) => {
@@ -1436,7 +1438,7 @@ export function Workspace(p: Props) {
                         </div>
                       )}
                     </div>
-                  </div>
+                  </div>}
                 </section>
                 {details && (
                   <aside className="details-panel">
@@ -1454,9 +1456,9 @@ export function Workspace(p: Props) {
                       </IconButton>
                     </header>
                     <div className="details-scroll">
-                      <ParticipationPanel operatorId={p.me.id} key={`participation/${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} />
-                      <ConsciousnessPanel operatorId={p.me.id} key={`${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} summaryAiIds={managedAiIds} summaryError={managementError} />
-                      {conversation.kind === "group" && <GroupDetails key={conversation.id + conversation.revision} conversation={conversation} me={p.me.id} busy={p.busy} act={p.act} refresh={p.refresh} leave={() => p.selectConversation("")} />}
+                      {!conversation.readOnly && <ParticipationPanel operatorId={p.me.id} key={`participation/${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} />}
+                      {!conversation.readOnly && <ConsciousnessPanel operatorId={p.me.id} key={`${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} summaryAiIds={managedAiIds} summaryError={managementError} />}
+                      {conversation.kind === "group" && !conversation.readOnly && <GroupDetails key={conversation.id + conversation.revision} conversation={conversation} me={p.me.id} busy={p.busy} act={p.act} refresh={p.refresh} leave={() => p.selectConversation("")} />}
                       <div className="details-hero">
                         <Avatar
                           contact={avatar({ name: conversation.name })}

@@ -73,7 +73,7 @@ pub(crate) async fn node_conversation(tx: &mut Tx<'_>, cid: Uuid) -> Result<Valu
     )
 }
 pub(crate) fn node_message(m: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments")})
+    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin")})
 }
 async fn is_member(tx: &mut Tx<'_>, cid: Uuid, actor: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar(
@@ -723,6 +723,12 @@ async fn manage(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     management_permission(&mut tx, cid, ai, p.id, summary).await?;
+    if !matches!(
+        v.operation,
+        ConsciousnessOperation::Memories | ConsciousnessOperation::Summaries
+    ) {
+        chat::writable(&mut tx, cid).await?;
+    }
     let b = sqlx::query("SELECT version,connection_id FROM cloud_ai_bindings WHERE ai_id=$1")
         .bind(ai)
         .fetch_one(&mut *tx)
@@ -824,6 +830,7 @@ async fn summary_start(
     if !summary_sources(&mut tx, n.ai, cid, rev, &v.sources, &v.material_scope).await? {
         return Err(error("source_stale", "摘要来源、权限或配置已失效"));
     }
+    chat::writable(&mut tx, cid).await?;
     let fp = fingerprint(&v);
     if let Some(row) =
         sqlx::query("SELECT * FROM cloud_summary_calls WHERE ai_id=$1 AND request_id=$2")

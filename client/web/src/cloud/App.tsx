@@ -408,7 +408,8 @@ export default function CloudApp() {
   };
   const send = () =>
     run(async () => {
-      if (!draftReady || busy || snapshotRef.current?.conversations.find((c) => c.id === active)?.directBlocked) return;
+      const target = snapshotRef.current?.conversations.find((c) => c.id === active);
+      if (!draftReady || busy || target?.directBlocked || target?.readOnly) return;
       setBusy(true);
       try {
         const current = recordRef.current;

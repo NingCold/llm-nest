@@ -60,6 +60,17 @@ pub(crate) async fn member(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Vec
     }
     Ok(members)
 }
+pub(crate) async fn writable(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
+    let read_only: bool =
+        sqlx::query_scalar("SELECT read_only FROM cloud_conversations WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if read_only {
+        return Err(AppError::conflict("归档或旧导入窗口只读"));
+    }
+    Ok(())
+}
 pub(crate) async fn notify(tx: &mut Tx<'_>, id: Uuid, members: Vec<Uuid>) -> Result<()> {
     for owner in members {
         sqlx::query("INSERT INTO cloud_events(owner,conversation) VALUES($1,$2)")
@@ -81,11 +92,11 @@ pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     )
 }
 pub(crate) fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference")})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin")})
 }
 pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
-    let c = sqlx::query("SELECT kind,name,revision FROM cloud_conversations WHERE id=$1")
+    let c = sqlx::query("SELECT kind,name,revision,read_only FROM cloud_conversations WHERE id=$1")
         .bind(id)
         .fetch_one(&mut **tx)
         .await?;
@@ -124,9 +135,9 @@ pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Resu
     .bind(id)
     .fetch_optional(&mut **tx)
     .await?;
-    let unread:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1 AND sender<>$2 AND position>$3 AND NOT withdrawn AND status<>'generating'").bind(id).bind(owner).bind(pos).fetch_one(&mut **tx).await?;
+    let unread:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1 AND sender<>$2 AND position>$3 AND NOT EXISTS(SELECT 1 FROM cloud_import_reads ir WHERE ir.owner=$2 AND ir.message_id=cloud_messages.id) AND NOT withdrawn AND status<>'generating'").bind(id).bind(owner).bind(pos).fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":id,"kind":kind,"name":name,"peer":peer,"members":members,"directBlocked":blocked,"revision":c.get::<i64,_>("revision").to_string(),"lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
+        json!({"id":id,"kind":kind,"name":name,"peer":peer,"members":members,"directBlocked":blocked,"readOnly":c.get::<bool,_>("read_only"),"revision":c.get::<i64,_>("revision").to_string(),"lastMessage":last.as_ref().map(message),"latestPosition":r.get::<i64,_>("latest_position").to_string(),"unreadCount":unread,"manualUnread":r.get::<bool,_>("manual_unread"),"pinned":r.get::<bool,_>("pinned"),"readPosition":pos.to_string(),"listRevision":r.get::<i64,_>("revision").to_string()}),
     )
 }
 async fn init(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value>> {
@@ -313,10 +324,10 @@ struct Input {
     manual_unread: Option<bool>,
 }
 #[derive(Deserialize)]
-struct Upload {
-    name: Option<String>,
-    mime: String,
-    data: String,
+pub(crate) struct Upload {
+    pub(crate) name: Option<String>,
+    pub(crate) mime: String,
+    pub(crate) data: String,
 }
 async fn receipt(
     tx: &mut Tx<'_>,
@@ -425,13 +436,21 @@ async fn save_receipt(
     Ok(())
 }
 async fn uploads(s: &AppState, id: Uuid, v: &Input) -> Result<Value> {
-    if v.images.len() > 4 || v.files.len() > 4 {
+    save_uploads(&s.attachments, id, &v.images, &v.files).await
+}
+pub(crate) async fn save_uploads(
+    root: &std::path::Path,
+    id: Uuid,
+    images: &[Upload],
+    files: &[Upload],
+) -> Result<Value> {
+    if images.len() > 4 || files.len() > 4 {
         return Err(bad("附件数量超限"));
     }
     let mut out = vec![];
     let mut image_total = 0;
     let mut file_total = 0;
-    for (kind, items) in [("image", &v.images), ("file", &v.files)] {
+    for (kind, items) in [("image", images), ("file", files)] {
         for item in items {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(&item.data)
@@ -476,7 +495,7 @@ async fn uploads(s: &AppState, id: Uuid, v: &Input) -> Result<Value> {
                 }
             }
             let index = out.len();
-            let dir = s.attachments.join(id.to_string());
+            let dir = root.join(id.to_string());
             tokio::fs::create_dir_all(&dir).await?;
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)
@@ -500,6 +519,7 @@ async fn send(
     let mut tx = s.pool.begin().await?;
     lock(&mut tx).await?;
     let pair = member(&mut tx, id, p.id).await?;
+    writable(&mut tx, id).await?;
     if let Some(r) = receipt(&mut tx, p.id, &v, "send", id).await? {
         return Ok(Json(r));
     }
@@ -544,6 +564,7 @@ async fn mutate(
         .ok_or_else(AppError::not_found)?;
     let cid: Uuid = row.get("conversation");
     let pair = member(&mut tx, cid, p.id).await?;
+    writable(&mut tx, cid).await?;
     if row.get::<Uuid, _>("sender") != p.id {
         return Err(AppError::forbidden());
     }
@@ -809,6 +830,13 @@ async fn export(
                 m["text"].as_str().unwrap()
             }
         ));
+        if !m["importOrigin"].is_null() {
+            md.push_str(&format!(
+                "[导入历史：来源消息 {}，修订 {}]\n\n",
+                m["importOrigin"]["sourceMessageId"].as_str().unwrap(),
+                m["importOrigin"]["sourceRevision"].as_str().unwrap()
+            ));
+        }
         if let Some(reference) = m["contextReference"].as_object() {
             md.push_str(&format!(
                 "[群引用：窗口 {}，版本 {}{}]\n\n",
@@ -945,18 +973,18 @@ async fn events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
-    pub(super) struct Fixture {
-        pub(super) state: Arc<AppState>,
+    pub(crate) struct Fixture {
+        pub(crate) state: Arc<AppState>,
         admin: sqlx::PgPool,
         schema: String,
         _dir: tempfile::TempDir,
-        pub(super) users: Vec<(Uuid, HeaderMap)>,
+        pub(crate) users: Vec<(Uuid, HeaderMap)>,
     }
     impl Fixture {
-        pub(super) async fn new() -> Option<Self> {
+        pub(crate) async fn new() -> Option<Self> {
             let url = std::env::var("CLOUD_TEST_DATABASE_URL").ok()?;
             let admin = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(2)
@@ -1017,7 +1045,7 @@ mod tests {
                 users,
             })
         }
-        pub(super) async fn close(self) {
+        pub(crate) async fn close(self) {
             self.state.pool.close().await;
             sqlx::query(&format!("DROP SCHEMA {} CASCADE", self.schema))
                 .execute(&self.admin)

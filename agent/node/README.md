@@ -40,7 +40,7 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 
 记忆与窗口摘要按 AI 分开保存在 `node.sqlite`。节点在线时，可从聊天或联系人详情维护显式记忆；AI 管理员还能为它在当前窗口选择专用模型，开启或手动整理摘要。摘要默认关闭，使用同一节点预算，最近 12 条原文保留，每段最多 32 条。群话题带入私聊时，节点读取获准引用的原文，并结合该 AI 自己的资料。完整操作见[使用指南](../../docs/usage.md#记忆摘要和群话题接续)。
 
-编辑、遗忘和来源变化会停止依赖旧资料的回复。节点重连先补齐来源变化，再使用记忆和摘要；未完成摘要在重启后标为中断，不自动重复调用模型。更换运行设备仍需单独迁移这些资料，当前没有迁移包入口。
+编辑、遗忘和来源变化会停止依赖旧资料的回复。节点重连先补齐来源变化，再使用记忆和摘要；未完成摘要在重启后标为中断，不自动重复调用模型。更换运行设备时，按下方步骤导出资料包并在新节点导入；旧本地版本的数据见[迁移指南](../../docs/migration.md)。
 
 普通文件只进入名称、类型和大小说明；图片经授权接口读取后作为原生图片材料，明确不支持图片的模型在调用前拒绝。当前没有工具执行；角色和模型参数可以由上述本机档案命令或在线管理入口调整。
 
@@ -57,3 +57,19 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 桌面使用 `pair-json <directory>` 获取 JSON 行：`{type:"pairing",pairingId,userCode,expiresAt}`，授权并持久保存后输出 `{type:"paired",aiId,bindingVersion}`；凭据不输出。`check <directory>` 无网络校验模板及模型参数，输出 `{type:"checked",models:[...]}`，不读取 Key 值。
 
 桌面托管使用 `run-managed <directory>`。取得目录锁、校验并准备完成后，输出 `{type:"ready",instanceId}`；调用方收到这行确认后再查询状态。`status <directory>` 输出 `{type:"status",running,instanceId,aiIds}`，未运行时 instanceId 为 null，aiIds 只读查询已配对账号。`stop <directory>` 请求停止当前托管实例，随后可用 status 确认退出；普通命令行 run 不接受这种停止。关闭桌面不影响独立托管进程，系统休眠或关机会使本机 AI 离线。
+
+AI 资料迁移使用独立 JSON 包，不复制节点目录：
+
+```text
+llmn-agent export-ai <directory> <AI id> <new-package.json>
+llmn-agent preview-import-ai <directory> <AI id> <package.json> <expected-profile-revision>
+llmn-agent import-ai <directory> <AI id> <package.json> <expected-profile-revision>
+```
+
+先备份并停止源节点；导出使用只读 SQLite 快照和目录锁，目标文件必须不存在。包只含角色、模型选择及参数、显式记忆、每窗摘要配置和摘要，不含模型 Key、provider 地址、节点凭据、执行任务、预算或来源游标。未完成摘要作为中断资料导出，不恢复调用。
+
+目标先配置自己的 `node.toml` 模型并重新配对，再预览和导入。模型及参数按目标目录严格校验，不能静默换模型。`expected-profile-revision` 是目标当前档案版本；导入只适用于尚无意识资料的 AI，成功后返回新档案版本。同包重试不重写已有资料，不会恢复已经遗忘的记忆；其它包与已有导入冲突。
+
+导入检查 AI 当前窗口成员身份和全部来源版本；无效来源的正文清空并标失效，旧失效/遗忘资料不会重新启用。自动摘要始终关闭，需要管理员重新确认。旧本地资料必须先经迁移脚本按云端映射转换账号、窗口、消息、修订和消息位置；此 CLI 不自行猜测映射。完整旧库备份仍应保留。
+
+预览会与云端同步来源失效并更新节点同步游标，不导入包内资料；已有来源失效可能因此被清理。可省略预览的版本参数，从输出 `expectedProfileRevision` 取得导入所需版本。导入摘要在资料界面保留导入来源标记。

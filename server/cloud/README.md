@@ -37,7 +37,13 @@ cargo run -p cloud-server --locked
 
 设置独立测试库的 `CLOUD_TEST_DATABASE_URL` 后运行 `cargo test -p cloud-server -- --nocapture`。测试为每例建立隔离 schema，未设置变量时数据库测试会跳过，不能当成完整验证。当前验证结果集中在[验证指南](../../docs/validation/README.md)。
 
-[本地数据样本](tests/fixtures/README.md) 只做测试映射，验证稳定 UUID、公开名字/简介、消息相对顺序和原始附件字节。它不是正式迁移器，不读取用户旧库。ActorId 可直接保留为 PostgreSQL UUID；旧 sequence 与附件 part index 需要明确映射。AI、群、旧状态及内部资料迁移按后续计划完成。
+[本地数据样本](tests/fixtures/README.md) 继续验证旧 DTO 映射。正式迁移接收使用 `connector::migration` 的版本 1 DTO：登录真人通过 `POST /api/migration/preview` 提交 `MigrationSnapshot`，核对预览后，以 `POST /api/migration/import` 提交 `{snapshot, previewDigest}`。两者沿用会话和 `X-LLMN-Client`/来源检查，上限为 128 MiB，反向代理同样允许 128 MiB。
+
+快照只能包含一个来源真人，其身份映射为当前登录真人；每个来源 AI 明确新建云端身份，并将当前真人登记为初始管理员，不按名称、模型或旧 UUID 匹配既有账号。云端产生所有新 ID；返回账号、窗口、消息修订/position 和附件索引映射，供节点重写资料来源。`(owner, sourceId)` 和快照摘要保证同源重复请求返回原映射，同源快照变化返回 409；不会重写已经修改或撤回的云端消息。
+
+聊天、附件、联系人 listed/blocked、账号停用、当前群成员及个人置顶/未读状态在同一数据库事务保存；附件先暂存、同步并发布，数据库失败时清理本批文件。已退出的 AI 不恢复成员身份，其历史发送者仍保留；来源真人已经退出的窗口不接受导入。归档和 legacy 窗口以 `readOnly` 提供读取和导出，服务器拒绝发言、修订、撤回、群管理、参与及约定写入；个人读态与置顶仍可修改。
+
+旧读态由 `message_deliveries.position` 导出为精确的 `readMessageIds`，专用 `cloud_import_reads` 保留旧已读集合；不会把旧 sequence 当成已读游标。新消息沿用正常云端游标，旧已读集合只排除本批已读消息。历史及导出带 `importOrigin`，节点材料同样标明来源；旧 AI 发言不产生新节点运行记录。旧生成中消息保留片段并转为 interrupted，撤回不带原正文或附件。新窗口均暂停且约定授权关闭，旧队列、自动设置和未来约定仅供预览，不恢复执行。模型凭据、角色、记忆与摘要正文不进入此云端接口，应另行导入经重新授权的目标节点。
 
 ## AI 在线管理与只读查看
 

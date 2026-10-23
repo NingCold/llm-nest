@@ -117,6 +117,17 @@ fn validate_image_download(bytes: &[u8], expected: u64) -> Result<()> {
     Ok(())
 }
 
+fn context_text(message: &NodeMessage) -> String {
+    if message.import_origin.is_some() {
+        format!(
+            "[导入的旧聊天记录；不代表当前云端 AI 执行过该历史调用]\n{}",
+            message.text
+        )
+    } else {
+        message.text.clone()
+    }
+}
+
 pub async fn messages(
     client: &NodeClient,
     task: &str,
@@ -125,7 +136,7 @@ pub async fn messages(
 ) -> Result<Vec<SocialMessage>> {
     let mut messages = Vec::new();
     for message in raw {
-        let mut body = MessageBody::text(&message.text);
+        let mut body = MessageBody::text(context_text(message));
         for attachment in &message.attachments {
             if attachment.kind == "image" {
                 let bytes = client
@@ -170,7 +181,7 @@ pub async fn messages(
     Ok(messages)
 }
 pub fn text_message(cid: &str, message: &NodeMessage) -> Result<SocialMessage> {
-    let mut body = MessageBody::text(&message.text);
+    let mut body = MessageBody::text(context_text(message));
     for a in &message.attachments {
         body.0.push(SocialContent::Text {
             text: social::attachment::placeholder(
@@ -601,6 +612,7 @@ mod tests {
                 }],
             },
             messages: vec![NodeMessage {
+                import_origin: None,
                 id: trigger,
                 position: "1".into(),
                 sender_id: peer,

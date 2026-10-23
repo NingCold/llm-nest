@@ -54,6 +54,7 @@ fn memory(id: &str, source: Option<SourceRevision>) -> MemoryItem {
 fn record(id: &str) -> SummaryRecord {
     SummaryRecord {
         item: SummaryItem {
+            import_origin: None,
             id: id.into(),
             revision: "1".into(),
             status: "ready".into(),
@@ -83,6 +84,7 @@ fn record(id: &str) -> SummaryRecord {
 }
 fn message(pos: usize) -> NodeMessage {
     NodeMessage {
+        import_origin: None,
         id: uid(),
         position: pos.to_string(),
         sender_id: uid(),

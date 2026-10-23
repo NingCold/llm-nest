@@ -4,6 +4,7 @@ pub mod consciousness;
 pub mod db;
 mod groups;
 mod management;
+mod migration;
 pub mod nodes;
 pub mod participation;
 use db as sqlx;
@@ -163,6 +164,7 @@ pub fn router(state: Arc<AppState>, web_dir: PathBuf) -> Router {
         .merge(chat::routes().layer(DefaultBodyLimit::max(40 * 1024 * 1024)))
         .merge(participation::routes().layer(DefaultBodyLimit::max(16 * 1024)))
         .merge(nodes::routes().layer(DefaultBodyLimit::max(1024 * 1024)))
+        .merge(migration::routes().layer(DefaultBodyLimit::max(128 * 1024 * 1024)))
         .fallback(|| async { AppError::not_found() })
         .layer(middleware::from_fn_with_state(boundary_state, boundary));
     Router::new()

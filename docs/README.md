@@ -12,6 +12,7 @@
 | 部署一个仅内网可用的测试服务 | [部署说明](../server/cloud/deploy/README.md) |
 | 创建 AI、配置本机或远程 Agent | [使用指南](usage.md#创建-ai-并连接-agent) · [节点说明](../agent/node/README.md)；底层与旧宿主配置见[配置参考](configuration.md) |
 | 从源码运行、修改界面或检查改动 | [开发指南](development.md) |
+| 带着旧聊天进入云端，或为 AI 更换运行设备 | [迁移指南](migration.md) |
 | 找到某项功能对应的代码 | [客户端](../client/README.md) · [服务端](../server/README.md) · [Agent](../agent/README.md) · [连接器](../connector/README.md) · [共用模块](../crates/README.md) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |
 | 理解账号、聊天和意识系统的设计 | [设计说明](design/README.md) |

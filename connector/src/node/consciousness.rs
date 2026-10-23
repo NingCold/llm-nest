@@ -17,7 +17,22 @@ dto!(ValidationResult { valid: bool });
 dto!(NodeHistory { conversation: NodeConversation, messages: Vec<NodeMessage>, recent_boundary: Option<String> });
 dto!(SummaryModel { provider_id: String, model_id: String, reasoning_effort: Option<String>, max_tokens: u32 });
 dto!(MemoryItem { id: String, revision: String, kind: String, text: String, status: String, source: Option<SourceRevision>, created_at: String, updated_at: String });
-dto!(SummaryItem { id: String, revision: String, status: String, text: String, from_position: String, through_position: String, sources: Vec<SourceRevision>, error: Option<String>, created_at: String, updated_at: String });
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryItem {
+    pub id: String,
+    pub revision: String,
+    pub status: String,
+    pub text: String,
+    pub from_position: String,
+    pub through_position: String,
+    pub sources: Vec<SourceRevision>,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_origin: Option<String>,
+}
 dto!(SummarySettings { revision: String, enabled: bool, binding: Option<SummaryModel> });
 dto!(SummaryModelChoice { provider_id: String, model_id: String, name: String, reasoning_efforts: Vec<String> });
 dto!(ConsciousnessView { memories: Vec<MemoryItem>, summaries: Vec<SummaryItem>, settings: Option<SummarySettings>, models: Vec<SummaryModelChoice> });

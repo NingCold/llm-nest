@@ -7,4 +7,5 @@ pub mod social_generation;
 pub use social_generation::{SocialFailure, SocialGenerationEvent};
 mod subscription;
 pub use subscription::{LiveEvent, SubscriptionEvent};
+pub mod migration;
 pub mod node;

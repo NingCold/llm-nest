@@ -46,6 +46,20 @@ python scripts/cloud_management_acceptance.py --binary /Agent程序路径 --acco
 
 可加 `--serve-ui` 留下在线模拟节点，随后在工作目录创建 `stop` 文件结束。脚本退出会停止本次进程并撤销本次 AI 的节点绑定，测试聊天保留；结果保存在工作目录的 `result.json`。运行记录以实际执行输出为准。
 
+## 迁移与备份恢复
+
+旧库迁入云端及为 AI 更换运行设备的操作见[迁移指南](../docs/migration.md)。`migrate_local.py` 依次提供备份、预览、确认导入和生成节点资料包，不直接修改旧库。
+
+```bash
+python scripts/test_migrate_local.py
+python scripts/cloud_migration_acceptance.py --binary /Agent程序路径 --accounts /私有目录/cloud-test-accounts.json --ca /测试CA/ca.crt --workdir /新的私有测试目录
+python scripts/cloud_restore_acceptance.py --server-host 测试服务器 --server-root /测试服务根目录
+```
+
+迁移验收创建合成旧库和新的云端 AI，检查原文、附件、已读、重复提交及更换节点后的记忆接续，只调用本机模拟模型。`--serve-ui` 的保留与结束方式同上，测试聊天会保留。
+
+恢复验收适用于当前隔离 Compose 服务，需要 SSH 和服务器上的免密 sudo。脚本先检查没有执行中的 AI 工作，短暂停住应用取得数据库和附件备份，恢复应用后在临时数据库及私有目录比较内容；不覆盖原库。结束删除本次临时数据库，配套备份留在服务器私有目录。它不负责日常定期备份。
+
 ## 保留的本地 API 回归
 
 ```bash

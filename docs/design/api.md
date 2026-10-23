@@ -182,6 +182,16 @@ delta 是完整累计正文检查点，最多 256 KiB，每 500ms 至多一次�
 
 角色/模型参数的在线编辑与管理员名单使用上文云端管理接口；模型 Key 只在节点本地配置。详细行为见[意识系统](consciousness.md)。
 
+## 数据迁移接口
+
+`POST /api/migration/preview` 接收 `connector::migration::MigrationSnapshot`（version 1），使用当前真人会话，返回目标真人、将新建的 AI、提醒和 `previewDigest`。`POST /api/migration/import` 接收 `{snapshot, previewDigest}`，返回账号、窗口、消息及其 revision/position、附件索引映射。两者上限 128 MiB，沿用变更请求的来源与客户端标记检查。
+
+唯一来源真人映射到登录账号；每个来源 AI 新建并授予该真人初始管理权，不合并同名账号。预览校验资料结构和来源是否已经导入；附件实际解码及尺寸、数量校验在导入时完成，失败不留下部分账号或聊天。相同 `(owner, sourceId)` 和内容重复提交返回原映射，内容变化返回 409；回执不保存原文或节点资料。
+
+消息的 `importOrigin` 标明导入批次及旧消息版本。归档、旧历史导入窗口返回 `readOnly: true`；当前成员可以读取、搜索、导出和调整自己的列表状态，不能向其中发消息或修改聊天。已退出成员不重新加入。旧消息直接保存，不创建发言任务；所有迁入窗口先暂停，约定与自动摘要需另行确认。
+
+AI 资料包由 `connector::node::transfer::AiTransfer` 定义，仅通过节点本机 CLI 导入，不通过云端上传。节点核对当前授权和来源，并通过 `SummaryItem.importOrigin` 返回摘要来源标记；模型 Key、节点凭据、执行确认及来源游标不在包内。命令与限制见[迁移指南](../migration.md)。
+
 ## 当前本地实现的适用范围
 
 以下章节及源码链接描述已实现的单机 HTTP/IPC 契约：固定本地真人、共享 SocialFeature 与 SQLite。源码已划分为 client、server、agent、connector，并提取 Agent 纯核心；本地宿主没有云端认证，也不承载上述节点 WSS。以下 SocialFeature 路由只供本地实现维护和迁移参考，不是默认客户端的云端接口。

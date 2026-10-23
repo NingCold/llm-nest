@@ -2,6 +2,7 @@ mod consciousness;
 mod context;
 mod management;
 mod store;
+mod transfer;
 use ai_client::{AiClient, ChatChunk, ModelRouter};
 use anyhow::{Context, Result, bail};
 use connector::node::*;
@@ -84,10 +85,20 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
     }
     if !matches!(
         command,
-        "pair" | "pair-json" | "run" | "run-managed" | "stop" | "status" | "profile" | "check"
+        "pair"
+            | "pair-json"
+            | "run"
+            | "run-managed"
+            | "stop"
+            | "status"
+            | "profile"
+            | "check"
+            | "export-ai"
+            | "preview-import-ai"
+            | "import-ai"
     ) {
         println!(
-            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>"
+            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>; export-ai <directory> <AI id> <output.json>; preview-import-ai|import-ai <directory> <AI id> <package.json> <expected-profile-revision>"
         );
         return Ok(());
     }
@@ -123,6 +134,13 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
         .write(true)
         .open(directory.join("node.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock).context("node directory already in use")?;
+    if command == "export-ai" {
+        let ai = args.get(3).context("export-ai requires AI id")?;
+        let output = args.get(4).context("export-ai requires output JSON")?;
+        transfer::export(&directory.join("node.sqlite"), ai, Path::new(output))?;
+        println!("AI transfer exported.");
+        return Ok(());
+    }
     {
         for name in ["desktop-agent.json", "desktop-stop.json"] {
             match fs::remove_file(directory.join(name)) {
@@ -133,6 +151,27 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
         }
     }
     let store = Store::open(&directory.join("node.sqlite"))?;
+    if matches!(command, "preview-import-ai" | "import-ai") {
+        let ai = args.get(3).context("import requires AI id")?;
+        let package = args.get(4).context("import requires package JSON")?;
+        let current_revision;
+        let expected = if command == "preview-import-ai" && args.get(5).is_none() {
+            current_revision = store.profile(ai)?.revision;
+            &current_revision
+        } else {
+            args.get(5)
+                .context("import requires expected profile revision")?
+        };
+        return transfer::import(
+            &config,
+            &store,
+            ai,
+            Path::new(package),
+            expected,
+            command == "preview-import-ai",
+        )
+        .await;
+    }
     if command == "profile" {
         let ai = args.get(3).context("profile requires AI id")?;
         let path = args.get(4).context("profile requires profile JSON file")?;

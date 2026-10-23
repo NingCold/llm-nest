@@ -241,7 +241,7 @@ fn selection(binding: &SummaryModel) -> Result<ModelSelection> {
             .transpose()?,
     })
 }
-fn summary_options(
+pub(crate) fn summary_options(
     router: &ModelRouter,
     b: &SummaryModel,
 ) -> Result<(ai_client::ResolvedSelection, common::GenerationOptions)> {
@@ -670,7 +670,14 @@ pub fn summary_record(cid: &str, s: &SummaryRecord) -> Result<social::Conversati
         conversation_id: cid.parse()?,
         from_sequence: social::Sequence::new(s.item.from_position.parse()?)?,
         through_sequence: social::Sequence::new(s.item.through_position.parse()?)?,
-        text: s.item.text.clone(),
+        text: if s.item.import_origin.is_some() {
+            format!(
+                "[导入的旧摘要；不是当前节点重新生成的摘要]\n{}",
+                s.item.text
+            )
+        } else {
+            s.item.text.clone()
+        },
         status: serde_json::from_value(serde_json::Value::String(s.item.status.clone()))?,
         revision: revision(&s.item.revision)?,
         sources: s
@@ -814,6 +821,7 @@ async fn make_segment(
     let epoch = store.material_scope(ai, &c.id)?.revision;
     Ok(Some(SummaryRecord {
         item: SummaryItem {
+            import_origin: None,
             id: previous
                 .as_ref()
                 .map(|r| r.item.id.clone())

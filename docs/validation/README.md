@@ -24,6 +24,31 @@ python scripts/social_acceptance.py
 
 `acceptance.py` 检查空配置、旧接口退役、本地访问、显式导入/重启与 worker；`social_acceptance.py` 以模拟 provider 驱动真实业务。编译不证明安装通过，模拟模型不证明真实模型能力，自动输入中文不证明真实输入法候选正常。
 
+## 数据迁移与联网试用验证
+
+2026-10-23，第 5 步使用合成的旧 v13 库、专用云端账号、两个独立节点目录和模拟模型验证。服务与 Web 已更新到授权内网，部署前保留数据库备份；日常旧库、已安装桌面程序及原有 Agent 未改变。
+
+- 云端 37 项真实 PostgreSQL 测试全部通过，包括迁移预览、重复导入、权限、附件、只读窗口、来源映射和已读集合。完整测试最终在服务器就近连接隔离测试库执行；本机经 SSH 隧道执行时出现过短超时失败，同一源码在服务器复测通过。
+- Agent 35 项单测、2 项 CLI 集成测试及连接器 13 项测试通过。覆盖只读导出、资料校验、来源失效、重复导入与遗忘保留；前端 25 组测试、类型检查和生产构建通过。Python 旧库转换的两项测试、严格 no-deps Clippy、依赖边界与格式检查通过。
+- `cloud_migration_acceptance.py` 完成旧库备份、预览、导入、重复提交、图片与空文件原字节及 ZIP 核对、个人已读/置顶、其他账号隔离和只读限制。源 SQLite 的字节保持不变，云端没有因导入执行旧任务。
+- 同一脚本将角色、显式记忆和导入摘要移到节点，再导出并换到第二个节点。云端 AI 身份和聊天沿用，旧节点凭据失效；新回复实际读到迁入的角色和记忆。遗忘后重复导入没有恢复正文。全程只有两次模拟模型调用，没有使用真实模型 Key。
+- Edge 网页确认历史的“导入历史”标记和归档窗口的只读说明，聊天仍可查看、搜索和导出。
+- `cloud_restore_acceptance.py` 将服务器配套备份恢复到独立临时数据库及附件目录，32 张表的 3,506 行和 16 个附件全部一致，其中两个为空文件。原数据库未被覆盖，临时数据库检查后删除，私有备份保留。
+- 应用服务重启后，历史保持一致，模拟节点重新在线，客户端从旧游标收到后续持久事件。测试结束停止本次节点并撤销绑定。
+
+迁移使用方法见[迁移指南](../migration.md)。当前仅支持 v13 旧库、单次不超过 128 MiB 的云端资料和新建旧 AI 的云端身份；复杂旧记忆依赖、旧头像引用及审计修订留在完整备份。尚无网页迁移向导，不将本轮结果当成真实日常库切换或桌面安装验收。
+
+```bash
+python scripts/test_migrate_local.py
+# CLOUD_TEST_DATABASE_URL 指向独立测试库，未设置导致的跳过不算通过。
+cargo test -p cloud-server --locked -- --test-threads=4
+cargo test -p agent-node -p connector --locked
+python scripts/cloud_migration_acceptance.py --binary "$LLMN_AGENT_BINARY" --accounts "$LLMN_TEST_ACCOUNTS" --ca "$LLMN_TEST_CA" --workdir "$LLMN_TEST_WORKDIR"
+python scripts/cloud_restore_acceptance.py --server-host "$LLMN_TEST_HOST" --server-root "$LLMN_TEST_ROOT"
+```
+
+联网脚本沿用独立测试账号文件，工作目录必须为新的私有目录；可加 `--serve-ui` 保留模拟节点供页面检查，随后创建工作目录中的 `stop` 文件清理。恢复脚本仅适用于现有隔离 Compose 部署，会短暂停止应用处理请求，检查期间拒绝执行中的 AI 工作；它不是通用在线备份功能。
+
 ## 云端管理与本机运行验证
 
 2026-10-23，第 4 步使用独立 PostgreSQL、授权内网 HTTPS/WSS 服务、本机模拟模型和独立 Agent 验证。本轮不调用真实模型，不迁移旧数据，也不替换日常安装版或原有 Agent 目录。

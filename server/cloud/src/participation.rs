@@ -1,5 +1,5 @@
 //! Durable cloud participation and one-time contact authorization.
-use crate::{AppError, AppState, Result, auth, db as sqlx, nodes};
+use crate::{AppError, AppState, Result, auth, chat, db as sqlx, nodes};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -186,6 +186,7 @@ async fn mutate(
     if !permission(&mut tx, cid, p.id).await? {
         return Err(AppError::forbidden());
     }
+    chat::writable(&mut tx, cid).await?;
     ensure(&mut tx, cid).await?;
     if receipt(&mut tx, p.id, cid, &v, op).await?.is_none() {
         let r = sqlx::query("SELECT * FROM cloud_participation WHERE conversation=$1")
@@ -290,6 +291,7 @@ async fn create(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     permission(&mut tx, cid, p.id).await?;
+    chat::writable(&mut tx, cid).await?;
     ensure(&mut tx, cid).await?;
     let iid = if let Some(iid) = receipt(&mut tx, p.id, cid, &v, "create").await? {
         iid
@@ -348,6 +350,7 @@ async fn cancel(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     let manage = permission(&mut tx, cid, p.id).await?;
+    chat::writable(&mut tx, cid).await?;
     let row = sqlx::query("SELECT * FROM cloud_contact_intents WHERE id=$1 AND conversation=$2")
         .bind(iid)
         .bind(cid)

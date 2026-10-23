@@ -1,5 +1,6 @@
 //! Version four cloud node protocol. Identifiers and revisions are opaque strings.
 use serde::{Deserialize, Serialize};
+pub mod transfer;
 
 macro_rules! dto { ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,7 +56,22 @@ pub enum NodeTrigger {
     },
 }
 dto!(NodeAttachment { index: usize, kind: String, mime: String, byte_length: u64, name: Option<String> });
-dto!(NodeMessage { id: String, position: String, sender_id: String, sender_name: String, reply_to: Option<String>, mentions: Vec<String>, text: String, revision: String, created_at: String, attachments: Vec<NodeAttachment> });
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeMessage {
+    pub id: String,
+    pub position: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub reply_to: Option<String>,
+    pub mentions: Vec<String>,
+    pub text: String,
+    pub revision: String,
+    pub created_at: String,
+    pub attachments: Vec<NodeAttachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_origin: Option<crate::migration::ImportProvenance>,
+}
 dto!(SourceRevision {
     message_id: String,
     revision: String

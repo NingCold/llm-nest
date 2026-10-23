@@ -55,6 +55,7 @@ export interface Message {
   mentions: string[];
   contextReference: (ReferenceSelection & { revision: string; stale: boolean }) | null;
   aiResponses: { aiId: string; taskId: string; status: string; error?: string | null }[];
+  importOrigin?: { importId: string; sourceMessageId: string; sourceRevision: string } | null;
 }
 export interface Conversation {
   id: string;
@@ -64,6 +65,7 @@ export interface Conversation {
   members: { account: Account; role: "owner" | "admin" | "member" }[];
   revision: string;
   directBlocked: boolean;
+  readOnly?: boolean;
   lastMessage: Message | null;
   unreadCount: number;
   manualUnread: boolean;
@@ -129,7 +131,7 @@ export type MemoryKind = "preference" | "fact" | "shared_experience" | "open_top
 export interface MemoryItem { id: string; revision: string; kind: MemoryKind; text: string; status: "confirmed" | "stale" | "forgotten"; source: SourceRevision | null; createdAt: string; updatedAt: string }
 export interface SummaryModel { providerId: string; modelId: string; reasoningEffort: string | null; maxTokens: number }
 export interface SummarySettings { revision: string; enabled: boolean; binding: SummaryModel | null }
-export interface SummaryItem { id: string; revision: string; status: "queued" | "running" | "ready" | "failed" | "interrupted" | "stale"; text: string; fromPosition: string; throughPosition: string; sources: SourceRevision[]; error: string | null; createdAt: string; updatedAt: string }
+export interface SummaryItem { importOrigin?: string | null; id: string; revision: string; status: "queued" | "running" | "ready" | "failed" | "interrupted" | "stale"; text: string; fromPosition: string; throughPosition: string; sources: SourceRevision[]; error: string | null; createdAt: string; updatedAt: string }
 export interface SummaryModelChoice { providerId: string; modelId: string; name: string; reasoningEfforts: string[] }
 export interface ConsciousnessView { memories: MemoryItem[]; summaries: SummaryItem[]; settings: SummarySettings | null; models: SummaryModelChoice[] }
 export type ConsciousnessOperation = { type: "memories" } | { type: "createMemory"; kind: MemoryKind; text: string; source: SourceRevision | null } | { type: "editMemory"; id: string; revision: string; kind: MemoryKind; text: string; source: SourceRevision | null } | { type: "forgetMemory"; id: string; revision: string } | { type: "summaries" } | { type: "configureSummaries"; revision: string; enabled: boolean; binding: SummaryModel | null } | { type: "generateSummary"; retryId: string | null };

@@ -88,3 +88,72 @@ async fn hidden_managed_start_acknowledges_before_immediate_status_probes() {
         assert_eq!(status(&directory).await["running"], false);
     }
 }
+
+#[tokio::test]
+async fn transfer_export_uses_directory_lock_and_preserves_database() {
+    let fixture = tempfile::tempdir().unwrap();
+    let directory = fixture.path().join("node");
+    assert!(
+        command("init", &directory)
+            .output()
+            .await
+            .unwrap()
+            .status
+            .success()
+    );
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(directory.join("node.toml")).unwrap()).unwrap();
+    let ai = uuid::Uuid::new_v4().to_string();
+    let database = directory.join("node.sqlite");
+    {
+        let db = rusqlite::Connection::open(&database).unwrap();
+        db.execute(
+            "INSERT INTO profiles VALUES(?1,?2)",
+            rusqlite::params![ai, serde_json::to_string(&config["profile"]).unwrap()],
+        )
+        .unwrap();
+    }
+    let before = std::fs::read(&database).unwrap();
+    let output = fixture.path().join("package.json");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("node.lock"))
+        .unwrap();
+    fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+    let failed = command("export-ai", &directory)
+        .arg(&ai)
+        .arg(&output)
+        .output()
+        .await
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(!output.exists());
+    drop(lock);
+    assert!(
+        command("export-ai", &directory)
+            .arg(&ai)
+            .arg(&output)
+            .output()
+            .await
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(before, std::fs::read(database).unwrap());
+    assert!(
+        !command("export-ai", &directory)
+            .arg(&ai)
+            .arg(&output)
+            .output()
+            .await
+            .unwrap()
+            .status
+            .success()
+    );
+    let package: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    assert_eq!(package["version"], 1);
+    assert_eq!(package["aiId"], ai);
+}

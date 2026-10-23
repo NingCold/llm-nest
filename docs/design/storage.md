@@ -2,6 +2,8 @@
 
 [总纲](overview.md) · [聊天与消息](conversations.md) · [API 与事件](api.md)
 
+[端到端加密讨论稿](encryption.md)另列密文存储、密钥、附件与迁移的待确认方案，尚未实现；确认前本文现行存储与迁移行为继续适用。角色、记忆和摘要仍归节点本地，云端密文保存 AI 资料未纳入已确认约定。
+
 ## 当前云端存储
 
 `server/cloud` 直接使用 PostgreSQL，不经过旧 SocialStore。`0001_accounts.sql` 保存 accounts、credentials、邀请、待验证注册、会话、密码重置和认证限流；`0002_chat.sql` 保存 cloud_contacts、cloud_conversations、cloud_list、cloud_messages、cloud_receipts、cloud_events。`0003_nodes.sql` 增加 AI 管理员、节点绑定、配对、任务及节点事件；`0004_groups.sql` 增加真实群与成员、结构化提及/回复、多 AI 任务回执、联系人屏蔽及账号启停。启动自动运行顺序迁移，不改写旧迁移。

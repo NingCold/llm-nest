@@ -37,6 +37,8 @@ pub struct Execution {
 
 pub fn initialize(store: &Store) -> Result<()> {
     store.db.execute_batch("CREATE TABLE IF NOT EXISTS direct_windows(cid TEXT PRIMARY KEY,owner TEXT NOT NULL,ai TEXT NOT NULL,grant TEXT NOT NULL,bootstrap TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'synced',error TEXT,sync_json TEXT);
+CREATE TABLE IF NOT EXISTS direct_attachments(cid TEXT NOT NULL,message TEXT NOT NULL,revision TEXT NOT NULL,idx INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(cid,message,revision,idx));
+CREATE TABLE IF NOT EXISTS direct_references(cid TEXT NOT NULL,fingerprint TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(cid,fingerprint));
 CREATE TABLE IF NOT EXISTS direct_turns(request TEXT PRIMARY KEY,cid TEXT NOT NULL,fingerprint TEXT NOT NULL,human TEXT NOT NULL,answer TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,synced INTEGER NOT NULL DEFAULT 0);
 UPDATE direct_turns SET state='interrupted',payload=json_set(payload,'$.error','node_restarted') WHERE state='running';")?;
     Ok(())
@@ -59,10 +61,6 @@ pub fn cache(store: &Store, owner: &str, grant: &str, bootstrap: &DirectBootstra
     ensure!(
         bootstrap.conversation.kind == "direct",
         "direct_private_chat_required"
-    );
-    ensure!(
-        bootstrap.messages.iter().all(|m| m.attachments.is_empty()),
-        "direct_unsupported_history"
     );
     let pending: bool = store.db.query_row(
         "SELECT EXISTS(SELECT 1 FROM direct_turns WHERE cid=?1 AND synced=0)",
@@ -102,6 +100,7 @@ pub fn send_message(
     request: &str,
     text: &str,
     input: Option<NodeMessage>,
+    encrypted_attachments: &[connector::crypto::EncryptedAttachment],
 ) -> Result<()> {
     let bootstrap = authorized(store, owner, cid)?;
     ensure!(
@@ -109,7 +108,8 @@ pub fn send_message(
         "invalid_request_id"
     );
     ensure!(
-        !text.trim().is_empty() && text.len() <= 128 * 1024,
+        (!text.trim().is_empty() || input.as_ref().is_some_and(|m| !m.attachments.is_empty()))
+            && text.len() <= 128 * 1024,
         "invalid_direct_text"
     );
     let fingerprint = format!(
@@ -118,7 +118,14 @@ pub fn send_message(
             owner,
             cid,
             text,
-            input.as_ref().map(|m| (&m.id, &m.sealed))
+            input.as_ref().map(|m| (
+                &m.id,
+                &m.sealed,
+                &m.reply_to,
+                &m.context_reference,
+                &m.attachments
+            )),
+            encrypted_attachments
         ))?)
     );
     let tx = store.db.unchecked_transaction()?;
@@ -156,6 +163,8 @@ pub fn send_message(
         revision: "1".into(),
         created_at: chrono::Utc::now().to_rfc3339(),
         attachments: vec![],
+        audience_revision: None,
+        context_reference: None,
         import_origin: None,
         sealed: None,
     };
@@ -163,7 +172,15 @@ pub fn send_message(
     human.sender_name = bootstrap.human.name.clone();
     let mut answer = message(&bootstrap.ai, String::new());
     answer.reply_to = Some(human.id.clone());
+    if bootstrap.conversation.encryption.is_some() {
+        answer.audience_revision = Some(bootstrap.conversation.revision.clone());
+    }
     tx.execute("INSERT INTO direct_turns(request,cid,fingerprint,human,answer,state,payload) VALUES(?1,?2,?3,?4,?5,'queued',?6)",params![request,cid,fingerprint,serde_json::to_string(&human)?,serde_json::to_string(&answer)?,serde_json::to_string(&Execution::default())?])?;
+    use base64::Engine;
+    for attachment in encrypted_attachments {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(&attachment.data)?;
+        tx.execute("INSERT INTO direct_attachments VALUES(?1,?2,?3,?4,?5) ON CONFLICT(cid,message,revision,idx) DO NOTHING",params![cid,human.id,human.revision,attachment.index,bytes])?;
+    }
     tx.execute(
         "UPDATE direct_windows SET state='pending',error=NULL WHERE cid=?1",
         [cid],
@@ -394,6 +411,7 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
         })
         .await?;
     crate::crypto::decrypt_bootstrap(client, store, &mut current).await?;
+    cache_bootstrap_downloads(client, store, &grant, &current).await?;
     if !unfinished(store, cid)? {
         return cache(store, &owner, &grant, &current);
     }
@@ -426,17 +444,33 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
         .into_iter()
         .filter(|s| s.message_id != human.id && s.message_id != answer.id)
         .collect();
-    let make = |m: NodeMessage, status: String, run: Option<String>, usage, error| DirectMessage {
-        id: m.id,
-        sender_id: m.sender_id,
-        text: m.text,
-        sealed: m.sealed,
-        status,
-        created_at: m.created_at,
-        reply_to: m.reply_to,
-        run_id: run,
-        usage,
-        error,
+    let make = |m: NodeMessage,
+                status: String,
+                run: Option<String>,
+                usage,
+                error|
+     -> Result<DirectMessage> {
+        Ok(DirectMessage {
+            id: m.id.clone(),
+            sender_id: m.sender_id.clone(),
+            text: m.text.clone(),
+            encrypted_attachments: if m.sealed.is_some() {
+                attachment_payloads(store, cid, &m)?
+            } else {
+                vec![]
+            },
+            attachments: wire_attachments(&m),
+            audience_revision: m.audience_revision,
+            context_reference: m.context_reference,
+            mentions: m.mentions,
+            sealed: m.sealed,
+            status,
+            created_at: m.created_at,
+            reply_to: m.reply_to,
+            run_id: run,
+            usage,
+            error,
+        })
     };
     let request = DirectSyncRequest {
         request_id: crate::id(),
@@ -452,14 +486,14 @@ async fn sync_inner(store: &Store, client: &NodeClient, cid: &str) -> Result<()>
             execution.profile
         },
         messages: vec![
-            make(human, "committed".into(), None, None, None),
+            make(human, "committed".into(), None, None, None)?,
             make(
                 answer,
                 state,
                 Some(request_id),
                 execution.usage,
                 execution.error,
-            ),
+            )?,
         ],
     };
     store.db.execute(
@@ -533,4 +567,432 @@ fn accept(
     )?;
     tx.commit()?;
     Ok(())
+}
+
+pub fn wire_attachments(message: &NodeMessage) -> Vec<NodeAttachment> {
+    message
+        .attachments
+        .iter()
+        .map(|a| {
+            if message.sealed.is_some() {
+                NodeAttachment {
+                    index: a.index,
+                    kind: "encrypted".into(),
+                    mime: "application/octet-stream".into(),
+                    byte_length: a.byte_length,
+                    name: None,
+                    media_encryption_info: None,
+                }
+            } else {
+                a.clone()
+            }
+        })
+        .collect()
+}
+pub fn cache_attachment(
+    store: &Store,
+    cid: &str,
+    message: &str,
+    revision: &str,
+    index: usize,
+    data: &[u8],
+) -> Result<()> {
+    store.db.execute("INSERT INTO direct_attachments VALUES(?1,?2,?3,?4,?5) ON CONFLICT(cid,message,revision,idx) DO UPDATE SET data=excluded.data",params![cid,message,revision,index,data])?;
+    Ok(())
+}
+pub fn attachment(
+    store: &Store,
+    cid: &str,
+    message: &str,
+    revision: &str,
+    index: usize,
+) -> Result<Vec<u8>> {
+    Ok(store.db.query_row("SELECT data FROM direct_attachments WHERE cid=?1 AND message=?2 AND revision=?3 AND idx=?4",params![cid,message,revision,index],|r|r.get(0))?)
+}
+fn attachment_payloads(
+    store: &Store,
+    cid: &str,
+    message: &NodeMessage,
+) -> Result<Vec<connector::crypto::EncryptedAttachment>> {
+    use base64::Engine;
+    message
+        .attachments
+        .iter()
+        .map(|a| {
+            Ok(connector::crypto::EncryptedAttachment {
+                index: a.index,
+                data: base64::engine::general_purpose::STANDARD.encode(attachment(
+                    store,
+                    cid,
+                    &message.id,
+                    &message.revision,
+                    a.index,
+                )?),
+            })
+        })
+        .collect()
+}
+fn reference_fingerprint(selection: &ReferenceSelection) -> Result<String> {
+    Ok(serde_json::to_string(selection)?)
+}
+pub fn cache_reference(
+    store: &Store,
+    cid: &str,
+    selection: &ReferenceSelection,
+    reference: &NodeReference,
+) -> Result<()> {
+    store.db.execute("INSERT INTO direct_references VALUES(?1,?2,?3) ON CONFLICT(cid,fingerprint) DO UPDATE SET json=excluded.json",params![cid,reference_fingerprint(selection)?,serde_json::to_string(reference)?])?;
+    Ok(())
+}
+pub fn reference(
+    store: &Store,
+    cid: &str,
+    selection: &ReferenceSelection,
+) -> Result<NodeReference> {
+    let state: String = store.db.query_row(
+        "SELECT state FROM direct_windows WHERE cid=?1",
+        [cid],
+        |r| r.get(0),
+    )?;
+    ensure!(state != "conflict", "direct_sync_conflict");
+    let json: String = store.db.query_row(
+        "SELECT json FROM direct_references WHERE cid=?1 AND fingerprint=?2",
+        params![cid, reference_fingerprint(selection)?],
+        |r| r.get(0),
+    )?;
+    Ok(serde_json::from_str(&json)?)
+}
+pub fn selected_reference(
+    store: &Store,
+    cid: &str,
+    human: &NodeMessage,
+) -> Result<Option<NodeReference>> {
+    fn from_message(
+        store: &Store,
+        cid: &str,
+        message: &NodeMessage,
+        required: bool,
+    ) -> Result<Option<NodeReference>> {
+        let Some(r) = &message.context_reference else {
+            return Ok(None);
+        };
+        ensure!(!r.stale, "direct_reference_stale");
+        let mut reference = reference(
+            store,
+            cid,
+            &ReferenceSelection {
+                conversation_id: r.conversation_id.clone(),
+                sources: r.sources.clone(),
+            },
+        )?;
+        reference.message_id = message.id.clone();
+        reference.revision = r.revision.clone();
+        reference.required = required;
+        Ok(Some(reference))
+    }
+    if human.context_reference.is_some() {
+        return from_message(store, cid, human, true);
+    }
+    let (owner, _, _, _) = binding(store, cid)?;
+    let messages = view(store, &owner, cid)?.messages;
+    if let Some(reply) = &human.reply_to
+        && let Some(message) = messages.iter().find(|m| m.message.id == *reply)
+        && message.message.context_reference.is_some()
+    {
+        return from_message(store, cid, &message.message, true);
+    }
+    for message in messages
+        .iter()
+        .rev()
+        .filter(|m| m.status == "committed")
+        .take(12)
+    {
+        if message
+            .message
+            .context_reference
+            .as_ref()
+            .is_some_and(|r| !r.stale)
+        {
+            return from_message(store, cid, &message.message, false);
+        }
+    }
+    Ok(None)
+}
+pub async fn cache_downloads(
+    client: &NodeClient,
+    store: &Store,
+    ai: &str,
+    grant: &str,
+    cid: &str,
+    messages: &[NodeMessage],
+) -> Result<()> {
+    for m in messages {
+        for a in &m.attachments {
+            let cached: bool = store.db.query_row("SELECT EXISTS(SELECT 1 FROM direct_attachments WHERE cid=?1 AND message=?2 AND revision=?3 AND idx=?4)",params![cid,m.id,m.revision,a.index],|r|r.get(0))?;
+            if cached {
+                continue;
+            }
+            let bytes = client
+                .direct_attachment(
+                    ai,
+                    &DirectAttachmentRequest {
+                        grant: grant.into(),
+                        conversation_id: cid.into(),
+                        message_id: m.id.clone(),
+                        index: a.index,
+                        revision: m.revision.clone(),
+                    },
+                )
+                .await?;
+            crate::crypto::validate_attachment_bytes(a, &bytes)?;
+            cache_attachment(store, cid, &m.id, &m.revision, a.index, &bytes)?;
+        }
+    }
+    Ok(())
+}
+pub async fn cache_bootstrap_downloads(
+    client: &NodeClient,
+    store: &Store,
+    grant: &str,
+    bootstrap: &DirectBootstrap,
+) -> Result<()> {
+    cache_downloads(
+        client,
+        store,
+        &bootstrap.ai.id,
+        grant,
+        &bootstrap.conversation.id,
+        &bootstrap.messages,
+    )
+    .await?;
+    for reference in &bootstrap.references {
+        cache_downloads(
+            client,
+            store,
+            &bootstrap.ai.id,
+            grant,
+            &reference.conversation.id,
+            &reference.messages,
+        )
+        .await?;
+        cache_reference(
+            store,
+            &bootstrap.conversation.id,
+            &ReferenceSelection {
+                conversation_id: reference.conversation.id.clone(),
+                sources: reference.sources.clone(),
+            },
+            reference,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn discard_reference(store: &Store, cid: &str, selection: &ReferenceSelection) -> Result<()> {
+    store.db.execute(
+        "DELETE FROM direct_references WHERE cid=?1 AND fingerprint=?2",
+        params![cid, reference_fingerprint(selection)?],
+    )?;
+    Ok(())
+}
+/// The connected invalidation stream is authoritative for all locally prepared references.
+pub fn invalidate_references(
+    store: &Store,
+    ai: &str,
+    change: &ConsciousnessChange,
+) -> Result<bool> {
+    let local: bool = store.db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='direct_references')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !local {
+        return Ok(false);
+    }
+    let rows: Vec<(String,String,String)> = store.db.prepare("SELECT r.cid,r.fingerprint,r.json FROM direct_references r JOIN direct_windows w ON w.cid=r.cid WHERE w.ai=?1")?.query_map([ai],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    let mut affected = false;
+    for (cid, fingerprint, json) in rows {
+        let reference: NodeReference = serde_json::from_str(&json)?;
+        if reference.conversation.id == change.conversation_id
+            && (change.message_id.is_none()
+                || reference
+                    .sources
+                    .iter()
+                    .any(|s| Some(&s.message_id) == change.message_id.as_ref()))
+        {
+            store.db.execute(
+                "DELETE FROM direct_references WHERE cid=?1 AND fingerprint=?2",
+                params![cid, fingerprint],
+            )?;
+            affected = true;
+        }
+    }
+    Ok(affected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    fn fixture() -> (Store, DirectBootstrap) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        initialize(&store).unwrap();
+        let bootstrap: DirectBootstrap=serde_json::from_value(json!({"ai":{"id":crate::id(),"name":"ai","bio":"","kind":"ai"},"human":{"id":crate::id(),"name":"human","bio":"","kind":"human"},"conversation":{"id":crate::id(),"kind":"direct","name":"chat","revision":"1","members":[]},"bindingVersion":"1","base":null,"messages":[],"hasMore":false})).unwrap();
+        cache(&store, &bootstrap.human.id, "grant", &bootstrap).unwrap();
+        (store, bootstrap)
+    }
+    #[test]
+    fn attachment_failure_rolls_back_turn_and_successful_retry_is_idempotent() {
+        let (store, b) = fixture();
+        let cid = &b.conversation.id;
+        let request = crate::id();
+        let message: NodeMessage=serde_json::from_value(json!({"id":crate::id(),"position":"0","senderId":b.human.id,"senderName":"human","replyTo":null,"mentions":[],"text":"file","revision":"1","createdAt":"2026-10-23T12:00:00Z","attachments":[{"index":0,"kind":"file","mime":"text/plain","byteLength":3,"name":"a.txt"}]})).unwrap();
+        let payload = vec![connector::crypto::EncryptedAttachment {
+            index: 0,
+            data: "YWJj".into(),
+        }];
+        store.db.execute_batch("CREATE TEMP TRIGGER fail_blob BEFORE INSERT ON direct_attachments BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END;").unwrap();
+        assert!(
+            send_message(
+                &store,
+                &b.human.id,
+                cid,
+                &request,
+                "file",
+                Some(message.clone()),
+                &payload
+            )
+            .is_err()
+        );
+        assert_eq!(
+            store
+                .db
+                .query_row("SELECT COUNT(*) FROM direct_turns", [], |r| r
+                    .get::<_, usize>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .db
+                .query_row(
+                    "SELECT state FROM direct_windows WHERE cid=?1",
+                    [cid],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "synced"
+        );
+        store.db.execute_batch("DROP TRIGGER fail_blob").unwrap();
+        for _ in 0..2 {
+            send_message(
+                &store,
+                &b.human.id,
+                cid,
+                &request,
+                "file",
+                Some(message.clone()),
+                &payload,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            store
+                .db
+                .query_row("SELECT COUNT(*) FROM direct_turns", [], |r| r
+                    .get::<_, usize>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            attachment(&store, cid, &message.id, "1", 0).unwrap(),
+            b"abc"
+        );
+        let changed = vec![connector::crypto::EncryptedAttachment {
+            index: 0,
+            data: "eHl6".into(),
+        }];
+        assert!(
+            send_message(
+                &store,
+                &b.human.id,
+                cid,
+                &request,
+                "file",
+                Some(message.clone()),
+                &changed
+            )
+            .is_err()
+        );
+        assert_eq!(
+            attachment(&store, cid, &message.id, "1", 0).unwrap(),
+            b"abc"
+        );
+    }
+    #[test]
+    fn known_source_invalidations_remove_only_affected_offline_references() {
+        let (store, b) = fixture();
+        let source = crate::id();
+        let mid = crate::id();
+        let selection = ReferenceSelection {
+            conversation_id: source.clone(),
+            sources: vec![SourceRevision {
+                message_id: mid.clone(),
+                revision: "1".into(),
+            }],
+        };
+        let reference = NodeReference {
+            message_id: crate::id(),
+            revision: "1".into(),
+            required: true,
+            conversation: NodeConversation {
+                id: source.clone(),
+                kind: "group".into(),
+                name: "group".into(),
+                revision: "1".into(),
+                members: vec![],
+                encryption: None,
+            },
+            messages: vec![],
+            sources: selection.sources.clone(),
+        };
+        cache_reference(&store, &b.conversation.id, &selection, &reference).unwrap();
+        let before = store.material_scope(&b.ai.id, &source).unwrap();
+        store
+            .invalidate(
+                &b.ai.id,
+                &ConsciousnessChanges {
+                    cursor: "1".into(),
+                    has_more: false,
+                    changes: vec![ConsciousnessChange {
+                        id: crate::id(),
+                        conversation_id: source.clone(),
+                        message_id: Some(crate::id()),
+                        reason: "message_changed".into(),
+                    }],
+                },
+            )
+            .unwrap();
+        assert!(super::reference(&store, &b.conversation.id, &selection).is_ok());
+        store
+            .invalidate(
+                &b.ai.id,
+                &ConsciousnessChanges {
+                    cursor: "2".into(),
+                    has_more: false,
+                    changes: vec![ConsciousnessChange {
+                        id: crate::id(),
+                        conversation_id: source.clone(),
+                        message_id: Some(mid),
+                        reason: "message_changed".into(),
+                    }],
+                },
+            )
+            .unwrap();
+        assert!(super::reference(&store, &b.conversation.id, &selection).is_err());
+        assert_ne!(
+            before.revision,
+            store.material_scope(&b.ai.id, &source).unwrap().revision
+        );
+    }
 }

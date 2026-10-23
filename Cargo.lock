@@ -42,6 +42,7 @@ dependencies = [
  "connector",
  "fs2",
  "futures-util",
+ "image",
  "llmn-crypto",
  "rand 0.8.8",
  "rusqlite",
@@ -2860,6 +2861,7 @@ version = "0.1.1-alpha.3"
 dependencies = [
  "anyhow",
  "http",
+ "matrix-sdk-common",
  "matrix-sdk-crypto",
  "matrix-sdk-sqlite",
  "ruma",

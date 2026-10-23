@@ -377,6 +377,43 @@ async fn history_delivery_authority(tx: &mut Tx<'_>, a: &Actor, v: &Value) -> Re
     if v.get("llmn_purpose").is_none() {
         return Ok(());
     }
+    if v["llmn_purpose"] == "conversationHistory" {
+        let cid = uid(field(v, "llmn_conversation_id")?)?;
+        let c = sqlx::query("SELECT kind,revision FROM cloud_conversations WHERE id=$1")
+            .bind(cid)
+            .fetch_one(&mut **tx)
+            .await?;
+        if c.get::<String, _>("kind") != "group"
+            || field(v, "llmn_expected_revision")? != c.get::<i64, _>("revision").to_string()
+        {
+            return Err(AppError::conflict("群版本已变化"));
+        }
+        let members = chat::member(tx, cid, a.id).await?;
+        for user in v["messages"]
+            .as_object()
+            .ok_or_else(|| AppError::bad("投递对象无效"))?
+            .keys()
+        {
+            let target = account(user)?;
+            if !members.contains(&target) {
+                return Err(AppError::forbidden());
+            }
+            for device in v["messages"][user]
+                .as_object()
+                .ok_or_else(|| AppError::bad("投递设备无效"))?
+                .keys()
+            {
+                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_crypto_devices d WHERE account_id=$1 AND device_id=$2 AND NOT revoked AND device_keys IS NOT NULL AND (node_id IS NULL OR EXISTS(SELECT 1 FROM cloud_ai_bindings b WHERE b.ai_id=d.account_id AND b.node_id=d.node_id AND b.version=d.binding_version)))").bind(target).bind(device).fetch_one(&mut **tx).await?;
+                if !active {
+                    return Err(AppError::forbidden());
+                }
+            }
+        }
+        if v["event_type"] != "m.room.encrypted" {
+            return Err(AppError::bad("历史密钥须经Olm密文投递"));
+        }
+        return Ok(());
+    }
     if v["llmn_purpose"] != "aiAdminHistory" || a.node.is_none() {
         return Err(AppError::forbidden());
     }
@@ -845,6 +882,20 @@ pub(crate) async fn content(
         None => Ok(()),
     }
 }
+pub(crate) async fn check_revision(
+    tx: &mut Tx<'_>,
+    cid: Uuid,
+    expected: Option<&str>,
+) -> Result<i64> {
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM cloud_conversations WHERE id=$1")
+        .bind(cid)
+        .fetch_one(&mut **tx)
+        .await?;
+    if expected != Some(revision.to_string().as_str()) {
+        return Err(AppError::conflict("窗口版本已变化"));
+    }
+    Ok(revision)
+}
 async fn enable(
     State(s): State<Arc<AppState>>,
     h: HeaderMap,
@@ -858,17 +909,43 @@ async fn enable(
         return Err(AppError::forbidden());
     }
     device(&mut tx, &a, field(&v, "deviceId")?).await?;
-    uid(field(&v, "requestId")?)?;
+    let rid = uid(field(&v, "requestId")?)?;
+    let fingerprint = digest(&json!(["enable", cid, v]));
     let members = chat::member(&mut tx, cid, a.id).await?;
     chat::writable(&mut tx, cid).await?;
     let c = sqlx::query("SELECT * FROM cloud_conversations WHERE id=$1")
         .bind(cid)
         .fetch_one(&mut *tx)
         .await?;
-    if c.get::<String, _>("kind") != "direct" || crate::groups::direct_blocked(&mut tx, cid).await?
-    {
+    let group = c.get::<String, _>("kind") == "group";
+    if group {
+        let role: String = sqlx::query_scalar(
+            "SELECT role FROM cloud_members WHERE conversation=$1 AND account_id=$2",
+        )
+        .bind(cid)
+        .bind(a.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !matches!(role.as_str(), "owner" | "admin") {
+            return Err(AppError::forbidden());
+        }
+    }
+    if !group && crate::groups::direct_blocked(&mut tx, cid).await? {
         return Err(AppError::forbidden());
     }
+    if let Some(row) =
+        sqlx::query("SELECT fingerprint FROM cloud_receipts WHERE owner=$1 AND request=$2")
+            .bind(a.id)
+            .bind(rid)
+            .fetch_optional(&mut *tx)
+            .await?
+    {
+        if row.get::<String, _>("fingerprint") != fingerprint {
+            return Err(AppError::conflict("请求ID已用于其他内容"));
+        }
+        return Ok(Json(chat::conversation(&mut tx, cid, a.id).await?));
+    }
+    check_revision(&mut tx, cid, v["expectedConversationRevision"].as_str()).await?;
     if !c.get::<bool, _>("crypto_enabled") {
         let busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state IN ('queued','running','uncertain'))").bind(cid).fetch_one(&mut *tx).await?;
         if busy {
@@ -899,6 +976,15 @@ async fn enable(
         chat::notify(&mut tx, cid, members).await?;
     }
     let out = chat::conversation(&mut tx, cid, a.id).await?;
+    sqlx::query(
+        "INSERT INTO cloud_receipts(owner,request,fingerprint,response) VALUES($1,$2,$3,$4)",
+    )
+    .bind(a.id)
+    .bind(rid)
+    .bind(fingerprint)
+    .bind(json!({"id":cid}))
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Json(out))
 }

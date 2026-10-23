@@ -545,6 +545,49 @@ pub async fn cloud_save_download(
             return Err("会话已变化，请重新保存".into());
         }
     }
+    persist_download(destination, bytes.to_vec()).await?;
+    Ok(SaveResult { saved: true })
+}
+
+/// Save already decrypted client content; never sends it back to the cloud.
+#[tauri::command]
+pub async fn cloud_save_blob(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, CloudState>,
+    name: String,
+    data: String,
+) -> Result<SaveResult, String> {
+    let (_, _, generation) = state.authorized_local_session()?;
+    if name.is_empty()
+        || name
+            .chars()
+            .any(|c| c.is_control() || "/\\:*?\"<>|".contains(c))
+    {
+        return Err("文件名无效".into());
+    }
+    let bytes = STANDARD.decode(data).map_err(|_| "保存内容格式无效")?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("保存文件")
+        .set_file_name(&name)
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(destination) = rx.await.map_err(|_| "保存窗口已关闭")? else {
+        return Ok(SaveResult { saved: false });
+    };
+    let destination = destination.into_path().map_err(|_| "保存位置无效")?;
+    if state.session_generation() != generation {
+        return Err("会话已变化，请重新保存".into());
+    }
+    persist_download(destination, bytes).await?;
+    Ok(SaveResult { saved: true })
+}
+
+async fn persist_download(destination: std::path::PathBuf, bytes: Vec<u8>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let mut tmp = tempfile::NamedTempFile::new_in(destination.parent().ok_or("保存位置无效")?)
             .map_err(|_| "无法创建临时文件")?;
@@ -554,8 +597,7 @@ pub async fn cloud_save_download(
         Ok::<_, String>(())
     })
     .await
-    .map_err(|_| "文件保存任务失败")??;
-    Ok(SaveResult { saved: true })
+    .map_err(|_| "文件保存任务失败")?
 }
 #[cfg(test)]
 mod tests {

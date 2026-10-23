@@ -92,7 +92,7 @@ pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     )
 }
 pub(crate) fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin"),"sealed":r.get::<Option<Value>,_>("sealed")})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin"),"sealed":r.get::<Option<Value>,_>("sealed"),"audienceRevision":r.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})
 }
 pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
@@ -311,6 +311,9 @@ struct Input {
     request_id: Uuid,
     message_id: Option<Uuid>,
     sealed: Option<connector::crypto::SealedEnvelope>,
+    expected_conversation_revision: Option<String>,
+    #[serde(default)]
+    encrypted_attachments: Vec<connector::crypto::EncryptedAttachment>,
     text: Option<String>,
     reference: Option<connector::node::ReferenceSelection>,
     reply_to: Option<Uuid>,
@@ -367,7 +370,15 @@ async fn receipt(
         fingerprint
     };
     let fingerprint = if v.sealed.is_some() || v.message_id.is_some() {
-        format!("{fingerprint}:{}", json!([v.message_id, v.sealed]))
+        format!(
+            "{fingerprint}:{}",
+            json!([
+                v.message_id,
+                v.sealed,
+                v.expected_conversation_revision,
+                v.encrypted_attachments
+            ])
+        )
     } else {
         fingerprint
     };
@@ -433,7 +444,15 @@ async fn save_receipt(
         fingerprint
     };
     let fingerprint = if v.sealed.is_some() || v.message_id.is_some() {
-        format!("{fingerprint}:{}", json!([v.message_id, v.sealed]))
+        format!(
+            "{fingerprint}:{}",
+            json!([
+                v.message_id,
+                v.sealed,
+                v.expected_conversation_revision,
+                v.encrypted_attachments
+            ])
+        )
     } else {
         fingerprint
     };
@@ -449,6 +468,60 @@ async fn save_receipt(
 }
 async fn uploads(s: &AppState, id: Uuid, v: &Input) -> Result<Value> {
     save_uploads(&s.attachments, id, &v.images, &v.files).await
+}
+pub(crate) async fn unoccupied_message(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
+    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM cloud_messages WHERE id=$1)")
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await?
+    {
+        return Err(AppError::conflict("消息ID已被使用"));
+    }
+    Ok(())
+}
+pub(crate) async fn save_encrypted_uploads(
+    root: &std::path::Path,
+    id: Uuid,
+    uploads: &[connector::crypto::EncryptedAttachment],
+) -> Result<Value> {
+    if uploads.len() > 8 {
+        return Err(bad("附件数量超限"));
+    }
+    let mut decoded = Vec::new();
+    let mut total = 0;
+    for (index, item) in uploads.iter().enumerate() {
+        if item.index != index {
+            return Err(bad("附件索引无效"));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&item.data)
+            .map_err(|_| bad("无效base64"))?;
+        total += bytes.len();
+        if bytes.len() > 10 * 1024 * 1024 + 1024 || total > 28 * 1024 * 1024 + 8192 {
+            return Err(bad("密文附件过大"));
+        }
+        decoded.push(bytes);
+    }
+    let mut parts = Vec::new();
+    for (index, bytes) in decoded.iter().enumerate() {
+        let dir = root.join(id.to_string());
+        tokio::fs::create_dir_all(&dir).await?;
+        // Callers hold the cloud writer lock and have rejected occupied message IDs.
+        // A failed transaction may leave files here; rewrite only this uncommitted ID.
+        let pending = dir.join(format!("{index}.pending"));
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&pending)
+            .await?;
+        file.write_all(bytes).await?;
+        file.sync_all().await?;
+        drop(file);
+        tokio::fs::rename(&pending, dir.join(index.to_string())).await?;
+        parts.push(json!({"index":index,"kind":"encrypted","mime":"application/octet-stream","name":null,"byteLength":bytes.len()}));
+    }
+    Ok(json!(parts))
 }
 pub(crate) async fn save_uploads(
     root: &std::path::Path,
@@ -537,16 +610,20 @@ async fn send(
     }
     let text = v.text.as_deref().unwrap_or("");
     let mid = v.message_id.unwrap_or_else(Uuid::new_v4);
-    if v.sealed.is_some()
-        && (v.message_id.is_none()
-            || !v.images.is_empty()
-            || !v.files.is_empty()
-            || v.reference.is_some())
-    {
-        return Err(AppError::conflict(
-            "密文私聊暂不支持附件与引用，发送需固定消息ID",
-        ));
-    }
+    let audience = if v.sealed.is_some() {
+        if v.message_id.is_none() || !v.images.is_empty() || !v.files.is_empty() {
+            return Err(bad("密文发送需固定ID且不得带明文附件"));
+        }
+        Some(
+            crate::crypto::check_revision(&mut tx, id, v.expected_conversation_revision.as_deref())
+                .await?,
+        )
+    } else {
+        if !v.encrypted_attachments.is_empty() {
+            return Err(bad("密文附件必须随密文消息发送"));
+        }
+        None
+    };
     crate::crypto::content(
         &mut tx,
         id,
@@ -567,8 +644,13 @@ async fn send(
         return Err(bad("消息为空或过长"));
     }
     crate::groups::validate_send(&mut tx, id, &pair, v.reply_to, &v.mentions).await?;
-    let attachments = uploads(&s, mid, &v).await?;
-    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments,sender_name,reply_to,mentions,sealed) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7,$8)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).bind(v.reply_to).bind(&v.mentions).bind(v.sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
+    let attachments = if v.sealed.is_some() {
+        unoccupied_message(&mut tx, mid).await?;
+        save_encrypted_uploads(&s.attachments, mid, &v.encrypted_attachments).await?
+    } else {
+        uploads(&s, mid, &v).await?
+    };
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments,sender_name,reply_to,mentions,sealed,crypto_audience_revision) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7,$8,$9)").bind(mid).bind(id).bind(p.id).bind(text).bind(attachments).bind(v.reply_to).bind(&v.mentions).bind(v.sealed.as_ref().map(|e|json!(e))).bind(audience).execute(&mut *tx).await?;
     if let Some(reference) = &v.reference {
         crate::consciousness::save_reference(&mut tx, id, mid, p.id, reference).await?;
     }
@@ -620,17 +702,29 @@ async fn mutate(
     };
     if !remove
         && v.sealed.is_some()
-        && (!row
+        && row
             .get::<Value, _>("attachments")
             .as_array()
             .unwrap()
-            .is_empty()
-            || row.get::<Option<Value>, _>("context_reference").is_some())
+            .iter()
+            .any(|part| part["kind"] != "encrypted")
     {
         return Err(AppError::conflict(
-            "旧附件和群引用尚未迁移，不能在密文编辑中丢弃",
+            "旧明文附件尚未迁移，不能作为密文附件保存",
         ));
     }
+    let audience = if !remove && v.sealed.is_some() {
+        Some(
+            crate::crypto::check_revision(
+                &mut tx,
+                cid,
+                v.expected_conversation_revision.as_deref(),
+            )
+            .await?,
+        )
+    } else {
+        row.get::<Option<i64>, _>("crypto_audience_revision")
+    };
     if !remove {
         crate::crypto::content(
             &mut tx,
@@ -659,7 +753,7 @@ async fn mutate(
     {
         return Err(bad("消息为空或过长"));
     }
-    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,context_reference=CASE WHEN $3 OR $4::jsonb IS NOT NULL THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,sealed=CASE WHEN $3 THEN NULL ELSE $4 END,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).bind(v.sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
+    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,context_reference=CASE WHEN $3 THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,sealed=CASE WHEN $3 THEN NULL ELSE $4 END,crypto_audience_revision=$5,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).bind(v.sealed.as_ref().map(|e|json!(e))).bind(audience).execute(&mut *tx).await?;
     crate::consciousness::message_changed(&mut tx, id).await?;
     let r = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
         .bind(id)

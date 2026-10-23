@@ -27,7 +27,7 @@ pub enum NodeError {
     Api { status: u16, body: String },
     #[error("node WebSocket: {0}")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
-    #[error("node image attachment exceeds 4 MiB")]
+    #[error("node attachment exceeds the download limit")]
     AttachmentTooLarge,
     #[error("node protocol JSON: {0}")]
     Json(#[from] serde_json::Error),
@@ -145,6 +145,31 @@ impl NodeClient {
         self.request(Method::POST, &["node", "direct", "sync"], Some(request))
             .await
     }
+    pub async fn direct_reference(
+        &self,
+        ai_id: &str,
+        request: &crate::direct::DirectReferenceRequest,
+    ) -> Result<NodeReference, NodeError> {
+        self.request(
+            Method::POST,
+            &["node", "direct", ai_id, "reference"],
+            Some(request),
+        )
+        .await
+    }
+    pub async fn direct_attachment(
+        &self,
+        ai_id: &str,
+        request: &crate::direct::DirectAttachmentRequest,
+    ) -> Result<Vec<u8>, NodeError> {
+        let response = self
+            .http
+            .post(self.endpoint(&["node", "direct", ai_id, "attachment"]))
+            .json(request)
+            .send()
+            .await?;
+        Self::attachment_bytes(response).await
+    }
     pub async fn changes(&self, after: &str) -> Result<ConsciousnessChanges, NodeError> {
         let mut url = self.endpoint(&["node", "consciousness", "changes"]);
         url.query_pairs_mut().append_pair("after", after);
@@ -260,16 +285,19 @@ impl NodeClient {
         ]);
         url.query_pairs_mut().append_pair("revision", revision);
         let response = self.http.get(url).send().await?;
+        Self::attachment_bytes(response).await
+    }
+    async fn attachment_bytes(response: reqwest::Response) -> Result<Vec<u8>, NodeError> {
         if !response.status().is_success() {
             return Err(NodeError::Api {
                 status: response.status().as_u16(),
                 body: response.text().await?,
             });
         }
-        const IMAGE_LIMIT: usize = 4 * 1024 * 1024;
+        const ATTACHMENT_LIMIT: usize = 10 * 1024 * 1024 + 1024;
         if response
             .content_length()
-            .is_some_and(|length| length > IMAGE_LIMIT as u64)
+            .is_some_and(|length| length > ATTACHMENT_LIMIT as u64)
         {
             return Err(NodeError::AttachmentTooLarge);
         }
@@ -277,7 +305,7 @@ impl NodeClient {
         let mut chunks = response.bytes_stream();
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk?;
-            if chunk.len() > IMAGE_LIMIT - image.len() {
+            if chunk.len() > ATTACHMENT_LIMIT - image.len() {
                 return Err(NodeError::AttachmentTooLarge);
             }
             image.extend_from_slice(&chunk);
@@ -436,8 +464,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn image_download_limits_declared_and_streamed_size() {
-        const LIMIT: usize = 4 * 1024 * 1024;
+    async fn attachment_download_limits_declared_and_streamed_size() {
+        const LIMIT: usize = 10 * 1024 * 1024 + 1024;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
@@ -460,12 +488,18 @@ mod tests {
                     _ => {
                         stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").await.unwrap();
                         let chunk = vec![7; 64 * 1024];
-                        for _ in 0..64 {
+                        for _ in 0..LIMIT / chunk.len() {
                             stream.write_all(b"10000\r\n").await.unwrap();
                             stream.write_all(&chunk).await.unwrap();
                             stream.write_all(b"\r\n").await.unwrap();
                         }
-                        stream.write_all(b"1\r\nx\r\n0\r\n\r\n").await.unwrap();
+                        let tail = vec![7; LIMIT % chunk.len() + 1];
+                        stream
+                            .write_all(format!("{:x}\r\n", tail.len()).as_bytes())
+                            .await
+                            .unwrap();
+                        stream.write_all(&tail).await.unwrap();
+                        stream.write_all(b"\r\n0\r\n\r\n").await.unwrap();
                     }
                 }
             }

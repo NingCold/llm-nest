@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { encryptIntent, projectIntent } from "./crypto/content";
+import { cryptoDevice } from "./crypto/engine";
 import { HttpError, request, server } from "./api";
 import type { Account, ContactIntent, ContactSettings, Conversation, ParticipationPolicy, ParticipationView } from "./types";
 
@@ -20,7 +22,7 @@ type Command = { path: string; method: string; body: Record<string, unknown> & {
 // Only unconfirmed commands survive closing this panel. Nothing is persisted to browser storage.
 const commands = new Map<string, Command>();
 export const clearParticipationCommands = () => commands.clear();
-export function useParticipation(conversationId: string, operatorId: string, cursor: string) {
+export function useParticipation(conversationId: string, operatorId: string, cursor: string, conversation?: Conversation) {
   const key = JSON.stringify([server, operatorId, conversationId]);
   const [view, setView] = useState<ParticipationView | null>(null);
   const [error, setError] = useState("");
@@ -36,6 +38,7 @@ export function useParticipation(conversationId: string, operatorId: string, cur
     setLoading(review || !view);
     try {
       const next = await request<ParticipationView>(`${path}/participation`);
+      if (conversation) next.intents = await Promise.all(next.intents.map(i => projectIntent(i, conversation)));
       if (mounted.current && ticket === sequence.current) { setView(next); setError(""); if (review) setReviewed(commands.has(key)); }
     } catch (e) {
       if (mounted.current && ticket === sequence.current) {
@@ -50,13 +53,19 @@ export function useParticipation(conversationId: string, operatorId: string, cur
     if (executing.current) return false;
     const firstAttempt = !commands.has(key);
     let command = commands.get(key);
-    if (!command) {
-      if (!suffix || !method || !body) return false;
-      command = { path: path + suffix, method, body: { ...body, requestId: crypto.randomUUID() }, label };
-      commands.set(key, command);
-    }
-    executing.current = true; setBusy(true); setPending(command); setReviewed(false); setError("");
+    executing.current = true; setBusy(true);
     try {
+      if (!command) {
+        if (!suffix || !method || !body) return false;
+        if (suffix === "/contact-intents" && conversation?.encryption) {
+          const intentId = crypto.randomUUID();
+          const sealed = await encryptIntent(conversation, operatorId, intentId, body as { aiId: string; content: string; dueAt: string; expiresAt: string; utcOffsetMinutes: number });
+          body = { ...body, intentId, deviceId: cryptoDevice(operatorId), sealed, content: "", expectedConversationRevision: conversation.revision };
+        }
+        command = { path: path + suffix, method, body: { ...body, requestId: crypto.randomUUID() }, label };
+        commands.set(key, command);
+      }
+      setPending(command); setReviewed(false); setError("");
       await request(command.path, command.method, command.body);
       if (commands.get(key) === command) commands.delete(key);
       if (mounted.current) { setPending(null); setCompleted(value => value + 1); await load(); }
@@ -135,7 +144,7 @@ function IntentEditor({ ais, state, done }: { ais: Account[]; state: State; done
 }
 
 export function ParticipationPanel({ conversation, operatorId, cursor }: { conversation: Conversation; operatorId: string; cursor: string }) {
-  const state = useParticipation(conversation.id, operatorId, cursor);
+  const state = useParticipation(conversation.id, operatorId, cursor, conversation);
   const [policy, setPolicy] = useState<{ value: ParticipationPolicy; revision: string } | null>(null);
   const [settings, setSettings] = useState<ContactSettings | null>(null), [creating, setCreating] = useState(false), [ending, setEnding] = useState(false);
   const view = state.view;
@@ -157,7 +166,7 @@ export function ParticipationPanel({ conversation, operatorId, cursor }: { conve
       <h3 className="cloud-participation-subtitle">一次性约定</h3><p>{view.settings.enabled ? "已允许成员明确创建一次性约定" : "尚未允许一次性约定"}{view.settings.quietUntil && ` · 免打扰至 ${new Date(view.settings.quietUntil).toLocaleString()}，到期约定${view.settings.quietAction === "defer" ? "延后" : "跳过"}`}</p>
       <div className="cloud-actions">{view.canManage && <button className="social-button secondary" disabled={locked || !!settings} onClick={() => setSettings({ ...view.settings })}>约定授权与免打扰</button>}<button className="social-button secondary" disabled={locked || !view.settings.enabled || !ais.length || creating} onClick={() => setCreating(true)}>新建一次性约定</button></div>
       {settings && <SettingsEditor value={settings} state={state} done={() => setSettings(null)} />}{creating && <IntentEditor ais={ais} state={state} done={() => setCreating(false)} />}
-      {!view.intents.length && <p>还没有一次性约定。</p>}{view.intents.map(intent => <article key={intent.id} className="memory-card cloud-contact-intent"><strong>{conversation.members.find(m => m.account.id === intent.aiId)?.account.name || "AI"} · {intentStatuses[intent.status]}</strong><p className="memory-text">{intent.content}</p><p>{new Date(intent.dueAt).toLocaleString()} 联系 · {new Date(intent.expiresAt).toLocaleString()} 失效<br />创建时区 {offsetLabel(intent.utcOffsetMinutes)} · {intent.creatorId === operatorId ? "我创建的约定" : `创建者：${conversation.members.find(m => m.account.id === intent.creatorId)?.account.name || intent.creatorId}`}</p>{intent.reason && <p>{participationReason(intent.reason)}</p>}{canCancelIntent(intent, operatorId, view.canManage) && <button className="text-button" disabled={locked} onClick={() => void state.execute(`/contact-intents/${intent.id}/cancel`, "POST", { expectedRevision: intent.revision }, "取消一次性约定")}>取消这次约定</button>}</article>)}
+      {!view.intents.length && <p>还没有一次性约定。</p>}{view.intents.map(intent => <article key={intent.id} className="memory-card cloud-contact-intent"><strong>{conversation.members.find(m => m.account.id === intent.aiId)?.account.name || "AI"} · {intentStatuses[intent.status]}</strong><p className="memory-text">{intent.cryptoError || intent.content}</p>{conversation.encryption && !intent.sealed && !intent.cryptoError && <small>旧明文约定 · 尚未迁移</small>}<p>{new Date(intent.dueAt).toLocaleString()} 联系 · {new Date(intent.expiresAt).toLocaleString()} 失效<br />创建时区 {offsetLabel(intent.utcOffsetMinutes)} · {intent.creatorId === operatorId ? "我创建的约定" : `创建者：${conversation.members.find(m => m.account.id === intent.creatorId)?.account.name || intent.creatorId}`}</p>{intent.reason && <p>{participationReason(intent.reason)}</p>}{canCancelIntent(intent, operatorId, view.canManage) && <button className="text-button" disabled={locked} onClick={() => void state.execute(`/contact-intents/${intent.id}/cancel`, "POST", { expectedRevision: intent.revision }, "取消一次性约定")}>取消这次约定</button>}</article>)}
     </>}
   </section>;
 }

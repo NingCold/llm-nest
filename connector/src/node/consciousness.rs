@@ -9,6 +9,9 @@ dto!(MaterialScope {
     revision: String
 });
 dto!(ReferenceSelection { conversation_id: String, sources: Vec<SourceRevision> });
+dto!(NodeContextReference {
+    conversation_id: String, sources: Vec<SourceRevision>, revision: String, stale: bool
+});
 dto!(NodeReference { message_id: String, revision: String, required: bool, conversation: NodeConversation, messages: Vec<NodeMessage>, sources: Vec<SourceRevision> });
 dto!(ConsciousnessChange { id: String, conversation_id: String, message_id: Option<String>, reason: String });
 dto!(ConsciousnessChanges { cursor: String, has_more: bool, changes: Vec<ConsciousnessChange> });

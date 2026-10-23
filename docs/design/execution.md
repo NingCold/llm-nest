@@ -4,7 +4,7 @@
 
 ## 当前云端私聊与群聊执行
 
-新私聊提供显式启用 `sealedV1` 的执行路径：节点使用官方 Matrix SDK 解密材料，核验设备与账号 master 双签后复用原上下文与任务确认；流式、结果与中断片段只上传密文封装。资料须由当前绑定节点确认应用，换节点提供 drain/ready 握手；恢复不会自动重跑结果不明的调用。同机使用同一封装，Olm 密钥投递已通过真实 Windows IPC 验证，联调见[当前安排](../project/current.md)。下文群、附件与约定规则仍适用于未启用窗口，完整协议见[加密契约](crypto-contract.md)。
+聊天提供显式启用 `sealedV1` 的执行路径：节点使用官方 Matrix SDK 解密材料，核验设备与账号 master 双签后复用原上下文与任务确认；流式、结果与中断片段只上传密文封装。资料须由当前绑定节点确认应用，换节点提供 drain/ready 握手；恢复不会自动重跑结果不明的调用。同机使用同一封装，Olm 密钥投递已通过真实 Windows IPC 验证，联调见[当前安排](../project/current.md)。群、附件与约定仍保留原权限和调度规则，内容由节点解密；完整协议见[加密契约](crypto-contract.md)。
 
 `server/cloud` 与独立 `agent/node` 已实现云端 AI 私聊、群聊、有限自动接话和一次性约定；字段见[节点接口](api.md#云端-ai-与节点接口)，实际联调证据另由[验证记录](../validation/README.md)维护。协议为 v4，旧版本节点明确拒绝。云端不加载模型客户端，`llmn-agent` 复用 `ai-client` 与 `builtin-agent` 纯上下文核心，不依赖旧 Runtime/SocialStore。
 

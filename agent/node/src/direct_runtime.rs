@@ -57,6 +57,7 @@ async fn operation(
             consciousness::sync(&api, store, &ai_id).await?;
             crate::crypto::sync(&api, store, config, binding).await?;
             crate::crypto::decrypt_bootstrap(&api, store, &mut bootstrap).await?;
+            direct::cache_bootstrap_downloads(&api, store, &grant, &bootstrap).await?;
             direct::cache(store, owner, &grant, &bootstrap)?;
             bootstrap.conversation.id
         }
@@ -68,9 +69,32 @@ async fn operation(
             sealed,
             message_id,
             key_messages,
+            encrypted_attachments,
+            reply_to,
+            reference,
+            expected_conversation_revision,
         } => {
             direct::view(store, owner, &conversation_id)?;
-            let (_, ai, _, _) = direct::binding(store, &conversation_id)?;
+            let (_, ai, _, bootstrap) = direct::binding(store, &conversation_id)?;
+            if bootstrap.conversation.encryption.is_some() {
+                ensure!(
+                    expected_conversation_revision.as_ref()
+                        == Some(&bootstrap.conversation.revision),
+                    "direct_conversation_changed"
+                );
+            }
+            if let Some(selection) = &reference {
+                direct::reference(store, &conversation_id, selection)?;
+            }
+            if let Some(reply) = &reply_to {
+                ensure!(
+                    direct::view(store, owner, &conversation_id)?
+                        .messages
+                        .iter()
+                        .any(|m| m.message.id == *reply),
+                    "direct_reply_missing"
+                );
+            }
             ensure!(
                 !crate::crypto::draining(store, &ai)?,
                 "node handover is draining"
@@ -80,6 +104,11 @@ async fn operation(
                 .find(|b| b.ai == ai)
                 .ok_or_else(|| anyhow::anyhow!("AI is not bound"))?;
             let api = client(config, &binding.secret)?;
+            let message_id = if bootstrap.conversation.encryption.is_none() {
+                Some(message_id.unwrap_or_else(|| request_id.clone()))
+            } else {
+                message_id
+            };
             let input = crate::crypto::direct_input(
                 &api,
                 store,
@@ -90,18 +119,104 @@ async fn operation(
                 sealed,
                 message_id,
                 key_messages,
+                &encrypted_attachments,
+                reply_to,
+                reference,
+                expected_conversation_revision,
             )
             .await?;
-            let decoded = input.as_ref().map(|m| m.text.as_str()).unwrap_or(&text);
+            let decoded = input.as_ref().map(|m| m.text.clone()).unwrap_or(text);
             direct::send_message(
                 store,
                 owner,
                 &conversation_id,
                 &request_id,
-                decoded,
-                input.clone(),
+                &decoded,
+                input,
+                &encrypted_attachments,
             )?;
             conversation_id
+        }
+        LocalOperation::PrepareReference {
+            conversation_id,
+            selection,
+        } => {
+            direct::view(store, owner, &conversation_id)?;
+            let (_, ai, grant, bootstrap) = direct::binding(store, &conversation_id)?;
+            let binding = bindings
+                .iter()
+                .find(|b| b.ai == ai)
+                .ok_or_else(|| anyhow::anyhow!("AI is not bound"))?;
+            let api = client(config, &binding.secret)?;
+            ensure!(
+                bootstrap.binding_version == binding.version,
+                "direct_binding_changed"
+            );
+            let mut reference = match api
+                .direct_reference(
+                    &ai,
+                    &connector::direct::DirectReferenceRequest {
+                        grant: grant.clone(),
+                        selection: selection.clone(),
+                    },
+                )
+                .await
+            {
+                Ok(reference) => reference,
+                Err(NodeError::Http(error)) if error.is_connect() || error.is_timeout() => {
+                    return Ok(LocalReply::Reference {
+                        reference: direct::reference(store, &conversation_id, &selection)?,
+                    });
+                }
+                Err(error) => {
+                    if matches!(
+                        error,
+                        NodeError::Api {
+                            status: 403 | 404 | 409,
+                            ..
+                        }
+                    ) {
+                        direct::discard_reference(store, &conversation_id, &selection)?;
+                    }
+                    return Err(error.into());
+                }
+            };
+            crate::crypto::decrypt_reference(&api, store, &ai, &mut reference).await?;
+            direct::cache_downloads(
+                &api,
+                store,
+                &ai,
+                &grant,
+                &reference.conversation.id,
+                &reference.messages,
+            )
+            .await?;
+            direct::cache_reference(store, &conversation_id, &selection, &reference)?;
+            return Ok(LocalReply::Reference { reference });
+        }
+        LocalOperation::Attachment {
+            conversation_id,
+            message_id,
+            index,
+            revision,
+        } => {
+            let view = direct::view(store, owner, &conversation_id)?;
+            ensure!(
+                view.messages.iter().any(|m| m.message.id == message_id
+                    && m.message.revision == revision
+                    && m.message.attachments.iter().any(|a| a.index == index)),
+                "direct_attachment_unavailable"
+            );
+            use base64::Engine;
+            return Ok(LocalReply::Attachment {
+                data: base64::engine::general_purpose::STANDARD.encode(direct::attachment(
+                    store,
+                    &conversation_id,
+                    &message_id,
+                    &revision,
+                    index,
+                )?),
+            });
         }
         LocalOperation::Stop { conversation_id } => {
             direct::stop(store, owner, &conversation_id)?;
@@ -159,6 +274,15 @@ async fn handle_connection(
         for row in &mut view.messages {
             if row.message.sealed.is_some() {
                 row.message.text.clear();
+                row.message.attachments = direct::wire_attachments(&row.message);
+            }
+        }
+    }
+    if let LocalReply::Reference { reference } = &mut reply {
+        for m in &mut reference.messages {
+            if m.sealed.is_some() {
+                m.text.clear();
+                m.attachments = direct::wire_attachments(m);
             }
         }
     }
@@ -198,9 +322,10 @@ async fn generate(
         let (human, _, _) = direct::turn(store, request_id)?;
         let view = direct::view(store, owner, cid)?;
         let messages: Vec<_> = view.messages.into_iter().filter(|m| m.status == "committed").map(|m| m.message).collect();
+        let reference = direct::selected_reference(store,cid,&human)?;
         let material = TaskMaterials {
             task: NodeTask { id: request_id.into(), ai_id: ai.clone(), conversation_id: cid.into(), binding_version: binding.version.clone(), revision: "1".into(), trigger: NodeTrigger::Message { message_id: human.id.clone(), input_ids: vec![human.id] }, automatic: false, status: "queued".into(), expires_at: (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339() },
-            ai: bootstrap.ai, conversation: bootstrap.conversation, reference: None,
+            ai: bootstrap.ai, conversation: bootstrap.conversation, reference,
             sources: messages.iter().map(|m| SourceRevision { message_id: m.id.clone(), revision: m.revision.clone() }).collect(), messages,
         };
         let router = ModelRouter::new(&config.providers)?;
@@ -322,5 +447,101 @@ pub async fn serve(
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use connector::direct::*;
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn offline_reference_requires_prior_preparation_and_never_masks_forbidden() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        direct::initialize(&store).unwrap();
+        let ai = crate::id();
+        let owner = crate::id();
+        let cid = crate::id();
+        let source = crate::id();
+        let bootstrap: DirectBootstrap=serde_json::from_value(json!({"ai":{"id":ai,"name":"ai","bio":"","kind":"ai"},"human":{"id":owner,"name":"human","bio":"","kind":"human"},"conversation":{"id":cid,"kind":"direct","name":"chat","revision":"1","members":[]},"bindingVersion":"1","base":null,"messages":[],"hasMore":false})).unwrap();
+        direct::cache(&store, &owner, "grant", &bootstrap).unwrap();
+        let selection = ReferenceSelection {
+            conversation_id: source.clone(),
+            sources: vec![SourceRevision {
+                message_id: crate::id(),
+                revision: "1".into(),
+            }],
+        };
+        let reference = NodeReference {
+            message_id: crate::id(),
+            revision: "1".into(),
+            required: true,
+            conversation: NodeConversation {
+                id: source,
+                kind: "group".into(),
+                name: "group".into(),
+                revision: "1".into(),
+                members: vec![],
+                encryption: None,
+            },
+            messages: vec![],
+            sources: selection.sources.clone(),
+        };
+        let mut config: Config=serde_json::from_value(json!({"server":"http://127.0.0.1:1","node_id":"test","node_name":"test","daily_calls":20,"daily_tokens":20000,"providers":{},"profile":{"revision":"1","persona":"test","selection":{"provider":"test","model":"small"},"temperature":null,"max_tokens":null}})).unwrap();
+        let bindings = vec![Binding {
+            ai: ai.clone(),
+            version: "1".into(),
+            secret: "test".into(),
+        }];
+        let windows = direct::Windows::default();
+        let request = || LocalRequest {
+            owner_id: owner.clone(),
+            operation: LocalOperation::PrepareReference {
+                conversation_id: cid.clone(),
+                selection: selection.clone(),
+            },
+        };
+        assert!(
+            operation(&config, &store, &bindings, &windows, request())
+                .await
+                .is_err()
+        );
+        direct::cache_reference(&store, &cid, &selection, &reference).unwrap();
+        assert!(matches!(
+            operation(&config, &store, &bindings, &windows, request())
+                .await
+                .unwrap(),
+            LocalReply::Reference { .. }
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        config.server = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 8192];
+            let _ = socket.read(&mut bytes).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .await
+                .unwrap();
+        });
+        let error = operation(&config, &store, &bindings, &windows, request())
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(
+            error.downcast_ref::<NodeError>(),
+            Some(NodeError::Api { status: 403, .. })
+        ));
+        server.await.unwrap();
+        assert!(direct::reference(&store, &cid, &selection).is_err());
+        config.server = "http://127.0.0.1:1".into();
+        assert!(
+            operation(&config, &store, &bindings, &windows, request())
+                .await
+                .is_err()
+        );
     }
 }

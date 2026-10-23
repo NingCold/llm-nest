@@ -124,6 +124,17 @@ impl Store {
             },
         })
     }
+    pub fn disable_summaries(&self, ai: &str, cid: &str, revision: Option<&str>) -> Result<()> {
+        let mut settings = self.settings(ai, cid)?;
+        settings.enabled = false;
+        settings.binding = None;
+        settings.revision = match revision {
+            Some(revision) => revision.into(),
+            None => next(&settings.revision)?,
+        };
+        self.db.execute("INSERT INTO conscious_settings VALUES(?1,?2,?3) ON CONFLICT(ai,cid) DO UPDATE SET json=excluded.json",params![ai,cid,serde_json::to_string(&settings)?])?;
+        Ok(())
+    }
     fn save_memory(&self, ai: &str, cid: &str, m: &MemoryItem) -> Result<()> {
         self.db.execute("INSERT INTO conscious_memory VALUES(?1,?2,?3,?4) ON CONFLICT(ai,cid,id) DO UPDATE SET json=excluded.json",params![ai,cid,m.id,serde_json::to_string(m)?])?;
         Ok(())
@@ -136,7 +147,10 @@ impl Store {
         let tx = self.db.unchecked_transaction()?;
         for change in &page.changes {
             let cid = &change.conversation_id;
-            let mut affected = false;
+            let mut affected = crate::direct::invalidate_references(self, ai, change)?;
+            if change.reason == "permission_revoked" {
+                self.disable_summaries(ai, cid, None)?;
+            }
             if change.message_id.is_none() && change.reason == "window_changed" {
                 for mut summary in self.summaries(ai, cid)? {
                     if matches!(summary.item.status.as_str(), "queued" | "running") {

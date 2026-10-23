@@ -1,5 +1,13 @@
 //! Ciphertext and routing contracts. Cryptographic state belongs to endpoints.
 use serde::{Deserialize, Serialize};
+
+/// Opaque attachment upload. Original names, types and keys are sealed in the message.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptedAttachment {
+    pub index: usize,
+    pub data: String,
+}
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

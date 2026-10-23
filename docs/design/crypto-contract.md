@@ -1,8 +1,8 @@
-# 私聊加密的接入约定
+# 聊天与 AI 资料的加密约定
 
 [加密设计](encryption.md) · [执行计划](../project/secure-local-plan.md)
 
-本文是第二批的实现契约。完成状态以进度与验证记录为准。
+本文记录私聊、群聊及 AI 资料使用的共同协议。完成状态以进度与验证记录为准。
 
 ## 选型
 
@@ -21,7 +21,7 @@
 - `sealed` 的结构为 `{version:1, roomId, sender, deviceId, eventId, content, deviceKeys, signatures}`；`content` 是 SDK 输出的 `m.room.encrypted` 内容，`deviceKeys` 为设备公开的 `{ed25519,curve25519}`，不含秘密。正文 `text` 在传输与云端存储中为空。
 - 对完整封装去除 `signatures` 后使用 Matrix canonical JSON，再由 SDK `sign` 生成账号主密钥和设备密钥两份签名。接收端先取得已独立核验的账号主公钥，验证主签名，再用其中签认的设备 Ed25519 公钥验证设备签名；同时核对 Curve25519 公钥及设备 ID 与 SDK 密文一致。Web 验签使用 `@noble/curves`，Rust 使用 SDK 的 vodozemac；不自行实现签名算法。
 - 这两份签名对新消息和恢复历史都必需。Matrix 标准历史备份导入后不保留原 Olm 投递的发送设备认证，因此 SDK 的 `CrossSigned` 解密设置会拒绝这种恢复记录。应用先完成上述强制双签核验，再由 SDK 检查密文并解密；不修改 SDK 的 imported 状态、不假造原投递证明，也没有缺签名时的降级路径。账户主密钥尚未核验或恢复秘密未获授权时不能发送或读回内容。
-- SDK 加密事件类型固定为 `com.llmn.content.v1`。内部正文为 `{version:1, server, kind, conversationId, messageId, senderId, revision, text, replyTo, mentions, runId, sequence}`。`server` 是标准化 HTTPS origin；`kind` 为 `message`、`delta` 或 `resource`。未适用字段用 null，mentions 用数组。解密后与收到的外部标识核对，不能把别的窗口、修订或流片段搬过来。创建消息必须由发送方先生成 messageId；事件 ID 使用 `$<messageId>.<revision>.<sequence或final>`。窗口 revision、云端 position、时间等服务器分配值不伪装为发送端已签认的值。
+- SDK 加密事件类型固定为 `com.llmn.content.v1`。内部正文为 `{version:1, server, kind, conversationId, messageId, senderId, revision, text, replyTo, mentions, runId, sequence}`。`server` 是标准化 HTTPS origin；`kind` 为 `message`、`delta`、`resource` 或 `contactIntent`；第三批增加的附件、来源和窗口版本绑定见下文。未适用字段用 null，mentions 用数组。解密后与收到的外部标识核对，不能把别的窗口、修订或流片段搬过来。创建消息必须由发送方先生成 messageId；事件 ID 使用 `$<messageId>.<revision>.<sequence或final>`。发送前读到的窗口 revision 可作为签名内层的受众版本；云端 position 和服务器生成时间不伪装为发送端已签认的值。
 - 所有发送先由 SDK 保存会话进展，再将完整请求和密文持久保存，最后联网。崩溃可能浪费一个未发送的会话序号，但不得发出未保存的密文；重试不重新加密。最终结果与累计流式片段均受保护。
 
 ## 密钥服务
@@ -46,13 +46,33 @@ keysUpload、keysQuery、keysClaim、signatures、signingKeys 的 body 为标准
 
 可信设备授权也可通过经指纹确认的 Olm to-device 密文传送 SecretsBundle/历史钥；禁止明文的秘密请求。AI 首次节点身份及管理员设备相互核对后才能分享恢复资料。恢复设备查询历史发送者公钥后，由恢复的 user-signing 签名链重新认可原有联系人；查询不等于信任，陌生或替换的主密钥仍须重新核验。恢复或解锁失败必须显示原因，不尝试登录密码或明文回退。Web 使用独立本机解锁口令保护 SDK IndexedDB；节点私有目录保管 SDK 数据库和本机解锁材料。
 
-## 私聊启用
+## 聊天启用
 
-`POST /chat/conversations/{id}/encryption` 携带 `{deviceId,requestId}`，不可逆启用现有私聊。响应和窗口 DTO 包含 `encryption:{version:1,activationPosition}`。先确保双方可信设备及恢复材料可用；服务端检查当前成员、设备与 AI 节点能力。已有原文明确标为尚未迁移，不悄悄改写。启用后的消息、修改、AI delta/result、同机补传与资料管理拒绝明文；本批不支持的附件、引用、约定明确不可发送。群和旧库切换属于后续批次。
+`POST /chat/conversations/{id}/encryption` 携带 `{deviceId,requestId,expectedConversationRevision}`，不可逆启用现有窗口。私聊由成员开启，群聊由群主或群管理员开启。响应和窗口 DTO 包含 `encryption:{version:1,activationPosition}`。发送端先确保当前每个成员至少有一台已核验的设备，并准备恢复材料；缺少时指出需要完成核验的成员，不静默跳过。服务端检查当前成员、窗口版本、有效设备与 AI 节点能力。已有原文明确标为尚未迁移，不悄悄改写。启用后的消息、修改、AI delta/result、约定、同机补传与资料管理拒绝明文。
+
+新密文绑定发送时的 `conversationRevision`，服务器保存对应的 `audienceRevision`。接收端核对两者；读取旧消息时不拿现在的群版本替换发送时的版本。加密发送和编辑携带 `expectedConversationRevision`，成员名单改变后，按旧名单准备的请求不能作为新消息提交。已完成命令仍返回当前权威记录，不重复创建消息。
 
 每条新真人消息和每次 AI 新运行建立新的 Megolm 发送会话，防止管理员拿到的旧历史链继续解出新的发言。同一条回复的流片段及未知结果重试保持原会话与冻结密文。
 
 同机发送的 `keyMessages` 和返回 DirectView 中的同名字段，携带官方 Olm to-device 请求 `{event_type,txn_id,messages}`。本机 Agent 从已授权的真人身份派生 sender，客户端从已绑定 AI 身份派生 sender，两端只读取自己的收件设备，并先由 SDK 处理密钥包，再解开正文。原请求持久保存，联网后沿用原 txn/request ID；本机密钥投递记录不依赖云端回执存活。断网前必须已核验设备并建立 Olm 会话，缺少这一准备时明确提示联网，不改走明文。
+
+## 群历史、附件与接续
+
+群成员仍共享完整群历史。已持有历史密钥的授权端，经 Olm 向当前群成员的可信设备分享该群的历史钥。内部事件为 `com.llmn.group-history.v1`，内容是 `{conversationId,revision,keys}`；外层始终是 `m.room.encrypted`。投递请求另带 `llmn_purpose:"conversationHistory"`、`llmn_conversation_id`、`llmn_expected_revision`，服务器在首次投递和重放时均核对双方当前成员身份与群版本。接收端只接受经过 SDK 验证的 Olm 事件，并在导入前检查当前权限、版本及每份密钥所属的房间。不能把 AI 的恢复秘密、其他窗口或角色资料密钥混入群历史。
+
+加入群不意味着立即拿到历史钥。尚无可用分享端时显示历史待恢复；已持有记录的端可以分享，节点按当前设备与历史变化去重分享。移除成员或撤销设备后，未来发言使用新会话。已经合法取得的历史钥和明文无法追回。节点按 AI 和窗口分别保存加密状态，同节点多个 AI 在同一群中也使用各自身份。
+
+图片和文件先在端点使用 SDK Attachment 加密。请求的 `encryptedAttachments:[{index,data}]` 只含密文字节；云端附件元数据只有索引、密文长度、`kind:"encrypted"` 和 `application/octet-stream`。原文件名、类型、长度和 SDK `mediaEncryptionInfo` 放在消息的签名内层 `attachments` 中。下载端先验证消息身份，再验证附件哈希、解密并检查原有格式与大小限制；普通文件不自动作为模型输入。修改文字保留原附件；旧明文附件的整体转换留到第四批。
+
+群话题接续继续使用原来的消息 ID 和修订，签名内层 `reference` 与外层来源选择对应。来源预览、模型材料和导出均在授权端解密；私聊没有启用加密时，也必须先解开引用的加密群内容才能交给模型。来源修改、撤回或失去共同群权限仍使引用和派生材料失效，不因持有旧钥而绕过当前权限。
+
+同机聊天缓存已准备的来源及附件。私有 IPC 的 `PrepareReference` 在联网时核对来源并准备缓存，`Attachment` 读取指定消息和修订的本机字节；界面列表只返回附件元数据。离线发送沿用同一份密文、附件和来源选择。补传重新检查绑定、双方当前共同群权限、来源版本及窗口状态，只保存原记录，不排新的模型任务。
+
+## 约定、搜索与导出
+
+约定联系使用客户端生成的 `intentId`，外层保留执行所需的目标、时间、状态和版本，正文为空。签名内层 `kind:"contactIntent"` 绑定窗口、创建者、目标 AI、约定 ID、时间和正文；内容版本固定为 `1`，不随排队、执行等状态修订改变。时间按 UTC 瞬间核对。节点解密后沿用既有免打扰、额度和开始确认，不伪造真人消息。旧终态约定可以查看并标为尚未迁移的明文记录，不能作为新的加密任务执行。
+
+加密聊天的正文搜索在客户端分页读取有权访问的历史并解密后执行，关键词不发给服务端。导出同样读取完整历史，按选择解密图片与文件。解密失败或仍有本机未同步记录时，界面说明原因，不把缺失内容的结果称作完整导出。聊天导出不包含恢复秘密、SDK 密钥库或附件解密密钥。
 
 ## AI 资料
 
@@ -66,6 +86,7 @@ keysUpload、keysQuery、keysClaim、signatures、signingKeys 的 body 为标准
 - 返回 `{id,aiId,conversationId,kind,revision,sealed,sources,tombstone,applied}`；applied 为 null 或 `{bindingVersion,revision,status}`，status 为 applied 或 rejected，具体错误正文也须加密。
 - `POST /crypto/resources/{id}/applied`：当前绑定节点提交 `{deviceId,revision,status}`，旧绑定/旧版本不能确认当前版本。
 - 窗口相关资源更新提升材料版本并使关联在飞工作失效。配置新版本已知但无法应用时暂停新运行。节点恢复时先处理来源失效、遗忘及当前资料，再确认可运行。
+- AI 退出群后，该 AI 在群内的记忆、摘要与摘要设置清除密文并留下失效版本；其他 AI 的资料不受影响。重新入群不会恢复这些旧资料。重新启用摘要须由有权管理员按当前版本明确保存设置；旧记忆、旧摘要不能用原 ID 恢复。
 - 客户端持久保存已点击保存的原命令与密文，断线自动重交同一意图；冲突保留编辑。聊天未知发送仍按原规则手动重试。云端保存与节点已应用分别显示。
 
 以上端点的大小、权限、来源和 CAS 在服务端事务边界校验；端点密文结构和内容格式在授权端校验。内部直接沿用已成立的类型和不变量，不堆叠备用路径或静默兜底。

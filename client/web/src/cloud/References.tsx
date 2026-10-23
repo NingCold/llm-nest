@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { projectReference } from "./crypto/content";
 import { request } from "./api";
 import type { Account, Conversation, DraftReference, Message, ReferencePreview, ReferenceSelection } from "./types";
 
@@ -10,7 +11,7 @@ export function ReferenceCard({ directId, selection, cursor, stale = false, remo
   const stamp = JSON.stringify([directId, selection, cursor, stale]);
   useEffect(() => {
     let active = true;
-    if (open && !stale) void request<ReferencePreview>(`/chat/conversations/${directId}/reference-preview`, "POST", { reference: selection }).then(
+    if (open && !stale) void request<ReferencePreview>(`/chat/conversations/${directId}/reference-preview`, "POST", { reference: selection }).then(projectReference).then(
       data => { if (active) setResult({ stamp, data }); },
       error => { if (active) setResult({ stamp, error: error instanceof Error ? error.message : String(error) }); },
     );
@@ -41,7 +42,7 @@ export function ContinuePrivately({ conversation, message, messages, continueWit
       const ticket = ++version.current; setBusy(true); setError(""); setPreview(null);
       try {
         const direct = await request<Conversation>("/chat/direct", "POST", { accountId: ai.id });
-        const data = await request<ReferencePreview>(`/chat/conversations/${direct.id}/reference-preview`, "POST", { reference: { conversationId: conversation.id, sources } });
+        const data = await projectReference(await request<ReferencePreview>(`/chat/conversations/${direct.id}/reference-preview`, "POST", { reference: { conversationId: conversation.id, sources } }));
         if (ticket === version.current) setPreview({ stamp, data });
       } catch (e) { if (ticket === version.current) setError(e instanceof Error ? e.message : String(e)); }
       finally { setBusy(false); }

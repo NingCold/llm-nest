@@ -235,6 +235,10 @@ async fn offline_text_retry_and_sync_keep_message_ids_without_cloud_start() {
                 &dir,
                 &owner,
                 LocalOperation::Send {
+                    encrypted_attachments: vec![],
+                    reply_to: None,
+                    reference: None,
+                    expected_conversation_revision: None,
                     key_messages: vec![],
                     sealed: None,
                     message_id: None,
@@ -365,6 +369,10 @@ async fn offline_text_retry_and_sync_keep_message_ids_without_cloud_start() {
             &dir,
             &owner,
             LocalOperation::Send {
+                encrypted_attachments: vec![],
+                reply_to: None,
+                reference: None,
+                expected_conversation_revision: None,
                 key_messages: vec![],
                 sealed: None,
                 message_id: None,
@@ -411,6 +419,10 @@ async fn offline_text_retry_and_sync_keep_message_ids_without_cloud_start() {
             &dir,
             &owner,
             LocalOperation::Send {
+                encrypted_attachments: vec![],
+                reply_to: None,
+                reference: None,
+                expected_conversation_revision: None,
                 key_messages: vec![],
                 sealed: None,
                 message_id: None,

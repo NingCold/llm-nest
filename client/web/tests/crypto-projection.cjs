@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
 const projected = {}, cache = new Map();
 let decrypted;
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/content.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: projected, crypto: require('node:crypto').webcrypto, localStorage: { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) }, require(name) { if (name === '../api') return { server: 'https://fixture.invalid' }; if (name === './engine') return { matrixRoom: id => `!${id}:llmn`, matrixUser: id => `@${id}:llmn`, unseal: async () => decrypted }; throw Error(name); } });
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/content.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: projected, TextEncoder, crypto: require('node:crypto').webcrypto, localStorage: { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) }, require(name) { if (name === '../api') return { server: 'https://fixture.invalid' }; if (name === './engine') return { matrixRoom: id => `!${id}:llmn`, matrixUser: id => `@${id}:llmn`, unseal: async () => decrypted }; throw Error(name); } });
 (async () => {
   const conversation = { id: 'room', encryption: { version: 1, activationPosition: '5' }, lastMessage: null };
   const message = { id: 'message', conversationId: 'room', senderId: 'human', revision: '1', position: '6', status: 'committed', text: 'server injected plaintext', mentions: [], replyTo: null, attachments: [] };
@@ -17,6 +17,23 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cl
   assert.ok((await projected.projectMessage({ ...message, sealed: { ...sealed, deviceId: 'other' } }, conversation)).cryptoError);
   decrypted.content = { ...payload, kind: 'delta', runId: 'run', sequence: 2, text: 'partial' };
   assert.equal((await projected.projectMessage({ ...message, status: 'interrupted', sealed: { ...sealed, eventId: '$message.1.2' } }, conversation)).text, 'partial', 'interrupted status keeps the last authenticated delta envelope');
+  decrypted.content = { ...payload, conversationRevision: '7', attachments: [{ index: 0, kind: 'file', name: 'private.txt', mime: 'text/plain', byteLength: 3, mediaEncryptionInfo: '{sdk-json}' }], reference: { conversationId: 'source', sources: [{ messageId: 'source-id', revision: '2' }] } };
+  const social = { ...message, sealed, audienceRevision: '7', attachments: [{ index: 0, kind: 'encrypted', mime: 'application/octet-stream', byteLength: 3 }], contextReference: { ...decrypted.content.reference, revision: '1', stale: false } };
+  const socialProjected = await projected.projectMessage(social, { ...conversation, kind: 'group' });
+  assert.equal(socialProjected.attachments[0].name, 'private.txt');
+  assert.equal(socialProjected.text, 'authentic');
+  assert.ok((await projected.projectMessage({ ...social, audienceRevision: '8' }, conversation)).cryptoError, 'stored audience revision is bound to signed content');
+  assert.ok((await projected.projectMessage({ ...social, contextReference: null }, conversation)).cryptoError, 'server cannot remove a signed reference');
+  assert.ok((await projected.projectMessage({ ...social, attachments: [] }, conversation)).cryptoError, 'server cannot strip encrypted attachment bytes');
+  decrypted.content = payload;
+  const intent = { id: 'intent', creatorId: 'human', aiId: 'ai', dueAt: '2027-01-01T00:00:00+00:00', expiresAt: '2027-01-01T01:00:00.000+00:00', utcOffsetMinutes: 0, audienceRevision: '7', revision: '9', status: 'delivered', content: 'injected', sealed: { ...sealed, eventId: '$intent.1.final' } };
+  decrypted.content = { ...payload, kind: 'contactIntent', messageId: 'intent', conversationRevision: '7', aiId: 'ai', dueAt: '2027-01-01T00:00:00.000Z', expiresAt: '2027-01-01T01:00:00Z', utcOffsetMinutes: 0, text: 'scheduled secret' };
+  assert.equal((await projected.projectIntent(intent, conversation)).content, 'scheduled secret', 'server timestamp normalization preserves the same UTC instant and status revisions do not change immutable content');
+  assert.ok((await projected.projectIntent({ ...intent, dueAt: '2027-01-02T00:00:00Z' }, conversation)).cryptoError);
+  const legacyIntent = { ...intent, sealed: null, audienceRevision: null, content: 'legacy' };
+  assert.equal((await projected.projectIntent(legacyIntent, conversation)).content, 'legacy');
+  assert.ok((await projected.projectIntent({ ...legacyIntent, status: 'pending' }, conversation)).cryptoError);
+  decrypted.content = payload;
   await projected.projectConversations([conversation], 'owner');
   const pinned = await projected.projectConversations([{ ...conversation, encryption: null, lastMessage: message }], 'owner');
   assert.ok(pinned[0].encryption, 'server omission cannot undo a locally known encryption boundary');

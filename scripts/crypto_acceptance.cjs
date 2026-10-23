@@ -81,9 +81,10 @@ async function query(s, accounts) {
 async function sync(s) {
   await flush(s);
   const value = await http(s, `/crypto/sync?deviceId=${s.device}&after=${s.cursor}`);
-  await s.machine.receiveSyncChanges(JSON.stringify(value.to_device.events), new sdk.DeviceLists(value.device_lists.changed.map(id => new sdk.UserId(id)), value.device_lists.left.map(id => new sdk.UserId(id))), new Map(Object.entries(value.device_one_time_keys_count)), new Set(value.device_unused_fallback_key_types), new sdk.DecryptionSettings(sdk.TrustRequirement.CrossSigned));
+  const processed = await s.machine.receiveSyncChanges(JSON.stringify(value.to_device.events), new sdk.DeviceLists(value.device_lists.changed.map(id => new sdk.UserId(id)), value.device_lists.left.map(id => new sdk.UserId(id))), new Map(Object.entries(value.device_one_time_keys_count)), new Set(value.device_unused_fallback_key_types), new sdk.DecryptionSettings(sdk.TrustRequirement.CrossSigned));
   s.cursor = value.next_batch;
   await flush(s);
+  return processed;
 }
 async function bootstrap(s) {
   const b = await s.machine.bootstrapCrossSigning(false);
@@ -217,6 +218,7 @@ max_tokens = 512
   }
   async function stopNode(child) { child.kill(); await waitFor(async () => child.exitCode ?? child.signalCode, code => code !== null, 'node exit'); }
   const nodeDir = await pairNode('node-first', ai.bindingVersion);
+  let rpcDirectory = nodeDir;
   const identity = JSON.parse(step('crypto-init', nodeDir, aiId));
   const recoveryPath = path.join(directory, 'ai-recovery.private.json');
   step('crypto-export-recovery', nodeDir, aiId, recoveryPath);
@@ -230,14 +232,15 @@ max_tokens = 512
   const cid = (await http(human, '/chat/direct', 'POST', { accountId: aiId })).id;
   const messagePath = `/chat/conversations/${cid}/messages`;
   await share(human, peer, cid);
-  await http(human, `/chat/conversations/${cid}/encryption`, 'POST', { deviceId: human.device, requestId: randomUUID() });
+  const direct = (await http(human, '/chat/init')).conversations.find(c => c.id === cid);
+  const encryptedDirect = await http(human, `/chat/conversations/${cid}/encryption`, 'POST', { deviceId: human.device, requestId: randomUUID(), expectedConversationRevision: direct.revision });
   async function send(text) {
     await share(human, peer, cid);
     const id = randomUUID();
-    const inner = { version: 1, server: origin, kind: 'message', conversationId: cid, messageId: id, senderId: human.account, revision: '1', text, replyTo: null, mentions: [], runId: null, sequence: null };
+    const inner = { version: 1, server: origin, kind: 'message', conversationId: cid, conversationRevision: encryptedDirect.revision, messageId: id, senderId: human.account, revision: '1', text, replyTo: null, mentions: [], runId: null, sequence: null };
     const sealed = { version: 1, roomId: roomId(cid), sender: userId(human.account), deviceId: human.device, eventId: `$${id}.1.final`, content: JSON.parse(await human.machine.encryptRoomEvent(new sdk.RoomId(roomId(cid)), 'com.llmn.content.v1', JSON.stringify(inner))) };
     await sign(human, sealed);
-    const command = { requestId: randomUUID(), deviceId: human.device, messageId: id, text: '', sealed };
+    const command = { requestId: randomUUID(), deviceId: human.device, messageId: id, text: '', sealed, expectedConversationRevision: encryptedDirect.revision };
     await http(human, messagePath, 'POST', command);
     await http(human, messagePath, 'POST', command);
     const page = await waitFor(() => http(human, messagePath), page => {
@@ -251,6 +254,12 @@ max_tokens = 512
     assert.match((await decrypt(human, reply.sealed)).text, /^节点密文回复-/);
     assert.equal(sql(`SELECT count(*) FROM cloud_messages WHERE id='${id}'`), '1');
     return id;
+  }
+  if (process.argv.includes('--social-only')) {
+    phase = 'encrypted social Agent and offline attachments';
+    await socialScenarios(nodeDir);
+    await stopNode(running);
+    return modelInputs.length;
   }
   phase = 'real Agent encrypted generation';
   const firstMessage = await send('真实节点加密输入');
@@ -290,7 +299,7 @@ max_tokens = 512
   const bound = (await managed()).find(row => row.account.id === aiId);
   const grant = await http(human, `/chat/conversations/${cid}/direct`, 'POST', { nodeId: bound.node.id, bindingVersion: bound.bindingVersion });
   function rpc(operation) {
-    const endpoint = JSON.parse(fs.readFileSync(path.join(nodeDir, 'direct-endpoint.json'), 'utf8'));
+    const endpoint = JSON.parse(fs.readFileSync(path.join(rpcDirectory, 'direct-endpoint.json'), 'utf8'));
     return new Promise((resolve, reject) => {
       const socket = connect(endpoint.name), chunks = [];
       socket.setTimeout(15000, () => socket.destroy(new Error('IPC timeout')));
@@ -304,7 +313,7 @@ max_tokens = 512
         chunks.push(chunk); const bytes = Buffer.concat(chunks);
         if (bytes.length >= 4 && bytes.length >= 4 + bytes.readUInt32BE()) {
           socket.end(); const result = JSON.parse(bytes.subarray(4, 4 + bytes.readUInt32BE()).toString());
-          if (result.type === 'error') reject(new Error(`IPC: ${result.error.code} ${result.error.message}`)); else resolve(result.view);
+          if (result.type === 'error') reject(new Error(`IPC: ${result.error.code} ${result.error.message}`)); else resolve(result.type === 'view' ? result.view : result);
         }
       });
     });
@@ -316,9 +325,9 @@ max_tokens = 512
   assert(!(await human.machine.getMissingSessions([human.account, aiId].map(id => new sdk.UserId(userId(id))))), 'Olm sessions must be prepared before disconnection');
   const localRequests = await human.machine.shareRoomKey(new sdk.RoomId(roomId(cid)), [human.account, aiId].map(id => new sdk.UserId(userId(id))), settings);
   const keyMessages = localRequests.map(r => ({ ...JSON.parse(r.body), event_type: r.event_type, txn_id: r.txn_id }));
-  const localId = randomUUID(), localInner = { version: 1, server: origin, kind: 'message', conversationId: cid, messageId: localId, senderId: human.account, revision: '1', text: '断开云端后的密文输入', replyTo: null, mentions: [], runId: null, sequence: null };
+  const localId = randomUUID(), localInner = { version: 1, server: origin, kind: 'message', conversationId: cid, conversationRevision: encryptedDirect.revision, messageId: localId, senderId: human.account, revision: '1', text: '断开云端后的密文输入', replyTo: null, mentions: [], runId: null, sequence: null };
   const localSealed = { version: 1, roomId: roomId(cid), sender: userId(human.account), deviceId: human.device, eventId: `$${localId}.1.final`, content: JSON.parse(await human.machine.encryptRoomEvent(new sdk.RoomId(roomId(cid)), 'com.llmn.content.v1', JSON.stringify(localInner))) }; await sign(human, localSealed);
-  const localCommand = { type: 'send', conversationId: cid, requestId: randomUUID(), messageId: localId, text: '', sealed: localSealed, keyMessages };
+  const localCommand = { type: 'send', conversationId: cid, requestId: randomUUID(), messageId: localId, text: '', sealed: localSealed, keyMessages, expectedConversationRevision: encryptedDirect.revision };
   await rpc(localCommand); await rpc(localCommand);
   const local = await waitFor(() => rpc({ type: 'view', conversationId: cid }), view => !view.running && view.messages.some(m => m.local && m.message.senderId === aiId && m.status === 'committed'), 'offline encrypted response');
   const incoming = (local.keyMessages ?? []).flatMap(body => { const content = body.messages[userId(human.account)]?.[human.device]; return content ? [{ sender: userId(aiId), type: body.event_type, content }] : []; });
@@ -377,8 +386,30 @@ max_tokens = 512
   await send('撤回摘要来源后继续');
   assert.equal(modelInputs.length, 17);
   assert(!JSON.stringify(modelInputs[16]).includes('加密窗口摘要'), 'stale summary must not return to model context');
+  // The tiny window above tests summary selection. Restore the ordinary fixture
+  // capacity before testing required image/reference material in later scenarios.
+  await stopNode(running);
+  fs.writeFileSync(replacementConfig, fs.readFileSync(replacementConfig, 'utf8').replace('context_window = 2048', 'context_window = 8192'));
+  running = startNode(replacement);
+  await waitFor(managed, rows => rows.find(row => row.account.id === aiId)?.node?.online, 'social fixture node online');
+  phase = 'encrypted social Agent and offline attachments';
+  await socialScenarios(replacement);
   await stopNode(running);
   console.log('PASS: actual Agent pairing, signed streaming replies, ciphertext role/memory saved while node offline, application, forgetting, offline encrypted IPC with local Olm delivery, original-result synchronization, encrypted summary generation, normal handover, fresh node recovery, summary source invalidation, no repeated model calls.');
+  return modelInputs.length;
+  async function socialScenarios(nodeDirectory) {
+    rpcDirectory = nodeDirectory;
+    await require('./crypto_social_acceptance.cjs').agent({ human, peer, aiId, cid, http, sql, sdk, decrypt, sync, waitFor, modelInputs, rpc, origin, userId, roomId, sign, outgoing, query,
+      stopCloud: () => stopNode(server),
+      startCloud: async () => { server = spawn(executable, [], { env, windowsHide: true, stdio: ['ignore', log, log] }); await waitFor(async () => { try { return (await fetch(origin + '/health')).ok; } catch { return false; } }, Boolean, 'cloud restart'); },
+      localShare: async () => {
+        const room = new sdk.RoomId(roomId(cid));
+        await human.machine.invalidateGroupSession(room);
+        const settings = new sdk.EncryptionSettings(); settings.algorithm = sdk.EncryptionAlgorithm.MegolmV1AesSha2; settings.sharingStrategy = sdk.CollectStrategy.onlyTrustedDevices();
+        return human.machine.shareRoomKey(room, [human.account, aiId].map(id => new sdk.UserId(userId(id))), settings);
+      },
+    });
+  }
 }
 async function main() {
   await sdk.initAsync();
@@ -396,13 +427,13 @@ async function main() {
   await trust(a, b); await trust(b, a);
   phase = 'Olm room-key sharing';
   await share(a, b, cid);
-  await http(a, `/chat/conversations/${cid}/encryption`, 'POST', { deviceId: a.device, requestId: randomUUID() });
+  const enabled = await http(a, `/chat/conversations/${cid}/encryption`, 'POST', { deviceId: a.device, requestId: randomUUID(), expectedConversationRevision: conversation.revision });
   phase = 'private message';
   const messageId = randomUUID(), marker = `只有端点可读-${randomUUID()}`;
-  const inner = { version: 1, server: origin, kind: 'message', conversationId: cid, messageId, senderId: a.account, revision: '1', text: marker, replyTo: null, mentions: [], runId: null, sequence: null };
+  const inner = { version: 1, server: origin, kind: 'message', conversationId: cid, conversationRevision: enabled.revision, messageId, senderId: a.account, revision: '1', text: marker, replyTo: null, mentions: [], runId: null, sequence: null };
   const sealed = { version: 1, roomId: roomId(cid), sender: userId(a.account), deviceId: a.device, eventId: `$${messageId}.1.final`, content: JSON.parse(await a.machine.encryptRoomEvent(new sdk.RoomId(roomId(cid)), 'com.llmn.content.v1', JSON.stringify(inner))) };
   await sign(a, sealed);
-  const command = { deviceId: a.device, requestId: randomUUID(), messageId, text: '', sealed };
+  const command = { deviceId: a.device, requestId: randomUUID(), messageId, text: '', sealed, expectedConversationRevision: enabled.revision };
   const sent = await http(a, `/chat/conversations/${cid}/messages`, 'POST', command);
   assert.equal(sent.id, messageId);
   assert.equal((await http(a, `/chat/conversations/${cid}/messages`, 'POST', command)).id, messageId);
@@ -455,11 +486,13 @@ async function main() {
   const rust = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   await a.machine.importExportedRoomKeys(JSON.stringify(rust.roomKeys), () => {});
   assert.deepEqual(await decrypt(a, rust.sealed), inner);
-  await agentFlow(a);
+  phase = 'encrypted groups and historical keys';
+  await require('./crypto_social_acceptance.cjs').human({ a, b, http, sdk, signup, device, bootstrap, trust, sync, decrypt, sql, roomId, userId, origin, sign, outgoing, query });
+  const modelCalls = await agentFlow(a);
   await http(b, `/crypto/devices/${untrusted.device}/revoke`, 'POST', {});
   await http(untrusted, `/crypto/sync?deviceId=${untrusted.device}&after=0`, 'GET', undefined, 403);
   for (const s of [a, b, untrusted]) s.machine.close();
   console.log('PASS: official SDK cross-signing, Olm distribution, signed private ciphertext, tamper rejection, idempotent retry, no plaintext in PostgreSQL, login alone cannot decrypt, recovery to a new device, WASM/Rust bidirectional interoperability, revoked device rejected.');
-  fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify({ passed: true, database, date: new Date().toISOString() }));
+  fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify({ passed: true, mode: process.argv.includes('--social-only') ? 'social' : 'full', modelCalls, database, date: new Date().toISOString() }));
 }
 main().catch(error => { console.error(`FAIL ${phase}:`, error?.stack || error?.description || error?.message || String(error)); process.exitCode = 1; }).finally(() => { children.forEach(child => child.kill()); modelServer?.close(); server.kill(); fs.closeSync(log); });

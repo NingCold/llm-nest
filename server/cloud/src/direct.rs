@@ -37,6 +37,8 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/chat/conversations/{id}/direct", post(grant))
         .route("/node/direct/prepare", post(prepare))
         .route("/node/direct/sync", post(sync))
+        .route("/node/direct/{aiId}/reference", post(reference))
+        .route("/node/direct/{aiId}/attachment", post(attachment))
 }
 struct Access {
     human: Uuid,
@@ -142,16 +144,18 @@ async fn prepare(
     let has_more = rows.len() > 64;
     rows.truncate(64);
     rows.reverse();
-    if rows.iter().any(|r| {
-        !r.get::<Value, _>("attachments")
-            .as_array()
-            .unwrap()
-            .is_empty()
-            || r.get::<Option<Value>, _>("context_reference").is_some()
-    }) {
-        return Err(AppError::bad(
-            "首批直连仅支持无附件、无跨窗口引用的文字历史",
-        ));
+    let mut references = Vec::new();
+    for r in rows.iter().rev().take(12) {
+        if let Some(reference) = r.get::<Option<Value>, _>("context_reference")
+            && reference["stale"] == false
+        {
+            let selection = serde_json::from_value(reference).map_err(|_| AppError::internal())?;
+            let mut value =
+                consciousness::direct_reference(&mut tx, a.cid, a.human, r.get("id"), &selection)
+                    .await?;
+            value["required"] = json!(false);
+            references.push(serde_json::from_value(value).map_err(|_| AppError::internal())?);
+        }
     }
     let out = DirectBootstrap {
         ai: serde_json::from_value(chat::account(&mut tx, a.ai).await?).unwrap(),
@@ -176,9 +180,92 @@ async fn prepare(
             })
             .collect(),
         has_more,
+        references,
     };
     tx.commit().await?;
     Ok(Json(out))
+}
+async fn reference(
+    State(s): State<Arc<AppState>>,
+    h: HeaderMap,
+    Path(ai): Path<Uuid>,
+    Json(v): Json<DirectReferenceRequest>,
+) -> Result<Json<connector::node::NodeReference>> {
+    let mut tx = s.pool.begin().await?;
+    nodes::lock(&mut tx).await?;
+    let a = access(&mut tx, &h, &v.grant).await?;
+    if ai != a.ai {
+        return Err(AppError::forbidden());
+    }
+    permitted(&mut tx, &a, false).await?;
+    let value =
+        consciousness::direct_reference(&mut tx, a.cid, a.human, Uuid::nil(), &v.selection).await?;
+    tx.commit().await?;
+    Ok(Json(
+        serde_json::from_value(value).map_err(|_| AppError::internal())?,
+    ))
+}
+async fn common_scope(tx: &mut Tx<'_>, a: &Access, cid: Uuid) -> Result<()> {
+    if cid != a.cid {
+        let kind: String = sqlx::query_scalar("SELECT kind FROM cloud_conversations WHERE id=$1")
+            .bind(cid)
+            .fetch_one(&mut **tx)
+            .await?;
+        if kind != "group" {
+            return Err(AppError::forbidden());
+        }
+        let members = chat::member(tx, cid, a.human).await?;
+        if !members.contains(&a.ai) {
+            return Err(AppError::forbidden());
+        }
+    }
+    Ok(())
+}
+async fn attachment(
+    State(s): State<Arc<AppState>>,
+    h: HeaderMap,
+    Path(ai): Path<Uuid>,
+    Json(v): Json<Value>,
+) -> Result<axum::response::Response> {
+    let mut tx = s.pool.begin().await?;
+    nodes::lock(&mut tx).await?;
+    let a = access(
+        &mut tx,
+        &h,
+        v["grant"].as_str().ok_or_else(AppError::forbidden)?,
+    )
+    .await?;
+    if ai != a.ai {
+        return Err(AppError::forbidden());
+    }
+    permitted(&mut tx, &a, false).await?;
+    let cid = uid(v["conversationId"]
+        .as_str()
+        .ok_or_else(|| AppError::bad("窗口无效"))?)?;
+    common_scope(&mut tx, &a, cid).await?;
+    let mid = uid(v["messageId"]
+        .as_str()
+        .ok_or_else(|| AppError::bad("消息无效"))?)?;
+    let index = v["index"]
+        .as_u64()
+        .ok_or_else(|| AppError::bad("附件索引无效"))? as usize;
+    let row=sqlx::query("SELECT * FROM cloud_messages WHERE id=$1 AND conversation=$2 AND NOT withdrawn AND status='committed'").bind(mid).bind(cid).fetch_optional(&mut *tx).await?.ok_or_else(AppError::not_found)?;
+    if v["revision"].as_str() != Some(row.get::<i64, _>("revision").to_string().as_str()) {
+        return Err(conflict());
+    }
+    let parts: Value = row.get("attachments");
+    if parts.get(index).is_none() {
+        return Err(AppError::not_found());
+    }
+    let bytes =
+        tokio::fs::read(s.attachments.join(mid.to_string()).join(index.to_string())).await?;
+    tx.commit().await?;
+    Ok(chat::binary(
+        bytes,
+        "application/octet-stream",
+        "attachment",
+        false,
+    ))
 }
 async fn receipt(tx: &mut Tx<'_>, cid: Uuid, ids: Vec<Uuid>) -> Result<DirectSyncReceipt> {
     let mut messages = vec![];
@@ -258,13 +345,15 @@ async fn sync(
             return Err(conflict());
         }
     }
-    if v.derived_sources
+    for cid in v
+        .derived_sources
         .iter()
-        .any(|x| x.conversation_id != a.cid.to_string())
-        || v.material_scopes
-            .iter()
-            .any(|x| x.conversation_id != a.cid.to_string())
-        || !consciousness::scoped_valid(&mut tx, a.ai, &v.derived_sources).await?
+        .map(|x| &x.conversation_id)
+        .chain(v.material_scopes.iter().map(|x| &x.conversation_id))
+    {
+        common_scope(&mut tx, &a, uid(cid)?).await?;
+    }
+    if !consciousness::scoped_valid(&mut tx, a.ai, &v.derived_sources).await?
         || !consciousness::scopes_valid(&mut tx, a.ai, &v.material_scopes).await?
     {
         return Err(conflict());
@@ -314,22 +403,51 @@ async fn sync(
             m.sealed.as_ref(),
         )
         .await?;
+        if m.sealed.is_some()
+            && m.audience_revision
+                .as_deref()
+                .is_some_and(|revision| revision != v.conversation_revision)
+        {
+            return Err(conflict());
+        }
+        let mentions = m
+            .mentions
+            .iter()
+            .map(|x| uid(x))
+            .collect::<Result<Vec<_>>>()?;
+        let pair = chat::member(&mut tx, a.cid, a.human).await?;
+        crate::groups::validate_send(&mut tx, a.cid, &pair, None, &mentions).await?;
+        if !m.attachments.is_empty() && m.encrypted_attachments.is_empty() {
+            return Err(AppError::bad("补传附件缺少密文字节"));
+        }
+        if !m.encrypted_attachments.is_empty() && m.sealed.is_none() {
+            return Err(AppError::bad("附件必须加密"));
+        }
+        chat::unoccupied_message(&mut tx, mid).await?;
+        let attachments =
+            chat::save_encrypted_uploads(&s.attachments, mid, &m.encrypted_attachments).await?;
         let created = m
             .created_at
             .parse::<chrono::DateTime<chrono::Utc>>()
             .map_err(|_| AppError::bad("消息时间无效"))?;
         let reply = m.reply_to.as_deref().map(uid).transpose()?;
-        if reply.is_some() && reply != previous {
-            return Err(AppError::bad("直连回复只能引用前一条消息"));
+        if !human && reply.is_some() && reply != previous {
+            return Err(AppError::bad("AI回复只能引用紧前真人消息"));
         }
-        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM cloud_messages WHERE id=$1)")
-            .bind(mid)
-            .fetch_one(&mut *tx)
-            .await?
-        {
-            return Err(conflict());
+        if human {
+            crate::groups::validate_send(&mut tx, a.cid, &pair, reply, &[]).await?;
         }
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,created_at,updated_at,sender_name,reply_to,sealed) VALUES($1,$2,$3,$4,$5,$6,$6,(SELECT name FROM accounts WHERE id=$3),$7,$8)").bind(mid).bind(a.cid).bind(sender).bind(&m.text).bind(&m.status).bind(created).bind(reply).bind(m.sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,created_at,updated_at,sender_name,reply_to,sealed,attachments,mentions,crypto_audience_revision) VALUES($1,$2,$3,$4,$5,$6,$6,(SELECT name FROM accounts WHERE id=$3),$7,$8,$9,$10,$11)").bind(mid).bind(a.cid).bind(sender).bind(&m.text).bind(&m.status).bind(created).bind(reply).bind(m.sealed.as_ref().map(|e|json!(e))).bind(attachments).bind(mentions).bind(m.audience_revision.as_deref().map(num).transpose()?).execute(&mut *tx).await?;
+        if let Some(reference) = &m.context_reference {
+            if reference.stale {
+                return Err(conflict());
+            }
+            let selection = connector::node::ReferenceSelection {
+                conversation_id: reference.conversation_id.clone(),
+                sources: reference.sources.clone(),
+            };
+            consciousness::save_reference(&mut tx, a.cid, mid, a.human, &selection).await?;
+        }
         if let Some(run) = &m.run_id {
             let run = uid(run)?;
             if sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM cloud_direct_runs WHERE run_id=$1 UNION ALL SELECT 1 FROM cloud_node_tasks WHERE run_id=$1)").bind(run).fetch_one(&mut *tx).await? {return Err(conflict());}
@@ -450,6 +568,11 @@ mod tests {
                     id: Uuid::new_v4().to_string(),
                     sender_id: f.users[0].0.to_string(),
                     sealed: None,
+                    audience_revision: None,
+                    context_reference: None,
+                    mentions: vec![],
+                    attachments: vec![],
+                    encrypted_attachments: vec![],
                     text: "hello".into(),
                     status: "committed".into(),
                     created_at: chrono::Utc::now().to_rfc3339(),
@@ -462,6 +585,11 @@ mod tests {
                     id: Uuid::new_v4().to_string(),
                     sender_id: ai.to_string(),
                     sealed: None,
+                    audience_revision: None,
+                    context_reference: None,
+                    mentions: vec![],
+                    attachments: vec![],
+                    encrypted_attachments: vec![],
                     text: "reply".into(),
                     status: "committed".into(),
                     created_at: chrono::Utc::now().to_rfc3339(),
@@ -714,6 +842,187 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
+        f.close().await;
+    }
+    #[tokio::test]
+    async fn direct_reference_and_attachment_require_current_shared_group() {
+        let Some(f) = Fixture::new().await else {
+            return;
+        };
+        let (_, ai, h, g) = setup(&f).await;
+        let group = Uuid::new_v4();
+        let mid = Uuid::new_v4();
+        sqlx::query("INSERT INTO cloud_conversations(id,kind,name) VALUES($1,'group','shared')")
+            .bind(group)
+            .execute(&f.state.pool)
+            .await
+            .unwrap();
+        for account in [f.users[0].0, ai] {
+            sqlx::query("INSERT INTO cloud_members(conversation,account_id) VALUES($1,$2)")
+                .bind(group)
+                .bind(account)
+                .execute(&f.state.pool)
+                .await
+                .unwrap();
+        }
+        let upload = connector::crypto::EncryptedAttachment {
+            index: 0,
+            data: "Y2lwaGVydGV4dA==".into(),
+        };
+        let parts = chat::save_encrypted_uploads(&f.state.attachments, mid, &[upload])
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments) VALUES($1,$2,$3,'',$4)").bind(mid).bind(group).bind(f.users[0].0).bind(parts).execute(&f.state.pool).await.unwrap();
+        let selection = connector::node::ReferenceSelection {
+            conversation_id: group.to_string(),
+            sources: vec![connector::node::SourceRevision {
+                message_id: mid.to_string(),
+                revision: "1".into(),
+            }],
+        };
+        let request = DirectReferenceRequest {
+            grant: g.token.clone(),
+            selection,
+        };
+        let preview = reference(
+            State(f.state.clone()),
+            h.clone(),
+            Path(ai),
+            Json(request.clone()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(preview.messages[0].attachments[0].kind, "encrypted");
+        let download = json!({"grant":g.token,"conversationId":group,"messageId":mid,"index":0,"revision":"1"});
+        assert!(
+            attachment(
+                State(f.state.clone()),
+                h.clone(),
+                Path(ai),
+                Json(download.clone())
+            )
+            .await
+            .is_ok()
+        );
+        let mut stale = download.clone();
+        stale["revision"] = json!("2");
+        assert!(
+            attachment(State(f.state.clone()), h.clone(), Path(ai), Json(stale))
+                .await
+                .is_err()
+        );
+        sqlx::query("DELETE FROM cloud_members WHERE conversation=$1 AND account_id=$2")
+            .bind(group)
+            .bind(f.users[0].0)
+            .execute(&f.state.pool)
+            .await
+            .unwrap();
+        assert!(
+            reference(State(f.state.clone()), h.clone(), Path(ai), Json(request))
+                .await
+                .is_err()
+        );
+        assert!(
+            attachment(State(f.state.clone()), h, Path(ai), Json(download))
+                .await
+                .is_err()
+        );
+        f.close().await;
+    }
+    #[tokio::test]
+    async fn legacy_private_sealed_outbox_keeps_missing_audience_revision() {
+        let Some(f) = Fixture::new().await else {
+            return;
+        };
+        let (cid, ai, h, g) = setup(&f).await;
+        sqlx::query("UPDATE cloud_conversations SET crypto_enabled=true WHERE id=$1")
+            .bind(cid)
+            .execute(&f.state.pool)
+            .await
+            .unwrap();
+        let node: Uuid = sqlx::query_scalar("SELECT node_id FROM cloud_ai_bindings WHERE ai_id=$1")
+            .bind(ai)
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+        let mut request = batch(&f, ai, &g);
+        for (index, m) in request.messages.iter_mut().enumerate() {
+            let device = format!("legacy-{index}");
+            let sender = uid(&m.sender_id).unwrap();
+            sqlx::query("INSERT INTO cloud_crypto_devices(account_id,device_id,node_id,binding_version,device_keys) VALUES($1,$2,$3,$4,'{}')").bind(sender).bind(&device).bind((sender==ai).then_some(node)).bind((sender==ai).then_some(1i64)).execute(&f.state.pool).await.unwrap();
+            m.text.clear();
+            m.sealed=Some(serde_json::from_value(json!({"version":1,"roomId":format!("!{cid}:llmn"),"sender":format!("@{sender}:llmn"),"deviceId":device,"eventId":format!("${}.1.final",m.id),"deviceKeys":{"ed25519":"public","curve25519":"public"},"signatures":{"account":{"device":"signature"}},"content":{"algorithm":"m.megolm.v1.aes-sha2","ciphertext":"legacy-frozen-ciphertext"}})).unwrap());
+        }
+        let mut wrong = request.clone();
+        wrong.messages[0].audience_revision = Some("0".into());
+        assert!(
+            sync(State(f.state.clone()), h.clone(), Json(wrong))
+                .await
+                .is_err()
+        );
+        let result = sync(State(f.state.clone()), h, Json(request.clone()))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(result.messages.len(), 2);
+        for (message, original) in result.messages.iter().zip(&request.messages) {
+            assert!(message.message.audience_revision.is_none());
+            assert_eq!(message.message.sealed, original.sealed);
+        }
+        f.close().await;
+    }
+    #[tokio::test]
+    async fn human_direct_replies_accept_older_history_and_earlier_batch_messages() {
+        let Some(f) = Fixture::new().await else {
+            return;
+        };
+        let (cid, ai, h, g) = setup(&f).await;
+        let first = batch(&f, ai, &g);
+        let old = first.messages[0].id.clone();
+        let receipt = sync(State(f.state.clone()), h.clone(), Json(first))
+            .await
+            .unwrap()
+            .0;
+        let mut second = batch(&f, ai, &g);
+        second.base = receipt.head;
+        second.messages[0].reply_to = Some(old.clone());
+        second.messages[1].reply_to = Some(old.clone());
+        assert!(
+            sync(State(f.state.clone()), h.clone(), Json(second.clone()))
+                .await
+                .is_err()
+        );
+        second.messages[1].reply_to = Some(second.messages[0].id.clone());
+        let mut third = batch(&f, ai, &g);
+        third.messages[0].reply_to = Some(second.messages[0].id.clone());
+        third.messages[1].reply_to = Some(third.messages[0].id.clone());
+        second.messages.extend(third.messages);
+        let receipt = sync(State(f.state.clone()), h.clone(), Json(second))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(receipt.messages.len(), 4);
+        sqlx::query("UPDATE cloud_messages SET withdrawn=true WHERE id=$1")
+            .bind(uid(&old).unwrap())
+            .execute(&f.state.pool)
+            .await
+            .unwrap();
+        let mut rejected = batch(&f, ai, &g);
+        rejected.base = receipt.head;
+        rejected.messages[0].reply_to = Some(old);
+        assert!(
+            sync(State(f.state.clone()), h, Json(rejected))
+                .await
+                .is_err()
+        );
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1")
+                .bind(cid)
+                .fetch_one(&f.state.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 6);
         f.close().await;
     }
 }

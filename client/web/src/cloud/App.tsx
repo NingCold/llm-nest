@@ -24,7 +24,9 @@ import {
 } from "./api";
 import type { Account, Conversation, Snapshot, Page, Message, CloudDraftRecord as DraftRecord, DraftReference, ReferencePreview } from "./types";
 import "./cloud.css";
-import { localView, prepareLocal, sendLocal, syncLocal, stopLocal, localPage, type LocalView } from "./local-api";
+import { localView, prepareLocal, prepareLocalReference, sendLocal, syncLocal, stopLocal, localPage, type LocalView } from "./local-api";
+import { prepareAttachments } from "./crypto/attachments";
+import { completeHistory } from "./crypto/history";
 import { encryptMessage, projectPage, projectSnapshot, enableEncryption } from "./crypto/content";
 import { cryptoDevice, lockCrypto, localKeyMessages, receiveLocalKeys } from "./crypto/engine";
 import { synchronizeResources } from "./crypto/resources";
@@ -247,8 +249,10 @@ export default function CloudApp() {
       void run(async () => { await refresh(); await syncHistory(); });
     };
     const timer = setInterval(() => { if (cryptoDevice(me.id)) void synchronizeResources(me.id).catch(report); }, 3000);
+    const warning = (event: Event) => report(new Error((event as CustomEvent<string>).detail));
     window.addEventListener("llmn-crypto-change", update);
-    return () => { clearInterval(timer); window.removeEventListener("llmn-crypto-change", update); };
+    window.addEventListener("llmn-crypto-warning", warning);
+    return () => { clearInterval(timer); window.removeEventListener("llmn-crypto-change", update); window.removeEventListener("llmn-crypto-warning", warning); };
   }, [me?.id]);
   useEffect(() => {
     if (!IS_DESKTOP || !me || !active || !(localChats[active] || savedLocal(active))) return;
@@ -439,7 +443,7 @@ export default function CloudApp() {
     });
   };
   const attach = (files: File[], images: boolean) => {
-    if (localRef.current[activeRef.current] || savedLocal(activeRef.current)) { report(new Error("同机私聊仅支持普通文字，请使用云端发送附件")); return; }
+    if ((localRef.current[activeRef.current] || savedLocal(activeRef.current)) && !snapshotRef.current?.conversations.find(c => c.id === activeRef.current)?.encryption) { report(new Error("同机附件需要先启用端到端加密")); return; }
     if (!draftReady || busy || recordRef.current.pending || closing.current)
       return;
     const id = activeRef.current,
@@ -499,29 +503,32 @@ export default function CloudApp() {
           owner = ownerRef.current,
           e = epoch.current,
           v = view.current;
+        if (pending.route === "local" && pending.mentions?.length) throw new HttpError(422, "同机私聊不支持群提及，请移除提及后发送");
         if (target?.encryption && !current.pending) {
-          if (pending.images?.length || pending.files?.length || pending.reference) throw new Error("本批加密私聊仅支持文字，附件和群话题引用请等待后续支持");
+          if (pending.route === "local" && pending.reference) await prepareLocalReference(target.id, pending.reference.selection);
+          const attachments = prepareAttachments(pending.images, pending.files);
+          pending.encryptedAttachments = attachments.encryptedAttachments;
+          pending.expectedConversationRevision = target.revision;
           pending.messageId = crypto.randomUUID();
-          pending.sealed = await encryptMessage(target, me!.id, pending.messageId, pending.text, "1", pending.replyTo ?? null, pending.mentions ?? [], pending.route === "local");
+          pending.sealed = await encryptMessage(target, me!.id, pending.messageId, pending.text, "1", pending.replyTo ?? null, pending.mentions ?? [], pending.route === "local", attachments.descriptors, pending.reference?.selection ?? null);
           if (pending.route === "local") pending.keyMessages = localKeyMessages(target.members.map(m => m.account.id));
         }
         if (target?.encryption && !pending.sealed) throw new Error("当前窗口已经启用加密，原明文待确认发送不能降级或重新加密重试，请先核对旧发送结果");
         await save({ ...current, pending });
         try {
           if (pending.route === "local") {
-            if (pending.images?.length || pending.files?.length || pending.replyTo || pending.reference || pending.mentions?.length)
-              throw new HttpError(422, "同机私聊本批仅支持普通文字，请清除附件、回复、提及和群引用后再发送；这些内容可使用云端发送。");
-            const data = await sendLocal(id, pending.requestId, pending.sealed ? "" : pending.text, pending.sealed, pending.messageId, pending.keyMessages);
+            if (!pending.sealed && (pending.images?.length || pending.files?.length)) throw new HttpError(422, "同机附件需要先启用端到端加密");
+            const data = await sendLocal(id, pending.requestId, pending.sealed ? "" : pending.text, pending.sealed, pending.messageId, pending.keyMessages, { encryptedAttachments: pending.encryptedAttachments, replyTo: pending.replyTo, reference: pending.reference?.selection, expectedConversationRevision: pending.expectedConversationRevision });
             if (e !== epoch.current) return;
             acceptLocal(data, e);
           } else await request(`/chat/conversations/${id}/messages`, "POST", {
             requestId: pending.requestId,
-            ...(pending.sealed ? { messageId: pending.messageId, sealed: pending.sealed, text: "" } : { text: pending.text }),
+            ...(pending.sealed ? { messageId: pending.messageId, sealed: pending.sealed, text: "", encryptedAttachments: pending.encryptedAttachments, expectedConversationRevision: pending.expectedConversationRevision } : { text: pending.text }),
             mentions: pending.mentions ?? [],
             replyTo: pending.replyTo ?? null,
             ...(pending.reference ? { reference: pending.reference.selection } : {}),
-            images: pending.images?.map(({ mime, data }) => ({ mime, data })),
-            files: pending.files?.map(({ name, mime, data }) => ({
+            images: pending.sealed ? [] : pending.images?.map(({ mime, data }) => ({ mime, data })),
+            files: pending.sealed ? [] : pending.files?.map(({ name, mime, data }) => ({
               name,
               mime,
               data,
@@ -578,6 +585,7 @@ export default function CloudApp() {
     if (accountEpoch !== epoch.current || originView !== view.current) throw new Error("窗口已变化，请重新选择话题来源");
     const current = direct.id === activeRef.current ? recordRef.current : loaded[direct.id] || blank();
     if (current.pending) throw new Error("这个私聊有尚未确认的发送，请先确认原发送结果，再添加群话题引用。");
+    if (localRef.current[direct.id] || savedLocal(direct.id)) await prepareLocalReference(direct.id, reference.selection);
     await db.save(owner, direct.id, { ...current, draft: { ...current.draft, reference, requestId: null } });
     await refresh();
     if (accountEpoch !== epoch.current || originView !== view.current) throw new Error("引用已保存至私聊草稿，但当前窗口已变化，请重新打开该私聊。");
@@ -650,10 +658,14 @@ export default function CloudApp() {
       id = active,
       v = view.current;
     if (snapshotRef.current?.conversations.some(c => c.encryption)) {
-      const messages = pageRef.current?.messages ?? [];
-      setResults(messages.filter(m => !m.cryptoError && m.status !== "withdrawn" && m.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())));
+      const candidates = snapshotRef.current.conversations.filter(c => scope !== "current" || c.id === id);
+      const current = () => sequence === searchSeq.current && v === view.current && id === activeRef.current;
+      const messages = (await Promise.all(candidates.map(c => completeHistory(c, current)))).flat();
+      if (!current()) return;
+      setResults(messages.filter(m => !m.cryptoError && m.status !== "withdrawn" && m.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       setSearchMore(false);
-      setNotice("加密搜索仅检查当前已解密页面；更早历史和其他窗口尚未建立本机索引。搜索词没有上传云端。");
+      const failed = messages.filter(m => m.cryptoError).length;
+      setNotice(failed ? `完整历史已读取；${failed} 条消息尚不可解密，未纳入搜索。搜索词没有上传云端。` : "已搜索所有授权历史，搜索词没有上传云端。");
       return;
     }
     const before =

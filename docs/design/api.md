@@ -4,7 +4,7 @@
 
 ## 已实现的云端接口
 
-新私聊的 `sealedV1`、Matrix 公钥与设备信箱、恢复密文和 AI 资料 CAS 接口集中见[加密契约](crypto-contract.md)。启用后新消息必须携带密文封装，正文为空；流式、结果与同机补传不允许明文回退。旧未启用窗口沿用普通接口。群、附件、跨窗引用、约定和完整搜索导出的加密支持留待第三批，旧历史转换留待第四批。
+聊天的 `sealedV1`、Matrix 公钥与设备信箱、恢复密文和 AI 资料 CAS 接口集中见[加密契约](crypto-contract.md)。启用后新消息必须携带密文封装，正文为空；流式、结果与同机补传不允许明文回退。旧未启用窗口沿用普通接口。群、附件、跨窗引用和约定复用同一加密格式；完整搜索和导出在授权客户端解密完成。旧历史转换留待第四批。
 
 默认 CloudApp 使用 `cloud-server` 的 `/api`，与保留的本地 `/api/social` 是两套不同契约。所有聊天操作者取登录会话，不接受客户端 senderId/operatorId。浏览器使用同源 HttpOnly Cookie；桌面经原生网络层持有内存 Cookie。修改请求带 `X-LLMN-Client: 1`，服务器检查来源与跨站请求。JSON 业务错误为 `{code,message}`，常用状态为 400、401、403、404、409、500；入口解析错误沿用 HTTP 状态。
 
@@ -144,23 +144,27 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 
 真人触发消息附 `aiResponses:[{aiId,taskId,status,error?}]`，按任务持久顺序排列，每位 AI 独立显示和停止，替代旧单一 aiResponse，表示排队、执行和失败，不把错误伪装成 AI 回答。AI 输出 status 为 generating/committed/interrupted/failed；generating 不计未读，终态取得新的 delivery position。客户端以服务器快照为准。
 
-### 桌面与同机 Agent 文字私聊
+### 桌面与同机 Agent 私聊
 
-首批同机通道用于已登录真人与其管理的本机 AI 的唯一私聊。首次准备必须联网；云端核对双方成员、真人管理权、AI 启用状态、有效节点绑定，以及屏蔽、暂停和未完成云端任务。准备成功后，同一桌面会话可在断云时使用缓存的授权和文字历史；离线节点不能即时获知云端撤权。第一批采用明文；第二批为启用窗口增加相同 sealedV1 封装与 Olm 密钥投递，已通过真实 Windows IPC 验证。局域网连接与加密附件尚未提供。
+首批同机通道用于已登录真人与其管理的本机 AI 的唯一私聊。首次准备必须联网；云端核对双方成员、真人管理权、AI 启用状态、有效节点绑定，以及屏蔽、暂停和未完成云端任务。准备成功后，同一桌面会话可在断云时使用缓存的授权和文字历史；离线节点不能即时获知云端撤权。第一批采用明文；第二批为启用窗口增加相同 sealedV1 封装与 Olm 密钥投递，已通过真实 Windows IPC 验证。第三批增加密文附件及已准备的群来源缓存；局域网连接尚未提供。
 
 | 方法与路径（省略 `/api`） | 请求与返回 |
 | --- | --- |
 | POST `/chat/conversations/{id}/direct` | 真人会话请求 `{nodeId,bindingVersion}`，返回 `{token}`；token 仅由桌面原生层交给 Agent，不返回网页脚本 |
-| POST `/node/direct/prepare` | 节点凭据加 `{grant}`；返回 `DirectBootstrap`：双方账号、真实私聊、bindingVersion、云端末条 `base:{messageId,revision,position}`、最近最多 64 条文字消息和 hasMore |
+| POST `/node/direct/prepare` | 节点凭据加 `{grant}`；返回 `DirectBootstrap`：双方账号、真实私聊、bindingVersion、云端末条 `base:{messageId,revision,position}`、最近最多 64 条消息、相关群来源与 hasMore；附件正文另取 |
 | POST `/node/direct/sync` | 节点凭据加 `DirectSyncRequest`；接纳已在本机完成或中断的一轮真人/AI 消息，返回该批当前权威消息和 head，不创建云端发言任务 |
+| POST `/node/direct/{aiId}/reference` | `{grant,selection}`；复核真人与 AI 的当前共同群及来源修订，返回 `NodeReference` 供本机缓存 |
+| POST `/node/direct/{aiId}/attachment` | `{grant,conversationId,messageId,index,revision}`；复核当前权限与修订，返回原附件字节，密文不在服务器解密 |
 
 同步请求携带固定 requestId、grant、conversationRevision、base、实际使用的 sources/derivedSources/materialScopes、configurationRevision，以及本轮稳定 UUID 的消息、终态、用量与错误。云端复核当前授权、绑定、来源、材料版本及末条历史，在同一事务保存消息、回执和事件。相同请求按指纹幂等；确认丢失时重交原请求，不能重开模型，也不能用旧回执恢复已撤回正文。权限、来源或历史变化产生冲突，节点保留本机记录供用户确认。
 
 同步回执的 `head` 是该回执最后一条消息的当前权威 `{messageId,revision,position}`，表示本批已接纳的边界。重放旧请求不能把其他设备后来发送、节点尚未读过的消息算成已同步；只有 prepare 的 `base` 取窗口真实末条。若回执丢失后云端已有新消息，原请求仍可幂等取得本批回执，但后续本机批次使用旧边界同步时应返回冲突，不能跳过新历史。
 
-桌面原生命令为 `local_chat_prepare(conversationId,aiId)`、`local_chat_view(conversationId)`、`local_chat_send(conversationId,requestId,text)`、`local_chat_stop(conversationId)` 和 `local_chat_sync(conversationId)`，返回 `DirectView`。原生层从当前登录会话选择真人及受限节点目录，不接受网页指定路径或操作者。`DirectView` 区分每条消息的 status/local/synced，并提供 running、syncState（pending/synced/conflict）、error 和 hasMore；本机顺序不冒充云端 position。网页每 500ms 刷新当前同机窗口。
+桌面原生命令包括 `local_chat_prepare`、`local_chat_view`、`local_chat_send`、`local_chat_stop` 和 `local_chat_sync`，返回 `DirectView`。发送携带下文的固定消息标识、密文、附件及引用；原生层从当前登录会话选择真人及受限节点目录，不接受网页指定路径或操作者。`DirectView` 区分每条消息的 status/local/synced，并提供 running、syncState（pending/synced/conflict）、error 和 hasMore；本机顺序不冒充云端 position。网页每 500ms 刷新当前同机窗口。
 
-Agent 的 `run-managed` 在目录锁内创建受限 Unix socket 或拒绝远程客户端的 Windows 命名管道，`direct-endpoint.json` 中的认证 token 仅由原生层读取。IPC 操作为 Status、Prepare、View、Send、Stop、Sync，所有窗口读写绑定授权真人；普通 `run` 不创建此通道。首批 Send 只有普通文字字段，附件、回复、提及与群引用不得静默删掉后执行。原生退出、401 或切服清除内存身份，在飞响应复核会话版本；桌面重启仍须重新在线登录。
+Agent 的 `run-managed` 在目录锁内创建受限 Unix socket 或拒绝远程客户端的 Windows 命名管道，`direct-endpoint.json` 中的认证 token 仅由原生层读取。IPC 提供 Status、Prepare、View、Send、PrepareReference、Attachment、Stop、Sync，所有窗口读写绑定授权真人；普通 `run` 不创建此通道。加密 Send 带稳定消息 ID、sealed、keyMessages、encryptedAttachments、replyTo、reference 和 expectedConversationRevision，沿用原请求重试。原生退出、401 或切服清除内存身份，在飞响应复核会话版本；桌面重启仍须重新在线登录。
+
+`local_chat_prepare_reference` 和 `local_chat_attachment` 转发对应本机操作。`cloud_save_blob` 只把客户端解密后的字节保存到用户通过原生对话框选定的位置，取消和写入失败会返回界面；不把这些字节传回云端，也不启动旧 Runtime。
 
 ### WSS 与重连
 

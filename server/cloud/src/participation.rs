@@ -61,7 +61,7 @@ async fn changed(tx: &mut Tx<'_>, cid: Uuid) -> Result<()> {
     Ok(())
 }
 fn intent(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"creatorId":r.get::<Uuid,_>("creator_id"),"aiId":r.get::<Uuid,_>("ai_id"),"content":r.get::<String,_>("content"),"dueAt":r.get::<DateTime<Utc>,_>("due_at"),"expiresAt":r.get::<DateTime<Utc>,_>("expires_at"),"utcOffsetMinutes":r.get::<i32,_>("utc_offset_minutes"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision").to_string(),"reason":r.get::<Option<String>,_>("reason"),"taskId":r.get::<Option<Uuid>,_>("task_id")})
+    json!({"id":r.get::<Uuid,_>("id"),"creatorId":r.get::<Uuid,_>("creator_id"),"aiId":r.get::<Uuid,_>("ai_id"),"content":r.get::<String,_>("content"),"dueAt":r.get::<DateTime<Utc>,_>("due_at"),"expiresAt":r.get::<DateTime<Utc>,_>("expires_at"),"utcOffsetMinutes":r.get::<i32,_>("utc_offset_minutes"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision").to_string(),"reason":r.get::<Option<String>,_>("reason"),"taskId":r.get::<Option<Uuid>,_>("task_id"),"sealed":r.get::<Option<Value>,_>("sealed"),"audienceRevision":r.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})
 }
 async fn view(tx: &mut Tx<'_>, cid: Uuid, owner: Uuid) -> Result<Value> {
     let manage = permission(tx, cid, owner).await?;
@@ -292,16 +292,56 @@ async fn create(
     nodes::lock(&mut tx).await?;
     permission(&mut tx, cid, p.id).await?;
     chat::writable(&mut tx, cid).await?;
-    crate::crypto::plaintext(&mut tx, cid).await?;
+    if v["sealed"].is_null() {
+        crate::crypto::plaintext(&mut tx, cid).await?;
+    }
     ensure(&mut tx, cid).await?;
     let iid = if let Some(iid) = receipt(&mut tx, p.id, cid, &v, "create").await? {
         iid
     } else {
         let ai = uid(&v, "aiId")?;
+        let sealed: Option<connector::crypto::SealedEnvelope> =
+            serde_json::from_value(v["sealed"].clone())
+                .map_err(|_| AppError::bad("密文格式无效"))?;
         let content = v["content"]
             .as_str()
-            .filter(|s| !s.trim().is_empty() && s.chars().count() <= 4000)
-            .ok_or_else(|| AppError::bad("约定内容须为1至4000字"))?;
+            .ok_or_else(|| AppError::bad("约定内容无效"))?;
+        let iid = if sealed.is_some() {
+            uid(&v, "intentId")?
+        } else {
+            Uuid::new_v4()
+        };
+        let audience = if let Some(e) = &sealed {
+            let revision = crate::crypto::check_revision(
+                &mut tx,
+                cid,
+                v["expectedConversationRevision"].as_str(),
+            )
+            .await?;
+            if v["deviceId"].as_str() != Some(&e.device_id) {
+                return Err(AppError::bad("设备不匹配"));
+            }
+            crate::crypto::content(
+                &mut tx,
+                cid,
+                &crate::crypto::Actor {
+                    id: p.id,
+                    node: None,
+                },
+                iid,
+                1,
+                None,
+                content,
+                Some(e),
+            )
+            .await?;
+            Some(revision)
+        } else {
+            if content.trim().is_empty() || content.chars().count() > 4000 {
+                return Err(AppError::bad("约定内容须为1至4000字"));
+            }
+            None
+        };
         let due = time(&v, "dueAt")?;
         let expires = time(&v, "expiresAt")?;
         let offset = v["utcOffsetMinutes"]
@@ -328,8 +368,7 @@ async fn create(
         if count >= 64 {
             return Err(AppError::conflict("当前窗口未完成约定已达上限"));
         }
-        let iid = Uuid::new_v4();
-        sqlx::query("INSERT INTO cloud_contact_intents(id,conversation,creator_id,ai_id,content,due_at,expires_at,utc_offset_minutes) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(iid).bind(cid).bind(p.id).bind(ai).bind(content).bind(due).bind(expires).bind(offset as i32).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO cloud_contact_intents(id,conversation,creator_id,ai_id,content,due_at,expires_at,utc_offset_minutes,sealed,crypto_audience_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(iid).bind(cid).bind(p.id).bind(ai).bind(content).bind(due).bind(expires).bind(offset as i32).bind(sealed.as_ref().map(|e|json!(e))).bind(audience).execute(&mut *tx).await?;
         save(&mut tx, p.id, cid, &v, "create", iid).await?;
         changed(&mut tx, cid).await?;
         iid
@@ -646,7 +685,7 @@ pub async fn tick(pool: &sqlx::PgPool, now: DateTime<Utc>) -> Result<()> {
             }
             let a=sqlx::query("SELECT b.version,c.revision FROM cloud_ai_bindings b CROSS JOIN cloud_conversations c WHERE b.ai_id=$1 AND c.id=$2").bind(i.get::<Uuid,_>("ai_id")).bind(cid).fetch_one(&mut *tx).await?;
             let tid = Uuid::new_v4();
-            sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,contact_intent_id,binding_version,expires_at,conversation_revision,automatic,trigger) VALUES($1,$2,$3,$4,$5,$6,$7,true,$8)").bind(tid).bind(i.get::<Uuid,_>("ai_id")).bind(cid).bind(iid).bind(a.get::<i64,_>("version")).bind(expires).bind(a.get::<i64,_>("revision")).bind(json!({"type":"contact","intentId":iid,"revision":(i.get::<i64,_>("revision")+1).to_string(),"creatorId":i.get::<Uuid,_>("creator_id"),"content":i.get::<String,_>("content"),"dueAt":due})).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,contact_intent_id,binding_version,expires_at,conversation_revision,automatic,trigger) VALUES($1,$2,$3,$4,$5,$6,$7,true,$8)").bind(tid).bind(i.get::<Uuid,_>("ai_id")).bind(cid).bind(iid).bind(a.get::<i64,_>("version")).bind(expires).bind(a.get::<i64,_>("revision")).bind(json!({"type":"contact","intentId":iid,"revision":(i.get::<i64,_>("revision")+1).to_string(),"creatorId":i.get::<Uuid,_>("creator_id"),"content":i.get::<String,_>("content"),"dueAt":due,"expiresAt":i.get::<DateTime<Utc>,_>("expires_at"),"utcOffsetMinutes":i.get::<i32,_>("utc_offset_minutes"),"sealed":i.get::<Option<Value>,_>("sealed"),"audienceRevision":i.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})).execute(&mut *tx).await?;
             sqlx::query("UPDATE cloud_contact_intents SET status='claimed',task_id=$2,revision=revision+1 WHERE id=$1").bind(iid).bind(tid).execute(&mut *tx).await?;
             nodes::publish(&mut tx, tid).await?;
         } else if status == "claimed" {

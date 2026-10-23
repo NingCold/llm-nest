@@ -33,6 +33,13 @@ impl Device {
         &self.machine
     }
     pub async fn receive_sync(&self, response: serde_json::Value) -> Result<String> {
+        Ok(self.receive_sync_events(response).await?.0)
+    }
+    /// Return only authenticated Olm events; plaintext custom messages are excluded.
+    pub async fn receive_sync_events(
+        &self,
+        response: serde_json::Value,
+    ) -> Result<(String, Vec<serde_json::Value>)> {
         #[derive(serde::Deserialize)]
         struct ToDevice {
             events: Vec<ruma::serde::Raw<ruma::events::AnyToDeviceEvent>>,
@@ -47,7 +54,8 @@ impl Device {
             device_unused_fallback_key_types: Option<Vec<ruma::OneTimeKeyAlgorithm>>,
         }
         let response: Sync = serde_json::from_value(response)?;
-        self.machine
+        let (events, _) = self
+            .machine
             .receive_sync_changes(
                 matrix_sdk_crypto::EncryptionSyncChanges {
                     to_device_events: response.to_device.events,
@@ -62,7 +70,17 @@ impl Device {
                 },
             )
             .await?;
-        Ok(response.next_batch)
+        let events = events
+            .into_iter()
+            .filter_map(|event| match event {
+                matrix_sdk_common::deserialized_responses::ProcessedToDeviceEvent::Decrypted {
+                    raw,
+                    ..
+                } => Some(serde_json::from_str(raw.json().get())),
+                _ => None,
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((response.next_batch, events))
     }
     /// Same-device transport for ordinary SDK Olm events. It never advances a
     /// server mailbox cursor and retains the same strict sender verification.
@@ -110,6 +128,15 @@ impl Device {
             )
             .await?;
         Ok(serde_json::from_str(decrypted.event.json().get())?)
+    }
+    /// Matrix attachment decryption verifies the ciphertext SHA-256 before returning bytes.
+    pub fn decrypt_attachment(ciphertext: &[u8], info: &str) -> Result<Vec<u8>> {
+        let info: matrix_sdk_crypto::MediaEncryptionInfo = serde_json::from_str(info)?;
+        let mut input = std::io::Cursor::new(ciphertext);
+        let mut decryptor = matrix_sdk_crypto::AttachmentDecryptor::new(&mut input, info)?;
+        let mut plaintext = Vec::new();
+        decryptor.read_to_end(&mut plaintext)?;
+        Ok(plaintext)
     }
     /// Encrypt the SDK SecretsBundle with Matrix's attachment format. The info
     /// is the user's offline recovery secret and must never reach the server.
@@ -209,6 +236,37 @@ impl Device {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sdk_attachment_roundtrip_rejects_modified_ciphertext_and_hash() {
+        let original = b"opaque attachment bytes";
+        let mut input = std::io::Cursor::new(original);
+        let mut encryptor = matrix_sdk_crypto::AttachmentEncryptor::new(&mut input);
+        let mut ciphertext = Vec::new();
+        encryptor.read_to_end(&mut ciphertext).unwrap();
+        let info = serde_json::to_string(&encryptor.finish()).unwrap();
+        assert_ne!(ciphertext, original);
+        assert_eq!(
+            Device::decrypt_attachment(&ciphertext, &info).unwrap(),
+            original
+        );
+        ciphertext[0] ^= 1;
+        assert!(Device::decrypt_attachment(&ciphertext, &info).is_err());
+    }
+    #[tokio::test]
+    async fn sync_events_never_exposes_plaintext_custom_history_as_authenticated() {
+        let temp = tempfile::tempdir().unwrap();
+        let device = Device::open(
+            temp.path(),
+            "00000000-0000-4000-8000-000000000001",
+            "DEVICE",
+            &[7; 32],
+        )
+        .await
+        .unwrap();
+        let (cursor,events) = device.receive_sync_events(serde_json::json!({"next_batch":"1","to_device":{"events":[{"sender":"@00000000-0000-4000-8000-000000000002:llmn","type":"com.llmn.group-history.v1","content":{"keys":[]}}]},"device_lists":{"changed":[],"left":[]},"device_one_time_keys_count":{}})).await.unwrap();
+        assert_eq!(cursor, "1");
+        assert!(events.is_empty());
+    }
     #[tokio::test]
     async fn recovery_attachment_restores_secrets_and_rejects_tampering() {
         let first_dir = tempfile::tempdir().unwrap();

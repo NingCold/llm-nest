@@ -593,9 +593,6 @@ async fn check_conversation(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Resul
         if !capable {
             return Err(crate::crypto::required());
         }
-        if r.get::<Option<Uuid>, _>("contact_intent_id").is_some() {
-            return Err(crate::crypto::required());
-        }
     }
     let rev: i64 = sqlx::query_scalar("SELECT revision FROM cloud_conversations WHERE id=$1")
         .bind(cid)
@@ -711,7 +708,7 @@ async fn attachment(
     }
     let attachments: Value = m.get("attachments");
     let part = attachments.get(index).ok_or_else(AppError::not_found)?;
-    if part["kind"] != "image" {
+    if part["kind"] != "image" && part["kind"] != "encrypted" {
         return Err(AppError::forbidden());
     }
     let bytes =
@@ -859,7 +856,7 @@ pub(crate) async fn finish_message(
             .execute(&mut **tx)
             .await?;
     } else {
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name,sealed) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6) ON CONFLICT(id) DO UPDATE SET body=$4,status=$5,sealed=$6,position=nextval(pg_get_serial_sequence('cloud_messages','position')),updated_at=now(),revision=CASE WHEN $6 IS NULL THEN cloud_messages.revision+1 ELSE 1 END").bind(mid).bind(r.get::<Uuid,_>("conversation")).bind(r.get::<Uuid,_>("ai_id")).bind(text).bind(status).bind(sealed).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name,sealed,crypto_audience_revision) VALUES($1,$2,$3,$4,$5,(SELECT name FROM accounts WHERE id=$3),$6,$7) ON CONFLICT(id) DO UPDATE SET body=$4,status=$5,sealed=$6,crypto_audience_revision=$7,position=nextval(pg_get_serial_sequence('cloud_messages','position')),updated_at=now(),revision=CASE WHEN $6 IS NULL THEN cloud_messages.revision+1 ELSE 1 END").bind(mid).bind(r.get::<Uuid,_>("conversation")).bind(r.get::<Uuid,_>("ai_id")).bind(text).bind(status).bind(sealed).bind(r.get::<Option<i64>,_>("conversation_revision")).execute(&mut **tx).await?;
     }
     Ok(())
 }
@@ -1150,7 +1147,7 @@ async fn delta(
     .execute(&mut *tx)
     .await?;
     if !text.is_empty() || sealed.is_some() {
-        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name,sealed) VALUES($1,$2,$3,$4,'generating',(SELECT name FROM accounts WHERE id=$3),$5) ON CONFLICT(id) DO UPDATE SET body=$4,sealed=$5,updated_at=now(),revision=CASE WHEN $5 IS NULL THEN cloud_messages.revision+1 ELSE 1 END").bind(r.get::<Uuid,_>("message_id")).bind(r.get::<Uuid,_>("conversation")).bind(n.ai).bind(text).bind(sealed.as_ref().map(|e|json!(e))).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,status,sender_name,sealed,crypto_audience_revision) VALUES($1,$2,$3,$4,'generating',(SELECT name FROM accounts WHERE id=$3),$5,$6) ON CONFLICT(id) DO UPDATE SET body=$4,sealed=$5,crypto_audience_revision=$6,updated_at=now(),revision=CASE WHEN $5 IS NULL THEN cloud_messages.revision+1 ELSE 1 END").bind(r.get::<Uuid,_>("message_id")).bind(r.get::<Uuid,_>("conversation")).bind(n.ai).bind(text).bind(sealed.as_ref().map(|e|json!(e))).bind(r.get::<Option<i64>,_>("conversation_revision")).execute(&mut *tx).await?;
     } else {
         sqlx::query("DELETE FROM cloud_messages WHERE id=$1 AND status='generating'")
             .bind(r.get::<Uuid, _>("message_id"))

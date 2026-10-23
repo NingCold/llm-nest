@@ -398,6 +398,7 @@ async fn recover(api: &NodeClient, store: &Store, binding: &Binding) -> Result<(
                     .await?
             }
         };
+        store.started(&task, &receipt)?;
         let mut saved = result(&receipt, "uncertain", draft, Some("node_restart_uncertain"));
         crypto::seal_result(api, store, &cloud.conversation_id, "1", &mut saved).await?;
         store.final_result(&task, &saved)?;
@@ -519,7 +520,9 @@ async fn while_connected_with<T>(
     work: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     tokio::pin!(work);
-    let mut invalidations = tokio::time::interval(Duration::from_secs(1));
+    let interval = Duration::from_secs(1);
+    let mut invalidations =
+        tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     loop {
         tokio::select! {
             biased;
@@ -527,6 +530,8 @@ async fn while_connected_with<T>(
             _=invalidations.tick()=>{
                 crypto::sync(api,store,config,binding).await?;
                 consciousness::poll_state(api,store,binding,scopes).await?;
+                // Schedule from completion so a slow sync cannot starve the work branch.
+                invalidations.reset();
             },
             result=&mut work=>return result,
         }
@@ -594,15 +599,16 @@ async fn cycle(
             let Ok(_social_slot) = social_slots.try_acquire() else {
                 break;
             };
-            let profile = store.profile(&binding.ai)?;
             let prepared = async {
                 let router = ModelRouter::new(&config.providers)?;
                 let llm = AiClient::from_config(&config.providers)?.snapshot().await;
+                // The task can arrive after the cycle's mailbox sync. Its sender
+                // delivered Olm keys before submitting the message, so drain that
+                // mailbox before authenticating the newly discovered materials.
+                crypto::sync(&api, store, config, binding).await?;
                 let mut material = api.materials(&task.id).await?;
-                if material.conversation.encryption.is_some() {
-                    crypto::ensure_ready(store, &binding.ai)?;
-                    crypto::decrypt_materials(&api, store, &mut material).await?;
-                }
+                crypto::decrypt_materials(&api, store, &mut material).await?;
+                let profile = store.profile(&binding.ai)?;
                 let material_task = material.task.clone();
                 let sources = material.sources.clone();
                 let conversation_revision = material.conversation.revision.clone();
@@ -610,6 +616,7 @@ async fn cycle(
                     context::prepare_scoped(&api, &router, &profile, material, Some(store)).await?;
                 Ok::<_, anyhow::Error>((
                     material_task,
+                    profile,
                     llm,
                     request,
                     tokens,
@@ -632,6 +639,7 @@ async fn cycle(
             .await;
             let (
                 task,
+                profile,
                 llm,
                 request,
                 tokens,
@@ -729,7 +737,9 @@ async fn cycle(
             let mut last = tokio::time::Instant::now();
             let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
             let work = async {
-                let mut invalidations = tokio::time::interval(Duration::from_secs(1));
+                let interval = Duration::from_secs(1);
+                let mut invalidations =
+                    tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
                 let mut stream = while_connected_with(
                     &mut socket,
                     &api,
@@ -755,6 +765,7 @@ async fn cycle(
                         _=invalidations.tick()=>{
                             crypto::sync(&api,store,config,binding).await?;
                             consciousness::poll_state(&api,store,binding,&material_scopes).await?;
+                            invalidations.reset();
                         },
                         chunk=stream.next()=>match chunk {
                             Some(Ok(ChatChunk::Delta {content}))=>{

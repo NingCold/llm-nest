@@ -128,20 +128,33 @@ fn context_text(message: &NodeMessage) -> String {
     }
 }
 
-pub async fn messages(
+async fn messages_with_store(
     client: &NodeClient,
     task: &str,
     conversation_id: ConversationId,
     raw: &[NodeMessage],
+    store: Option<&Store>,
+    local: bool,
 ) -> Result<Vec<SocialMessage>> {
     let mut messages = Vec::new();
     for message in raw {
         let mut body = MessageBody::text(context_text(message));
         for attachment in &message.attachments {
             if attachment.kind == "image" {
-                let bytes = client
-                    .attachment(task, &message.id, attachment.index, &message.revision)
-                    .await?;
+                let bytes = if local {
+                    crate::direct::attachment(
+                        store.expect("direct context has a store"),
+                        &conversation_id.to_string(),
+                        &message.id,
+                        &message.revision,
+                        attachment.index,
+                    )?
+                } else {
+                    client
+                        .attachment(task, &message.id, attachment.index, &message.revision)
+                        .await?
+                };
+                let bytes = crate::crypto::validate_attachment_bytes(attachment, &bytes)?;
                 validate_image_download(&bytes, attachment.byte_length)?;
                 body.0.push(SocialContent::Image {
                     mime: Some(attachment.mime.clone()),
@@ -226,7 +239,7 @@ pub async fn prepare_scoped(
     store: Option<&Store>,
 ) -> Result<(ChatRequest, u64, Vec<ScopedSource>, Vec<MaterialScope>)> {
     let (request, tokens, derived, scopes, _) =
-        prepare_inner(client, router, profile, material, store).await?;
+        prepare_inner(client, router, profile, material, store, false).await?;
     Ok((request, tokens, derived, scopes))
 }
 /// Return the core-selected message sources, including local IDs for caller filtering.
@@ -243,11 +256,7 @@ pub async fn prepare_direct(
     Vec<MaterialScope>,
     Vec<connector::node::SourceRevision>,
 )> {
-    anyhow::ensure!(
-        material.reference.is_none() && material.messages.iter().all(|m| m.attachments.is_empty()),
-        "direct_text_only"
-    );
-    prepare_inner(client, router, profile, material, store).await
+    prepare_inner(client, router, profile, material, store, true).await
 }
 async fn prepare_inner(
     client: &NodeClient,
@@ -255,6 +264,7 @@ async fn prepare_inner(
     profile: &Profile,
     mut material: TaskMaterials,
     store: Option<&Store>,
+    local: bool,
 ) -> Result<(
     ChatRequest,
     u64,
@@ -337,6 +347,9 @@ async fn prepare_inner(
             creator_id,
             content,
             due_at,
+            expires_at,
+            utc_offset_minutes,
+            ..
         } => ContextTrigger::Contact(ContactIntent {
             id: intent_id.parse()?,
             conversation_id,
@@ -345,8 +358,11 @@ async fn prepare_inner(
             authorization_id: intent_id.parse()?,
             text: content.clone(),
             due_at: due_at.parse()?,
-            expires_at: material.task.expires_at.parse()?,
-            utc_offset_minutes: 0,
+            expires_at: expires_at
+                .as_ref()
+                .unwrap_or(&material.task.expires_at)
+                .parse()?,
+            utc_offset_minutes: utc_offset_minutes.unwrap_or(0),
             status: ContactIntentStatus::Executing,
             plan_id: None,
             revision: crate::consciousness::revision(revision)?,
@@ -355,11 +371,13 @@ async fn prepare_inner(
             updated_at: now,
         }),
     };
-    let messages = messages(
+    let messages = messages_with_store(
         client,
         &material.task.id,
         conversation_id,
         &material.messages,
+        store,
+        local,
     )
     .await?;
     let mut reference = None;
@@ -403,11 +421,13 @@ async fn prepare_inner(
                     created_at: now,
                     legacy: false,
                 },
-                messages: self::messages(
+                messages: messages_with_store(
                     client,
                     &material.task.id,
                     r.conversation.id.parse()?,
                     &r.messages,
+                    store,
+                    local,
                 )
                 .await?,
                 summary: reference_summary
@@ -669,6 +689,8 @@ mod tests {
             messages: vec![NodeMessage {
                 import_origin: None,
                 sealed: None,
+                audience_revision: None,
+                context_reference: None,
                 id: trigger,
                 position: "1".into(),
                 sender_id: peer,
@@ -679,6 +701,7 @@ mod tests {
                 revision: "1".into(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 attachments: vec![NodeAttachment {
+                    media_encryption_info: None,
                     index: 0,
                     kind: "file".into(),
                     mime: "text/plain".into(),
@@ -784,6 +807,10 @@ image_input=false
         let mut material = materials();
         material.task.automatic = true;
         material.task.trigger = NodeTrigger::Contact {
+            sealed: None,
+            audience_revision: None,
+            expires_at: None,
+            utc_offset_minutes: None,
             intent_id: uuid::Uuid::new_v4().to_string(),
             revision: "2".into(),
             creator_id: material.messages[0].sender_id.clone(),
@@ -834,19 +861,17 @@ image_input=false
                 .any(|m| m.id == s.message_id && m.revision == s.revision)
         }));
         material.messages[0].attachments.push(NodeAttachment {
+            media_encryption_info: None,
             index: 0,
             kind: "file".into(),
             mime: "text/plain".into(),
             byte_length: 1,
             name: None,
         });
-        assert_eq!(
-            prepare_direct(&api, &router(), &profile(), material, None)
-                .await
-                .unwrap_err()
-                .to_string(),
-            "direct_text_only"
-        );
+        let (request, _, _, _, _) = prepare_direct(&api, &router(), &profile(), material, None)
+            .await
+            .unwrap();
+        assert!(format!("{:?}", request.messages).contains("text/plain"));
     }
     #[tokio::test]
     async fn context_uses_core_and_file_metadata_without_fetching_bytes() {
@@ -887,6 +912,7 @@ image_input=false
         message.id = id.into();
         message.attachments = (0..count)
             .map(|index| NodeAttachment {
+                media_encryption_info: None,
                 index,
                 kind: "image".into(),
                 mime: "image/png".into(),

@@ -14,10 +14,10 @@ function harness() {
     useRef(initial) { const i = index++; return slots[i] ||= { current: initial }; },
     useEffect(fn, deps) { const i = index++, previous = slots[i]; if (!previous || deps.some((d, n) => d !== previous.deps[n])) { previous?.cleanup?.(); const record = { deps }; slots[i] = record; effects.push(() => { record.cleanup = fn(); }); } },
   };
-  const api = { HttpError, server: "https://example.test", async request(path, method = "GET", body) { calls.push(structuredClone({ path, method, body })); return api.respond(path, method, body); }, respond: async () => structuredClone(initial) };
+  const api = { encryptions: 0, HttpError, server: "https://example.test", async request(path, method = "GET", body) { calls.push(structuredClone({ path, method, body })); return api.respond(path, method, body); }, respond: async () => structuredClone(initial) };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/Participation.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText + "\nexports.PolicyEditor = PolicyEditor; exports.SettingsEditor = SettingsEditor; exports.IntentEditor = IntentEditor;", {
-    exports, crypto: { randomUUID }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; return require(name); },
+    exports, crypto: { randomUUID }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name === "./crypto/content") return { projectIntent: async i => i, encryptIntent: async () => ({ cipher: `sealed-${++api.encryptions}` }) }; if (name === "./crypto/engine") return { cryptoDevice: () => "device" }; return require(name); },
   });
   return { exports, api, calls, remount() { slots.forEach(slot => slot?.cleanup?.()); slots.length = 0; }, render(fn, ...props) { index = 0; return fn(...props); }, async effects() { while (effects.length) effects.shift()(); await tick(); } };
 }
@@ -112,5 +112,19 @@ const submit = tree => all(tree, node => node.type === "form")[0].props.onSubmit
   tree = settings.render(settings.exports.SettingsEditor, settingProps);
   change(all(tree, n => n.type === "select")[0], "skip"); tree = settings.render(settings.exports.SettingsEditor, settingProps); await submit(tree);
   assert.equal(settingWrites[0][0], "/contact-settings"); assert.equal(settingWrites[0][2].quietAction, "skip"); assert.equal(settingWrites[0][2].expectedRevision, "2");
+  const sealedContact = harness();
+  const encryptedConversation = { ...conversation, encryption: { version: 1, activationPosition: "0" }, revision: "7" };
+  const encryptedRead = () => sealedContact.render(sealedContact.exports.useParticipation, "window", "self", "1", encryptedConversation);
+  sealedContact.exports.clearParticipationCommands(); encryptedRead(); await sealedContact.effects();
+  sealedContact.api.respond = async (_path, method) => { if (method === "GET") return structuredClone(initial); throw Error("lost encrypted intent acknowledgement"); };
+  await encryptedRead().execute("/contact-intents", "POST", { aiId: "ai", content: "secret contact", dueAt: intent.dueAt, expiresAt: intent.expiresAt, utcOffsetMinutes: 480 });
+  const originalSealed = sealedContact.calls.at(-1);
+  await encryptedRead().execute();
+  assert.equal(sealedContact.api.encryptions, 1, "unknown contact retries do not reencrypt");
+  assert.deepEqual(sealedContact.calls.at(-1), originalSealed);
+  assert.equal(originalSealed.body.content, "");
+  assert.equal(originalSealed.body.expectedConversationRevision, "7");
+  assert.ok(originalSealed.body.intentId);
+  assert.equal(JSON.stringify(originalSealed.body).includes("secret contact"), false);
   console.log("PASS: cloud participation permissions, stable editors and retries, UTC contact validation, and quiet-time commands");
 })().catch(error => { console.error(error); process.exitCode = 1; });

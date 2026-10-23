@@ -51,7 +51,16 @@ async function flushInner(s: Session) {
   let queued = JSON.parse(localStorage.getItem(queueKey) ?? "[]") as { id: string; type?: Matrix.RequestType; body: Record<string, unknown>; kind: string }[];
   while (queued.length) {
     const outgoing = queued[0];
-    const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id, kind: outgoing.kind, body: outgoing.body });
+    let response: unknown;
+    try { response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id, kind: outgoing.kind, body: outgoing.body }); }
+    catch (error) {
+      if (outgoing.body.llmn_purpose === "conversationHistory" && error instanceof HttpError && [403, 404, 409].includes(error.status)) {
+        current(s);
+        const latest = JSON.parse(localStorage.getItem(queueKey) ?? "[]") as typeof queued;
+        localStorage.setItem(queueKey, JSON.stringify(latest.filter(item => item.body.llmn_purpose !== "conversationHistory" || item.body.llmn_conversation_id !== outgoing.body.llmn_conversation_id || item.body.llmn_expected_revision !== outgoing.body.llmn_expected_revision)));
+      }
+      throw error;
+    }
     current(s);
     if (outgoing.type !== undefined) await s.machine.markRequestAsSent(outgoing.id, outgoing.type, JSON.stringify(response));
     queued = (JSON.parse(localStorage.getItem(queueKey) ?? "[]") as typeof queued).filter(item => item.id !== outgoing.id);
@@ -91,6 +100,12 @@ export async function syncCrypto() {
       if (processed.encryptionInfo.sender.toString() !== event.sender) continue;
       if (event.type === "com.llmn.recovery.v1" && event.sender === matrixUser(s.account)) {
         if (processed.encryptionInfo.senderDevice?.toString() === event.content.senderDevice) s.authorization = event.content;
+      } else if (event.type === "com.llmn.group-history.v1") {
+        const group = await request<import("../types").Snapshot>("/chat/init");
+        const conversation = group.conversations.find(c => c.id === event.content.conversationId);
+        if (!conversation || conversation.revision !== event.content.revision || !conversation.members.some(m => matrixUser(m.account.id) === event.sender)) { window.dispatchEvent(new CustomEvent("llmn-crypto-warning", { detail: "群历史授权已变化，过期密钥分享已拒绝；请按当前成员重新分享" })); continue; }
+        if (!Array.isArray(event.content.keys) || event.content.keys.some((key: { room_id: string }) => key.room_id !== matrixRoom(conversation.id))) { window.dispatchEvent(new CustomEvent("llmn-crypto-warning", { detail: "历史密钥包含其他范围，已拒绝导入" })); continue; }
+        await s.machine.importExportedRoomKeys(JSON.stringify(event.content.keys), () => {});
       } else if (event.type === "com.llmn.ai-history.v1" && event.sender === matrixUser(event.content.aiId)) {
         await s.machine.importExportedRoomKeys(JSON.stringify(event.content.keys), () => {});
       }
@@ -373,4 +388,28 @@ export async function restoreRecoveryFile(file: RecoveryFile) {
   confirmRecovery();
   await syncCrypto();
   return deviceStatus();
+}
+
+export function encryptAttachment(data: Uint8Array) {
+  const encrypted = session().sdk.Attachment.encrypt(data);
+  return { data: bytes64(encrypted.encryptedData), mediaEncryptionInfo: encrypted.mediaEncryptionInfo! };
+}
+export function decryptAttachment(data: Uint8Array, mediaEncryptionInfo: string) {
+  const s = session();
+  return s.sdk.Attachment.decrypt(new s.sdk.EncryptedAttachment(data, mediaEncryptionInfo));
+}
+export async function shareConversationHistory(conversation: import("../types").Conversation) {
+  const s = session(), room = matrixRoom(conversation.id);
+  await prepareEncryption(room, conversation.members.map(m => m.account.id));
+  const keys = JSON.parse(await s.machine.exportRoomKeys(key => key.roomId.toString() === room));
+  for (const member of conversation.members) {
+    const devices = await s.machine.getUserDevices(new s.sdk.UserId(matrixUser(member.account.id)));
+    for (const device of devices.devices().filter(d => d.isVerified() && d.isCrossSignedByOwner() && !d.isDeleted())) {
+      if (member.account.id === s.account && device.deviceId.toString() === s.deviceId) continue;
+      const encrypted = JSON.parse(await device.encryptToDeviceEvent("com.llmn.group-history.v1", { conversationId: conversation.id, revision: conversation.revision, keys }, s.sdk.CollectStrategy.onlyTrustedDevices()));
+      const id = crypto.randomUUID();
+      queueRequest(s, { id, kind: "toDevice", body: { event_type: "m.room.encrypted", txn_id: id, llmn_purpose: "conversationHistory", llmn_conversation_id: conversation.id, llmn_expected_revision: conversation.revision, messages: { [matrixUser(member.account.id)]: { [device.deviceId.toString()]: encrypted } } } });
+    }
+  }
+  await flush(s);
 }

@@ -34,6 +34,7 @@ export interface AgentModelChoice {
 export interface AgentManagementView { profile: AgentProfile; models: AgentModelChoice[] }
 export type SaveAgentProfile = Omit<AgentProfile, "revision"> & { type: "saveProfile"; expectedRevision: string };
 export interface Attachment {
+  mediaEncryptionInfo?: string;
   index: number;
   kind: string;
   name?: string;
@@ -41,6 +42,8 @@ export interface Attachment {
   byteLength: number;
 }
 export interface Message {
+  attachmentRoute?: "local";
+  audienceRevision?: string | null;
   sealed?: import("./crypto/content").Sealed | null;
   cryptoError?: string;
   local?: { synced: boolean };
@@ -98,6 +101,9 @@ export interface ContactSettings {
   quietAction: "defer" | "skip";
 }
 export interface ContactIntent {
+  sealed?: import("./crypto/content").Sealed | null;
+  audienceRevision?: string | null;
+  cryptoError?: string;
   id: string;
   creatorId: string;
   aiId: string;
@@ -128,8 +134,8 @@ export interface SourceRevision { messageId: string; revision: string }
 export interface ReferenceSelection { conversationId: string; sources: SourceRevision[] }
 export interface DraftReference { actorId: string; selection: ReferenceSelection }
 export type CloudDraftRecord = import("../social/drafts").DraftRecord<DraftReference>;
-export interface NodeConversation { id: string; kind: "direct" | "group"; name: string; revision: string; members: Account[] }
-export interface ReferenceMessage { id: string; senderId: string; senderName: string; text: string; revision: string; createdAt: string; position: string; attachments: Attachment[]; replyTo: string | null; mentions: string[] }
+export interface NodeConversation { encryption?: Conversation["encryption"]; id: string; kind: "direct" | "group"; name: string; revision: string; members: Account[] }
+export interface ReferenceMessage { sealed?: import("./crypto/content").Sealed | null; audienceRevision?: string | null; contextReference?: Message["contextReference"]; id: string; senderId: string; senderName: string; text: string; revision: string; createdAt: string; position: string; attachments: Attachment[]; replyTo: string | null; mentions: string[] }
 export interface ReferencePreview { conversation: NodeConversation; messages: ReferenceMessage[] }
 export type MemoryKind = "preference" | "fact" | "shared_experience" | "open_topic";
 export interface MemoryItem { id: string; revision: string; kind: MemoryKind; text: string; status: "confirmed" | "stale" | "forgotten"; source: SourceRevision | null; createdAt: string; updatedAt: string }

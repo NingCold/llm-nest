@@ -26,6 +26,9 @@ fn initialize(store: &Store) -> Result<()> {
  CREATE TABLE IF NOT EXISTS crypto_control_outbox(ai TEXT NOT NULL,kind TEXT NOT NULL,json TEXT NOT NULL,file TEXT,PRIMARY KEY(ai,kind));
  CREATE TABLE IF NOT EXISTS crypto_resource_outbox(id TEXT PRIMARY KEY,json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS crypto_window_activation(cid TEXT PRIMARY KEY,position TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS crypto_conversations(ai TEXT NOT NULL,cid TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(ai,cid));
+ CREATE TABLE IF NOT EXISTS crypto_history_shares(ai TEXT NOT NULL,cid TEXT NOT NULL,device TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(ai,cid,device));
+ CREATE TABLE IF NOT EXISTS crypto_incoming_history(ai TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(ai,id));
  CREATE TABLE IF NOT EXISTS crypto_windows(cid TEXT PRIMARY KEY,ai TEXT NOT NULL,encrypted INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS crypto_resources(id TEXT PRIMARY KEY,revision TEXT NOT NULL,status TEXT NOT NULL);")?;
     Ok(())
@@ -189,15 +192,32 @@ pub async fn sync(
         .await?;
     let handover = response["llmn_handover_state"].as_str().unwrap_or("active");
     store.db.execute("INSERT INTO crypto_handover VALUES(?1,?2) ON CONFLICT(ai) DO UPDATE SET state=excluded.state",params![binding.ai,handover])?;
-    let cursor = s.device.receive_sync(response).await?;
-    store.db.execute(
+    let (cursor, events) = s.device.receive_sync_events(response).await?;
+    let tx = store.db.unchecked_transaction()?;
+    for event in events {
+        if event["type"] == "com.llmn.group-history.v1" {
+            let json = serde_json::to_string(&event)?;
+            use sha2::{Digest, Sha256};
+            let id = format!("{:x}", Sha256::digest(json.as_bytes()));
+            tx.execute(
+                "INSERT INTO crypto_incoming_history VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
+                params![binding.ai, id, json],
+            )?;
+        }
+    }
+    tx.execute(
         "UPDATE crypto_devices SET cursor=?2 WHERE ai=?1",
         params![binding.ai, cursor],
     )?;
+    tx.commit()?;
     apply_resources(api, store, Some(config), &s, None).await?;
     let conversations = api.crypto_conversations().await?;
     let mut windows = Vec::with_capacity(conversations.len());
+    receive_group_history(store, &s, &conversations).await?;
     for conversation in conversations {
+        if conversation.kind == "group" {
+            share_group_history(api, store, &s, &conversation).await?;
+        }
         register_window(store, &conversation, &binding.ai)?;
         windows.push(conversation.id);
     }
@@ -418,6 +438,50 @@ async fn decrypt_message(
             && p["mentions"] == json!(message.mentions),
         "sealed content binding mismatch"
     );
+    if let Some(revision) = &message.audience_revision {
+        ensure!(
+            p["conversationRevision"] == *revision,
+            "sealed audience revision mismatch"
+        );
+    }
+    let selection = message
+        .context_reference
+        .as_ref()
+        .map(|r| json!({"conversationId":r.conversation_id,"sources":r.sources}));
+    ensure!(
+        p.get("reference").unwrap_or(&serde_json::Value::Null) == &json!(selection),
+        "sealed reference mismatch"
+    );
+    let inner: Vec<NodeAttachment> = p
+        .get("attachments")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or_default();
+    ensure!(
+        inner.len() == message.attachments.len(),
+        "sealed attachment count mismatch"
+    );
+    for (outer, attachment) in message.attachments.iter().zip(&inner) {
+        ensure!(
+            outer.index == attachment.index
+                && outer.kind == "encrypted"
+                && outer.mime == "application/octet-stream"
+                && outer.name.is_none(),
+            "sealed attachment metadata mismatch"
+        );
+        ensure!(
+            attachment.media_encryption_info.is_some()
+                && matches!(attachment.kind.as_str(), "image" | "file"),
+            "invalid sealed attachment metadata"
+        );
+        ensure!(
+            outer.byte_length == attachment.byte_length,
+            "sealed attachment length mismatch"
+        );
+    }
+    validate_attachment_metadata(&inner)?;
+    message.attachments = inner;
     message.text = p["text"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("invalid sealed text"))?
@@ -462,45 +526,235 @@ pub async fn decrypt_materials(
 ) -> Result<()> {
     initialize(store)?;
     register_window(store, &material.conversation, &material.ai.id)?;
-    if material.conversation.encryption.is_none() {
+    let encrypted = material.conversation.encryption.is_some();
+    let has_encrypted_reference = material
+        .reference
+        .as_ref()
+        .is_some_and(|r| r.conversation.encryption.is_some());
+    if !encrypted && !has_encrypted_reference {
         return Ok(());
     }
     ensure_ready(store, &material.ai.id)?;
     let s = session(store, &material.ai.id).await?;
-    apply_resources(api, store, None, &s, Some(&material.conversation.id)).await?;
-    prepare_room(
+    if encrypted {
+        apply_resources(api, store, None, &s, Some(&material.conversation.id)).await?;
+        prepare_room(
+            api,
+            store,
+            &s,
+            &room_id(&material.conversation.id),
+            &material.conversation.members,
+            true,
+            true,
+            Some(&material.conversation.revision),
+        )
+        .await?;
+        decrypt_conversation_messages(
+            api,
+            store,
+            &s,
+            &material.conversation,
+            &mut material.messages,
+        )
+        .await?;
+        decrypt_contact(api, &s, &material.conversation, &mut material.task.trigger).await?;
+    }
+    if let Some(reference) = &mut material.reference {
+        decrypt_reference(api, store, &material.ai.id, reference).await?;
+    }
+    Ok(())
+}
+pub async fn decrypt_reference(
+    api: &NodeClient,
+    store: &Store,
+    ai: &str,
+    reference: &mut NodeReference,
+) -> Result<()> {
+    if reference.conversation.encryption.is_none() {
+        return Ok(());
+    }
+    let s = session(store, ai).await?;
+    register_window(store, &reference.conversation, ai)?;
+    decrypt_conversation_messages(
         api,
         store,
         &s,
-        &room_id(&material.conversation.id),
-        &material.conversation.members,
-        true,
-        Some(&material.conversation.revision),
+        &reference.conversation,
+        &mut reference.messages,
     )
-    .await?;
-    for message in &mut material.messages {
-        if message.position.parse::<u64>()?
-            > material
-                .conversation
-                .encryption
-                .as_ref()
-                .unwrap()
-                .activation_position
-                .parse::<u64>()?
+    .await
+}
+async fn decrypt_conversation_messages(
+    api: &NodeClient,
+    store: &Store,
+    s: &Session,
+    conversation: &NodeConversation,
+    messages: &mut [NodeMessage],
+) -> Result<()> {
+    for message in messages {
+        if conversation.kind == "group" && message.sealed.is_some() {
+            ensure!(
+                message.audience_revision.is_some(),
+                "encrypted group message missing audience revision"
+            );
+        }
+        if let Some(encryption) = &conversation.encryption
+            && message.position.parse::<u64>()? > encryption.activation_position.parse::<u64>()?
         {
             ensure!(
                 message.sealed.is_some(),
                 "encrypted window contains unsealed message"
             );
         }
-        decrypt_message(api, &s, &material.conversation.id, message).await?;
-    }
-    if let Some(reference) = &mut material.reference {
-        for message in &mut reference.messages {
-            decrypt_message(api, &s, &reference.conversation.id, message).await?;
+        if let Some(envelope) = &message.sealed {
+            query_sender_identity(api, store, s, envelope).await?;
         }
+        decrypt_message(api, s, &conversation.id, message).await?;
     }
     Ok(())
+}
+fn same_instant(value: &serde_json::Value, expected: &str) -> Result<bool> {
+    let value = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("invalid sealed timestamp"))?;
+    Ok(chrono::DateTime::parse_from_rfc3339(value)?
+        == chrono::DateTime::parse_from_rfc3339(expected)?)
+}
+async fn decrypt_contact(
+    api: &NodeClient,
+    s: &Session,
+    conversation: &NodeConversation,
+    trigger: &mut NodeTrigger,
+) -> Result<()> {
+    if let NodeTrigger::Contact {
+        intent_id,
+        creator_id,
+        content,
+        due_at,
+        expires_at,
+        utc_offset_minutes,
+        sealed,
+        audience_revision,
+        ..
+    } = trigger
+    {
+        ensure!(
+            expires_at.is_some() && utc_offset_minutes.is_some() && audience_revision.is_some(),
+            "encrypted contact metadata missing"
+        );
+        let envelope = sealed
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("encrypted contact requires sealed content"))?;
+        ensure!(
+            envelope.room_id == room_id(&conversation.id)
+                && envelope.sender == user_id(creator_id)
+                && envelope.event_id == format!("${intent_id}.1.final"),
+            "sealed contact route mismatch"
+        );
+        let event = s
+            .device
+            .open_envelope(&serde_json::to_value(envelope)?)
+            .await?;
+        let p = &event["content"];
+        ensure!(
+            p["version"] == 1
+                && p["server"] == api.origin()
+                && p["kind"] == "contactIntent"
+                && p["conversationId"] == conversation.id
+                && p["messageId"] == *intent_id
+                && p["senderId"] == *creator_id
+                && p["revision"] == "1"
+                && p["aiId"] == s.ai
+                && same_instant(&p["dueAt"], due_at)?
+                && same_instant(
+                    &p["expiresAt"],
+                    expires_at.as_deref().expect("validated contact expiry")
+                )?
+                && p["utcOffsetMinutes"] == json!(utc_offset_minutes)
+                && p["conversationRevision"] == json!(audience_revision),
+            "sealed contact binding mismatch"
+        );
+        *content = p["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("invalid contact content"))?
+            .into();
+    }
+    Ok(())
+}
+pub fn validate_attachment_metadata(attachments: &[NodeAttachment]) -> Result<()> {
+    ensure!(attachments.len() <= 8, "too many attachments");
+    let mut images = (0, 0);
+    let mut files = (0, 0);
+    for (index, a) in attachments.iter().enumerate() {
+        ensure!(a.index == index, "invalid attachment index");
+        match a.kind.as_str() {
+            "image" => {
+                images.0 += 1;
+                images.1 += a.byte_length;
+                ensure!(
+                    a.byte_length > 0
+                        && a.byte_length <= 4 * 1024 * 1024
+                        && matches!(a.mime.as_str(), "image/png" | "image/jpeg" | "image/webp"),
+                    "invalid image metadata"
+                );
+            }
+            "file" => {
+                files.0 += 1;
+                files.1 += a.byte_length;
+                ensure!(
+                    !a.mime.is_empty()
+                        && a.mime.len() <= 255
+                        && !a.mime.chars().any(char::is_control),
+                    "invalid file mime"
+                );
+                ensure!(
+                    a.byte_length <= 10 * 1024 * 1024
+                        && a.name
+                            .as_ref()
+                            .is_none_or(|n| social::attachment::valid_file_name(n)),
+                    "invalid file metadata"
+                );
+            }
+            _ => anyhow::bail!("invalid attachment kind"),
+        }
+    }
+    ensure!(
+        images.0 <= 4 && images.1 <= 8 * 1024 * 1024 && files.0 <= 4 && files.1 <= 20 * 1024 * 1024,
+        "attachment limits exceeded"
+    );
+    Ok(())
+}
+
+pub fn validate_attachment_bytes(
+    attachment: &NodeAttachment,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>> {
+    let bytes = match &attachment.media_encryption_info {
+        Some(info) => Device::decrypt_attachment(ciphertext, info)?,
+        None => ciphertext.to_vec(),
+    };
+    ensure!(
+        bytes.len() as u64 == attachment.byte_length,
+        "attachment length mismatch"
+    );
+    if attachment.kind == "image" {
+        let format = image::guess_format(&bytes)?;
+        let expected = match attachment.mime.as_str() {
+            "image/png" => image::ImageFormat::Png,
+            "image/jpeg" => image::ImageFormat::Jpeg,
+            "image/webp" => image::ImageFormat::WebP,
+            _ => anyhow::bail!("invalid image mime"),
+        };
+        ensure!(format == expected, "image format mismatch");
+        let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(4096);
+        limits.max_image_height = Some(4096);
+        limits.max_alloc = Some(64 * 1024 * 1024);
+        reader.limits(limits);
+        reader.decode()?;
+    }
+    Ok(bytes)
 }
 
 /// Summary selection and provider input must use authenticated plaintext too.
@@ -531,6 +785,31 @@ pub async fn decrypt_history(
         decrypt_message(api, &s, &history.conversation.id, message).await?;
     }
     Ok(())
+}
+fn frozen_run_revision(store: &Store, ai: &str, cid: &str, run: &str) -> Result<String> {
+    let start: Option<String> = store
+        .db
+        .query_row(
+            "SELECT start_json FROM tasks WHERE ai=?1 AND json_extract(receipt_json,'$.runId')=?2",
+            params![ai, run],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(start) = start {
+        return Ok(serde_json::from_str::<StartRequest>(&start)?.conversation_revision);
+    }
+    let local: bool = store.db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='direct_turns')",
+        [],
+        |r| r.get(0),
+    )?;
+    if local {
+        let revision: Option<String> = store.db.query_row("SELECT json_extract(w.bootstrap,'$.conversation.revision') FROM direct_turns t JOIN direct_windows w ON w.cid=t.cid WHERE t.request=?1 AND w.ai=?2 AND w.cid=?3",params![run,ai,cid],|r|r.get(0)).optional()?;
+        if let Some(revision) = revision {
+            return Ok(revision);
+        }
+    }
+    anyhow::bail!("encrypted run has no frozen conversation revision")
 }
 #[allow(clippy::too_many_arguments)]
 async fn freeze(
@@ -565,7 +844,9 @@ async fn freeze(
         return Ok(serde_json::from_str(&prior)?);
     }
     let s = session(store, ai).await?;
-    let p = json!({"version":1,"server":api.origin(),"kind":kind,"conversationId":cid,"messageId":id,"senderId":ai,"revision":revision,"text":text,"replyTo":reply,"mentions":mentions,"runId":run,"sequence":sequence});
+    let run = run.ok_or_else(|| anyhow::anyhow!("encrypted output requires a frozen run"))?;
+    let audience_revision = frozen_run_revision(store, ai, cid, run)?;
+    let p = json!({"conversationRevision":audience_revision,"attachments":[],"reference":null,"version":1,"server":api.origin(),"kind":kind,"conversationId":cid,"messageId":id,"senderId":ai,"revision":revision,"text":text,"replyTo":reply,"mentions":mentions,"runId":run,"sequence":sequence});
     let envelope = SealedEnvelope {
         version: 1,
         room_id: room_id(cid),
@@ -591,17 +872,19 @@ pub async fn seal_result(
     result: &mut ResultRequest,
 ) -> Result<()> {
     initialize(store)?;
+    if !encrypted(store, cid)? {
+        return Ok(());
+    }
+    let run_id = &result.run_id;
     let ai: Option<String> = store
         .db
         .query_row(
-            "SELECT ai FROM crypto_windows WHERE cid=?1 AND encrypted=1",
-            [cid],
+            "SELECT ai FROM tasks WHERE json_extract(receipt_json,'$.runId')=?1",
+            [run_id.as_str()],
             |r| r.get(0),
         )
         .optional()?;
-    let Some(ai) = ai else {
-        return Ok(());
-    };
+    let ai = ai.ok_or_else(|| anyhow::anyhow!("encrypted run identity unavailable"))?;
     result.sealed = Some(
         freeze(
             api,
@@ -630,17 +913,22 @@ pub async fn seal_delta(
     frame: &mut ClientFrame,
 ) -> Result<()> {
     initialize(store)?;
+    if !encrypted(store, cid)? {
+        return Ok(());
+    }
+    let run_id = match frame {
+        ClientFrame::Delta { run_id, .. } => run_id,
+        _ => return Ok(()),
+    };
     let ai: Option<String> = store
         .db
         .query_row(
-            "SELECT ai FROM crypto_windows WHERE cid=?1 AND encrypted=1",
-            [cid],
+            "SELECT ai FROM tasks WHERE json_extract(receipt_json,'$.runId')=?1",
+            [run_id.as_str()],
             |r| r.get(0),
         )
         .optional()?;
-    let Some(ai) = ai else {
-        return Ok(());
-    };
+    let ai = ai.ok_or_else(|| anyhow::anyhow!("encrypted run identity unavailable"))?;
     let key = match frame {
         ClientFrame::Delta {
             run_id, sequence, ..
@@ -749,7 +1037,10 @@ async fn apply_resources(
                     "resource revision rollback"
                 );
                 ensure!(
-                    !(status == "forgotten" || status == "stale") || resource.tombstone.is_some(),
+                    !(status == "forgotten" || status == "stale")
+                        || resource.tombstone.is_some()
+                        || resource.kind == "summarySettings"
+                            && resource.revision.parse::<u64>()? > revision.parse::<u64>()?,
                     "resource tombstone cannot be resurrected"
                 );
             }
@@ -790,6 +1081,14 @@ async fn apply_resource(
     ensure!(r.ai_id == s.ai, "resource actor mismatch");
     if let Some(tombstone) = &r.tombstone {
         if let Some(cid) = &r.conversation_id {
+            if r.kind == "summarySettings" {
+                store.disable_summaries(&s.ai, cid, Some(&r.revision))?;
+                store.db.execute(
+                    "UPDATE conscious_scopes SET epoch=?3 WHERE ai=?1 AND cid=?2",
+                    params![s.ai, cid, crate::id()],
+                )?;
+                return Ok(());
+            }
             let table = match r.kind.as_str() {
                 "memory" => "conscious_memory",
                 "summary" => "conscious_summaries",
@@ -949,6 +1248,8 @@ pub fn capable(store: &Store, ai: &str) -> Result<bool> {
         .optional()?
         .unwrap_or(false))
 }
+// Keep trust requirements and run rotation independent: history reads must not rotate an active run.
+#[allow(clippy::too_many_arguments)]
 async fn prepare_room(
     api: &NodeClient,
     store: &Store,
@@ -956,6 +1257,7 @@ async fn prepare_room(
     room: &str,
     members: &[NodeAccount],
     require_all: bool,
+    new_run: bool,
     audience_revision: Option<&str>,
 ) -> Result<()> {
     use llmn_crypto::matrix_sdk_crypto::{CollectStrategy, EncryptionSettings};
@@ -1025,7 +1327,7 @@ async fn prepare_room(
             |r| r.get(0),
         )
         .optional()?;
-    if require_all || previous.as_ref().is_some_and(|old| old != &fingerprint) {
+    if new_run || previous.as_ref().is_some_and(|old| old != &fingerprint) {
         s.device
             .machine()
             .discard_room_key(&llmn_crypto::ruma::RoomId::parse(room)?)
@@ -1365,6 +1667,9 @@ pub async fn decrypt_bootstrap(
 ) -> Result<()> {
     initialize(store)?;
     register_window(store, &bootstrap.conversation, &bootstrap.ai.id)?;
+    for reference in &mut bootstrap.references {
+        decrypt_reference(api, store, &bootstrap.ai.id, reference).await?;
+    }
     if bootstrap.conversation.encryption.is_none() {
         return Ok(());
     }
@@ -1378,6 +1683,7 @@ pub async fn decrypt_bootstrap(
         &room_id(&bootstrap.conversation.id),
         &bootstrap.conversation.members,
         true,
+        false,
         Some(&bootstrap.conversation.revision),
     )
     .await?;
@@ -1411,6 +1717,10 @@ pub async fn direct_input(
     sealed: Option<SealedEnvelope>,
     message_id: Option<String>,
     key_messages: Vec<serde_json::Value>,
+    encrypted_attachments: &[connector::crypto::EncryptedAttachment],
+    reply_to: Option<String>,
+    reference: Option<ReferenceSelection>,
+    expected_conversation_revision: Option<String>,
 ) -> Result<Option<NodeMessage>> {
     initialize(store)?;
     let encrypted: bool = store
@@ -1427,30 +1737,62 @@ pub async fn direct_input(
             sealed.is_none(),
             "sealed input requires an encrypted window"
         );
-        return Ok(None);
+        ensure!(
+            encrypted_attachments.is_empty(),
+            "encrypted attachments require encrypted window"
+        );
     }
     ensure!(
-        text.is_empty(),
+        !encrypted || text.is_empty(),
         "encrypted direct input must omit plaintext"
     );
     let mut message = NodeMessage {
-        id: message_id
-            .ok_or_else(|| anyhow::anyhow!("encrypted direct input requires message id"))?,
+        id: if encrypted {
+            message_id
+                .ok_or_else(|| anyhow::anyhow!("encrypted direct input requires message id"))?
+        } else {
+            message_id.unwrap_or_else(crate::id)
+        },
         position: "0".into(),
         sender_id: owner.into(),
         sender_name: String::new(),
-        reply_to: None,
+        reply_to,
         mentions: vec![],
-        text: String::new(),
+        text: text.into(),
         revision: "1".into(),
         created_at: chrono::Utc::now().to_rfc3339(),
-        attachments: vec![],
+        attachments: encrypted_attachments
+            .iter()
+            .map(|a| {
+                Ok(NodeAttachment {
+                    index: a.index,
+                    kind: "encrypted".into(),
+                    mime: "application/octet-stream".into(),
+                    byte_length: base64::engine::general_purpose::STANDARD
+                        .decode(&a.data)?
+                        .len() as u64,
+                    name: None,
+                    media_encryption_info: None,
+                })
+            })
+            .collect::<Result<_>>()?,
+        audience_revision: expected_conversation_revision,
+        context_reference: reference.map(|r| NodeContextReference {
+            conversation_id: r.conversation_id,
+            sources: r.sources,
+            revision: "1".into(),
+            stale: false,
+        }),
         import_origin: None,
-        sealed: Some(
-            sealed
-                .ok_or_else(|| anyhow::anyhow!("encrypted direct input requires sealed content"))?,
-        ),
+        sealed,
     };
+    if !encrypted {
+        return Ok(Some(message));
+    }
+    ensure!(
+        message.sealed.is_some(),
+        "encrypted direct input requires sealed content"
+    );
     let s = session(store, ai).await?;
     let mut events = Vec::new();
     for body in key_messages {
@@ -1467,6 +1809,15 @@ pub async fn direct_input(
     }
     s.device.receive_local_events(events).await?;
     decrypt_message(api, &s, cid, &mut message).await?;
+    for a in encrypted_attachments {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(&a.data)?;
+        let metadata = message
+            .attachments
+            .iter()
+            .find(|m| m.index == a.index)
+            .ok_or_else(|| anyhow::anyhow!("attachment index mismatch"))?;
+        validate_attachment_bytes(metadata, &bytes)?;
+    }
     Ok(Some(message))
 }
 pub async fn seal_direct_message(
@@ -1576,6 +1927,7 @@ async fn publish_resource(
             s,
             &room,
             &members,
+            false,
             false,
             Some(&audience.revision),
         )
@@ -1769,7 +2121,7 @@ async fn share_admin_history(api: &NodeClient, store: &Store, s: &Session) -> Re
         }
         let cids: Vec<String> = store
             .db
-            .prepare("SELECT cid FROM crypto_windows WHERE ai=?1 AND encrypted=1")?
+            .prepare("SELECT cid FROM crypto_conversations WHERE ai=?1 AND json_extract(json,'$.encryption') IS NOT NULL")?
             .query_map([&s.ai], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for cid in cids {
@@ -1781,6 +2133,7 @@ async fn share_admin_history(api: &NodeClient, store: &Store, s: &Session) -> Re
                         s,
                         &room_id(&cid),
                         &history.conversation.members,
+                        true,
                         true,
                         Some(&history.conversation.revision),
                     )
@@ -1897,6 +2250,158 @@ async fn share_admin_history(api: &NodeClient, store: &Store, s: &Session) -> Re
     Ok(())
 }
 
+async fn receive_group_history(
+    store: &Store,
+    s: &Session,
+    conversations: &[NodeConversation],
+) -> Result<()> {
+    let pending: Vec<(String, String)> = store
+        .db
+        .prepare("SELECT id,json FROM crypto_incoming_history WHERE ai=?1")?
+        .query_map([&s.ai], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, json) in pending {
+        let event: serde_json::Value = serde_json::from_str(&json)?;
+        let body = &event["content"];
+        if let Some(conversation) = conversations.iter().find(|c| {
+            body["conversationId"] == c.id
+                && body["revision"] == c.revision
+                && c.kind == "group"
+                && c.members.iter().any(|m| event["sender"] == user_id(&m.id))
+        }) {
+            let keys: Vec<llmn_crypto::matrix_sdk_crypto::olm::ExportedRoomKey> =
+                serde_json::from_value(body["keys"].clone())?;
+            ensure!(
+                keys.iter()
+                    .all(|k| k.room_id.as_str() == room_id(&conversation.id)),
+                "history contains foreign room keys"
+            );
+            s.device
+                .machine()
+                .store()
+                .import_exported_room_keys(keys, |_, _| {})
+                .await?;
+        }
+        // A changed membership/revision intentionally invalidates an old delivery.
+        store.db.execute(
+            "DELETE FROM crypto_incoming_history WHERE ai=?1 AND id=?2",
+            params![s.ai, id],
+        )?;
+    }
+    Ok(())
+}
+async fn share_group_history(
+    api: &NodeClient,
+    store: &Store,
+    s: &Session,
+    conversation: &NodeConversation,
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let room = llmn_crypto::ruma::RoomId::parse(room_id(&conversation.id))?;
+    let keys = s
+        .device
+        .machine()
+        .store()
+        .export_room_keys(|key| key.room_id() == room)
+        .await?;
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let body =
+        json!({"conversationId":conversation.id,"revision":conversation.revision,"keys":keys});
+    let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&body)?));
+    let users = conversation
+        .members
+        .iter()
+        .map(|m| llmn_crypto::ruma::UserId::parse(user_id(&m.id)))
+        .collect::<Result<Vec<_>, _>>()?;
+    s.device
+        .machine()
+        .update_tracked_users(users.iter().map(|u| u.as_ref()))
+        .await?;
+    for request in s.device.outgoing().await? {
+        relay(api, store, s, request).await?;
+    }
+    if let Some((id, r)) = s
+        .device
+        .machine()
+        .get_missing_sessions(users.iter().map(|u| u.as_ref()))
+        .await?
+    {
+        relay(
+            api,
+            store,
+            s,
+            Request {
+                device_id: s.device.machine().device_id().to_string(),
+                request_id: id.to_string(),
+                kind: "keysClaim".into(),
+                body: json!({"one_time_keys":r.one_time_keys}),
+            },
+        )
+        .await?;
+    }
+    for user in users {
+        for target in s
+            .device
+            .machine()
+            .get_user_devices(&user, None)
+            .await?
+            .devices()
+        {
+            if !target.is_verified()
+                || target.is_deleted()
+                || user == s.device.machine().user_id()
+                    && target.device_id() == s.device.machine().device_id()
+            {
+                continue;
+            }
+            let target_id = format!(
+                "{}:{}:{:?}:{:?}",
+                user,
+                target.device_id(),
+                target.ed25519_key(),
+                target.curve25519_key()
+            );
+            let previous: Option<String> = store.db.query_row("SELECT fingerprint FROM crypto_history_shares WHERE ai=?1 AND cid=?2 AND device=?3",params![s.ai,conversation.id,target_id],|r|r.get(0)).optional()?;
+            if previous.as_ref() == Some(&fingerprint) {
+                continue;
+            }
+            let (requests, withheld) = s
+                .device
+                .machine()
+                .encrypt_content_for_devices(
+                    vec![(*target).clone()],
+                    "com.llmn.group-history.v1",
+                    &body,
+                    llmn_crypto::matrix_sdk_crypto::CollectStrategy::OnlyTrustedDevices,
+                )
+                .await?;
+            ensure!(withheld.is_empty(), "group history sharing withheld");
+            for request in requests {
+                let mut value = serde_json::to_value(&request)?;
+                value["llmn_purpose"] = json!("conversationHistory");
+                value["llmn_conversation_id"] = json!(conversation.id);
+                value["llmn_expected_revision"] = json!(conversation.revision);
+                relay(
+                    api,
+                    store,
+                    s,
+                    Request {
+                        device_id: s.device.machine().device_id().to_string(),
+                        request_id: request.txn_id.to_string(),
+                        kind: "toDevice".into(),
+                        body: value,
+                    },
+                )
+                .await?;
+            }
+            store.db.execute("INSERT INTO crypto_history_shares VALUES(?1,?2,?3,?4) ON CONFLICT(ai,cid,device) DO UPDATE SET fingerprint=excluded.fingerprint",params![s.ai,conversation.id,target_id,fingerprint])?;
+        }
+    }
+    Ok(())
+}
+
 pub fn draining(store: &Store, ai: &str) -> Result<bool> {
     initialize(store)?;
     Ok(store
@@ -1925,12 +2430,13 @@ fn register_window(store: &Store, conversation: &NodeConversation, ai: &str) -> 
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    if let Some((actor, encrypted)) = previous {
+    if let Some((_actor, encrypted)) = previous {
         ensure!(
-            !encrypted || actor == ai && conversation.encryption.is_some(),
+            !encrypted || conversation.encryption.is_some(),
             "encrypted conversation downgrade rejected"
         );
     }
+    store.db.execute("INSERT INTO crypto_conversations VALUES(?1,?2,?3) ON CONFLICT(ai,cid) DO UPDATE SET json=excluded.json", params![ai,conversation.id,serde_json::to_string(conversation)?])?;
     // Unencrypted group windows can be used by several AIs on this node.
     if conversation.encryption.is_none() {
         return Ok(());
@@ -2146,4 +2652,297 @@ pub fn enrolled(store: &Store, ai: &str) -> Result<bool> {
         [ai],
         |r| r.get(0),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn store() -> Store {
+        Store::open(std::path::Path::new(":memory:")).unwrap()
+    }
+    #[test]
+    fn encrypted_group_keeps_separate_ai_snapshots_and_rejects_downgrade() {
+        let store = store();
+        initialize(&store).unwrap();
+        let mut conversation = NodeConversation {
+            id: crate::id(),
+            kind: "group".into(),
+            name: "test".into(),
+            revision: "2".into(),
+            members: vec![],
+            encryption: Some(ConversationEncryption {
+                version: 1,
+                activation_position: "0".into(),
+            }),
+        };
+        let a = crate::id();
+        let b = crate::id();
+        register_window(&store, &conversation, &a).unwrap();
+        register_window(&store, &conversation, &b).unwrap();
+        let count: usize = store
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM crypto_conversations WHERE cid=?1",
+                [&conversation.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        conversation.encryption = None;
+        assert!(register_window(&store, &conversation, &b).is_err());
+        let json: String = store
+            .db
+            .query_row(
+                "SELECT json FROM crypto_conversations WHERE ai=?1 AND cid=?2",
+                params![b, conversation.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            serde_json::from_str::<NodeConversation>(&json)
+                .unwrap()
+                .encryption
+                .is_some()
+        );
+    }
+    #[tokio::test]
+    async fn group_history_import_rejects_foreign_rooms_and_ignores_stale_rosters() {
+        let store = store();
+        initialize(&store).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let sender = crate::id();
+        let ai = crate::id();
+        let cid = crate::id();
+        let foreign = crate::id();
+        let source = Device::open(
+            &directory.path().join("source"),
+            &sender,
+            "SOURCE",
+            &[1; 32],
+        )
+        .await
+        .unwrap();
+        for cid in [&cid, &foreign] {
+            source
+                .machine()
+                .share_room_key(
+                    &llmn_crypto::ruma::RoomId::parse(room_id(cid)).unwrap(),
+                    std::iter::empty::<&llmn_crypto::ruma::UserId>(),
+                    llmn_crypto::matrix_sdk_crypto::EncryptionSettings::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let keys = source
+            .machine()
+            .store()
+            .export_room_keys(|_| true)
+            .await
+            .unwrap();
+        assert_eq!(keys.len(), 2);
+        let target = Session {
+            device: Device::open(&directory.path().join("target"), &ai, "TARGET", &[2; 32])
+                .await
+                .unwrap(),
+            ai: ai.clone(),
+            router: Default::default(),
+        };
+        let conversation = NodeConversation {
+            id: cid.clone(),
+            kind: "group".into(),
+            name: "group".into(),
+            revision: "3".into(),
+            members: vec![NodeAccount {
+                id: sender.clone(),
+                name: "sender".into(),
+                bio: String::new(),
+                kind: "human".into(),
+            }],
+            encryption: Some(ConversationEncryption {
+                version: 1,
+                activation_position: "0".into(),
+            }),
+        };
+        let event = json!({"sender":user_id(&sender),"content":{"conversationId":cid,"revision":"3","keys":keys}});
+        store
+            .db
+            .execute(
+                "INSERT INTO crypto_incoming_history VALUES(?1,'event',?2)",
+                params![ai, event.to_string()],
+            )
+            .unwrap();
+        assert!(
+            receive_group_history(&store, &target, std::slice::from_ref(&conversation))
+                .await
+                .is_err()
+        );
+        assert!(
+            target
+                .device
+                .machine()
+                .store()
+                .export_room_keys(|_| true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let mut stale = event.clone();
+        stale["content"]["revision"] = json!("2");
+        store
+            .db
+            .execute(
+                "UPDATE crypto_incoming_history SET json=?1 WHERE id='event'",
+                [stale.to_string()],
+            )
+            .unwrap();
+        receive_group_history(&store, &target, std::slice::from_ref(&conversation))
+            .await
+            .unwrap();
+        assert!(
+            target
+                .device
+                .machine()
+                .store()
+                .export_room_keys(|_| true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let keys = source
+            .machine()
+            .store()
+            .export_room_keys(|key| key.room_id().as_str() == room_id(&cid))
+            .await
+            .unwrap();
+        let mut valid = event;
+        valid["content"]["keys"] = json!(keys);
+        store
+            .db
+            .execute(
+                "INSERT INTO crypto_incoming_history VALUES(?1,'valid',?2)",
+                params![ai, valid.to_string()],
+            )
+            .unwrap();
+        receive_group_history(&store, &target, &[conversation])
+            .await
+            .unwrap();
+        let imported = target
+            .device
+            .machine()
+            .store()
+            .export_room_keys(|_| true)
+            .await
+            .unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].room_id.as_str(), room_id(&cid));
+    }
+    #[test]
+    fn output_revision_uses_persisted_start_even_after_roster_refresh() {
+        let store = store();
+        initialize(&store).unwrap();
+        let ai = crate::id();
+        let cid = crate::id();
+        let run = crate::id();
+        let start = StartRequest {
+            request_id: crate::id(),
+            task_revision: "1".into(),
+            conversation_revision: "7".into(),
+            sources: vec![],
+            configuration_revision: "1".into(),
+            derived_sources: vec![],
+            material_scopes: vec![],
+        };
+        store.db.execute("INSERT INTO tasks(id,ai,state,start_json,receipt_json) VALUES('task',?1,'started',?2,?3)",params![ai,serde_json::to_string(&start).unwrap(),json!({"runId":run}).to_string()]).unwrap();
+        let current = NodeConversation {
+            id: cid.clone(),
+            kind: "group".into(),
+            name: "test".into(),
+            revision: "9".into(),
+            members: vec![],
+            encryption: Some(ConversationEncryption {
+                version: 1,
+                activation_position: "0".into(),
+            }),
+        };
+        register_window(&store, &current, &ai).unwrap();
+        assert_eq!(frozen_run_revision(&store, &ai, &cid, &run).unwrap(), "7");
+        assert!(frozen_run_revision(&store, &crate::id(), &cid, &run).is_err());
+    }
+    #[tokio::test]
+    async fn summary_settings_tombstone_disables_local_configuration_and_fences_work() {
+        let store = store();
+        let ai = crate::id();
+        let cid = crate::id();
+        store
+            .db
+            .execute(
+                "INSERT INTO conscious_settings VALUES(?1,?2,?3)",
+                params![
+                    ai,
+                    cid,
+                    json!({"revision":"6","enabled":true,"binding":null}).to_string()
+                ],
+            )
+            .unwrap();
+        let old = store.material_scope(&ai, &cid).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let s = Session {
+            device: Device::open(directory.path(), &ai, "DEVICE", &[3; 32])
+                .await
+                .unwrap(),
+            ai: ai.clone(),
+            router: Default::default(),
+        };
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let resource = Resource {
+            id: crate::id(),
+            ai_id: ai.clone(),
+            conversation_id: Some(cid.clone()),
+            kind: "summarySettings".into(),
+            revision: "7".into(),
+            sealed: None,
+            sources: vec![],
+            tombstone: Some("stale".into()),
+            applied: None,
+        };
+        apply_resource(&api, &store, None, &s, &resource)
+            .await
+            .unwrap();
+        let settings = store.settings(&ai, &cid).unwrap();
+        assert!(!settings.enabled);
+        assert!(settings.binding.is_none());
+        assert_eq!(settings.revision, "7");
+        assert!(!store.scopes_current(&ai, &[old]).unwrap());
+    }
+    #[test]
+    fn timestamp_binding_accepts_only_the_same_utc_instant() {
+        assert!(
+            same_instant(
+                &json!("2026-10-23T12:00:00.000Z"),
+                "2026-10-23T12:00:00+00:00"
+            )
+            .unwrap()
+        );
+        assert!(!same_instant(&json!("2026-10-23T12:00:00Z"), "2026-10-23T12:00:01Z").unwrap());
+        assert!(same_instant(&json!("bad"), "2026-10-23T12:00:00Z").is_err());
+    }
+    #[test]
+    fn decrypted_images_enforce_real_format_and_dimensions() {
+        let metadata = NodeAttachment {
+            index: 0,
+            kind: "image".into(),
+            mime: "image/png".into(),
+            byte_length: 3,
+            name: None,
+            media_encryption_info: None,
+        };
+        assert!(validate_attachment_bytes(&metadata, b"bad").is_err());
+        let metadata = NodeAttachment {
+            kind: "file".into(),
+            byte_length: 0,
+            mime: "application/octet-stream".into(),
+            ..metadata
+        };
+        assert_eq!(validate_attachment_bytes(&metadata, b"").unwrap(), b"");
+    }
 }

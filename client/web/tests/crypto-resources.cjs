@@ -39,5 +39,34 @@ function load() { const result = {}; vm.runInNewContext(ts.transpileModule(fs.re
   mode = 'online';
   await assert.rejects(resources.saveResource('human', { ...target, id: 'switched-account' }, { persona: 'must not persist' }), /账号已切换/);
   assert.equal((await resources.pendingResources('human')).some(p => p.id === 'switched-account'), false, 'a late signing result cannot persist an intent after account lock');
+  const React = require('react');
+  function panelHarness(kind, tombstone = 'stale', pending = []) {
+    const resource = { id: 'settings', aiId: 'ai', conversationId: 'group', kind, revision: '9', tombstone, sources: [], applied: null };
+    const states = [[{ resource, data: { enabled: true, binding: { providerId: 'old-provider', modelId: 'old-model', maxTokens: 99 } } }], pending];
+    let index = 0; const saved = [], panel = {};
+    const hooks = { ...React, useState(initial) { const slot = index++; if (!(slot in states)) states[slot] = typeof initial === 'function' ? initial() : initial; return [states[slot], value => { states[slot] = typeof value === 'function' ? value(states[slot]) : value; }]; }, useEffect() {}, useRef: () => ({ current: 0 }) };
+    const fields = { enabled: 'on', provider: 'new-provider', model: 'new-model', effort: '', maxTokens: '321' };
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/ResourcePanel.tsx'), 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: panel, crypto: require('node:crypto').webcrypto, FormData: class { get(key) { return fields[key] ?? null; } has(key) { return key in fields; } }, localStorage: { setItem() {} }, require: name => name === 'react' ? hooks : name === './engine' ? { cryptoDevice: () => 'device' } : name === '../api' ? { server: api.server, HttpError, request: async () => ({ accounts: ['human', 'ai'], revision: 'current-audience' }) } : name === './resources' ? { loadResources: async () => ({ items: [resource], offline: false }), decryptResource: async () => null, pendingResources: async () => [], resourceStatus: () => 'stale', saveResource: async (...args) => saved.push(args) } : require(name) });
+    return { saved, render() { index = 0; return panel.EncryptedResourcePanel({ operatorId: 'human', aiId: 'ai', kind, conversation: { id: 'group' } }); } };
+  }
+  const all = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(all)];
+  const label = node => typeof node === 'string' ? node : React.Children.toArray(node?.props?.children).map(label).join('');
+  const settingsPanel = panelHarness('summarySettings');
+  let tree = settingsPanel.render();
+  const restart = all(tree).find(n => n.type === 'button' && label(n) === '重新设置摘要');
+  assert.ok(restart); assert.equal(restart.props.disabled, false); restart.props.onClick();
+  tree = settingsPanel.render();
+  const inputs = all(tree).filter(n => n.type === 'input');
+  assert.equal(inputs.find(n => n.props.name === 'enabled').props.defaultChecked, false);
+  for (const name of ['provider', 'model', 'maxTokens']) assert.equal(inputs.find(n => n.props.name === name).props.defaultValue, '', 'stale values are never restored');
+  all(tree).find(n => n.type === 'form').props.onSubmit({ preventDefault() {}, currentTarget: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settingsPanel.saved.length, 1);
+  assert.equal(settingsPanel.saved[0][1].id, 'settings');
+  assert.equal(settingsPanel.saved[0][1].expectedRevision, '9');
+  assert.equal(settingsPanel.saved[0][2].binding.modelId, 'new-model');
+  for (const kind of ['memory', 'summary']) assert.equal(all(panelHarness(kind).render()).some(n => n.type === 'button' && ['重新设置摘要', '编辑当前版本'].includes(label(n))), false, 'memory/summary tombstones cannot be revived');
+  assert.equal(all(panelHarness('summarySettings', 'forgotten').render()).some(n => label(n) === '重新设置摘要'), false);
+  assert.equal(all(panelHarness('summarySettings', 'stale', [{ id: 'settings', body: { expectedRevision: '9' } }]).render()).find(n => n.type === 'button' && label(n) === '重新设置摘要').props.disabled, true, 'an unknown original save remains locked');
   console.log('PASS: encrypted resource intents persist across reload, retry original ciphertext, preserve conflicts and separate saved/applied states');
 })().catch(e => { console.error(e); process.exitCode = 1; });

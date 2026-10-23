@@ -86,6 +86,8 @@ fn record(id: &str) -> SummaryRecord {
 fn message(pos: usize) -> NodeMessage {
     NodeMessage {
         sealed: None,
+        audience_revision: None,
+        context_reference: None,
         import_origin: None,
         id: uid(),
         position: pos.to_string(),
@@ -232,6 +234,22 @@ fn membership_changes_preserve_ready_but_revocation_erases_and_fences() {
     queued.item.status = "queued".into();
     store.save_summary(&ai, &cid, &ready).unwrap();
     store.save_summary(&ai, &cid, &queued).unwrap();
+    store
+        .db
+        .execute(
+            "INSERT INTO conscious_settings VALUES(?1,?2,?3)",
+            params![
+                ai,
+                cid,
+                serde_json::to_string(&SummarySettings {
+                    revision: "1".into(),
+                    enabled: true,
+                    binding: Some(ready.binding.clone())
+                })
+                .unwrap()
+            ],
+        )
+        .unwrap();
     let old = store.material_scope(&ai, &cid).unwrap();
     let unrelated = store.material_scope(&ai, &other).unwrap();
     store
@@ -249,11 +267,14 @@ fn membership_changes_preserve_ready_but_revocation_erases_and_fences() {
             .text,
         "private summary"
     );
+    assert!(store.settings(&ai, &cid).unwrap().enabled);
     assert!(!store.scopes_current(&ai, &[old]).unwrap());
     assert!(store.scopes_current(&ai, &[unrelated]).unwrap());
     store
         .invalidate(&ai, &event("2", &cid, None, "permission_revoked"))
         .unwrap();
+    assert!(!store.settings(&ai, &cid).unwrap().enabled);
+    assert!(store.settings(&ai, &cid).unwrap().binding.is_none());
     assert!(store.memories(&ai, &cid).unwrap()[0].text.is_empty());
     assert!(
         store
@@ -265,6 +286,7 @@ fn membership_changes_preserve_ready_but_revocation_erases_and_fences() {
     store
         .invalidate(&ai, &event("3", &cid, None, "window_changed"))
         .unwrap();
+    assert!(!store.settings(&ai, &cid).unwrap().enabled);
     assert_eq!(store.memories(&ai, &cid).unwrap()[0].status, "stale");
 }
 #[test]

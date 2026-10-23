@@ -76,13 +76,6 @@ async fn permission(tx: &mut Tx<'_>, a: &Actor, s: &Scope) -> Result<()> {
         if !members.contains(&s.ai_id) {
             return Err(AppError::forbidden());
         }
-        let kind: String = sqlx::query_scalar("SELECT kind FROM cloud_conversations WHERE id=$1")
-            .bind(cid)
-            .fetch_one(&mut **tx)
-            .await?;
-        if kind != "direct" {
-            return Err(AppError::conflict("本批密文资料仅支持私聊"));
-        }
         if a.node.is_none() && s.kind != "memory" {
             nodes::admin(tx, s.ai_id, a.id).await?;
         }
@@ -289,6 +282,7 @@ async fn save(
         .as_ref()
         .is_some_and(|r| r.get::<Option<String>, _>("tombstone").is_some())
         && v.tombstone.is_none()
+        && scope.kind != "summarySettings"
     {
         return Err(AppError::conflict(
             "已遗忘或失效条目不能由旧记录恢复，请新建条目",
@@ -407,6 +401,20 @@ pub(crate) async fn ready(tx: &mut Tx<'_>, ai: Uuid, cid: Uuid) -> Result<()> {
         let mut e = AppError::conflict("最新加密资料尚未在当前节点应用");
         e.code = "crypto_material_pending";
         return Err(e);
+    }
+    Ok(())
+}
+pub(crate) async fn revoke_access(tx: &mut Tx<'_>, cid: Uuid, removed: &[Uuid]) -> Result<()> {
+    let rows=sqlx::query("UPDATE cloud_crypto_resources SET sealed=NULL,tombstone='stale',revision=revision+1,material_revision=$3,updated_at=now() WHERE conversation=$1 AND ai_id=ANY($2) AND tombstone IS NULL RETURNING ai_id").bind(cid).bind(removed).bind(Uuid::new_v4()).fetch_all(&mut **tx).await?;
+    let mut accounts = rows
+        .iter()
+        .map(|r| r.get::<Uuid, _>("ai_id"))
+        .collect::<Vec<_>>();
+    accounts.sort();
+    accounts.dedup();
+    for ai in accounts {
+        crate::handover::changed(tx, ai).await?;
+        sqlx::query("INSERT INTO cloud_material_epochs VALUES($1,$2,$3) ON CONFLICT(ai_id,conversation) DO UPDATE SET revision=$3").bind(ai).bind(cid).bind(Uuid::new_v4()).execute(&mut **tx).await?;
     }
     Ok(())
 }

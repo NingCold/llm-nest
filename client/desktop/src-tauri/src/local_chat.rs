@@ -72,6 +72,10 @@ pub async fn local_chat_send(
     sealed: Option<connector::crypto::SealedEnvelope>,
     message_id: Option<String>,
     key_messages: Option<Vec<serde_json::Value>>,
+    encrypted_attachments: Option<Vec<connector::crypto::EncryptedAttachment>>,
+    reply_to: Option<String>,
+    reference: Option<connector::node::ReferenceSelection>,
+    expected_conversation_revision: Option<String>,
 ) -> Result<DirectView, String> {
     view(
         call(
@@ -84,10 +88,60 @@ pub async fn local_chat_send(
                 sealed,
                 message_id,
                 key_messages: key_messages.unwrap_or_default(),
+                encrypted_attachments: encrypted_attachments.unwrap_or_default(),
+                reply_to,
+                reference,
+                expected_conversation_revision,
             },
         )
         .await?,
     )
+}
+#[tauri::command]
+pub async fn local_chat_prepare_reference(
+    cloud: tauri::State<'_, CloudState>,
+    local: tauri::State<'_, LocalAgentState>,
+    conversation_id: String,
+    selection: connector::node::ReferenceSelection,
+) -> Result<connector::node::NodeReference, String> {
+    match call(
+        &cloud,
+        &local,
+        LocalOperation::PrepareReference {
+            conversation_id,
+            selection,
+        },
+    )
+    .await?
+    {
+        LocalReply::Reference { reference } => Ok(reference),
+        _ => Err("本机 Agent 响应类型无效".into()),
+    }
+}
+#[tauri::command]
+pub async fn local_chat_attachment(
+    cloud: tauri::State<'_, CloudState>,
+    local: tauri::State<'_, LocalAgentState>,
+    conversation_id: String,
+    message_id: String,
+    index: usize,
+    revision: String,
+) -> Result<String, String> {
+    match call(
+        &cloud,
+        &local,
+        LocalOperation::Attachment {
+            conversation_id,
+            message_id,
+            index,
+            revision,
+        },
+    )
+    .await?
+    {
+        LocalReply::Attachment { data } => Ok(data),
+        _ => Err("本机 Agent 响应类型无效".into()),
+    }
 }
 #[tauri::command]
 pub async fn local_chat_stop(

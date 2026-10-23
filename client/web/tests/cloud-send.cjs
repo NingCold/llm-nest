@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict"), fs = require("node:fs"), vm = require("node:vm"), path = require("node:path"), ts = require("typescript"), React = require("react"), { randomUUID } = require("node:crypto");
 class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); this.status = status; } }
 const me = { id: "me", name: "自己", kind: "human", status: "active" };
-const conversation = { id: "group", kind: "group", directBlocked: false };
+const conversation = { id: "group", kind: "group", revision: "7", directBlocked: false };
 const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
 function harness(record, desktop = false, storage = new Map()) {
   const states = [], refs = [], calls = [], saves = [], effects = [], listeners = {};
@@ -22,7 +22,7 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "react") return hooks;
       if (name === "./api") return api;
       if (name === "./local-api") return {
-        sendLocal: async (id, requestId, text, sealed, messageId, keyMessages) => { calls.push({ local: true, id, requestId, text, sealed, messageId, keyMessages }); throw new Error("local acknowledgement lost"); },
+        sendLocal: async (id, requestId, text, sealed, messageId, keyMessages, options) => { calls.push({ local: true, id, requestId, text, sealed, messageId, keyMessages, options }); throw new Error("local acknowledgement lost"); },
         syncLocal: async () => api.localRespond(),
         localPage: data => ({ messages: data.messages, hasMore: false, latestPosition: "0" }),
       };
@@ -31,6 +31,7 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "./AiConfiguration") return { clearAiConfigurationCommands() {} };
       if (name === "./Participation") return { clearParticipationCommands() {} };
       if (name === "./crypto/engine") return { lockCrypto() {}, cryptoDevice: () => undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+      if (name === "./crypto/attachments") return { prepareAttachments: (images = [], files = []) => ({ descriptors: [...images, ...files].map((a, index) => ({ index, kind: "file", mime: a.mime, byteLength: 1, mediaEncryptionInfo: "sdk-secret" })), encryptedAttachments: [...images, ...files].map((a, index) => ({ index, data: "cipher-only" })) }) };
       if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => p, projectSnapshot: async s => s };
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
@@ -111,14 +112,26 @@ function harness(record, desktop = false, storage = new Map()) {
   assert.equal(encrypted.calls[0].body.text, "");
   assert.ok(encrypted.calls[0].body.messageId);
   assert.equal(JSON.stringify(encrypted.calls[0].body).includes("private words"), false, "plaintext is not part of the cloud request");
+  const encryptedSocial = harness({ draft, pending: null });
+  encryptedSocial.api.respond = async () => { throw Error("lost social ciphertext acknowledgement"); };
+  await encryptedSocial.render().send(); await encryptedSocial.render().send();
+  assert.equal(encryptedSocial.api.encryptions, 1);
+  assert.deepEqual(encryptedSocial.calls[0].body, encryptedSocial.calls[1].body);
+  assert.equal(encryptedSocial.calls[0].body.expectedConversationRevision, "7");
+  assert.equal(JSON.stringify(encryptedSocial.calls[0].body.images), "[]");
+  assert.equal(encryptedSocial.calls[0].body.encryptedAttachments[0].data, "cipher-only");
+  assert.equal(JSON.stringify(encryptedSocial.calls[0].body).includes("YQ=="), false, "original attachment bytes never join sealed requests");
   delete conversation.encryption;
-  const frozenLocal = { ...localPending, messageId: "encrypted-local", sealed: { version: 1, ciphertext: "megolm" }, keyMessages: [{ event_type: "m.room.encrypted", txn_id: "original-olm", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+  const frozenLocal = { ...localPending, encryptedAttachments: [{ index: 0, data: "frozen-cipher" }], expectedConversationRevision: "7", replyTo: "earlier", messageId: "encrypted-local", sealed: { version: 1, ciphertext: "megolm" }, keyMessages: [{ event_type: "m.room.encrypted", txn_id: "original-olm", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
   const ipc = harness({ draft: { ...frozenLocal, text: "later" }, pending: frozenLocal }, true);
   await ipc.render().send();
   await ipc.render().send();
   assert.deepEqual(ipc.calls[0], ipc.calls[1], "lost IPC ack retries frozen Megolm and Olm key package together");
   assert.deepEqual(ipc.calls[0].keyMessages, frozenLocal.keyMessages);
   assert.equal(ipc.calls[0].text, "");
+  assert.deepEqual(ipc.calls[0].options.encryptedAttachments, frozenLocal.encryptedAttachments);
+  assert.equal(ipc.calls[0].options.replyTo, "earlier");
+  assert.equal(ipc.calls[0].options.expectedConversationRevision, "7");
   const target = { ...conversation, id: "direct", kind: "direct", peer: { id: "ai-a" } };
   const continuation = harness({ draft, pending: null });
   const targetDraft = { draft: { ...draft, text: "保留私聊输入", reference: null }, pending: null };

@@ -56,6 +56,7 @@ function harness(desktop = false) {
       Blob,
       Uint8Array,
       atob,
+      btoa,
       setTimeout: (fn) => {
         timers.push(fn);
         return timers.length;
@@ -212,6 +213,13 @@ function harness(desktop = false) {
   await new Promise((r) => setImmediate(r));
   assert.equal(attempts, 2);
   done();
+  const saved = harness(true);
+  saved.setHandler(async () => ({ saved: false }));
+  await assert.rejects(saved.api.saveBlob(new Blob(["secret"]), "chat.json"), saved.api.DownloadCancelled);
+  assert.equal(saved.calls[0][0], "cloud_save_blob");
+  assert.equal(Buffer.from(saved.calls[0][1].data, "base64").toString(), "secret");
+  saved.setHandler(async () => { throw Error("disk write failed"); });
+  await assert.rejects(saved.api.saveBlob(new Blob(["secret"]), "chat.json"), /disk write failed/);
   console.log("Cloud transport checks passed");
 })().catch((e) => {
   console.error(e);

@@ -73,7 +73,7 @@ pub(crate) async fn node_conversation(tx: &mut Tx<'_>, cid: Uuid) -> Result<Valu
     )
 }
 pub(crate) fn node_message(m: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin"),"sealed":m.get::<Option<Value>,_>("sealed")})
+    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin"),"sealed":m.get::<Option<Value>,_>("sealed"),"audienceRevision":m.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string()),"contextReference":m.get::<Option<Value>,_>("context_reference")})
 }
 async fn is_member(tx: &mut Tx<'_>, cid: Uuid, actor: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar(
@@ -155,6 +155,7 @@ async fn stale_references(tx: &mut Tx<'_>, source: Option<Uuid>, group: Uuid) ->
     for row in rows {
         let mid = row.get("id");
         let cid = row.get("conversation");
+        crate::crypto_resources::source_changed(tx, mid).await?;
         nodes::source_changed(tx, mid).await?;
         event(tx, cid, Some(mid), "reference_stale", &[]).await?;
         let members: Vec<Uuid> =
@@ -190,6 +191,7 @@ pub(crate) async fn membership_changed(tx: &mut Tx<'_>, cid: Uuid, old: &[Uuid])
         .copied()
         .filter(|id| !current.contains(id))
         .collect();
+    crate::crypto_resources::revoke_access(tx, cid, &removed).await?;
     sqlx::query("INSERT INTO cloud_source_changes(ai_id,conversation,reason) SELECT id,$1,'permission_revoked' FROM accounts WHERE kind='ai' AND id=ANY($2)").bind(cid).bind(&removed).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO cloud_node_events(ai_id,binding_version,kind) SELECT ai_id,version,'sourcesChanged' FROM cloud_ai_bindings WHERE ai_id=ANY($1)").bind(&removed).execute(&mut **tx).await?;
     stale_references(tx, None, cid).await?;
@@ -258,6 +260,18 @@ async fn reference_rows(
     rows.sort_by_key(|r| r.get::<i64, _>("position"));
     Ok(rows)
 }
+pub(crate) async fn direct_reference(
+    tx: &mut Tx<'_>,
+    cid: Uuid,
+    human: Uuid,
+    mid: Uuid,
+    selection: &ReferenceSelection,
+) -> Result<Value> {
+    let rows = reference_rows(tx, cid, human, selection).await?;
+    Ok(
+        json!({"messageId":mid,"revision":"1","required":true,"conversation":node_conversation(tx,parse(&selection.conversation_id)?).await?,"messages":rows.iter().map(node_message).collect::<Vec<_>>(),"sources":selection.sources}),
+    )
+}
 async fn preview(
     State(s): State<Arc<AppState>>,
     h: HeaderMap,
@@ -266,7 +280,6 @@ async fn preview(
 ) -> Result<Json<Value>> {
     let p = auth::authenticate(&s, &h).await?;
     let mut tx = s.pool.begin().await?;
-    crate::crypto::plaintext(&mut tx, cid).await?;
     nodes::lock(&mut tx).await?;
     let rows = reference_rows(&mut tx, cid, p.id, &v.reference).await?;
     Ok(Json(
@@ -307,7 +320,7 @@ pub(crate) async fn task_reference(
         .bind(cid)
         .fetch_one(&mut **tx)
         .await?;
-    if ckind != "direct" || crate::crypto::enabled(tx, cid).await? {
+    if ckind != "direct" {
         return Ok(None);
     }
     let human: Uuid = sqlx::query_scalar(

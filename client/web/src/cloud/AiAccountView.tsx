@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { MarkdownView } from "@/components/chat/MarkdownView";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { DownloadCancelled, download, request } from "./api";
+import { DownloadCancelled, request } from "./api";
 import { fileSize } from "../social/files";
 import type { Account, Conversation, Message, Page } from "./types";
+import { downloadAttachment } from "./crypto/attachments";
 import { projectPage, projectConversations } from "./crypto/content";
 
 export function AiAccountView({ aiId, operatorId }: { aiId: string; operatorId?: string }) {
@@ -42,7 +43,7 @@ export function AiAccountView({ aiId, operatorId }: { aiId: string; operatorId?:
     const ticket = sequence.current;
     setError("");
     try {
-      const url = await download(`${root}/conversations/${message.conversationId}/messages/${message.id}/attachments/${index}?revision=${message.revision}${image ? "&inline=true" : ""}`, name, image);
+      const url = await downloadAttachment(message, message.attachments.find(a => a.index === index)!, `${root}/conversations/${message.conversationId}/messages/${message.id}/attachments/${index}?revision=${message.revision}${image ? "&inline=true" : ""}`, name, image);
       if (ticket === sequence.current) setPreview(url);
       else if (url) URL.revokeObjectURL(url);
     } catch (e) {

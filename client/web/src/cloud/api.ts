@@ -210,3 +210,34 @@ export async function download(
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export async function downloadBytes(path: string): Promise<Uint8Array> {
+  const epoch = generation;
+  let bytes: Uint8Array;
+  if (IS_DESKTOP) {
+    const r = await invoke<{ status: number; body: string }>("cloud_request", { method: "GET", path: `/api${path}` });
+    if (r.status >= 400) throw responseError(r.status, r.body);
+    bytes = Uint8Array.from(atob(r.body), c => c.charCodeAt(0));
+  } else {
+    const r = await fetch(`/api${path}`, { credentials: "include" });
+    if (!r.ok) throw responseError(r.status, await r.text());
+    bytes = new Uint8Array(await r.arrayBuffer());
+  }
+  if (epoch !== generation) throw new Error("账号已切换");
+  return bytes;
+}
+export async function saveBlob(blob: Blob, name: string, preview = false): Promise<string | undefined> {
+  if (IS_DESKTOP && !preview) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    const result = await invoke<{ saved: boolean }>("cloud_save_blob", { name, data: btoa(binary) });
+    if (!result.saved) throw new DownloadCancelled("已取消保存");
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  if (preview) return url;
+  const a = document.createElement("a");
+  try { a.href = url; a.download = name; document.body.appendChild(a); a.click(); }
+  finally { a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60_000); }
+}

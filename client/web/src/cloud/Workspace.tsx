@@ -50,6 +50,9 @@ import type {
 import "../social/social.css";
 import "./cloud.css";
 import type { LocalView } from "./local-api";
+import { downloadAttachment } from "./crypto/attachments";
+import { exportHistory } from "./crypto/history";
+import { shareConversationHistory } from "./crypto/engine";
 import { CryptoDevices } from "./crypto/Devices";
 
 interface Props {
@@ -158,7 +161,7 @@ function InlineImage({
       objectUrl: string | undefined;
     setUrl(undefined);
     setError("");
-    download(
+    downloadAttachment(message, attachment,
       attachmentPath(message, attachment) + "&inline=true",
       "图片",
       true,
@@ -186,7 +189,7 @@ function InlineImage({
             const trigger = event.currentTarget;
             void act(async () =>
               onPreview(
-                await download(
+                await downloadAttachment(message, attachment,
                   attachmentPath(message, attachment) + "&inline=true",
                   "图片",
                   true,
@@ -205,7 +208,7 @@ function InlineImage({
         className="text-button"
         onClick={() =>
           void act(async () => {
-            await download(
+            await downloadAttachment(message, attachment,
               attachmentPath(message, attachment),
               `image-${message.id}-${attachment.index}`,
             );
@@ -1035,8 +1038,8 @@ export function Workspace(p: Props) {
                         <small>{p.localChat ? `同机私聊 · ${p.localChat.syncState === "synced" ? "已同步云端" : p.localChat.syncState === "conflict" ? "云端同步冲突" : "等待云端同步"}` : conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
                       </span>
                     </button>
-                    {conversation.kind === "direct" && !conversation.encryption && p.enableEncryption && <button className="text-button" onClick={() => { if (window.confirm("开启后不可回退明文。请确认双方可信设备及恢复文件已准备好，旧历史留待后续迁移。")) void p.act(p.enableEncryption!); }}>开启端到端加密</button>}
-                    {conversation.encryption && <small role="status">端到端加密 · 旧记录尚未迁移</small>}
+                    {!conversation.encryption && (conversation.kind === "direct" || conversation.members.some(m => m.account.id === p.me.id && m.role !== "member")) && p.enableEncryption && <button className="text-button" onClick={() => { if (window.confirm("开启后不可回退明文。请确认双方可信设备及恢复文件已准备好，旧历史留待后续迁移。")) void p.act(p.enableEncryption!); }}>开启端到端加密</button>}
+                    {conversation.encryption && <><small role="status">端到端加密 · 旧记录尚未迁移</small><button className="text-button" disabled={!p.cryptoUnlocked} onClick={() => void p.act(() => shareConversationHistory(conversation))}>向当前可信成员设备分享历史密钥</button><small>新成员或新设备缺少历史密钥时，请由可读取历史的成员分享；所有当前成员须先完成设备核验。</small></>}
                     {conversation.kind === "direct" && conversation.peer?.kind === "ai" && p.prepareLocal && !p.localSelected && <button className="text-button" onClick={() => void p.act(p.prepareLocal!)}>开启同机私聊</button>}
                     {p.localSelected && !p.localChat && <div role="status">同机私聊暂未连接；发送仍使用本机 Agent，不会自动改发云端。<button className="text-button" onClick={() => void p.act(() => p.history())}>重新连接本机</button></div>}
                     {p.localChat && <div role="status"><small>同机私聊仅支持普通文字；附件、回复与群引用请使用云端。{p.localChat.error}{p.localChat.hasMore && "仅显示节点已缓存的历史。"}</small><button className="text-button" onClick={() => void p.act(p.syncLocal!)}>重试云端同步</button><button className="text-button" disabled={p.localChat.running || p.localChat.syncState !== "synced" || !!p.record.pending} onClick={() => void p.act(p.closeLocal!)}>返回云端发送</button>{p.localChat.running && <button className="text-button" onClick={() => void p.act(p.stopLocal!)}>停止本机回复</button>}</div>}
@@ -1122,7 +1125,7 @@ export function Workspace(p: Props) {
                             {m.status === "committed" && conversation.kind === "group" && <ContinuePrivately conversation={conversation} message={m} messages={p.page!.messages} continueWith={p.continuePrivately} />}
                             {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo! }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
                             {!!m.mentions.length && <div className="cloud-mentions">{m.mentions.map(id => <span key={id}>@{conversation.members.find(member => member.account.id === id)?.account.name || id} </span>)}</div>}
-                            {m.status === "committed" && !conversation.readOnly && !p.localSelected && <button className="text-button" disabled={!!p.localSelected || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
+                            {m.status === "committed" && !conversation.readOnly && <button className="text-button" disabled={(!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
                             {p.editing?.id === m.id ? (
                               <form
                                 className="live-message-editor cloud-form"
@@ -1176,7 +1179,7 @@ export function Workspace(p: Props) {
                                           key={a.index}
                                           onClick={() =>
                                             void p.act(async () => {
-                                              await download(
+                                              await downloadAttachment(m, a,
                                                 attachmentPath(m, a),
                                                 a.name || "附件",
                                               );
@@ -1325,7 +1328,7 @@ export function Workspace(p: Props) {
                       {p.record.draft.reference && <ReferenceCard directId={conversation.id} selection={p.record.draft.reference.selection} cursor={p.snapshot!.cursor} remove={p.draftReady && !p.busy && !p.record.pending ? () => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, reference: null } })) : undefined} />}
                       {conversation.directBlocked && <p role="status">双方私聊已屏蔽，历史和草稿保留。解除屏蔽后可发送新消息。</p>}
                       {p.record.draft.replyTo && <div className="cloud-reply-draft">回复：{replyLabel(p.record.draft.replyTo)}<button className="text-button" disabled={p.busy || !!p.record.pending || !p.draftReady} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: null } }))}>取消回复</button></div>}
-                      {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={!!p.localSelected || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
+                      {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={(!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
                         <legend>提及成员（可明确指定回复的 AI）</legend>
                         {conversation.members.filter(member => member.account.id !== p.me.id).map(({ account }) => <label className="cloud-check" key={account.id}><input type="checkbox" checked={p.record.draft.mentions?.includes(account.id) || false} onChange={e => { const mentions = p.record.draft.mentions || []; void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: e.target.checked ? [...mentions, account.id] : mentions.filter(id => id !== account.id) } })); }} />@{account.name}</label>)}
                         {p.record.draft.mentions?.filter(id => !conversation.members.some(member => member.account.id === id)).map(id => <button type="button" className="text-button" key={id} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: p.record.draft.mentions!.filter(previous => previous !== id) } }))}>移除已离群提及：{id}</button>)}
@@ -1372,7 +1375,7 @@ export function Workspace(p: Props) {
                           multiple
                           accept="image/png,image/jpeg,image/webp"
                           disabled={
-                            !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
+                            (!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending
                           }
                           onChange={(e) => {
                             add(Array.from(e.target.files || []));
@@ -1385,7 +1388,7 @@ export function Workspace(p: Props) {
                           type="file"
                           multiple
                           disabled={
-                            !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
+                            (!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending
                           }
                           onChange={(e) => {
                             add(Array.from(e.target.files || []), true);
@@ -1396,7 +1399,7 @@ export function Workspace(p: Props) {
                           <IconButton
                             label="添加文件"
                             disabled={
-                              !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
+                              (!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending
                             }
                             onClick={() => fileInput.current?.click()}
                           >
@@ -1405,7 +1408,7 @@ export function Workspace(p: Props) {
                           <IconButton
                             label="添加图片"
                             disabled={
-                              !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
+                              (!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending
                             }
                             onClick={() => imageInput.current?.click()}
                           >
@@ -1526,13 +1529,13 @@ export function Workspace(p: Props) {
                       </section>
                       <section className="cloud-detail-section">
                         <h3>导出聊天记录</h3>
-                        <p>{conversation.encryption ? "加密私聊的完整本机解密导出将在后续批次开放；当前不会向云端请求空白导出。" : "导出完整窗口；附件可以分别选择。"}</p>
+                        <p>{conversation.encryption ? "在本机读取并解密完整授权历史后导出；无法解密时停止导出。" : "导出完整窗口；附件可以分别选择。"}</p>
                         <form
                           className="cloud-form"
                           onSubmit={(e) => {
                             e.preventDefault();
                             const form = new FormData(e.currentTarget);
-                            if (conversation.encryption) return;
+                            if (conversation.encryption) { void p.act(async () => { if (p.localSelected && p.localChat?.syncState !== "synced") throw new Error("请先同步本机记录，再导出完整授权历史"); await exportHistory(conversation, String(form.get("format")), form.has("images"), form.has("files")); }); return; }
                             void p.act(async () => {
                               await download(
                                 `/chat/conversations/${conversation.id}/export?format=${form.get("format")}&includeImages=${form.has("images")}&includeFiles=${form.has("files")}`,
@@ -1543,7 +1546,7 @@ export function Workspace(p: Props) {
                             });
                           }}
                         >
-                          <select name="format" disabled={!!conversation.encryption}>
+                          <select name="format">
                             <option value="markdown">Markdown</option>
                             <option value="json">JSON</option>
                           </select>
@@ -1555,7 +1558,7 @@ export function Workspace(p: Props) {
                             <input name="files" type="checkbox" />
                             包含普通文件
                           </label>
-                          <button className="social-button secondary" disabled={!!conversation.encryption}>
+                          <button className="social-button secondary" disabled={!!conversation.encryption && !p.cryptoUnlocked}>
                             <Download />
                             导出记录
                           </button>

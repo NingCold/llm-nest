@@ -42,6 +42,8 @@ dto!(NodeTask {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+// Keep the public wire contract inspectable for independent connector callers.
+#[allow(clippy::large_enum_variant)]
 pub enum NodeTrigger {
     Message {
         message_id: String,
@@ -53,9 +55,22 @@ pub enum NodeTrigger {
         creator_id: String,
         content: String,
         due_at: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        utc_offset_minutes: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sealed: Option<crate::crypto::SealedEnvelope>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audience_revision: Option<String>,
     },
 }
-dto!(NodeAttachment { index: usize, kind: String, mime: String, byte_length: u64, name: Option<String> });
+dto!(NodeAttachment {
+    index: usize, kind: String, mime: String, byte_length: u64, name: Option<String>,
+    // Only populated at the decrypting endpoint; the cloud sees opaque metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    media_encryption_info: Option<String>
+});
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeMessage {
@@ -68,6 +83,10 @@ pub struct NodeMessage {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sealed: Option<crate::crypto::SealedEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_reference: Option<NodeContextReference>,
     pub revision: String,
     pub created_at: String,
     pub attachments: Vec<NodeAttachment>,

@@ -41,6 +41,7 @@ export interface Attachment {
   byteLength: number;
 }
 export interface Message {
+  local?: { synced: boolean };
   id: string;
   conversationId: string;
   senderId: string;

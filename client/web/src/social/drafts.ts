@@ -2,6 +2,7 @@ import type { DraftImage } from "./images"
 import type { ReferenceInput, SendInput } from "./live-types"
 
 export interface Draft<R = ReferenceInput> {
+  route?: "local";
   text: string
   requestId: string | null
   images?: DraftImage[]

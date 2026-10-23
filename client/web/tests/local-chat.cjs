@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
+const exportsLocal = {}, calls = [];
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/local-api.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exportsLocal, require: () => ({ invoke: async (name, args) => { calls.push({ name, args }); } }) });
+(async () => {
+  const messages = [{ message: { id: 'first', position: '9', text: 'before', attachments: [] }, status: 'committed', local: false, synced: true }, { message: { id: 'second', position: '1', text: 'after', attachments: [] }, status: 'generating', local: true, synced: false }];
+  const page = exportsLocal.localPage({ conversation: { id: 'direct' }, messages, hasMore: true });
+  assert.equal(page.messages.map(m => m.id).join(','), 'first,second', 'Agent order is preserved independently of cloud positions');
+  assert.equal(page.messages[1].local.synced, false);
+  assert.equal(page.messages[1].status, 'generating');
+  assert.equal(page.hasMore, false, 'local cached history does not pretend cloud pagination is available');
+  await exportsLocal.sendLocal('direct', 'same-request', 'plain text');
+  assert.equal(calls[0].name, 'local_chat_send');
+  assert.equal(calls[0].args.requestId, 'same-request');
+  assert.equal(Object.keys(calls[0].args).sort().join(','), 'conversationId,requestId,text');
+  console.log('PASS: local chat uses native transport, preserves Agent history order and exposes sync state without credentials');
+})().catch(e => { console.error(e); process.exitCode = 1; });

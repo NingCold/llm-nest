@@ -24,6 +24,7 @@ import {
 } from "./api";
 import type { Account, Conversation, Snapshot, Page, Message, CloudDraftRecord as DraftRecord, DraftReference, ReferencePreview } from "./types";
 import "./cloud.css";
+import { localView, prepareLocal, sendLocal, syncLocal, stopLocal, localPage, type LocalView } from "./local-api";
 const db = new DraftDatabase<DraftReference>();
 const blank = (): DraftRecord => ({ draft: emptyDraft<DraftReference>(), pending: null });
 export default function CloudApp() {
@@ -88,6 +89,21 @@ export default function CloudApp() {
     acknowledging = useRef(false),
     bottom = useRef(true);
   recordRef.current = record;
+  const [localChats, setLocalChats] = useState<Record<string, LocalView>>({});
+  const localRef = useRef(localChats);
+  localRef.current = localChats;
+  const localRouteKey = (id: string) => `llmn-local-chat-route:${JSON.stringify([ownerRef.current, id])}`;
+  const savedLocal = (id: string) => IS_DESKTOP && window.localStorage?.getItem(localRouteKey(id)) === "local";
+  const acceptLocal = (data: LocalView, expectedEpoch = epoch.current) => {
+    if (expectedEpoch !== epoch.current || ownerRef.current !== `${server}/${data.human.id}`) return;
+    localRef.current = { ...localRef.current, [data.conversation.id]: data };
+    setLocalChats(localRef.current);
+    if (activeRef.current === data.conversation.id) setPage(localPage(data));
+  };
+  const loadLocal = async (id: string) => {
+    const e = epoch.current;
+    acceptLocal(await localView(id), e);
+  };
   pageRef.current = page;
   snapshotRef.current = snapshot;
   tabRef.current = tab;
@@ -108,6 +124,8 @@ export default function CloudApp() {
     }
   };
   const clear = () => {
+    localRef.current = {};
+    setLocalChats({});
     clearConsciousnessCommands();
     clearAiConfigurationCommands();
     clearParticipationCommands();
@@ -147,6 +165,7 @@ export default function CloudApp() {
     return data.cursor;
   };
   const history = async (id: string, older = false) => {
+    if (localRef.current[id] || savedLocal(id)) { await loadLocal(id); return; }
     const e = epoch.current,
       v = view.current;
     const data = await request<Page>(
@@ -164,6 +183,7 @@ export default function CloudApp() {
       old = pageRef.current,
       e = epoch.current,
       v = view.current;
+    if (localRef.current[id] || savedLocal(id)) { await loadLocal(id); return; }
     if (!id || !old) return;
     if (!old.messages.length) {
       await history(id);
@@ -198,6 +218,17 @@ export default function CloudApp() {
       });
   };
   useDesktopReady(ready);
+  useEffect(() => {
+    if (!IS_DESKTOP || !me || !active || !(localChats[active] || savedLocal(active))) return;
+    const e = epoch.current;
+    let cancelled = false, polling = false;
+    const timer = setInterval(() => {
+      if (polling) return;
+      polling = true;
+      void localView(active).then(data => { if (!cancelled) acceptLocal(data, e); }).catch(error => { if (!cancelled && e === epoch.current) report(error); }).finally(() => { polling = false; });
+    }, 500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [me?.id, active, !!localChats[active], savedLocal(active)]);
   useEffect(() => {
     const init = async () => {
       try {
@@ -262,6 +293,11 @@ export default function CloudApp() {
       if (v !== view.current) return;
       setRecord(loaded[active] || blank());
       setDraftReady(true);
+      if (loaded[active]?.pending?.route === "local") {
+        window.localStorage?.setItem(localRouteKey(active), "local");
+        await loadLocal(active);
+        return;
+      }
       const target = located.current;
       if (target?.conversationId === active) {
         located.current = null;
@@ -369,6 +405,7 @@ export default function CloudApp() {
     });
   };
   const attach = (files: File[], images: boolean) => {
+    if (localRef.current[activeRef.current] || savedLocal(activeRef.current)) { report(new Error("同机私聊仅支持普通文字，请使用云端发送附件")); return; }
     if (!draftReady || busy || recordRef.current.pending || closing.current)
       return;
     const id = activeRef.current,
@@ -416,6 +453,7 @@ export default function CloudApp() {
         const pending = current.pending || {
           ...current.draft,
           requestId: crypto.randomUUID(),
+          ...(localRef.current[active] || savedLocal(active) ? { route: "local" as const } : {}),
         };
         if (
           !pending.text.trim() &&
@@ -429,7 +467,13 @@ export default function CloudApp() {
           v = view.current;
         await save({ ...current, pending });
         try {
-          await request(`/chat/conversations/${id}/messages`, "POST", {
+          if (pending.route === "local") {
+            if (pending.images?.length || pending.files?.length || pending.replyTo || pending.reference || pending.mentions?.length)
+              throw new HttpError(422, "同机私聊本批仅支持普通文字，请清除附件、回复、提及和群引用后再发送；这些内容可使用云端发送。");
+            const data = await sendLocal(id, pending.requestId, pending.text);
+            if (e !== epoch.current) return;
+            acceptLocal(data, e);
+          } else await request(`/chat/conversations/${id}/messages`, "POST", {
             requestId: pending.requestId,
             text: pending.text,
             mentions: pending.mentions ?? [],
@@ -457,7 +501,7 @@ export default function CloudApp() {
           await save({ draft: emptyDraft<DraftReference>(), pending: null });
         else await db.save(owner, id, { draft: emptyDraft<DraftReference>(), pending: null });
         await history(id);
-        await refresh();
+        if (!localRef.current[id]) await refresh();
       } finally {
         setBusy(false);
       }
@@ -544,6 +588,7 @@ export default function CloudApp() {
   }, []);
 
   const mutation = async (m: Message, withdraw: boolean, text?: string) => {
+    if (localRef.current[m.conversationId] || savedLocal(m.conversationId)) throw new Error("同机私聊暂不支持编辑与撤回");
     await request(
       `/chat/messages/${m.id}${withdraw ? "/withdraw" : ""}`,
       withdraw ? "POST" : "PATCH",
@@ -769,6 +814,32 @@ export default function CloudApp() {
       locate={locate}
       act={run}
       refresh={refresh}
+      localChat={localChats[active]}
+      localSelected={!!localChats[active] || savedLocal(active)}
+      prepareLocal={IS_DESKTOP ? async () => {
+        if (recordRef.current.pending) throw new Error("请先确认原发送结果，再开启同机私聊");
+        const target = snapshotRef.current?.conversations.find(c => c.id === active);
+        if (!target?.peer) return;
+        const e = epoch.current, key = localRouteKey(active);
+        const data = await prepareLocal(active, target.peer.id);
+        if (e !== epoch.current) return;
+        window.localStorage.setItem(key, "local");
+        acceptLocal(data, e);
+      } : undefined}
+      syncLocal={async () => { const e = epoch.current; acceptLocal(await syncLocal(active), e); }}
+      stopLocal={async () => { const e = epoch.current; acceptLocal(await stopLocal(active), e); }}
+      closeLocal={async () => {
+        if (recordRef.current.pending || localRef.current[active]?.running || localRef.current[active]?.syncState !== "synced")
+          throw new Error("请先完成本机回复并同步云端，再返回云端发送");
+        const e = epoch.current, id = active, key = localRouteKey(active);
+        const data = await request<Page>(`/chat/conversations/${id}/messages`);
+        if (e !== epoch.current) return;
+        window.localStorage.removeItem(key);
+        const next = { ...localRef.current }; delete next[id];
+        localRef.current = next;
+        setLocalChats(next);
+        if (activeRef.current === id) setPage(data);
+      }}
       history={(older) => {
         if (!older) setMessageLocation(null);
         return history(active, older);

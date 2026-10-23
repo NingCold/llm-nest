@@ -64,6 +64,13 @@ pub struct SetupOptions {
     api_key_env: Option<String>,
 }
 impl LocalAgentState {
+    pub(crate) fn direct_directory(
+        &self,
+        cloud: &CloudState,
+    ) -> Result<(Uuid, PathBuf, u64), String> {
+        let (server, human, generation) = cloud.authorized_local_session()?;
+        Ok((human, self.dir(&Owner { server, human }), generation))
+    }
     pub fn new() -> Self {
         Self::at_root(storage::default_data_dir().join("desktop-agents"))
     }

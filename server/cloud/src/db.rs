@@ -66,6 +66,13 @@ pub fn migrator() -> sqlx_core::migrate::Migrator {
                 include_str!("../migrations/0008_migration.sql").into(),
                 false,
             ),
+            Migration::new(
+                9,
+                "direct".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/0009_direct.sql").into(),
+                false,
+            ),
         ]
         .into(),
         ..Migrator::DEFAULT

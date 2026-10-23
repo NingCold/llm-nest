@@ -22,6 +22,7 @@ struct Inner {
     server: Option<Url>,
     cookie: Option<String>,
     generation: u64,
+    local_human: Option<Uuid>,
     subscriptions: HashMap<String, Subscription>,
     owner_versions: HashMap<String, u64>,
 }
@@ -68,6 +69,7 @@ impl CloudState {
                 server: None,
                 cookie: None,
                 generation: 0,
+                local_human: None,
                 subscriptions: HashMap::new(),
                 owner_versions: HashMap::new(),
             })),
@@ -124,10 +126,60 @@ impl CloudState {
         }
         Ok((ctx.url.origin().ascii_serialization(), owner))
     }
-    fn cookies(&self, ctx: &RequestContext, response: &reqwest::Response) {
+    #[cfg(test)]
+    fn authorized_local_identity(&self) -> Result<(String, Uuid), String> {
+        self.authorized_local_session()
+            .map(|(server, human, _)| (server, human))
+    }
+    pub(crate) fn authorized_local_session(&self) -> Result<(String, Uuid, u64), String> {
+        let s = self.shared.lock().unwrap();
+        Ok((
+            s.server
+                .as_ref()
+                .ok_or("请先设置云端服务器")?
+                .origin()
+                .ascii_serialization(),
+            s.local_human
+                .ok_or("请先在线登录真人账号，再使用同机私聊")?,
+            s.generation,
+        ))
+    }
+    pub(crate) fn session_generation(&self) -> u64 {
+        self.shared.lock().unwrap().generation
+    }
+    pub(crate) async fn direct_grant(
+        &self,
+        conversation: &str,
+        binding: &connector::direct::DirectBinding,
+    ) -> Result<String, String> {
+        let ctx = self.context(
+            &format!("/api/chat/conversations/{conversation}/direct"),
+            false,
+        )?;
+        let response = request(&ctx, Method::POST)
+            .timeout(Duration::from_secs(60))
+            .json(&connector::direct::DirectGrantRequest {
+                node_id: binding.node_id.clone(),
+                binding_version: binding.binding_version.clone(),
+            })
+            .send()
+            .await
+            .map_err(connection_error)?;
+        self.reject_session(&ctx, response.status());
+        if !response.status().is_success() {
+            return Err("同机私聊授权失败，请检查登录、AI 管理权及当前节点绑定".into());
+        }
+        let grant: connector::direct::DirectGrant =
+            response.json().await.map_err(|_| "同机授权响应无效")?;
+        if self.shared.lock().unwrap().generation != ctx.generation {
+            return Err("登录身份已变化".into());
+        }
+        Ok(grant.token)
+    }
+    fn cookies(&self, ctx: &RequestContext, response: &reqwest::Response) -> Option<u64> {
         let mut s = self.shared.lock().unwrap();
         if s.generation != ctx.generation {
-            return;
+            return None;
         }
         for h in response.headers().get_all(header::SET_COOKIE) {
             if let Ok(v) = h.to_str()
@@ -147,11 +199,12 @@ impl CloudState {
                 }
             }
         }
+        Some(s.generation)
     }
     fn reject_session(&self, ctx: &RequestContext, status: reqwest::StatusCode) {
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let mut s = self.shared.lock().unwrap();
-            if s.generation == ctx.generation && s.cookie.is_some() {
+            if s.generation == ctx.generation {
                 advance(&mut s);
                 s.cookie = None;
             }
@@ -160,6 +213,7 @@ impl CloudState {
 }
 fn advance(s: &mut Inner) {
     s.generation += 1;
+    s.local_human = None;
     for (_, v) in s.subscriptions.drain() {
         v.cancel.cancel();
     }
@@ -252,7 +306,7 @@ pub async fn cloud_request(
         b = b.json(&body);
     }
     let response = b.send().await.map_err(connection_error)?;
-    state.cookies(&ctx, &response);
+    let response_generation = state.cookies(&ctx, &response);
     state.reject_session(&ctx, response.status());
     let status = response.status().as_u16();
     let content_type = response
@@ -276,6 +330,25 @@ pub async fn cloud_request(
     } else {
         String::from_utf8(bytes.to_vec()).map_err(|_| "云端文本编码无效")?
     };
+    if status < 300
+        && response_generation.is_some()
+        && matches!(
+            path.as_str(),
+            "/api/me" | "/api/auth/login" | "/api/auth/verify"
+        )
+    {
+        let account: serde_json::Value =
+            serde_json::from_str(&body).map_err(|_| "云端身份响应无效")?;
+        let account = if path == "/api/me" {
+            &account
+        } else {
+            &account["account"]
+        };
+        let mut s = state.shared.lock().unwrap();
+        if Some(s.generation) == response_generation && account["kind"] == "human" {
+            s.local_human = account["id"].as_str().and_then(|id| id.parse().ok());
+        }
+    }
     Ok(CloudResponse {
         status,
         body,
@@ -487,6 +560,24 @@ pub async fn cloud_save_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_authority_survives_connection_errors_but_not_session_change() {
+        let state = CloudState::new();
+        let human = Uuid::new_v4();
+        {
+            let mut s = state.shared.lock().unwrap();
+            s.server = Some(server_url("https://example.com").unwrap());
+            s.cookie = Some("nest_session=private".into());
+            s.local_human = Some(human);
+        }
+        assert_eq!(state.authorized_local_identity().unwrap().1, human);
+        let ctx = state.context("/api/me", false).unwrap();
+        state.reject_session(&ctx, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.authorized_local_identity().unwrap().1, human);
+        state.reject_session(&ctx, reqwest::StatusCode::UNAUTHORIZED);
+        assert!(state.authorized_local_identity().is_err());
+        assert!(CloudState::new().authorized_local_identity().is_err());
+    }
     #[tokio::test]
     #[ignore = "requires explicit CLOUD_TLS_TEST_URL and CLOUD_CA_CERT_FILE"]
     async fn connects_to_explicit_test_https_with_configured_ca() {
@@ -573,6 +664,7 @@ mod tests {
                 server: Some(server_url("https://example.com").unwrap()),
                 cookie: Some("nest_session=old".into()),
                 generation: 0,
+                local_human: None,
                 subscriptions: HashMap::new(),
                 owner_versions: HashMap::new(),
             })),
@@ -593,8 +685,8 @@ mod tests {
                     .unwrap(),
             )
         };
-        state.cookies(&newer, &response("new"));
-        state.cookies(&older, &response("stale"));
+        assert!(state.cookies(&newer, &response("new")).is_some());
+        assert!(state.cookies(&older, &response("stale")).is_none());
         assert_eq!(
             state.shared.lock().unwrap().cookie.as_deref(),
             Some("nest_session=new")

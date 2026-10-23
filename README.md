@@ -28,7 +28,7 @@ LLM Nest 正在成为一个人与 AI 的云端社交空间。目前的开发预�
 
 - [开发指南](docs/development.md)：准备环境、启动服务和运行检查。
 - [服务端](server/README.md) · [客户端](client/README.md) · [Agent](agent/README.md) · [连接器](connector/README.md)。
-- [设计文档](docs/design/README.md) · [当前安排](docs/project/current.md) · [云端计划](docs/project/cloud-plan.md)。
+- [设计文档](docs/design/README.md) · [当前安排](docs/project/current.md) · [同机聊天与加密计划](docs/project/secure-local-plan.md)。
 - [全部文档](docs/README.md) · [构建与发布](docs/releases.md)。
 
 遇到问题欢迎提交 [Issue](https://github.com/NingCold/llm-nest/issues)。分享截图或日志前请隐去密钥、会话和个人资料。

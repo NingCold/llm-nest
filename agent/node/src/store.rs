@@ -132,7 +132,46 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
         tokens: u64,
         limits: BudgetLimits<'_>,
     ) -> Result<()> {
+        self.reserve_model(task, ai, Some(start), day, tokens, limits)
+    }
+    /// Reserve a local invocation without creating a cloud task or confirmation.
+    pub fn reserve_local(
+        &self,
+        task: &str,
+        ai: &str,
+        day: &str,
+        tokens: u64,
+        limits: BudgetLimits<'_>,
+    ) -> Result<()> {
+        self.reserve_model(task, ai, None, day, tokens, limits)
+    }
+    fn reserve_model(
+        &self,
+        task: &str,
+        ai: &str,
+        start: Option<&connector::node::StartRequest>,
+        day: &str,
+        tokens: u64,
+        limits: BudgetLimits<'_>,
+    ) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;
+        if start.is_none() {
+            let reserved: Option<(String, i64, Option<String>, bool)> = tx.query_row(
+                "SELECT ai,tokens,cid,EXISTS(SELECT 1 FROM tasks WHERE id=?1) FROM model_reservations WHERE task=?1", [task],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).optional()?;
+            if let Some((reserved_ai, reserved_tokens, reserved_cid, cloud_task)) = reserved {
+                anyhow::ensure!(
+                    reserved_ai == ai
+                        && reserved_tokens == i64::try_from(tokens)?
+                        && reserved_cid.as_deref()
+                            == limits.automatic.as_ref().map(|a| a.conversation)
+                        && !cloud_task,
+                    "local reservation reused with different parameters"
+                );
+                return Ok(());
+            }
+        }
         let last: Option<String> = tx
             .query_row("SELECT value FROM meta WHERE key='last_day'", [], |r| {
                 r.get(0)
@@ -167,10 +206,12 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
             }
             tx.execute("INSERT INTO automatic_budget VALUES(?1,?2,?3,?4) ON CONFLICT(ai,cid,day) DO UPDATE SET tokens=excluded.tokens",params![ai,automatic.conversation,day,i64::try_from(used+tokens)?])?;
         }
-        tx.execute(
-            "INSERT INTO tasks(id,ai,state,start_json) VALUES(?1,?2,'intent',?3)",
-            params![task, ai, serde_json::to_string(start)?],
-        )?;
+        if let Some(start) = start {
+            tx.execute(
+                "INSERT INTO tasks(id,ai,state,start_json) VALUES(?1,?2,'intent',?3)",
+                params![task, ai, serde_json::to_string(start)?],
+            )?;
+        }
         tx.execute("INSERT INTO budget VALUES(?1,?2,?3) ON CONFLICT(day) DO UPDATE SET calls=excluded.calls,tokens=excluded.tokens",params![day,i64::try_from(calls+1)?,i64::try_from(used+tokens)?])?;
         tx.execute("INSERT INTO meta VALUES('last_day',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[day])?;
         tx.execute(
@@ -244,6 +285,44 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_and_cloud_share_budget_without_local_cloud_tasks() {
+        let s = Store::open(Path::new(":memory:")).unwrap();
+        let limits = || BudgetLimits {
+            calls: 2,
+            tokens: 1000,
+            automatic: None,
+        };
+        s.reserve_local("local", "ai", "2026-10-23", 400, limits())
+            .unwrap();
+        s.reserve_local("local", "ai", "2026-10-23", 400, limits())
+            .unwrap();
+        assert!(s.state("local").unwrap().is_none());
+        assert!(
+            s.reserve_local("local", "other", "2026-10-23", 400, limits())
+                .is_err()
+        );
+        s.reserve("cloud", "ai", &start(), "2026-10-23", 500, limits())
+            .unwrap();
+        assert!(
+            s.reserve_local("third", "ai", "2026-10-23", 1, limits())
+                .is_err()
+        );
+        let budget: (i64, i64) =
+            s.db.query_row("SELECT calls,tokens FROM budget", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(budget, (2, 900));
+        assert!(
+            s.reserve_local("cloud", "ai", "2026-10-23", 500, limits())
+                .is_err()
+        );
+        assert!(
+            s.reserve_local("rollback", "ai", "2026-10-22", 1, limits())
+                .is_err()
+        );
+    }
     fn automatic_limits(cid: &str) -> BudgetLimits<'_> {
         BudgetLimits {
             calls: 100,

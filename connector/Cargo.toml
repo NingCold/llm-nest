@@ -14,3 +14,7 @@ thiserror.workspace = true
 url = "2"
 native-tls = "0.2"
 tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+tempfile = "3"

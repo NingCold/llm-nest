@@ -15,6 +15,7 @@ mod directories;
 mod draft_close;
 mod local_agent;
 mod local_agent_tray;
+mod local_chat;
 mod social_commands;
 mod social_subscription;
 mod window_frame;
@@ -215,6 +216,11 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            local_chat::local_chat_prepare,
+            local_chat::local_chat_view,
+            local_chat::local_chat_send,
+            local_chat::local_chat_stop,
+            local_chat::local_chat_sync,
             local_agent::local_agent_status,
             local_agent::local_agent_setup,
             local_agent::local_agent_pair,

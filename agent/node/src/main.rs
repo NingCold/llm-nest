@@ -1,5 +1,7 @@
 mod consciousness;
 mod context;
+mod direct;
+mod direct_runtime;
 mod management;
 mod store;
 mod transfer;
@@ -203,6 +205,17 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
     if bindings.is_empty() {
         bail!("no AI binding; run pair first");
     }
+    let mut direct_listener = if command == "run-managed" {
+        direct::initialize(&store)?;
+        match fs::remove_file(directory.join("direct-endpoint.json")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        Some(connector::direct::ipc::Listener::bind(&directory)?)
+    } else {
+        None
+    };
     let managed = if command == "run-managed" {
         for binding in &bindings {
             management::validate(&config, &store.profile(&binding.ai)?)?;
@@ -220,16 +233,43 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
     }
     let social_slots = tokio::sync::Semaphore::new(4);
     let summary_slot = tokio::sync::Semaphore::new(1);
+    let windows = direct::Windows::default();
+    let local_llm = AiClient::from_config(&config.providers)?;
     let nodes = bindings.iter().map(|binding| async {
         loop {
-            if let Err(error) = cycle(&config, &store, binding, &social_slots, &summary_slot).await
+            if let Err(error) = cycle(
+                &config,
+                &store,
+                binding,
+                &social_slots,
+                &summary_slot,
+                &windows,
+            )
+            .await
             {
                 eprintln!("Node cycle failed: {error}");
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
-    tokio::select! { _=tokio::signal::ctrl_c()=>Ok(()), _=managed_stop(managed.as_ref())=>Ok(()), _=futures_util::future::join_all(nodes)=>Ok(()) }
+    let local = async {
+        if let Some(listener) = direct_listener.as_mut() {
+            direct_runtime::serve(
+                &config,
+                &store,
+                &directory,
+                &bindings,
+                &local_llm,
+                &social_slots,
+                &windows,
+                listener,
+            )
+            .await
+        } else {
+            futures_util::future::pending::<Result<()>>().await
+        }
+    };
+    tokio::select! { _=tokio::signal::ctrl_c()=>Ok(()), _=managed_stop(managed.as_ref())=>Ok(()), result=local=>result, _=futures_util::future::join_all(nodes)=>Ok(()) }
 }
 fn result(receipt: &StartReceipt, status: &str, text: String, code: Option<&str>) -> ResultRequest {
     ResultRequest {
@@ -430,6 +470,7 @@ async fn cycle(
     binding: &Binding,
     social_slots: &tokio::sync::Semaphore,
     summary_slot: &tokio::sync::Semaphore,
+    windows: &direct::Windows,
 ) -> Result<()> {
     let api = client(config, &binding.secret)?;
     store.db.execute(
@@ -468,6 +509,9 @@ async fn cycle(
             if task.status != "queued" || store.state(&task.id)?.is_some() {
                 continue;
             }
+            let Some(_window) = windows.enter(&task.conversation_id) else {
+                continue;
+            };
             let Ok(_social_slot) = social_slots.try_acquire() else {
                 break;
             };

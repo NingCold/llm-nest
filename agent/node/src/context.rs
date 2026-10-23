@@ -222,9 +222,46 @@ pub async fn prepare_scoped(
     client: &NodeClient,
     router: &ModelRouter,
     profile: &Profile,
-    mut material: TaskMaterials,
+    material: TaskMaterials,
     store: Option<&Store>,
 ) -> Result<(ChatRequest, u64, Vec<ScopedSource>, Vec<MaterialScope>)> {
+    let (request, tokens, derived, scopes, _) =
+        prepare_inner(client, router, profile, material, store).await?;
+    Ok((request, tokens, derived, scopes))
+}
+/// Return the core-selected message sources, including local IDs for caller filtering.
+pub async fn prepare_direct(
+    client: &NodeClient,
+    router: &ModelRouter,
+    profile: &Profile,
+    material: TaskMaterials,
+    store: Option<&Store>,
+) -> Result<(
+    ChatRequest,
+    u64,
+    Vec<ScopedSource>,
+    Vec<MaterialScope>,
+    Vec<connector::node::SourceRevision>,
+)> {
+    anyhow::ensure!(
+        material.reference.is_none() && material.messages.iter().all(|m| m.attachments.is_empty()),
+        "direct_text_only"
+    );
+    prepare_inner(client, router, profile, material, store).await
+}
+async fn prepare_inner(
+    client: &NodeClient,
+    router: &ModelRouter,
+    profile: &Profile,
+    mut material: TaskMaterials,
+    store: Option<&Store>,
+) -> Result<(
+    ChatRequest,
+    u64,
+    Vec<ScopedSource>,
+    Vec<MaterialScope>,
+    Vec<connector::node::SourceRevision>,
+)> {
     let resolved = router.resolve(&profile.selection)?;
     let options = generation::options(
         &generation::Parameters {
@@ -553,6 +590,22 @@ pub async fn prepare_scoped(
     {
         scopes.retain(|s| s.conversation_id == material.task.conversation_id);
     }
+    let actual_messages = prepared
+        .snapshot
+        .sources
+        .iter()
+        .filter_map(|source| match source {
+            SourceRef::Message {
+                conversation_id: cid,
+                message_id,
+                revision,
+            } if *cid == conversation_id => Some(connector::node::SourceRevision {
+                message_id: message_id.to_string(),
+                revision: revision.to_string(),
+            }),
+            _ => None,
+        })
+        .collect();
     let reserve = resolved.spec.context_window.unwrap_or(8192) as u64;
     // The request and client are frozen for the entire invocation.
     Ok((
@@ -566,6 +619,7 @@ pub async fn prepare_scoped(
         reserve,
         derived,
         scopes,
+        actual_messages,
     ))
 }
 
@@ -754,6 +808,43 @@ image_input=false
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), "invalid_contact_trigger");
+    }
+    #[tokio::test]
+    async fn direct_sources_match_selected_text_without_network() {
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let mut material = materials();
+        for message in &mut material.messages {
+            message.attachments.clear();
+        }
+        let trigger = match &material.task.trigger {
+            NodeTrigger::Message { message_id, .. } => message_id.clone(),
+            _ => unreachable!(),
+        };
+        let (_, _, _, _, sources) =
+            prepare_direct(&api, &router(), &profile(), material.clone(), None)
+                .await
+                .unwrap();
+        assert!(sources.iter().any(|s| s.message_id == trigger));
+        assert!(sources.iter().all(|s| {
+            material
+                .messages
+                .iter()
+                .any(|m| m.id == s.message_id && m.revision == s.revision)
+        }));
+        material.messages[0].attachments.push(NodeAttachment {
+            index: 0,
+            kind: "file".into(),
+            mime: "text/plain".into(),
+            byte_length: 1,
+            name: None,
+        });
+        assert_eq!(
+            prepare_direct(&api, &router(), &profile(), material, None)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "direct_text_only"
+        );
     }
     #[tokio::test]
     async fn context_uses_core_and_file_metadata_without_fetching_bytes() {

@@ -49,8 +49,15 @@ import type {
 } from "./types";
 import "../social/social.css";
 import "./cloud.css";
+import type { LocalView } from "./local-api";
 
 interface Props {
+  localChat?: LocalView;
+  localSelected?: boolean;
+  prepareLocal?: () => Promise<void>;
+  syncLocal?: () => Promise<void>;
+  stopLocal?: () => Promise<void>;
+  closeLocal?: () => Promise<void>;
   me: Account;
   snapshot: Snapshot | null;
   active: string;
@@ -1021,9 +1028,12 @@ export function Workspace(p: Props) {
                       <Avatar contact={avatar({ name: conversation.name })} />
                       <span>
                         <strong>{conversation.name}</strong>
-                        <small>{conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
+                        <small>{p.localChat ? `同机私聊 · ${p.localChat.syncState === "synced" ? "已同步云端" : p.localChat.syncState === "conflict" ? "云端同步冲突" : "等待云端同步"}` : conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
                       </span>
                     </button>
+                    {conversation.kind === "direct" && conversation.peer?.kind === "ai" && p.prepareLocal && !p.localSelected && <button className="text-button" onClick={() => void p.act(p.prepareLocal!)}>开启同机私聊</button>}
+                    {p.localSelected && !p.localChat && <div role="status">同机私聊暂未连接；发送仍使用本机 Agent，不会自动改发云端。<button className="text-button" onClick={() => void p.act(() => p.history())}>重新连接本机</button></div>}
+                    {p.localChat && <div role="status"><small>同机私聊仅支持普通文字；附件、回复与群引用请使用云端。{p.localChat.error}{p.localChat.hasMore && "仅显示节点已缓存的历史。"}</small><button className="text-button" onClick={() => void p.act(p.syncLocal!)}>重试云端同步</button><button className="text-button" disabled={p.localChat.running || p.localChat.syncState !== "synced" || !!p.record.pending} onClick={() => void p.act(p.closeLocal!)}>返回云端发送</button>{p.localChat.running && <button className="text-button" onClick={() => void p.act(p.stopLocal!)}>停止本机回复</button>}</div>}
                     <IconButton
                       label="聊天详情"
                       aria-pressed={details}
@@ -1100,11 +1110,11 @@ export function Workspace(p: Props) {
                               {m.importOrigin && <small title="从旧版聊天记录导入">导入历史</small>}
                             </div>
                             {m.contextReference && m.status !== "withdrawn" && <ReferenceCard directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
-                            {m.status === "committed" && !conversation.readOnly && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
+                            {m.status === "committed" && !conversation.readOnly && !p.localSelected && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
                             {m.status === "committed" && conversation.kind === "group" && <ContinuePrivately conversation={conversation} message={m} messages={p.page!.messages} continueWith={p.continuePrivately} />}
                             {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo! }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
                             {!!m.mentions.length && <div className="cloud-mentions">{m.mentions.map(id => <span key={id}>@{conversation.members.find(member => member.account.id === id)?.account.name || id} </span>)}</div>}
-                            {m.status === "committed" && !conversation.readOnly && <button className="text-button" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
+                            {m.status === "committed" && !conversation.readOnly && !p.localSelected && <button className="text-button" disabled={!!p.localSelected || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
                             {p.editing?.id === m.id ? (
                               <form
                                 className="live-message-editor cloud-form"
@@ -1181,6 +1191,7 @@ export function Workspace(p: Props) {
                                 )}
                               </div>
                             )}
+                            {m.local && <small role="status">{m.local.synced ? "本机消息 · 已同步云端" : "本机消息 · 待同步云端"}</small>}
                             {m.aiResponses.map(response => (
                               <div className="cloud-task-status" role="status" key={response.taskId}>
                                 <span>{conversation.members.find(member => member.account.id === response.aiId)?.account.name}：{responseStatus(response)}</span>
@@ -1193,6 +1204,7 @@ export function Workspace(p: Props) {
                             ))}
                             {m.senderId === p.me.id &&
                               !conversation.readOnly &&
+                              !p.localSelected &&
                               m.status !== "withdrawn" && (
                                 <div className="live-message-actions">
                                   <button
@@ -1305,7 +1317,7 @@ export function Workspace(p: Props) {
                       {p.record.draft.reference && <ReferenceCard directId={conversation.id} selection={p.record.draft.reference.selection} cursor={p.snapshot!.cursor} remove={p.draftReady && !p.busy && !p.record.pending ? () => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, reference: null } })) : undefined} />}
                       {conversation.directBlocked && <p role="status">双方私聊已屏蔽，历史和草稿保留。解除屏蔽后可发送新消息。</p>}
                       {p.record.draft.replyTo && <div className="cloud-reply-draft">回复：{replyLabel(p.record.draft.replyTo)}<button className="text-button" disabled={p.busy || !!p.record.pending || !p.draftReady} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: null } }))}>取消回复</button></div>}
-                      {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
+                      {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={!!p.localSelected || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
                         <legend>提及成员（可明确指定回复的 AI）</legend>
                         {conversation.members.filter(member => member.account.id !== p.me.id).map(({ account }) => <label className="cloud-check" key={account.id}><input type="checkbox" checked={p.record.draft.mentions?.includes(account.id) || false} onChange={e => { const mentions = p.record.draft.mentions || []; void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: e.target.checked ? [...mentions, account.id] : mentions.filter(id => id !== account.id) } })); }} />@{account.name}</label>)}
                         {p.record.draft.mentions?.filter(id => !conversation.members.some(member => member.account.id === id)).map(id => <button type="button" className="text-button" key={id} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: p.record.draft.mentions!.filter(previous => previous !== id) } }))}>移除已离群提及：{id}</button>)}
@@ -1352,7 +1364,7 @@ export function Workspace(p: Props) {
                           multiple
                           accept="image/png,image/jpeg,image/webp"
                           disabled={
-                            !p.draftReady || p.busy || !!p.record.pending
+                            !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
                           }
                           onChange={(e) => {
                             add(Array.from(e.target.files || []));
@@ -1365,7 +1377,7 @@ export function Workspace(p: Props) {
                           type="file"
                           multiple
                           disabled={
-                            !p.draftReady || p.busy || !!p.record.pending
+                            !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
                           }
                           onChange={(e) => {
                             add(Array.from(e.target.files || []), true);
@@ -1376,7 +1388,7 @@ export function Workspace(p: Props) {
                           <IconButton
                             label="添加文件"
                             disabled={
-                              !p.draftReady || p.busy || !!p.record.pending
+                              !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
                             }
                             onClick={() => fileInput.current?.click()}
                           >
@@ -1385,7 +1397,7 @@ export function Workspace(p: Props) {
                           <IconButton
                             label="添加图片"
                             disabled={
-                              !p.draftReady || p.busy || !!p.record.pending
+                              !!p.localSelected || !p.draftReady || p.busy || !!p.record.pending
                             }
                             onClick={() => imageInput.current?.click()}
                           >

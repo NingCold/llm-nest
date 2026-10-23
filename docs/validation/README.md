@@ -24,6 +24,31 @@ python scripts/social_acceptance.py
 
 `acceptance.py` 检查空配置、旧接口退役、本地访问、显式导入/重启与 worker；`social_acceptance.py` 以模拟 provider 驱动真实业务。编译不证明安装通过，模拟模型不证明真实模型能力，自动输入中文不证明真实输入法候选正常。
 
+## 同机文字私聊验证
+
+2026-10-23，使用本机独立 PostgreSQL、临时节点目录、真实 `llmn-agent run-managed` 进程和模拟模型验证。未调用真实模型，未更新内网部署或日常安装，未迁移日常数据。
+
+- 云端 42 项测试在真实 PostgreSQL 上通过，没有因缺少数据库而跳过。新增覆盖同机授权、节点换绑、真实聊天尾部和来源复核、暂停及未完成任务冲突、重复补传与撤回回执，以及失败/中断记录保存；补传不会产生云端 AI 任务。
+- Agent 37 项单测、3 项进程集成测试与连接器 13 项测试通过。同机场景通过云端返回 503 模拟离线，实际从私有 IPC 发送并调用本机模拟模型；发送重试只调用一次。首次补传已接纳但返回失败后，重试保持完整载荷和消息 ID，刷新历史仍一致；异账号读取被拒绝。生成中终止真实进程，重启后显示中断，同一请求不重新调用。
+- 前端完整测试、类型检查和生产构建通过。测试包含本机消息顺序、发送方式跨刷新保留、未确认请求重试、退出后迟到响应不能恢复旧会话。生产构建仍提示部分依赖包较大，不影响本轮构建通过。
+- 桌面 `cargo check -p tauri-frontend --lib` 通过。原生单测已编译，但测试 EXE 启动返回 `0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND`，未进入测试；不能记作通过。完整桌面点击、断网体验与 Linux 通道尚未实测。Unix socket 已改为短路径、私有临时目录，新增的 Unix 专属测试在 Windows 不执行。
+- Agent、连接器及云端严格 no-deps Clippy、Rust 格式、依赖边界及文档链接检查通过。
+
+复测入口：
+
+```bash
+# CLOUD_TEST_DATABASE_URL 必须指向独立测试库。
+cargo test -p cloud-server --locked -- --test-threads=4
+cargo test -p agent-node -p connector --locked
+cargo test -p agent-node --test direct_lifecycle --locked
+cargo check -p tauri-frontend --lib --locked
+npm --prefix client/web test
+npm --prefix client/web run typecheck
+npm --prefix client/web run build
+```
+
+这批证明的是同机文字执行与补传流程，不代表端到端加密、完整离线登录、Linux 实机或安装验收已完成。具体范围见[执行计划](../project/secure-local-plan.md)。
+
 ## 数据迁移与联网试用验证
 
 2026-10-23，第 5 步使用合成的旧 v13 库、专用云端账号、两个独立节点目录和模拟模型验证。服务与 Web 已更新到授权内网，部署前保留数据库备份；日常旧库、已安装桌面程序及原有 Agent 未改变。

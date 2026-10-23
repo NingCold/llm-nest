@@ -3,7 +3,7 @@ class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); t
 const me = { id: "me", name: "自己", kind: "human", status: "active" };
 const conversation = { id: "group", kind: "group", directBlocked: false };
 const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
-function harness(record, desktop = false) {
+function harness(record, desktop = false, storage = new Map()) {
   const states = [], refs = [], calls = [], saves = [], effects = [], listeners = {};
   const repository = { records: {} };
   let si = 0, ri = 0;
@@ -14,14 +14,22 @@ function harness(record, desktop = false) {
     useState(initial) { const i = si++; if (!(i in states)) states[i] = typeof initial === "function" ? initial() : initial; return [states[i], value => { states[i] = typeof value === "function" ? value(states[i]) : value; }]; },
     useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
   };
-  const api = { server: "https://example.test", HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
+  const api = { server: "https://example.test", invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/App.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
-    exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, window: { addEventListener() {}, removeEventListener() {} },
+    exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener() {}, removeEventListener() {} },
     require(name) {
       if (name === "react") return hooks;
       if (name === "./api") return api;
+      if (name === "./local-api") return {
+        sendLocal: async (id, requestId, text) => { calls.push({ local: true, id, requestId, text }); throw new Error("local acknowledgement lost"); },
+        syncLocal: async () => api.localRespond(),
+        localPage: data => ({ messages: data.messages, hasMore: false, latestPosition: "0" }),
+      };
       if (name === "./Workspace") return { Workspace: "workspace" };
+      if (name === "./Consciousness") return { clearConsciousnessCommands() {} };
+      if (name === "./AiConfiguration") return { clearAiConfigurationCommands() {} };
+      if (name === "./Participation") return { clearParticipationCommands() {} };
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
       if (name === "@tauri-apps/api/core") return { invoke: async () => {} };
@@ -67,6 +75,30 @@ function harness(record, desktop = false) {
   assert.equal(recovered.calls[0].body.replyTo, draft.replyTo);
   assert.equal(JSON.stringify(recovered.calls[0].body.mentions), JSON.stringify(draft.mentions));
   assert.equal(recovered.render().record.draft.text, "later input");
+  const localPending = { text: "offline text", requestId: "local-request", route: "local", mentions: [], replyTo: null };
+  const local = harness({ draft: { ...localPending, text: "later" }, pending: localPending });
+  await local.render().send();
+  assert.equal(local.calls.length, 1);
+  assert.equal(local.calls[0].local, true, "recovered local command never falls through to cloud transport");
+  assert.equal(local.calls[0].requestId, "local-request");
+  assert.equal(local.render().record.pending.route, "local", "lost local acknowledgement retains route and request identity");
+  const unsupportedLocal = harness({ draft, pending: { ...localPending, images: draft.images } });
+  await unsupportedLocal.render().send();
+  assert.equal(unsupportedLocal.calls.length, 0, "unsupported local attachment is rejected without silently dropping its bytes or cloud fallback");
+  const rememberedRoute = new Map([[`llmn-local-chat-route:${JSON.stringify(["https://example.test/me", "group"])}`, "local"]]);
+  const refreshedLocal = harness({ draft: localPending, pending: null }, true, rememberedRoute);
+  await refreshedLocal.render().send();
+  assert.equal(refreshedLocal.calls[0].local, true, "a remembered local route survives reload even without an unconfirmed command or in-memory view");
+  assert.equal(refreshedLocal.render().record.pending.route, "local");
+  const oldResponse = harness({ draft: localPending, pending: null }, true, rememberedRoute);
+  let resolveLocal;
+  oldResponse.api.localRespond = () => new Promise(resolve => { resolveLocal = resolve; });
+  const beforeLogout = oldResponse.render();
+  const synchronization = beforeLogout.syncLocal();
+  beforeLogout.endSession();
+  resolveLocal({ human: { id: "me" }, conversation: { id: "group" }, messages: [] });
+  await synchronization;
+  assert.equal(oldResponse.render().localChat, undefined, "an already resolved native response cannot restore local data after logout");
   const target = { ...conversation, id: "direct", kind: "direct", peer: { id: "ai-a" } };
   const continuation = harness({ draft, pending: null });
   const targetDraft = { draft: { ...draft, text: "保留私聊输入", reference: null }, pending: null };

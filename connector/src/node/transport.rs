@@ -130,6 +130,20 @@ impl NodeClient {
         }
         Ok(response.json().await?)
     }
+    pub async fn direct_prepare(
+        &self,
+        request: &crate::direct::DirectPrepare,
+    ) -> Result<crate::direct::DirectBootstrap, NodeError> {
+        self.request(Method::POST, &["node", "direct", "prepare"], Some(request))
+            .await
+    }
+    pub async fn direct_sync(
+        &self,
+        request: &crate::direct::DirectSyncRequest,
+    ) -> Result<crate::direct::DirectSyncReceipt, NodeError> {
+        self.request(Method::POST, &["node", "direct", "sync"], Some(request))
+            .await
+    }
     pub async fn changes(&self, after: &str) -> Result<ConsciousnessChanges, NodeError> {
         let mut url = self.endpoint(&["node", "consciousness", "changes"]);
         url.query_pairs_mut().append_pair("after", after);

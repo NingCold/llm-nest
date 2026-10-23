@@ -87,7 +87,11 @@ async fn is_member(tx: &mut Tx<'_>, cid: Uuid, actor: Uuid) -> Result<bool> {
 async fn valid_message(tx: &mut Tx<'_>, cid: Uuid, id: Uuid, revision: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_messages WHERE id=$1 AND conversation=$2 AND revision=$3 AND status='committed' AND NOT withdrawn AND NOT coalesce((context_reference->>'stale')::boolean,false))").bind(id).bind(cid).bind(revision).fetch_one(&mut **tx).await?)
 }
-async fn scoped_valid(tx: &mut Tx<'_>, ai: Uuid, sources: &[ScopedSource]) -> Result<bool> {
+pub(crate) async fn scoped_valid(
+    tx: &mut Tx<'_>,
+    ai: Uuid,
+    sources: &[ScopedSource],
+) -> Result<bool> {
     if sources.len() > 512 {
         return Err(AppError::bad("来源数量超限"));
     }
@@ -107,7 +111,11 @@ async fn scoped_valid(tx: &mut Tx<'_>, ai: Uuid, sources: &[ScopedSource]) -> Re
     }
     Ok(true)
 }
-async fn scopes_valid(tx: &mut Tx<'_>, ai: Uuid, scopes: &[MaterialScope]) -> Result<bool> {
+pub(crate) async fn scopes_valid(
+    tx: &mut Tx<'_>,
+    ai: Uuid,
+    scopes: &[MaterialScope],
+) -> Result<bool> {
     if scopes.len() > 512 {
         return Err(AppError::bad("材料范围数量超限"));
     }

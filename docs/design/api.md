@@ -142,6 +142,24 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 
 真人触发消息附 `aiResponses:[{aiId,taskId,status,error?}]`，按任务持久顺序排列，每位 AI 独立显示和停止，替代旧单一 aiResponse，表示排队、执行和失败，不把错误伪装成 AI 回答。AI 输出 status 为 generating/committed/interrupted/failed；generating 不计未读，终态取得新的 delivery position。客户端以服务器快照为准。
 
+### 桌面与同机 Agent 文字私聊
+
+首批同机通道用于已登录真人与其管理的本机 AI 的唯一私聊。首次准备必须联网；云端核对双方成员、真人管理权、AI 启用状态、有效节点绑定，以及屏蔽、暂停和未完成云端任务。准备成功后，同一桌面会话可在断云时使用缓存的授权和文字历史；离线节点不能即时获知云端撤权。本批没有端到端加密、局域网连接或附件传输。
+
+| 方法与路径（省略 `/api`） | 请求与返回 |
+| --- | --- |
+| POST `/chat/conversations/{id}/direct` | 真人会话请求 `{nodeId,bindingVersion}`，返回 `{token}`；token 仅由桌面原生层交给 Agent，不返回网页脚本 |
+| POST `/node/direct/prepare` | 节点凭据加 `{grant}`；返回 `DirectBootstrap`：双方账号、真实私聊、bindingVersion、云端末条 `base:{messageId,revision,position}`、最近最多 64 条文字消息和 hasMore |
+| POST `/node/direct/sync` | 节点凭据加 `DirectSyncRequest`；接纳已在本机完成或中断的一轮真人/AI 消息，返回该批当前权威消息和 head，不创建云端发言任务 |
+
+同步请求携带固定 requestId、grant、conversationRevision、base、实际使用的 sources/derivedSources/materialScopes、configurationRevision，以及本轮稳定 UUID 的消息、终态、用量与错误。云端复核当前授权、绑定、来源、材料版本及末条历史，在同一事务保存消息、回执和事件。相同请求按指纹幂等；确认丢失时重交原请求，不能重开模型，也不能用旧回执恢复已撤回正文。权限、来源或历史变化产生冲突，节点保留本机记录供用户确认。
+
+同步回执的 `head` 是该回执最后一条消息的当前权威 `{messageId,revision,position}`，表示本批已接纳的边界。重放旧请求不能把其他设备后来发送、节点尚未读过的消息算成已同步；只有 prepare 的 `base` 取窗口真实末条。若回执丢失后云端已有新消息，原请求仍可幂等取得本批回执，但后续本机批次使用旧边界同步时应返回冲突，不能跳过新历史。
+
+桌面原生命令为 `local_chat_prepare(conversationId,aiId)`、`local_chat_view(conversationId)`、`local_chat_send(conversationId,requestId,text)`、`local_chat_stop(conversationId)` 和 `local_chat_sync(conversationId)`，返回 `DirectView`。原生层从当前登录会话选择真人及受限节点目录，不接受网页指定路径或操作者。`DirectView` 区分每条消息的 status/local/synced，并提供 running、syncState（pending/synced/conflict）、error 和 hasMore；本机顺序不冒充云端 position。网页每 500ms 刷新当前同机窗口。
+
+Agent 的 `run-managed` 在目录锁内创建受限 Unix socket 或拒绝远程客户端的 Windows 命名管道，`direct-endpoint.json` 中的认证 token 仅由原生层读取。IPC 操作为 Status、Prepare、View、Send、Stop、Sync，所有窗口读写绑定授权真人；普通 `run` 不创建此通道。首批 Send 只有普通文字字段，附件、回复、提及与群引用不得静默删掉后执行。原生退出、401 或切服清除内存身份，在飞响应复核会话版本；桌面重启仍须重新在线登录。
+
 ### WSS 与重连
 
 `/node/ws` 使用同一 Bearer，单帧上限 1 MiB。客户端先发送 `{type:"hello",protocolVersion:4,nodeId,aiId,bindingVersion,capabilities?}`，服务端复核后返回 `{type:"ready",protocolVersion:4}`；旧版本明确拒绝。

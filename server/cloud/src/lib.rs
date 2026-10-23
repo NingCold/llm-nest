@@ -2,6 +2,7 @@ pub mod auth;
 pub mod chat;
 pub mod consciousness;
 pub mod db;
+mod direct;
 mod groups;
 mod management;
 mod migration;
@@ -161,6 +162,7 @@ pub fn router(state: Arc<AppState>, web_dir: PathBuf) -> Router {
     });
     let api = Router::new()
         .merge(auth::routes().layer(DefaultBodyLimit::max(16 * 1024)))
+        .merge(direct::routes().layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .merge(chat::routes().layer(DefaultBodyLimit::max(40 * 1024 * 1024)))
         .merge(participation::routes().layer(DefaultBodyLimit::max(16 * 1024)))
         .merge(nodes::routes().layer(DefaultBodyLimit::max(1024 * 1024)))

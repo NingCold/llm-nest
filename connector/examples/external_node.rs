@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 sources: material.sources,
                                 derived_sources: vec![],
                                 material_scopes: vec![scope],
-                                configuration_revision: "deterministic-example-v1".into(),
+                                configuration_revision: "deterministic-example-v4".into(),
                             },
                         )
                         .await;
@@ -75,12 +75,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Err(error) if error.is_queue_wait() => break,
                         Err(error) => return Err(error.into()),
                     };
-                    client.result(&task.id, &ResultRequest {
-                    request_id: task.id.clone(), run_id: receipt.run_id,
-                    message_id: receipt.message_id, confirmation_id: receipt.confirmation_id,
-                    status: "completed".into(), text: "[Connector demonstration: fixed response; no model was called.]".into(),
-                    error_code: None, usage: None,
-                }).await?;
+                    let demonstration = match &material.task.trigger {
+                        NodeTrigger::Message { input_ids, .. } => format!("[Connector demonstration: fixed response to {} required input(s); no model was called.]", input_ids.len()),
+                        NodeTrigger::Contact { .. } => "[Connector demonstration: one-shot authorized contact; no model was called.]".into(),
+                    };
+                    client
+                        .result(
+                            &task.id,
+                            &ResultRequest {
+                                request_id: task.id.clone(),
+                                run_id: receipt.run_id,
+                                message_id: receipt.message_id,
+                                confirmation_id: receipt.confirmation_id,
+                                status: "completed".into(),
+                                text: demonstration,
+                                error_code: None,
+                                usage: None,
+                            },
+                        )
+                        .await?;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }

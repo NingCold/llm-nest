@@ -288,6 +288,9 @@ pub(crate) async fn task_reference(
     task: &sqlx::postgres::PgRow,
     frozen: bool,
 ) -> Result<Option<Value>> {
+    if task.get::<Option<Uuid>, _>("input_id").is_none() {
+        return Ok(None);
+    }
     let cid: Uuid = task.get("conversation");
     let ai: Uuid = task.get("ai_id");
     let ckind: String = sqlx::query_scalar("SELECT kind FROM cloud_conversations WHERE id=$1")

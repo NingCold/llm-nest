@@ -2,7 +2,7 @@
 
 [开发指南](../development.md) · [Windows](windows.md) · [Linux](linux.md) · [设计](../design/README.md)
 
-当前默认入口支持云端真人与 AI 的私聊、群聊和节点意识系统；第 3 步前两批已完成 Web 与双节点验证。云端验证见下文；保留的本地模块仍按原回归脚本验证，历史平台记录只适用于当时的版本。
+当前默认入口支持云端真人与 AI 的私聊、群聊、节点意识系统，以及有限自动接话和一次性约定。云端各批验证见下文；保留的本地模块仍按原回归脚本验证，历史平台记录只适用于当时的版本。
 
 先验证改动所属模块及相关调用链，再按范围扩大。使用独立临时配置、数据和模拟 provider；不要把个人配置、会话或密钥放进 fixture、CI 或发布资源。真实模型验收会产生费用，必须已有明确授权。
 
@@ -23,6 +23,30 @@ python scripts/social_acceptance.py
 全量 Rust 检查用 `cargo test --workspace --locked`。Linux 先安装开发依赖，Windows 发布使用 MSVC；桌面须经 Tauri CLI 构建以嵌入生产前端，详见[发布指南](../releases.md)。上述是可执行入口，不表示每次文档更新都重新运行。
 
 `acceptance.py` 检查空配置、旧接口退役、本地访问、显式导入/重启与 worker；`social_acceptance.py` 以模拟 provider 驱动真实业务。编译不证明安装通过，模拟模型不证明真实模型能力，自动输入中文不证明真实输入法候选正常。
+
+## 云端接话与约定验证
+
+2026-10-23，第 3 步第三批在独立 PostgreSQL、内网 HTTPS/WSS 服务和两个本机 Agent 进程上验证，模型使用模拟服务。本机日常 Agent 配套升级到协议 v4，保留账号、绑定、档案和 SQLite，已确认重新在线；没有发送真实模型请求。
+
+- 最终源码的云端 27 项测试在真实 PostgreSQL 上全部通过，无失败或跳过。包括权限、重复命令、连续输入、群轮转与额度、UTC 日切换/回拨、结束与暂停、免打扰延后及过期、执行中恢复；既有认证、附件、意识与节点回归同轮通过。
+- Agent 28 项、连接器 12 项测试通过，覆盖独立 contact 触发、合并输入与图片的必要材料、自动 token 账本、开始前撤销预留、时钟回拨和恢复不重调模型。
+- 前端全部 24 组测试、类型检查和生产构建通过；最终文案修改后重跑聊天、群操作、接话三组测试及类型检查、构建。包含实际组件渲染、请求身份隔离、未确认请求手动重试、编辑中版本变化、时间换算与权限。
+- 修改模块的严格 no-deps Clippy、工作区格式及四项依赖边界检查通过。
+- `scripts/cloud_participation_acceptance.py` 使用两位真人、两个 AI、两个实际节点连接远端服务，检查默认显式接话、私聊连续输入、群内轮转及额度、暂停/恢复/结束、独立约定、免打扰延后/跳过、屏蔽范围、离线过期与执行中重启。每轮 9 次模拟调用，不读取真实模型 Key。
+- Edge 实际操作已确认规则保存、暂停与恢复、创建未来约定及取消。检查时间输入期间浏览器连接中断，免打扰截止时间的手工输入与截图未完成，不记为通过；免打扰行为已由自动和双节点测试覆盖。
+
+最终源码与 Web 构建已部署，部署后双节点验收再次通过。部署前保留 PostgreSQL 备份，仍只在授权内网开放，HTTPS/WSS 保持测试 CA 和主机名验证。未迁移日常旧库、更新已安装桌面客户端或复验 GNOME、安装包。482 个文档文件链接检查通过。
+
+```bash
+# 先设置独立 CLOUD_TEST_DATABASE_URL，未设置时的跳过不算通过。
+# 数据库测试共用调度锁，按顺序运行以免测试之间争锁影响短超时场景。
+cargo test -p cloud-server --locked -- --test-threads=1
+cargo test -p agent-node -p connector --locked
+cargo clippy -p cloud-server -p agent-node -p connector --all-targets --no-deps --locked -- -D warnings
+python scripts/cloud_participation_acceptance.py --binary "$LLMN_AGENT_BINARY" --accounts "$LLMN_TEST_ACCOUNTS" --ca "$LLMN_TEST_CA" --workdir "$LLMN_TEST_WORKDIR"
+```
+
+联调脚本使用 `cloud_acceptance.py` 的专用账号文件，工作目录必须尚不存在且受 Git 忽略；需要保留节点供网页检查时加 `--serve-ui`，检查后创建该目录下的 `stop` 文件。脚本结束时停止模拟进程并撤销本轮节点，保留测试聊天供核对。
 
 ## 云端真人聊天验证
 

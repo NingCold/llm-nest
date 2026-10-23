@@ -380,13 +380,13 @@ mod tests {
                 assert!(matches!(
                     serde_json::from_str::<ClientFrame>(&text).unwrap(),
                     ClientFrame::Hello {
-                        protocol_version: 3,
+                        protocol_version: 4,
                         ..
                     }
                 ));
                 ws.send(Message::Text(
                     serde_json::to_string(&ServerFrame::Ready {
-                        protocol_version: 3,
+                        protocol_version: 4,
                     })
                     .unwrap()
                     .into(),
@@ -401,7 +401,7 @@ mod tests {
             let mut connection = client.connect().await.unwrap();
             connection
                 .send(&ClientFrame::Hello {
-                    protocol_version: 3,
+                    protocol_version: 4,
                     node_id: "n".into(),
                     ai_id: "a".into(),
                     binding_version: "1".into(),
@@ -411,7 +411,7 @@ mod tests {
             assert_eq!(
                 connection.recv().await.unwrap(),
                 Some(ServerFrame::Ready {
-                    protocol_version: 3
+                    protocol_version: 4
                 })
             );
             assert_eq!(connection.recv().await.unwrap(), None);

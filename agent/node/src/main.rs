@@ -134,10 +134,12 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
     if bindings.is_empty() {
         bail!("no AI binding; run pair first");
     }
-    let model_slot = tokio::sync::Mutex::new(());
+    let social_slots = tokio::sync::Semaphore::new(4);
+    let summary_slot = tokio::sync::Semaphore::new(1);
     let nodes = bindings.iter().map(|binding| async {
         loop {
-            if let Err(error) = cycle(&config, &store, binding, &model_slot).await {
+            if let Err(error) = cycle(&config, &store, binding, &social_slots, &summary_slot).await
+            {
                 eprintln!("Node cycle failed: {error}");
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -191,7 +193,7 @@ async fn recover(api: &NodeClient, store: &Store, binding: &Binding) -> Result<(
         }
         if cloud.status == "queued" {
             let start: StartRequest = serde_json::from_str(&start)?;
-            api.reject(&task,&RejectRequest {request_id:start.request_id,task_revision:start.task_revision,code:"node_restart_before_start".into(),message:"Node restarted before the model invocation began; resend manually if needed.".into()}).await?;
+            api.reject(&task,&RejectRequest {request_id:start.request_id,task_revision:cloud.revision,code:"node_restart_before_start".into(),message:"Node restarted before the model invocation began; resend manually if needed.".into()}).await?;
             store.acknowledged(&task)?;
             continue;
         }
@@ -265,12 +267,16 @@ fn generation_failure(error: &anyhow::Error) -> (&'static str, &'static str) {
         "output_limit" => "output_limit",
         "tools_not_enabled" => "tools_not_enabled",
         "provider_stream_incomplete" => "provider_protocol_failed",
+        "generation_timeout" => "generation_timeout",
         _ => "node_execution_failed",
     };
     (
         if matches!(
             code,
-            "source_cancelled" | "node_authorization_lost" | "node_disconnected"
+            "source_cancelled"
+                | "node_authorization_lost"
+                | "node_disconnected"
+                | "generation_timeout"
         ) {
             "interrupted"
         } else {
@@ -279,19 +285,37 @@ fn generation_failure(error: &anyhow::Error) -> (&'static str, &'static str) {
         code,
     )
 }
-fn generation_outcome(
-    outcome: std::result::Result<Result<()>, tokio::time::error::Elapsed>,
-    text: &str,
-) -> (&'static str, Option<&'static str>) {
+fn generation_outcome(outcome: Result<()>, text: &str) -> (&'static str, Option<&'static str>) {
     match outcome {
-        Ok(Ok(())) if text.trim().is_empty() => ("failed", Some("empty_response")),
-        Ok(Ok(())) => ("completed", None),
-        Ok(Err(error)) => {
+        Ok(()) if text.trim().is_empty() => ("failed", Some("empty_response")),
+        Ok(()) => ("completed", None),
+        Err(error) => {
             let (status, code) = generation_failure(&error);
             (status, Some(code))
         }
-        Err(_) => ("interrupted", Some("generation_timeout")),
     }
+}
+/// A definitive queue wait can also arrive while fetching materials or attachments.
+/// No local intent exists at this point, and the cloud task must remain queued.
+fn preparation_rejection(task: &NodeTask, error: &anyhow::Error) -> Option<RejectRequest> {
+    if error
+        .downcast_ref::<NodeError>()
+        .is_some_and(NodeError::is_queue_wait)
+    {
+        return None;
+    }
+    let message = error.to_string();
+    Some(RejectRequest {
+        request_id: id(),
+        task_revision: task.revision.clone(),
+        code: if message == "image_input_unsupported" {
+            "image_input_unsupported"
+        } else {
+            "preparation_failed"
+        }
+        .into(),
+        message,
+    })
 }
 // The wait must retain the socket, node dependencies, and frozen run scope together.
 #[allow(clippy::too_many_arguments)]
@@ -320,7 +344,8 @@ async fn cycle(
     config: &Config,
     store: &Store,
     binding: &Binding,
-    model_slot: &tokio::sync::Mutex<()>,
+    social_slots: &tokio::sync::Semaphore,
+    summary_slot: &tokio::sync::Semaphore,
 ) -> Result<()> {
     let api = client(config, &binding.secret)?;
     store.db.execute(
@@ -333,7 +358,7 @@ async fn cycle(
     let mut socket = api.connect().await?;
     socket
         .send(&ClientFrame::Hello {
-            protocol_version: 3,
+            protocol_version: 4,
             node_id: config.node_id.clone(),
             ai_id: binding.ai.clone(),
             binding_version: binding.version.clone(),
@@ -341,13 +366,13 @@ async fn cycle(
         .await?;
     match socket.recv().await? {
         Some(ServerFrame::Ready {
-            protocol_version: 3,
+            protocol_version: 4,
         }) => {}
         _ => bail!("node handshake failed"),
     }
     loop {
         consciousness::sync(&api, store, &binding.ai).await?;
-        consciousness::summaries_tick(&api, store, config, binding, &mut socket, model_slot)
+        consciousness::summaries_tick(&api, store, config, binding, &mut socket, summary_slot)
             .await?;
         let tasks =
             while_connected_with(&mut socket, &api, store, config, binding, &[], "", async {
@@ -358,7 +383,7 @@ async fn cycle(
             if task.status != "queued" || store.state(&task.id)?.is_some() {
                 continue;
             }
-            let Ok(_model_slot) = model_slot.try_lock() else {
+            let Ok(_social_slot) = social_slots.try_acquire() else {
                 break;
             };
             let profile = store.profile(&binding.ai)?;
@@ -366,11 +391,13 @@ async fn cycle(
                 let router = ModelRouter::new(&config.providers)?;
                 let llm = AiClient::from_config(&config.providers)?.snapshot().await;
                 let material = api.materials(&task.id).await?;
+                let material_task = material.task.clone();
                 let sources = material.sources.clone();
                 let conversation_revision = material.conversation.revision.clone();
                 let (request, tokens, derived_sources, material_scopes) =
                     context::prepare_scoped(&api, &router, &profile, material, Some(store)).await?;
                 Ok::<_, anyhow::Error>((
+                    material_task,
                     llm,
                     request,
                     tokens,
@@ -392,6 +419,7 @@ async fn cycle(
             )
             .await;
             let (
+                task,
                 llm,
                 request,
                 tokens,
@@ -402,22 +430,10 @@ async fn cycle(
             ) = match prepared {
                 Ok(value) => value,
                 Err(error) => {
-                    let message = error.to_string();
-                    api.reject(
-                        &task.id,
-                        &RejectRequest {
-                            request_id: id(),
-                            task_revision: task.revision,
-                            code: if message == "image_input_unsupported" {
-                                "image_input_unsupported"
-                            } else {
-                                "preparation_failed"
-                            }
-                            .into(),
-                            message,
-                        },
-                    )
-                    .await?;
+                    let Some(rejection) = preparation_rejection(&task, &error) else {
+                        break;
+                    };
+                    api.reject(&task.id, &rejection).await?;
                     continue;
                 }
             };
@@ -428,7 +444,7 @@ async fn cycle(
                 derived_sources,
                 material_scopes: material_scopes.clone(),
                 sources,
-                configuration_revision: profile.revision,
+                configuration_revision: profile.revision.clone(),
             };
             for scope in &material_scopes {
                 api.announce(scope).await?;
@@ -447,17 +463,21 @@ async fn cycle(
                 store::BudgetLimits {
                     calls: config.daily_calls,
                     tokens: config.daily_tokens,
+                    automatic: task.automatic.then_some(store::AutomaticBudget {
+                        conversation: &task.conversation_id,
+                        tokens: profile.auto_daily_tokens.unwrap_or(262_144),
+                    }),
                 },
             ) {
-                if error.downcast_ref::<store::BudgetDenied>().is_none() {
+                let Some(denied) = error.downcast_ref::<store::BudgetDenied>() else {
                     return Err(error);
-                }
+                };
                 api.reject(
                     &task.id,
                     &RejectRequest {
                         request_id: id(),
                         task_revision: task.revision,
-                        code: "node_budget_exhausted".into(),
+                        code: denied.0.into(),
                         message: error.to_string(),
                     },
                 )
@@ -478,7 +498,7 @@ async fn cycle(
             let receipt = match started {
                 Ok(receipt) => receipt,
                 Err(error) if error.is_queue_wait() => {
-                    store.defer_unstarted(&task.id, &budget_day, tokens)?;
+                    store.defer_unstarted(&task.id)?;
                     break;
                 }
                 Err(error) => return Err(error.into()),
@@ -488,6 +508,7 @@ async fn cycle(
             let mut usage = None;
             let mut sequence = 0;
             let mut last = tokio::time::Instant::now();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
             let work = async {
                 let mut invalidations = tokio::time::interval(Duration::from_secs(1));
                 let mut stream = while_connected_with(
@@ -498,12 +519,20 @@ async fn cycle(
                     binding,
                     &material_scopes,
                     &task.id,
-                    async { Ok(llm.complete_stream(request).await?) },
+                    async {
+                        Ok(
+                            tokio::time::timeout_at(deadline, llm.complete_stream(request))
+                                .await
+                                .map_err(|_| anyhow::anyhow!("generation_timeout"))??,
+                        )
+                    },
                 )
                 .await?;
                 loop {
                     tokio::select! {
+                        biased;
                         frame=socket.recv()=>{let frame=consciousness::handle_frame(frame?,&mut socket,&api,store,config,binding,&material_scopes).await?;match frame {Some(ServerFrame::Cancel {task_id}) if task_id==task.id=>bail!("source_cancelled"),Some(ServerFrame::Error {..})=>bail!("node_authorization_lost"),None=>bail!("node_disconnected"),_=>{}}},
+                        _=tokio::time::sleep_until(deadline)=>bail!("generation_timeout"),
                         _=invalidations.tick()=>{consciousness::poll_state(&api,store,binding,&material_scopes).await?;},
                         chunk=stream.next()=>match chunk {
                             Some(Ok(ChatChunk::Delta {content}))=>{
@@ -517,7 +546,7 @@ async fn cycle(
                     }
                 }
             };
-            let outcome = tokio::time::timeout(Duration::from_secs(120), work).await;
+            let outcome = work.await;
             let (status, code) = generation_outcome(outcome, &text);
             if let Some(code) = code {
                 eprintln!("Generation ended: {code}");
@@ -712,6 +741,13 @@ mod recovery_tests {
                         serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
                     assert!(value.status == "uncertain" || value.status == "completed");
                 }
+                if path.ends_with("/reject") {
+                    let value: RejectRequest =
+                        serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
+                    // Recovery fetched a merged queued task at revision 2;
+                    // its persisted start intent still carries revision 1.
+                    assert_eq!(value.task_revision, "2");
+                }
                 socket.write_all(format!("HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
             }
         });
@@ -724,10 +760,36 @@ mod recovery_tests {
             conversation_id: "conversation".into(),
             binding_version: "1".into(),
             revision: "1".into(),
-            trigger_message_id: "trigger".into(),
+            trigger: NodeTrigger::Message {
+                message_id: "trigger".into(),
+                input_ids: vec!["trigger".into()],
+            },
+            automatic: false,
             status: status.into(),
             expires_at: "2099-01-01T00:00:00Z".into(),
         }
+    }
+    #[test]
+    fn pre_start_queue_wait_preserves_tasks_while_unknown_conflicts_are_not_retried() {
+        for code in ["task_not_ready", "conversation_busy"] {
+            let error: anyhow::Error = NodeError::Api {
+                status: 409,
+                body: serde_json::json!({"code":code}).to_string(),
+            }
+            .into();
+            assert!(preparation_rejection(&task("queued"), &error).is_none());
+        }
+        let conflict: anyhow::Error = NodeError::Api {
+            status: 409,
+            body: serde_json::json!({"code":"source_changed"}).to_string(),
+        }
+        .into();
+        assert!(preparation_rejection(&task("queued"), &conflict).is_some());
+        let image = anyhow::anyhow!("image_input_unsupported");
+        assert_eq!(
+            preparation_rejection(&task("queued"), &image).unwrap().code,
+            "image_input_unsupported"
+        );
     }
     #[tokio::test]
     async fn restart_intent_reconciles_without_model_and_final_retries_same_receipt() {
@@ -754,6 +816,7 @@ mod recovery_tests {
                     store::BudgetLimits {
                         calls: 3,
                         tokens: 1000,
+                        automatic: None,
                     },
                 )
                 .unwrap();
@@ -850,14 +913,19 @@ mod recovery_tests {
         );
         assert!(store.pending("ai").unwrap().is_empty());
         store.db.execute("UPDATE tasks SET state='intent',result_json=NULL,receipt_json=NULL WHERE id='task'",[]).unwrap();
+        let mut merged = task("queued");
+        merged.revision = "2".into();
+        let mut rejected = merged.clone();
+        rejected.status = "failed".into();
+        rejected.revision = "3".into();
         let (api, worker) = mock(vec![
             (
                 "GET /api/node/tasks/task",
-                serde_json::to_string(&task("queued")).unwrap(),
+                serde_json::to_string(&merged).unwrap(),
             ),
             (
                 "POST /api/node/tasks/task/reject",
-                serde_json::to_string(&task("failed")).unwrap(),
+                serde_json::to_string(&rejected).unwrap(),
             ),
         ])
         .await;
@@ -876,13 +944,10 @@ mod outcome_tests {
     #[test]
     fn empty_completed_response_is_failed_and_provider_errors_are_sanitized() {
         assert_eq!(
-            generation_outcome(Ok(Ok(())), "  \n"),
+            generation_outcome(Ok(()), "  \n"),
             ("failed", Some("empty_response"))
         );
-        assert_eq!(
-            generation_outcome(Ok(Ok(())), "answer"),
-            ("completed", None)
-        );
+        assert_eq!(generation_outcome(Ok(()), "answer"), ("completed", None));
         let invalid = anyhow::Error::from(ai_client::AiError::InvalidResponse(
             "private provider response must never escape".into(),
         ));

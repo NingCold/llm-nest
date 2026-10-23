@@ -1,4 +1,4 @@
-//! Version three cloud node protocol. Identifiers and revisions are opaque strings.
+//! Version four cloud node protocol. Identifiers and revisions are opaque strings.
 use serde::{Deserialize, Serialize};
 
 macro_rules! dto { ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
@@ -30,10 +30,30 @@ dto!(NodeTask {
     conversation_id: String,
     binding_version: String,
     revision: String,
-    trigger_message_id: String,
+    trigger: NodeTrigger,
+    automatic: bool,
     status: String,
     expires_at: String
 });
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum NodeTrigger {
+    Message {
+        message_id: String,
+        input_ids: Vec<String>,
+    },
+    Contact {
+        intent_id: String,
+        revision: String,
+        creator_id: String,
+        content: String,
+        due_at: String,
+    },
+}
 dto!(NodeAttachment { index: usize, kind: String, mime: String, byte_length: u64, name: Option<String> });
 dto!(NodeMessage { id: String, position: String, sender_id: String, sender_name: String, reply_to: Option<String>, mentions: Vec<String>, text: String, revision: String, created_at: String, attachments: Vec<NodeAttachment> });
 dto!(SourceRevision {
@@ -134,7 +154,7 @@ mod tests {
     #[test]
     fn frame_wire_names() {
         let frame = ClientFrame::Hello {
-            protocol_version: 3,
+            protocol_version: 4,
             node_id: "node".into(),
             ai_id: "ai".into(),
             binding_version: "2".into(),
@@ -142,7 +162,7 @@ mod tests {
         let json = serde_json::to_value(&frame).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"type":"hello","protocolVersion":3,"nodeId":"node","aiId":"ai","bindingVersion":"2"})
+            serde_json::json!({"type":"hello","protocolVersion":4,"nodeId":"node","aiId":"ai","bindingVersion":"2"})
         );
         assert_eq!(serde_json::from_value::<ClientFrame>(json).unwrap(), frame);
         assert_eq!(
@@ -151,7 +171,7 @@ mod tests {
         );
     }
     #[test]
-    fn start_v3_requires_conversation_revision() {
+    fn start_v4_requires_conversation_revision() {
         let wire = serde_json::json!({"requestId":"r", "taskRevision":"1", "conversationRevision":"7", "sources":[], "configurationRevision":"1", "derivedSources":[], "materialScopes":[]});
         let request: StartRequest = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(request.conversation_revision, "7");
@@ -159,6 +179,21 @@ mod tests {
         let mut old = wire;
         old.as_object_mut().unwrap().remove("conversationRevision");
         assert!(serde_json::from_value::<StartRequest>(old).is_err());
+    }
+    #[test]
+    fn task_v4_distinguishes_merged_messages_and_independent_contacts() {
+        for trigger in [
+            serde_json::json!({"type":"message","messageId":"latest","inputIds":["first","latest"]}),
+            serde_json::json!({"type":"contact","intentId":"intent","revision":"2","creatorId":"human","content":"follow up","dueAt":"2026-10-23T12:00:00Z"}),
+        ] {
+            let wire = serde_json::json!({"id":"task","aiId":"ai","conversationId":"window","bindingVersion":"1","revision":"2","trigger":trigger,"automatic":true,"status":"queued","expiresAt":"2026-10-23T13:00:00Z"});
+            let task: NodeTask = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(serde_json::to_value(task).unwrap(), wire);
+            let mut obsolete = wire;
+            obsolete.as_object_mut().unwrap().remove("trigger");
+            obsolete["triggerMessageId"] = "fake".into();
+            assert!(serde_json::from_value::<NodeTask>(obsolete).is_err());
+        }
     }
     #[test]
     fn transport_policy() {

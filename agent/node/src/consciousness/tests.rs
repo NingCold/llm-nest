@@ -538,6 +538,13 @@ async fn restart_interrupts_queued_and_reconciles_confirmed_without_calling_prov
 
 #[tokio::test]
 async fn selected_management_frame_finishes_while_provider_keeps_producing_chunks() {
+    selected_management_frame_finishes(false).await;
+}
+#[tokio::test]
+async fn selected_management_frame_finishes_even_when_provider_deadline_passes() {
+    selected_management_frame_finishes(true).await;
+}
+async fn selected_management_frame_finishes(provider_timeout: bool) {
     use futures_util::{SinkExt, StreamExt};
     let store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let ai = uid();
@@ -595,17 +602,25 @@ async fn selected_management_frame_finishes_while_provider_keeps_producing_chunk
         version: "1".into(),
         secret: "test".into(),
     };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(20);
     let work = async {
-        for _ in 0..20 {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        if provider_timeout {
+            tokio::time::sleep_until(deadline).await;
+            bail!("generation_timeout");
+        } else {
+            for _ in 0..20 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
         }
         Ok(42)
     };
     let output =
-        crate::while_connected_with(&mut socket, &api, &store, &cfg, &binding, &[], "", work)
-            .await
-            .unwrap();
-    assert_eq!(output, 42);
+        crate::while_connected_with(&mut socket, &api, &store, &cfg, &binding, &[], "", work).await;
+    if provider_timeout {
+        assert_eq!(output.unwrap_err().to_string(), "generation_timeout");
+    } else {
+        assert_eq!(output.unwrap(), 42);
+    }
     assert_eq!(store.memories(&ai, &c.id).unwrap().len(), 1);
     ws_server.await.unwrap();
     http_server.abort();

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { IS_DESKTOP } from "@/lib/desktop";
 import { clearConsciousnessCommands } from "./Consciousness";
+import { clearParticipationCommands } from "./Participation";
 import { Workspace } from "./Workspace";
 import { AuthPage } from "./AuthPage";
 import { StartupSurface } from "@/components/StartupSurface";
@@ -107,6 +108,7 @@ export default function CloudApp() {
   };
   const clear = () => {
     clearConsciousnessCommands();
+    clearParticipationCommands();
     epoch.current++;
     view.current++;
     invalidate();

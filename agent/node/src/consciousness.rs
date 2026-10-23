@@ -873,7 +873,7 @@ pub async fn summaries_tick(
     config: &Config,
     binding: &Binding,
     socket: &mut NodeConnection,
-    slot: &tokio::sync::Mutex<()>,
+    slot: &tokio::sync::Semaphore,
 ) -> Result<()> {
     let cids: Vec<String> = store
         .db
@@ -921,7 +921,7 @@ pub async fn summaries_tick(
         }
     }
     for _ in 0..4 {
-        let Ok(_slot) = slot.try_lock() else {
+        let Ok(_slot) = slot.try_acquire() else {
             return Ok(());
         };
         let mut queued = None;
@@ -1051,6 +1051,7 @@ async fn run_summary(
     };
     let llm = AiClient::from_config(&config.providers)?.snapshot().await;
     let active_scopes = [scope.clone()];
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
     let work = async {
         let mut invalidations = tokio::time::interval(std::time::Duration::from_secs(1));
         let mut stream = crate::while_connected_with(
@@ -1061,20 +1062,26 @@ async fn run_summary(
             binding,
             &active_scopes,
             "",
-            async { Ok(llm.complete_stream(request).await?) },
+            async {
+                Ok(
+                    tokio::time::timeout_at(deadline, llm.complete_stream(request))
+                        .await
+                        .map_err(|_| anyhow::anyhow!("summary_timeout"))??,
+                )
+            },
         )
         .await?;
         let mut text = String::new();
         let usage;
         loop {
-            tokio::select! {frame=socket.recv()=>{let frame=handle_frame(frame?,socket,api,store,config,binding,&active_scopes).await?;match frame {None|Some(ServerFrame::Error{..})=>bail!("node_disconnected"),_=>{}}},_=invalidations.tick()=>{poll_state(api,store,binding,&active_scopes).await?;},chunk=stream.next()=>match chunk {Some(Ok(ChatChunk::Delta{content}))=>{ensure!(text.len()+content.len()<=64*1024,"summary_output_limit");text.push_str(&content);},Some(Ok(ChatChunk::Done{usage:reported}))=>{usage=reported;break;},Some(Ok(ChatChunk::ReasoningDelta{..}))=>{},Some(Err(e))=>return Err(e.into()),_=>bail!("summary_incomplete")}}
+            tokio::select! {biased; frame=socket.recv()=>{let frame=handle_frame(frame?,socket,api,store,config,binding,&active_scopes).await?;match frame {None|Some(ServerFrame::Error{..})=>bail!("node_disconnected"),_=>{}}},_=tokio::time::sleep_until(deadline)=>bail!("summary_timeout"),_=invalidations.tick()=>{poll_state(api,store,binding,&active_scopes).await?;},chunk=stream.next()=>match chunk {Some(Ok(ChatChunk::Delta{content}))=>{ensure!(text.len()+content.len()<=64*1024,"summary_output_limit");text.push_str(&content);},Some(Ok(ChatChunk::Done{usage:reported}))=>{usage=reported;break;},Some(Ok(ChatChunk::ReasoningDelta{..}))=>{},Some(Err(e))=>return Err(e.into()),_=>bail!("summary_incomplete")}}
         }
         ensure!(!text.trim().is_empty(), "empty_summary");
         Ok::<_, anyhow::Error>((text, usage))
     };
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(120), work).await;
+    let outcome = work.await;
     let (text, usage, status) = match outcome {
-        Ok(Ok((text, usage))) => (text, usage, "ready"),
+        Ok((text, usage)) => (text, usage, "ready"),
         _ => (String::new(), None, "interrupted"),
     };
     sync(api, store, &binding.ai).await?;

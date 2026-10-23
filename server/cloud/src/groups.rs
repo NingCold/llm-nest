@@ -427,6 +427,9 @@ async fn block(
             nodes::conversation_changed(&mut tx, cid, "blocked").await?;
         }
     }
+    if blocked {
+        crate::participation::reconcile(&mut tx).await?;
+    }
     for id in [p.id, a] {
         sqlx::query("INSERT INTO cloud_events(owner) VALUES($1)")
             .bind(id)

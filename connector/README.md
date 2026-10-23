@@ -22,10 +22,12 @@ cargo run -p connector --example external_node -- run
 
 `connect()` 建立连接后，由调用者发送 `ClientFrame::Hello` 并等待 `Ready`，然后重新读取 `tasks()`。连接丢失后可以再次 `connect()`，但连接器不会自动重试模型。WSS 通知仅用于提醒读取权威 HTTP 状态；原生 ping/pong 在读取连接时处理。
 
-节点协议为 v3，`Hello` / `Ready` 的 `protocolVersion` 均为 3，旧版本会被明确拒绝。`TaskMaterials.conversation` 提供真实窗口 ID、种类、名称、版本与当前成员；消息提供 `senderName`、`replyTo`、`mentions` 和稳定 `position`。`StartRequest.conversationRevision` 原样回传材料版本，与来源消息版本共同用于开始和提交复核。触发消息、被回复原文和必要图片不能被历史截取静默丢弃。
+节点协议为 v4，`Hello` / `Ready` 的 `protocolVersion` 均为 4，旧版本会被明确拒绝。`TaskMaterials.conversation` 提供真实窗口 ID、种类、名称、版本与当前成员；消息提供 `senderName`、`replyTo`、`mentions` 和稳定 `position`。`StartRequest.conversationRevision` 原样回传材料版本，与来源消息版本共同用于开始和提交复核。`NodeTask.trigger` 区分消息（`type: "message"`，含 `messageId` 与全部必要 `inputIds`）和独立约定（`type: "contact"`，含 `intentId/revision/creatorId/content/dueAt`），`automatic` 表示是否预留自动额度。所有合并输入、被回复原文和必要图片必须完整容纳。约定不伪造真人消息，也不携带群话题引用。
 
 意识接口支持来源变化同步、群原文引用、节点材料版本、在线管理转发和摘要调用确认。记忆与摘要正文由节点自行保存，平台只保存校验所需的标识和版本。开始请求必须携带已宣布的当前窗口材料版本及实际使用的派生来源；在线管理的 `requestId` 用于节点去重，`relayId` 用于匹配这次连接上的响应。具体字段和权限见[协议说明](../docs/design/api.md#记忆摘要与群话题接续)。
 
 同群由云端按持久顺序串行任务，材料可包含前序 AI 的已提交回答。HTTP 409 `conversation_busy` / `task_not_ready` 明确表示尚未取得开始资格，可等待后重新读取材料和任务；连接器的 `NodeError::is_queue_wait()` 仅识别这两类响应。未知网络失败不能按未开始处理。
 
 模型调用前保存原始 start 请求，取得并保存开始回执。已经开始但结果不明的任务不能自动重做。最终结果先保存在节点，再通过原 request ID 和正文重传。`Delta` 是最多每 500ms 一次的完整文字检查点，最终 HTTP result 才是权威结果。附件接口只为已授权材料提供原字节，普通文件只给模型元信息。
+
+自带节点的自动 token 账本按 AI、窗口和 UTC 日区分，显式消息仍受整体节点预算约束。外部 Agent 自行管理模型并发与预算；无法执行时使用 `RejectRequest` 返回明确原因，例如 `token_limit`。已开始或网络结果不明确的调用不退还预算，不自动重调模型。

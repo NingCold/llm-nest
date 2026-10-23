@@ -44,7 +44,7 @@ export function CreateGroup({ contacts, me, act, busy, error, refresh, select, c
             if (e.target.checked) setSelected(previous => [...previous.filter(x => x.id !== a.id), a]);
           }} />{a.name} · {a.kind === "ai" ? "AI" : "真人"}
         </label>)}</div>
-        <p>已选择 {members.length} 位成员。群成员可阅读完整群历史；AI 仅在明确提及或回复它时发言。</p>
+        <p>已选择 {members.length} 位成员。群成员可阅读完整群历史；AI 默认在明确提及或回复它时发言。</p>
         {error && <p className="social-error" role="alert">{error}</p>}
         <button className="social-button primary" disabled={busy || !members.length || !name.trim()}>创建群聊</button>
       </form>

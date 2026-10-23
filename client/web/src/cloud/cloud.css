@@ -270,3 +270,13 @@
 .cloud-workspace .live-message-content > .text-button { margin-inline-end: 12px; }
 .cloud-consciousness .summary-panel .cloud-actions { flex-wrap: wrap; gap: 10px; }
 .cloud-consciousness .summary-panel .cloud-actions > button { flex: 0 0 auto; white-space: nowrap; }
+.cloud-participation .cloud-actions { flex-wrap: wrap; gap: 8px; }
+.cloud-participation .social-form-fields { display: grid; gap: 12px; border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.cloud-participation-counts { display: grid; gap: 8px; font-size: 12px; }
+.cloud-participation-counts > div { display: flex; justify-content: space-between; gap: 12px; }
+.cloud-participation-counts dt { color: var(--s-muted); }
+.cloud-participation-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.cloud-participation .cloud-participation-subtitle { margin-top: 24px; }
+.cloud-participation-confirm { margin: 12px 0; padding: 12px; border: 1px solid var(--s-line); border-radius: 8px; }
+.cloud-contact-intent { margin-top: 14px; overflow-wrap: anywhere; }
+.cloud-contact-intent strong { font-size: 12px; font-weight: 500; }

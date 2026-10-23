@@ -324,7 +324,7 @@ async fn change_binding(
     Ok(Json(r))
 }
 fn task_value(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"aiId":r.get::<Uuid,_>("ai_id"),"conversationId":r.get::<Uuid,_>("conversation"),"bindingVersion":r.get::<i64,_>("binding_version").to_string(),"revision":r.get::<i64,_>("revision").to_string(),"triggerMessageId":r.get::<Uuid,_>("input_id"),"status":r.get::<String,_>("state"),"expiresAt":r.get::<chrono::DateTime<chrono::Utc>,_>("expires_at")})
+    json!({"id":r.get::<Uuid,_>("id"),"aiId":r.get::<Uuid,_>("ai_id"),"conversationId":r.get::<Uuid,_>("conversation"),"bindingVersion":r.get::<i64,_>("binding_version").to_string(),"revision":r.get::<i64,_>("revision").to_string(),"trigger":r.get::<Value,_>("trigger"),"automatic":r.get::<bool,_>("automatic"),"status":r.get::<String,_>("state"),"expiresAt":r.get::<chrono::DateTime<chrono::Utc>,_>("expires_at")})
 }
 async fn event(tx: &mut Tx<'_>, ai: Uuid, version: i64, task: Uuid, kind: &str) -> Result<()> {
     sqlx::query(
@@ -338,13 +338,14 @@ async fn event(tx: &mut Tx<'_>, ai: Uuid, version: i64, task: Uuid, kind: &str) 
     .await?;
     Ok(())
 }
-async fn publish(tx: &mut Tx<'_>, tid: Uuid) -> Result<()> {
+pub(crate) async fn publish(tx: &mut Tx<'_>, tid: Uuid) -> Result<()> {
     let r = sqlx::query("SELECT * FROM cloud_node_tasks WHERE id=$1")
         .bind(tid)
         .fetch_one(&mut **tx)
         .await?;
     let cid: Uuid = r.get("conversation");
-    sqlx::query("UPDATE cloud_messages SET ai_responses=(SELECT coalesce(jsonb_agg(jsonb_build_object('aiId',ai_id,'taskId',id,'status',state,'error',error_code) ORDER BY queue_position),'[]'::jsonb) FROM cloud_node_tasks WHERE input_id=$1) WHERE id=$1").bind(r.get::<Uuid,_>("input_id")).execute(&mut **tx).await?;
+    crate::participation::task_changed(tx, &r).await?;
+    sqlx::query("UPDATE cloud_messages m SET ai_responses=(SELECT coalesce(jsonb_agg(jsonb_build_object('aiId',ai_id,'taskId',id,'status',state,'error',error_code) ORDER BY queue_position),'[]'::jsonb) FROM cloud_node_tasks WHERE m.id=ANY(input_ids)) WHERE m.id=ANY($1)").bind(r.get::<Vec<Uuid>,_>("input_ids")).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO cloud_events(owner,conversation) SELECT account_id,conversation FROM cloud_members WHERE conversation=$1").bind(cid).execute(&mut **tx).await?;
     event(
         tx,
@@ -372,10 +373,42 @@ pub(crate) async fn enqueue(tx: &mut Tx<'_>, cid: Uuid, mid: Uuid, sender: Uuid)
         .bind(cid)
         .fetch_one(&mut **tx)
         .await?;
-    let m = sqlx::query("SELECT mentions,reply_to FROM cloud_messages WHERE id=$1")
-        .bind(mid)
+    let m =
+        sqlx::query("SELECT mentions,reply_to,context_reference FROM cloud_messages WHERE id=$1")
+            .bind(mid)
+            .fetch_one(&mut **tx)
+            .await?;
+    crate::participation::ensure(tx, cid).await?;
+    let p = sqlx::query("SELECT * FROM cloud_participation WHERE conversation=$1")
+        .bind(cid)
         .fetch_one(&mut **tx)
         .await?;
+    let old = sqlx::query(
+        "SELECT * FROM cloud_node_tasks WHERE conversation=$1 AND automatic AND contact_intent_id IS NULL AND state='queued'",
+    )
+    .bind(cid)
+    .fetch_all(&mut **tx)
+    .await?;
+    invalidate_rows(tx, old, "input_pending").await?;
+    sqlx::query("UPDATE cloud_participation SET consecutive_ai=0,bout_id=coalesce(bout_id,$2),bout_calls=CASE WHEN bout_id IS NULL THEN 0 ELSE bout_calls END,last_activity=greatest(last_activity,now()),reason='input_pending' WHERE conversation=$1").bind(cid).bind(Uuid::new_v4()).execute(&mut **tx).await?;
+    if p.get::<bool, _>("paused") {
+        return Ok(());
+    }
+    let ordinary = m.get::<Vec<Uuid>, _>("mentions").is_empty()
+        && m.get::<Option<Uuid>, _>("reply_to").is_none()
+        && m.get::<Option<Value>, _>("context_reference").is_none();
+    if c.get::<String, _>("kind") == "direct" && ordinary {
+        let prior=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_messages m ON m.id=t.input_id WHERE t.conversation=$1 AND t.state='queued' AND NOT t.automatic AND cardinality(t.input_ids)<20 AND t.not_before>now() AND m.reply_to IS NULL AND m.mentions='{}' AND m.context_reference IS NULL ORDER BY t.queue_position DESC LIMIT 1").bind(cid).fetch_optional(&mut **tx).await?;
+        if let Some(prior) = prior {
+            let tid: Uuid = prior.get("id");
+            let ms = p.get::<Value, _>("policy")["directMergeMs"]
+                .as_i64()
+                .unwrap();
+            sqlx::query("UPDATE cloud_node_tasks SET ready_notified=false,input_id=$2,input_revision=1,input_ids=array_append(input_ids,$2),trigger=jsonb_build_object('type','message','messageId',$2::text,'inputIds',array_append(input_ids,$2)),not_before=now()+($3*interval '1 millisecond'),expires_at=now()+interval '5 minutes',revision=revision+1 WHERE id=$1").bind(tid).bind(mid).bind(ms as f64).execute(&mut **tx).await?;
+            publish(tx, tid).await?;
+            return Ok(());
+        }
+    }
     let mut targets: Vec<Uuid> = if c.get::<String, _>("kind") == "direct" {
         sqlx::query_scalar(
             "SELECT account_id FROM cloud_members WHERE conversation=$1 AND account_id<>$2",
@@ -399,18 +432,33 @@ pub(crate) async fn enqueue(tx: &mut Tx<'_>, cid: Uuid, mid: Uuid, sender: Uuid)
         if !seen.insert(ai) {
             continue;
         }
+        if p.get::<Vec<Uuid>, _>("paused_ai").contains(&ai) {
+            continue;
+        }
         let binding:Option<i64>=sqlx::query_scalar("SELECT b.version FROM cloud_ai_bindings b JOIN accounts a ON a.id=b.ai_id JOIN cloud_members m ON m.account_id=a.id AND m.conversation=$2 WHERE a.id=$1 AND a.kind='ai' AND a.status='active'").bind(ai).bind(cid).fetch_optional(&mut **tx).await?;
         if let Some(version) = binding {
             let tid = Uuid::new_v4();
             sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at,conversation_revision) VALUES($1,$2,$3,$4,1,$5,now()+interval '5 minutes',$6)").bind(tid).bind(ai).bind(cid).bind(mid).bind(version).bind(c.get::<i64,_>("revision")).execute(&mut **tx).await?;
+            let ms = if ordinary && c.get::<String, _>("kind") == "direct" {
+                p.get::<Value, _>("policy")["directMergeMs"]
+                    .as_i64()
+                    .unwrap()
+            } else {
+                0
+            };
+            sqlx::query("UPDATE cloud_node_tasks SET input_ids=ARRAY[$2],trigger=jsonb_build_object('type','message','messageId',$2::text,'inputIds',ARRAY[$2]),not_before=now()+($3*interval '1 millisecond') WHERE id=$1").bind(tid).bind(mid).bind(ms as f64).execute(&mut **tx).await?;
             publish(tx, tid).await?;
         }
+    }
+    if ordinary {
+        crate::participation::automatic(tx, cid, mid, chrono::Utc::now()).await?;
     }
     Ok(())
 }
 pub(crate) async fn conversation_changed(tx: &mut Tx<'_>, cid: Uuid, reason: &str) -> Result<()> {
     let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE conversation=$1 AND state IN ('queued','running','uncertain')").bind(cid).fetch_all(&mut **tx).await?;
-    invalidate_rows(tx, rows, reason).await
+    invalidate_rows(tx, rows, reason).await?;
+    crate::participation::reconcile(tx).await
 }
 pub(crate) async fn invalidate_rows(
     tx: &mut Tx<'_>,
@@ -421,7 +469,16 @@ pub(crate) async fn invalidate_rows(
         let tid: Uuid = r.get("id");
         sqlx::query("UPDATE cloud_node_tasks SET state='cancelled',revision=revision+1,error_code=$2,delta_text='',finished_at=now() WHERE id=$1").bind(tid).bind(reason).execute(&mut **tx).await?;
         if let Some(mid) = r.get::<Option<Uuid>, _>("message_id") {
-            if matches!(reason, "cancelled" | "blocked" | "account_disabled") {
+            if matches!(
+                reason,
+                "cancelled"
+                    | "blocked"
+                    | "account_disabled"
+                    | "expired"
+                    | "quiet"
+                    | "authorization_closed"
+                    | "authorization_changed"
+            ) {
                 finish_message(tx, &r, &r.get::<String, _>("delta_text"), "interrupted").await?;
             } else {
                 sqlx::query("DELETE FROM cloud_messages WHERE id=$1 AND status<>'committed'")
@@ -440,7 +497,7 @@ async fn invalidate_ai(tx: &mut Tx<'_>, ai: Uuid, reason: &str) -> Result<()> {
     invalidate_rows(tx, rows, reason).await
 }
 pub(crate) async fn source_changed(tx: &mut Tx<'_>, mid: Uuid) -> Result<()> {
-    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE state IN ('queued','running','uncertain') AND (input_id=$1 OR reference->>'messageId'=$1::text OR EXISTS(SELECT 1 FROM cloud_messages m WHERE m.id=cloud_node_tasks.input_id AND m.reply_to=$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements(sources || derived_sources) s WHERE s->>'messageId'=$1::text))").bind(mid).fetch_all(&mut **tx).await?;
+    let rows=sqlx::query("SELECT * FROM cloud_node_tasks WHERE state IN ('queued','running','uncertain') AND ($1=ANY(input_ids) OR input_id=$1 OR reference->>'messageId'=$1::text OR EXISTS(SELECT 1 FROM cloud_messages m WHERE m.id=cloud_node_tasks.input_id AND m.reply_to=$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements(sources || derived_sources) s WHERE s->>'messageId'=$1::text))").bind(mid).fetch_all(&mut **tx).await?;
     invalidate_rows(tx, rows, "source_changed").await
 }
 async fn expire(tx: &mut Tx<'_>, ai: Uuid) -> Result<()> {
@@ -461,7 +518,7 @@ async fn tasks(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Valu
     lock(&mut tx).await?;
     let n = authenticate(&mut tx, &h).await?;
     expire(&mut tx, n.ai).await?;
-    let rows=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN accounts a ON a.id=t.ai_id JOIN cloud_members m ON m.account_id=t.ai_id AND m.conversation=t.conversation WHERE t.ai_id=$1 AND t.binding_version=$2 AND a.status='active' AND (t.state='running' OR t.state='queued' AND NOT EXISTS(SELECT 1 FROM cloud_node_tasks q WHERE q.conversation=t.conversation AND (q.state='running' OR q.state='queued' AND q.queue_position<t.queue_position))) ORDER BY t.queue_position").bind(n.ai).bind(n.version).fetch_all(&mut *tx).await?;
+    let rows=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN accounts a ON a.id=t.ai_id JOIN cloud_members m ON m.account_id=t.ai_id AND m.conversation=t.conversation WHERE t.ai_id=$1 AND t.binding_version=$2 AND a.status='active' AND (t.state='running' OR t.state='queued' AND t.not_before<=now() AND NOT EXISTS(SELECT 1 FROM cloud_node_tasks q WHERE q.conversation=t.conversation AND (q.state='running' OR q.state='queued' AND (q.contact_intent_id IS NULL OR q.not_before<=now()) AND q.queue_position<t.queue_position))) ORDER BY t.queue_position").bind(n.ai).bind(n.version).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!(rows.iter().map(task_value).collect::<Vec<_>>())))
 }
@@ -480,9 +537,12 @@ async fn task(
 }
 async fn history(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<Vec<sqlx::postgres::PgRow>> {
     check_conversation(tx, r).await?;
+    if r.get::<Option<Uuid>, _>("contact_intent_id").is_some() {
+        return Ok(sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND NOT withdrawn AND status='committed' ORDER BY position DESC LIMIT 100").bind(r.get::<Uuid,_>("conversation")).fetch_all(&mut **tx).await?.into_iter().rev().collect());
+    }
     let trigger =
         sqlx::query("SELECT position,revision,withdrawn,reply_to FROM cloud_messages WHERE id=$1")
-            .bind(r.get::<Uuid, _>("input_id"))
+            .bind(r.get::<Option<Uuid>, _>("input_id"))
             .fetch_one(&mut **tx)
             .await?;
     if trigger.get::<bool, _>("withdrawn")
@@ -491,7 +551,7 @@ async fn history(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<Vec<sqlx:
         return Err(AppError::conflict("触发原文已变化"));
     }
     let mut rows=sqlx::query("SELECT m.* FROM cloud_messages m WHERE m.conversation=$1 AND NOT m.withdrawn AND m.status='committed' AND (m.position<=$2 OR EXISTS(SELECT 1 FROM cloud_node_tasks prior JOIN cloud_messages input ON input.id=prior.input_id WHERE prior.message_id=m.id AND prior.conversation=$1 AND prior.queue_position<$3 AND prior.state='completed' AND input.position<=$2)) ORDER BY m.position DESC LIMIT 100").bind(r.get::<Uuid,_>("conversation")).bind(trigger.get::<i64,_>("position")).bind(r.get::<i64,_>("queue_position")).fetch_all(&mut **tx).await?;
-    let mut required = vec![r.get::<Uuid, _>("input_id")];
+    let mut required = r.get::<Vec<Uuid>, _>("input_ids");
     if let Some(reply) = trigger.get::<Option<Uuid>, _>("reply_to") {
         required.push(reply);
     }
@@ -509,6 +569,7 @@ fn sources(rows: &[sqlx::postgres::PgRow]) -> Value {
     json!(rows.iter().map(|m|json!({"messageId":m.get::<Uuid,_>("id"),"revision":m.get::<i64,_>("revision").to_string()})).collect::<Vec<_>>())
 }
 async fn check_conversation(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
+    crate::participation::validate_task(tx, r).await?;
     let cid = r.get::<Uuid, _>("conversation");
     let rev: i64 = sqlx::query_scalar("SELECT revision FROM cloud_conversations WHERE id=$1")
         .bind(cid)
@@ -675,13 +736,23 @@ async fn start(
         tx.commit().await?;
         return Ok(Json(response));
     }
-    if state != "queued" || r.get::<i64, _>("revision") != revision(&v, "taskRevision")? {
-        return Err(AppError::conflict("任务已开始、失效或版本已变化"));
+    if state != "queued" {
+        return Err(AppError::conflict("任务已开始或失效"));
+    }
+    if r.get::<i64, _>("revision") != revision(&v, "taskRevision")? {
+        let mut error = AppError::conflict("尚未开始的任务输入已更新，请重新读取");
+        error.code = "task_not_ready";
+        return Err(error);
     }
     if revision(&v, "conversationRevision")? != r.get::<i64, _>("conversation_revision") {
         return Err(AppError::conflict("窗口版本已变化"));
     }
-    let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state='queued' AND queue_position<$2)").bind(r.get::<Uuid,_>("conversation")).bind(r.get::<i64,_>("queue_position")).fetch_one(&mut *tx).await?;
+    if r.get::<chrono::DateTime<chrono::Utc>, _>("not_before") > chrono::Utc::now() {
+        let mut e = AppError::conflict("任务仍在等待");
+        e.code = "task_not_ready";
+        return Err(e);
+    }
+    let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state='queued' AND (contact_intent_id IS NULL OR not_before<=now()) AND queue_position<$2)").bind(r.get::<Uuid,_>("conversation")).bind(r.get::<i64,_>("queue_position")).fetch_one(&mut *tx).await?;
     if blocked {
         let mut e = AppError::conflict("任务尚未轮到");
         e.code = "task_not_ready";
@@ -693,7 +764,11 @@ async fn start(
         history(&mut tx, &r).await?
     };
     if sources(&rows) != v["sources"] {
-        return Err(AppError::conflict("上下文原文已变化"));
+        let mut error = AppError::conflict("上下文原文已变化");
+        if r.get::<Option<Uuid>, _>("contact_intent_id").is_some() {
+            error.code = "task_not_ready";
+        }
+        return Err(error);
     }
     if sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state='running')",
@@ -721,6 +796,7 @@ async fn start(
     });
     let reference_metadata=used_reference.map(|reference|json!({"messageId":reference["messageId"],"revision":reference["revision"],"required":reference["required"]}));
     sqlx::query("UPDATE cloud_node_tasks SET derived_sources=$2,material_scopes=$3,reference=$4 WHERE id=$1").bind(tid).bind(&v["derivedSources"]).bind(&v["materialScopes"]).bind(reference_metadata).execute(&mut *tx).await?;
+    crate::participation::reserve(&mut tx, &r).await?;
     let r=sqlx::query("UPDATE cloud_node_tasks SET state='running',revision=revision+1,start_request=$2,start_fingerprint=$3,sources=$4,snapshot_id=$5,run_id=$6,message_id=$7,confirmation_id=$8,started_at=now() WHERE id=$1 RETURNING *").bind(tid).bind(rid).bind(fp).bind(&v["sources"]).bind(config).bind(Uuid::new_v4()).bind(Uuid::new_v4()).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?;
     let response = start_receipt(&r);
     publish(&mut tx, tid).await?;
@@ -739,7 +815,7 @@ fn check_ids(r: &sqlx::postgres::PgRow, v: &Value) -> Result<()> {
     }
     Ok(())
 }
-async fn finish_message(
+pub(crate) async fn finish_message(
     tx: &mut Tx<'_>,
     r: &sqlx::postgres::PgRow,
     text: &str,
@@ -815,6 +891,9 @@ async fn result(
     .await?;
     let r=sqlx::query("UPDATE cloud_node_tasks SET state=$2,revision=revision+1,result_request=$3,result_fingerprint=$4,result=$5,error_code=$6,delta_text='',finished_at=now() WHERE id=$1 RETURNING *").bind(tid).bind(status).bind(rid).bind(fp).bind(json!({"status":status,"usage":v["usage"],"errorCode":v["errorCode"]})).bind(v["errorCode"].as_str()).fetch_one(&mut *tx).await?;
     publish(&mut tx, tid).await?;
+    if status == "completed" {
+        crate::participation::completed(&mut tx, &r).await?;
+    }
     tx.commit().await?;
     Ok(Json(task_value(&r)))
 }
@@ -917,9 +996,12 @@ async fn expire_pending(pool: &sqlx::PgPool) -> Result<()> {
 }
 /// Expiration is a cloud responsibility even while every node is offline.
 pub async fn maintain(pool: sqlx::PgPool) {
-    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         tick.tick().await;
+        if let Err(error) = crate::participation::tick(&pool, chrono::Utc::now()).await {
+            eprintln!("Participation maintenance failed: {}", error.code);
+        }
         if let Err(error) = expire_pending(&pool).await {
             eprintln!("节点任务过期维护失败：{}", error.code);
         }
@@ -1007,7 +1089,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
     let valid = match hello {
         Ok(Some(Ok(Message::Text(text)))) => {
-            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:3,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
+            matches!(serde_json::from_str::<ClientFrame>(&text),Ok(ClientFrame::Hello{protocol_version:4,node_id,ai_id,binding_version}) if node_id==n.node.to_string()&&ai_id==n.ai.to_string()&&binding_version==n.version.to_string())
         }
         _ => false,
     };
@@ -1038,7 +1120,7 @@ async fn socket_loop(s: Arc<AppState>, h: HeaderMap, n: Node, mut socket: WebSoc
     if send_frame(
         &mut socket,
         ServerFrame::Ready {
-            protocol_version: 3,
+            protocol_version: 4,
         },
     )
     .await
@@ -1146,6 +1228,7 @@ async fn status(
         .await?;
     if status == "disabled" {
         invalidate_ai(&mut tx, ai, "account_disabled").await?;
+        crate::participation::reconcile(&mut tx).await?;
     }
     sqlx::query("INSERT INTO cloud_events(owner) SELECT administrator FROM cloud_ai_admins WHERE ai_id=$1 UNION SELECT m.account_id FROM cloud_members m JOIN cloud_members own ON own.conversation=m.conversation WHERE own.account_id=$1 UNION SELECT owner FROM cloud_contacts WHERE target=$1").bind(ai).execute(&mut *tx).await?;
     let out = view(&mut tx, ai, p.id).await?;

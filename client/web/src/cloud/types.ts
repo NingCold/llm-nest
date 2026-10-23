@@ -49,6 +49,41 @@ export interface Snapshot {
   conversations: Conversation[];
   cursor: string;
 }
+export interface ParticipationPolicy {
+  mode: "mentionedOnly" | "limitedAuto";
+  directMergeMs: number;
+  maxConsecutiveAi: number;
+  maxBoutCalls: number;
+  maxDailyCalls: number;
+  idleSeconds: number;
+}
+export interface ContactSettings {
+  revision: string;
+  enabled: boolean;
+  quietUntil: string | null;
+  quietAction: "defer" | "skip";
+}
+export interface ContactIntent {
+  id: string;
+  creatorId: string;
+  aiId: string;
+  content: string;
+  dueAt: string;
+  expiresAt: string;
+  utcOffsetMinutes: number;
+  status: "pending" | "claimed" | "executing" | "delivered" | "cancelled" | "skipped" | "expired" | "failed" | "uncertain";
+  revision: string;
+  reason: string | null;
+  taskId: string | null;
+}
+export interface ParticipationView {
+  revision: string;
+  canManage: boolean;
+  policy: ParticipationPolicy;
+  state: { paused: boolean; pausedAiIds: string[]; boutId: string | null; consecutiveAi: number; boutCalls: number; dailyCalls: number; reason: string | null };
+  settings: ContactSettings;
+  intents: ContactIntent[];
+}
 export interface Page {
   messages: Message[];
   hasMore: boolean;

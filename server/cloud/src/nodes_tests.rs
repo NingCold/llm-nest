@@ -1,5 +1,5 @@
 use super::*;
-use reqwest::{Client, Method};
+use reqwest::{Client, Method, StatusCode};
 
 struct Fixture {
     state: Arc<AppState>,
@@ -121,14 +121,16 @@ impl Fixture {
         (secret, node, response)
     }
     async fn conversation(&self, ai: &str) -> String {
-        value(
+        let cid = value(
             self.human(0, Method::POST, "/chat/direct")
                 .json(&json!({"accountId":ai})),
         )
         .await["id"]
             .as_str()
             .unwrap()
-            .into()
+            .to_owned();
+        sqlx::query("INSERT INTO cloud_participation(conversation,policy) VALUES($1,jsonb_set('{\"mode\":\"mentionedOnly\",\"directMergeMs\":800,\"maxConsecutiveAi\":3,\"maxBoutCalls\":12,\"maxDailyCalls\":48,\"idleSeconds\":300}'::jsonb,'{directMergeMs}','0')) ON CONFLICT(conversation) DO UPDATE SET policy=jsonb_set(cloud_participation.policy,'{directMergeMs}','0')").bind(cid.parse::<Uuid>().unwrap()).execute(&self.state.pool).await.unwrap();
+        cid
     }
     async fn send(&self, cid: &str, text: &str) -> Value {
         value(
@@ -419,7 +421,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     );
     let mut ws = client.connect().await.unwrap();
     ws.send(&connector::node::ClientFrame::Hello {
-        protocol_version: 3,
+        protocol_version: 4,
         node_id: node.to_string(),
         ai_id: aid.into(),
         binding_version: "1".into(),
@@ -429,7 +431,7 @@ async fn websocket_drafts_recovery_and_terminal_delivery_position() {
     assert_eq!(
         ws.recv().await.unwrap(),
         Some(connector::node::ServerFrame::Ready {
-            protocol_version: 3
+            protocol_version: 4
         })
     );
     let (outgoing, mut commands) = tokio::sync::mpsc::unbounded_channel();
@@ -1278,7 +1280,7 @@ async fn connect_node(
     let client = connector::node::NodeClient::new(&f.url, secret, None).unwrap();
     let mut ws = client.connect().await.unwrap();
     ws.send(&connector::node::ClientFrame::Hello {
-        protocol_version: 3,
+        protocol_version: 4,
         node_id: node.to_string(),
         ai_id: ai.into(),
         binding_version: "1".into(),
@@ -1288,7 +1290,7 @@ async fn connect_node(
     assert_eq!(
         ws.recv().await.unwrap(),
         Some(connector::node::ServerFrame::Ready {
-            protocol_version: 3
+            protocol_version: 4
         })
     );
     ws
@@ -1768,5 +1770,459 @@ async fn consciousness_history_full_pagination_and_stable_change_cursor() {
     ))
     .await;
     assert_eq!(replay["cursor"], first["cursor"]);
+    f.close().await;
+}
+
+async fn participation_view(f: &Fixture, cid: &str) -> Value {
+    value(f.human(
+        0,
+        Method::GET,
+        &format!("/chat/conversations/{cid}/participation"),
+    ))
+    .await
+}
+async fn enable_contacts(f: &Fixture, cid: &str) {
+    value(f.human(0,Method::PUT,&format!("/chat/conversations/{cid}/contact-settings")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","enabled":true,"quietUntil":null,"quietAction":"defer"}))).await;
+}
+async fn contact(f: &Fixture, cid: &str, aid: &str, seconds: i64) -> Value {
+    value(f.human(0,Method::POST,&format!("/chat/conversations/{cid}/contact-intents")).json(&json!({"requestId":Uuid::new_v4(),"aiId":aid,"content":"授权的一次性联系","dueAt":chrono::Utc::now()+chrono::Duration::seconds(seconds),"expiresAt":chrono::Utc::now()+chrono::Duration::hours(2),"utcOffsetMinutes":480}))).await
+}
+async fn ready_now(f: &Fixture) {
+    sqlx::query("UPDATE cloud_node_tasks SET not_before=now() WHERE state='queued'")
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn cloud_direct_merge_twenty_required_sources_and_source_invalidation() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let cid = f.conversation(aid).await;
+    sqlx::query("UPDATE cloud_participation SET policy=jsonb_set(policy,'{directMergeMs}','2000') WHERE conversation=$1").bind(cid.parse::<Uuid>().unwrap()).execute(&f.state.pool).await.unwrap();
+    let first = f.send(&cid, "first").await;
+    for i in 1..21 {
+        // Freeze the unstarted deadline; database tunnel latency is outside the merge behavior under test.
+        sqlx::query("UPDATE cloud_node_tasks SET not_before=now()+interval '1 hour' WHERE conversation=$1 AND state='queued'").bind(cid.parse::<Uuid>().unwrap()).execute(&f.state.pool).await.unwrap();
+        f.send(&cid, &format!("input{i}")).await;
+    }
+    let rows=sqlx::query("SELECT cardinality(input_ids) AS n FROM cloud_node_tasks WHERE conversation=$1 ORDER BY queue_position").bind(cid.parse::<Uuid>().unwrap()).fetch_all(&f.state.pool).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get::<i32, _>("n"), 20);
+    assert_eq!(rows[1].get::<i32, _>("n"), 1);
+    ready_now(&f).await;
+    let (task, request) = f.prepare(&secret).await;
+    assert_eq!(task["trigger"]["inputIds"].as_array().unwrap().len(), 20);
+    assert!(request["sources"].as_array().unwrap().len() >= 20);
+    let mid = first["id"].as_str().unwrap().parse().unwrap();
+    let mut tx = f.state.pool.begin().await.unwrap();
+    lock(&mut tx).await.unwrap();
+    source_changed(&mut tx, mid).await.unwrap();
+    tx.commit().await.unwrap();
+    let states: Vec<String> = sqlx::query_scalar(
+        "SELECT state FROM cloud_node_tasks WHERE conversation=$1 ORDER BY queue_position",
+    )
+    .bind(cid.parse::<Uuid>().unwrap())
+    .fetch_all(&f.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(states, vec!["cancelled", "queued"]);
+    f.close().await;
+}
+#[tokio::test]
+async fn cloud_contacts_independent_trigger_idempotency_restart_and_no_fake_human() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let group = value(
+        f.human(0, Method::POST, "/chat/groups")
+            .json(&json!({"requestId":Uuid::new_v4(),"name":"约定恢复边界","memberIds":[aid]})),
+    )
+    .await;
+    let cid = group["id"].as_str().unwrap().to_owned();
+    enable_contacts(&f, &cid).await;
+    let v = json!({"requestId":Uuid::new_v4(),"aiId":aid,"content":"独立授权正文","dueAt":chrono::Utc::now()+chrono::Duration::seconds(120),"expiresAt":chrono::Utc::now()+chrono::Duration::hours(2),"utcOffsetMinutes":480});
+    let path = format!("/chat/conversations/{cid}/contact-intents");
+    let i = value(f.human(0, Method::POST, &path).json(&v)).await;
+    assert_eq!(i, value(f.human(0, Method::POST, &path).json(&v)).await);
+    crate::participation::tick(
+        &f.state.pool,
+        chrono::Utc::now() + chrono::Duration::seconds(121),
+    )
+    .await
+    .unwrap();
+    let (task, request) = f.prepare(&secret).await;
+    assert_eq!(task["trigger"]["type"], "contact");
+    assert!(task["automatic"].as_bool().unwrap());
+    assert!(request["sources"].as_array().unwrap().is_empty());
+    let tid = task["id"].as_str().unwrap();
+    f.send(&cid, "准备和开始之间的新原文").await;
+    let stale = f
+        .node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale.json::<Value>().await.unwrap()["code"],
+        "task_not_ready"
+    );
+    assert_eq!(participation_view(&f, &cid).await["state"]["dailyCalls"], 0);
+    let request = f.start_request(&secret, &task).await;
+    let receipt = value(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+            .json(&request),
+    )
+    .await;
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cloud_messages WHERE conversation=$1")
+            .bind(cid.parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        count, 1,
+        "only the real human message exists; contact never fabricates one"
+    );
+    recover(&f.state.pool).await.unwrap();
+    let view = participation_view(&f, &cid).await;
+    assert_eq!(view["intents"][0]["status"], "uncertain");
+    assert_eq!(view["state"]["dailyCalls"], 1);
+    assert!(
+        value(f.node(&secret, Method::GET, "/node/tasks"))
+            .await
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    value(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/result"))
+            .json(&final_result(&receipt, "重启前已保存的完成结果")),
+    )
+    .await;
+    let after = participation_view(&f, &cid).await;
+    assert_eq!(after["intents"][0]["status"], "delivered");
+    assert_eq!(after["state"]["dailyCalls"], 1);
+    let second = contact(&f, &cid, aid, 120).await;
+    crate::participation::tick(
+        &f.state.pool,
+        chrono::Utc::now() + chrono::Duration::seconds(121),
+    )
+    .await
+    .unwrap();
+    let (task, request) = f.prepare(&secret).await;
+    let tid = task["id"].as_str().unwrap();
+    let saved = value(
+        f.node(&secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+            .json(&request),
+    )
+    .await;
+    recover(&f.state.pool).await.unwrap();
+    for blocked in [true, false] {
+        let c = value(f.human(0, Method::GET, &format!("/chat/contacts/{aid}"))).await;
+        value(f.human(0,Method::PUT,&format!("/chat/contacts/{aid}/block")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":c["revision"],"blocked":blocked}))).await;
+    }
+    let rejected = f
+        .node(&secret, Method::POST, &format!("/node/tasks/{tid}/result"))
+        .json(&final_result(&saved, "已撤销授权的迟到结果"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::CONFLICT);
+    let status: String = sqlx::query_scalar("SELECT status FROM cloud_contact_intents WHERE id=$1")
+        .bind(second["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .fetch_one(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        status, "cancelled",
+        "unblocking never restores the old uncertain authorization"
+    );
+    f.close().await;
+}
+#[tokio::test]
+async fn cloud_end_retains_future_contacts_pause_skips_due_and_dnd_defers() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (_secret, _, _) = f.bind_ai(aid, "0").await;
+    let cid = f.conversation(aid).await;
+    enable_contacts(&f, &cid).await;
+    let future = contact(&f, &cid, aid, 3600).await;
+    let due = contact(&f, &cid, aid, 120).await;
+    let already_due = contact(&f, &cid, aid, 120).await;
+    sqlx::query("UPDATE cloud_contact_intents SET due_at=now()-interval '1 second' WHERE id=$1")
+        .bind(already_due["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    let control = format!("/chat/conversations/{cid}/participation/control");
+    value(
+        f.human(0, Method::POST, &control)
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","action":"end"})),
+    )
+    .await;
+    value(
+        f.human(0, Method::POST, &control)
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","action":"pause"})),
+    )
+    .await;
+    crate::participation::tick(
+        &f.state.pool,
+        chrono::Utc::now() + chrono::Duration::seconds(121),
+    )
+    .await
+    .unwrap();
+    let view = participation_view(&f, &cid).await;
+    assert_eq!(
+        view["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == already_due["id"])
+            .unwrap()["status"],
+        "cancelled"
+    );
+    assert_eq!(
+        view["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == future["id"])
+            .unwrap()["status"],
+        "pending"
+    );
+    assert_eq!(
+        view["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == due["id"])
+            .unwrap()["status"],
+        "skipped"
+    );
+    value(
+        f.human(0, Method::POST, &control)
+            .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3","action":"resume"})),
+    )
+    .await;
+    let dnd = contact(&f, &cid, aid, 120).await;
+    value(f.human(0,Method::PUT,&format!("/chat/conversations/{cid}/contact-settings")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","enabled":true,"quietUntil":chrono::Utc::now()+chrono::Duration::hours(1),"quietAction":"defer"}))).await;
+    crate::participation::tick(
+        &f.state.pool,
+        chrono::Utc::now() + chrono::Duration::seconds(121),
+    )
+    .await
+    .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM cloud_contact_intents WHERE id=$1")
+        .bind(dnd["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .fetch_one(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "pending");
+    f.send(&cid, "普通消息照常排队").await;
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM cloud_node_tasks WHERE conversation=$1 AND state='queued' AND contact_intent_id IS NULL").bind(cid.parse::<Uuid>().unwrap()).fetch_one(&f.state.pool).await.unwrap();
+    assert_eq!(count, 1);
+    value(f.human(0,Method::PUT,&format!("/chat/conversations/{cid}/contact-settings")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"3","enabled":true,"quietUntil":null,"quietAction":"defer"}))).await;
+    crate::participation::tick(
+        &f.state.pool,
+        chrono::Utc::now() + chrono::Duration::seconds(121),
+    )
+    .await
+    .unwrap();
+    f.send(&cid, "新消息保留独立已领取约定").await;
+    let status: String = sqlx::query_scalar("SELECT status FROM cloud_contact_intents WHERE id=$1")
+        .bind(dnd["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .fetch_one(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "claimed");
+    value(f.human(0,Method::PUT,&format!("/chat/conversations/{cid}/contact-settings")).json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"4","enabled":true,"quietUntil":chrono::Utc::now()+chrono::Duration::hours(1),"quietAction":"defer"}))).await;
+    sqlx::query("INSERT INTO cloud_participation_daily(conversation,day,calls) SELECT conversation,budget_day,48 FROM cloud_participation WHERE conversation=$1 ON CONFLICT(conversation,day) DO UPDATE SET calls=48").bind(cid.parse::<Uuid>().unwrap()).execute(&f.state.pool).await.unwrap();
+    crate::participation::tick(&f.state.pool, chrono::Utc::now())
+        .await
+        .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM cloud_contact_intents WHERE id=$1")
+        .bind(dnd["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .fetch_one(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        status, "claimed",
+        "DND-deferred contacts evaluate quota when eligible, allowing a new UTC day"
+    );
+    let expiring = contact(&f, &cid, aid, 120).await;
+    sqlx::query(
+        "UPDATE cloud_participation SET quiet_until=now()+interval '3 hours' WHERE conversation=$1",
+    )
+    .bind(cid.parse::<Uuid>().unwrap())
+    .execute(&f.state.pool)
+    .await
+    .unwrap();
+    crate::participation::tick(
+        &f.state.pool,
+        chrono::Utc::now() + chrono::Duration::hours(2) + chrono::Duration::minutes(1),
+    )
+    .await
+    .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM cloud_contact_intents WHERE id=$1")
+        .bind(expiring["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .fetch_one(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "expired", "expiry precedes quiet-hours deferral");
+    f.close().await;
+}
+#[tokio::test]
+async fn cloud_group_auto_rotation_quota_explicit_bypass_and_human_input_during_run() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let a = f.ai().await;
+    let aid = a["account"]["id"].as_str().unwrap();
+    let (s1, _, _) = f.bind_ai(aid, "0").await;
+    let b = f.ai().await;
+    let bid = b["account"]["id"].as_str().unwrap();
+    let (s2, _, _) = f.bind_ai(bid, "0").await;
+    let c = value(f.human(0, Method::POST, "/chat/groups").json(
+        &json!({"requestId":Uuid::new_v4(),"name":"自动轮转","memberIds":[aid,bid,f.humans[1].0]}),
+    ))
+    .await;
+    let cid = c["id"].as_str().unwrap();
+    let p = json!({"mode":"limitedAuto","directMergeMs":800,"maxConsecutiveAi":3,"maxBoutCalls":12,"maxDailyCalls":3,"idleSeconds":300});
+    value(
+        f.human(
+            0,
+            Method::PUT,
+            &format!("/chat/conversations/{cid}/participation"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","policy":p})),
+    )
+    .await;
+    let member_view = value(f.human(
+        1,
+        Method::GET,
+        &format!("/chat/conversations/{cid}/participation"),
+    ))
+    .await;
+    assert_eq!(member_view["canManage"], false);
+    let denied = f
+        .human(
+            1,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/participation/control"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","action":"pause"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    f.send(cid, "开始讨论").await;
+    let mut actors = vec![];
+    for n in 0..3 {
+        ready_now(&f).await;
+        let t1 = value(f.node(&s1, Method::GET, "/node/tasks")).await;
+        let (secret, task) = if t1.as_array().unwrap().is_empty() {
+            (
+                &s2,
+                value(f.node(&s2, Method::GET, "/node/tasks")).await[0].clone(),
+            )
+        } else {
+            (&s1, t1[0].clone())
+        };
+        actors.push(task["aiId"].clone());
+        let req = f.start_request(secret, &task).await;
+        let tid = task["id"].as_str().unwrap();
+        let start = value(
+            f.node(secret, Method::POST, &format!("/node/tasks/{tid}/start"))
+                .json(&req),
+        )
+        .await;
+        if n == 0 {
+            let human = f.send(cid, "生成期间的新输入").await;
+            let input: Uuid = sqlx::query_scalar(
+                "SELECT input_id FROM cloud_node_tasks WHERE conversation=$1 AND state='queued'",
+            )
+            .bind(cid.parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+            assert_eq!(input.to_string(), human["id"].as_str().unwrap());
+        }
+        value(
+            f.node(secret, Method::POST, &format!("/node/tasks/{tid}/result"))
+                .json(&final_result(&start, "完整回答")),
+        )
+        .await;
+    }
+    assert_ne!(actors[1], actors[2]);
+    let v = participation_view(&f, cid).await;
+    assert_eq!(v["state"]["dailyCalls"], 3);
+    let m = value(
+        f.human(
+            0,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+        )
+        .json(&json!({"requestId":Uuid::new_v4(),"text":"明确点名","mentions":[aid]})),
+    )
+    .await;
+    let (task, request) = f.prepare(&s1).await;
+    assert_eq!(task["automatic"], false);
+    assert_eq!(task["trigger"]["messageId"], m["id"]);
+    let saved_final = value(
+        f.node(
+            &s1,
+            Method::POST,
+            &format!("/node/tasks/{}/start", task["id"].as_str().unwrap()),
+        )
+        .json(&request),
+    )
+    .await;
+    assert_eq!(participation_view(&f, cid).await["state"]["dailyCalls"], 3);
+    recover(&f.state.pool).await.unwrap();
+    sqlx::query("UPDATE cloud_participation SET bout_id=NULL,reason='idle',policy=jsonb_set(policy,'{maxDailyCalls}','200') WHERE conversation=$1").bind(cid.parse::<Uuid>().unwrap()).execute(&f.state.pool).await.unwrap();
+    value(
+        f.node(
+            &s1,
+            Method::POST,
+            &format!("/node/tasks/{}/result", task["id"].as_str().unwrap()),
+        )
+        .json(&final_result(&saved_final, "空闲结束后已保存结果的确认")),
+    )
+    .await;
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM cloud_node_tasks WHERE conversation=$1 AND state='queued'",
+    )
+    .bind(cid.parse::<Uuid>().unwrap())
+    .fetch_one(&f.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(queued, 0, "late known final does not reopen an idle bout");
+    let tomorrow = chrono::Utc::now() + chrono::Duration::days(1);
+    crate::participation::tick(&f.state.pool, tomorrow)
+        .await
+        .unwrap();
+    assert_eq!(participation_view(&f, cid).await["state"]["dailyCalls"], 0);
+    crate::participation::tick(&f.state.pool, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(participation_view(&f, cid).await["state"]["dailyCalls"], 0);
+    let day: chrono::NaiveDate =
+        sqlx::query_scalar("SELECT budget_day FROM cloud_participation WHERE conversation=$1")
+            .bind(cid.parse::<Uuid>().unwrap())
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(day, tomorrow.date_naive());
     f.close().await;
 }

@@ -33,6 +33,7 @@ import {
 import { useUiStore } from "@/store/ui";
 import type { CloudDraftRecord as DraftRecord, DraftReference } from "./types";
 import { ConsciousnessPanel, RememberMessage } from "./Consciousness";
+import { ParticipationPanel } from "./Participation";
 import { ContinuePrivately, ReferenceCard } from "./References";
 import { fileSize } from "../social/files";
 import { download, request } from "./api";
@@ -1303,7 +1304,7 @@ export function Workspace(p: Props) {
                       {conversation.directBlocked && <p role="status">双方私聊已屏蔽，历史和草稿保留。解除屏蔽后可发送新消息。</p>}
                       {p.record.draft.replyTo && <div className="cloud-reply-draft">回复：{replyLabel(p.record.draft.replyTo)}<button className="text-button" disabled={p.busy || !!p.record.pending || !p.draftReady} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: null } }))}>取消回复</button></div>}
                       {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>
-                        <legend>提及成员（仅勾选才会通知 AI 回复）</legend>
+                        <legend>提及成员（可明确指定回复的 AI）</legend>
                         {conversation.members.filter(member => member.account.id !== p.me.id).map(({ account }) => <label className="cloud-check" key={account.id}><input type="checkbox" checked={p.record.draft.mentions?.includes(account.id) || false} onChange={e => { const mentions = p.record.draft.mentions || []; void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: e.target.checked ? [...mentions, account.id] : mentions.filter(id => id !== account.id) } })); }} />@{account.name}</label>)}
                         {p.record.draft.mentions?.filter(id => !conversation.members.some(member => member.account.id === id)).map(id => <button type="button" className="text-button" key={id} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, mentions: p.record.draft.mentions!.filter(previous => previous !== id) } }))}>移除已离群提及：{id}</button>)}
                       </fieldset>}
@@ -1453,6 +1454,7 @@ export function Workspace(p: Props) {
                       </IconButton>
                     </header>
                     <div className="details-scroll">
+                      <ParticipationPanel operatorId={p.me.id} key={`participation/${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} />
                       <ConsciousnessPanel operatorId={p.me.id} key={`${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} summaryAiIds={managedAiIds} summaryError={managementError} />
                       {conversation.kind === "group" && <GroupDetails key={conversation.id + conversation.revision} conversation={conversation} me={p.me.id} busy={p.busy} act={p.act} refresh={p.refresh} leave={() => p.selectConversation("")} />}
                       <div className="details-hero">

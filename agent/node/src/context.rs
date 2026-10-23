@@ -5,7 +5,9 @@ use anyhow::{Result, bail};
 use builtin_agent::{
     ContactInput, ContextInput, ContextTrigger, consciousness::ConsciousnessService, generation,
 };
-use connector::node::{MaterialScope, NodeClient, NodeMessage, ScopedSource, TaskMaterials};
+use connector::node::{
+    MaterialScope, NodeClient, NodeMessage, NodeTrigger, ScopedSource, TaskMaterials,
+};
 use social::*;
 
 const IMAGE_BYTES: u64 = 4 * 1024 * 1024;
@@ -31,28 +33,52 @@ fn image_cost(message: &NodeMessage) -> Result<(usize, u64)> {
 /// Keep whole messages: required trigger first, then newest history within image limits.
 #[cfg(test)]
 fn select_image_history(messages: Vec<NodeMessage>, trigger: &str) -> Result<Vec<NodeMessage>> {
-    select_images(messages, trigger, 0, 0)
+    let required = message_required_ids(&messages, trigger, &[trigger.to_string()])?;
+    select_images(messages, &required, 0, 0)
 }
-fn select_images(
-    messages: Vec<NodeMessage>,
+fn message_required_ids(
+    messages: &[NodeMessage],
     trigger: &str,
-    reserved_count: usize,
-    reserved_bytes: u64,
-) -> Result<Vec<NodeMessage>> {
+    inputs: &[String],
+) -> Result<Vec<String>> {
+    anyhow::ensure!(
+        !inputs.is_empty() && inputs.len() <= 20 && inputs.iter().any(|id| id == trigger),
+        "invalid_trigger_inputs"
+    );
+    let mut required = Vec::new();
+    for id in inputs {
+        anyhow::ensure!(
+            messages.iter().any(|m| &m.id == id),
+            "missing required input message"
+        );
+        if !required.contains(id) {
+            required.push(id.clone());
+        }
+    }
     let trigger_message = messages
         .iter()
         .find(|m| m.id == trigger)
-        .ok_or_else(|| anyhow::anyhow!("missing trigger message"))?;
-    let reply = trigger_message.reply_to.as_deref();
-    if let Some(reply) = reply {
+        .expect("validated trigger input");
+    if let Some(reply) = &trigger_message.reply_to {
         anyhow::ensure!(
-            messages.iter().any(|m| m.id == reply),
+            messages.iter().any(|m| &m.id == reply),
             "missing reply message"
         );
+        if !required.contains(reply) {
+            required.push(reply.clone());
+        }
     }
+    Ok(required)
+}
+fn select_images(
+    messages: Vec<NodeMessage>,
+    required: &[String],
+    reserved_count: usize,
+    reserved_bytes: u64,
+) -> Result<Vec<NodeMessage>> {
     let mut selected = messages
         .iter()
-        .map(|m| m.id == trigger || Some(m.id.as_str()) == reply)
+        .map(|m| required.contains(&m.id))
         .collect::<Vec<_>>();
     let (mut count, mut bytes) = (reserved_count, reserved_bytes);
     for (message, required) in messages.iter().zip(&selected) {
@@ -204,16 +230,26 @@ pub async fn prepare_scoped(
             ref_bytes += bytes;
         }
     }
-    let trigger_message = material
-        .messages
-        .iter()
-        .find(|m| m.id == material.task.trigger_message_id)
-        .ok_or_else(|| anyhow::anyhow!("missing trigger message"))?;
+    let required_ids = match &material.task.trigger {
+        NodeTrigger::Message {
+            message_id,
+            input_ids,
+        } => message_required_ids(&material.messages, message_id, input_ids)?,
+        NodeTrigger::Contact { .. } => {
+            anyhow::ensure!(
+                material.task.automatic && material.reference.is_none(),
+                "invalid_contact_trigger"
+            );
+            vec![]
+        }
+    };
     let mut required_count = 0;
     let mut required_bytes = 0;
-    for message in material.messages.iter().filter(|m| {
-        m.id == material.task.trigger_message_id || Some(&m.id) == trigger_message.reply_to.as_ref()
-    }) {
+    for message in material
+        .messages
+        .iter()
+        .filter(|m| required_ids.contains(&m.id))
+    {
         let (count, bytes) = image_cost(message)?;
         required_count += count;
         required_bytes += bytes;
@@ -226,12 +262,7 @@ pub async fn prepare_scoped(
         ref_count = 0;
         ref_bytes = 0;
     }
-    material.messages = select_images(
-        material.messages,
-        &material.task.trigger_message_id,
-        ref_count,
-        ref_bytes,
-    )?;
+    material.messages = select_images(material.messages, &required_ids, ref_count, ref_bytes)?;
     let has_images = material
         .messages
         .iter()
@@ -242,7 +273,6 @@ pub async fn prepare_scoped(
     }
     let ai: ActorId = material.ai.id.parse()?;
     let conversation_id: ConversationId = material.task.conversation_id.parse()?;
-    let trigger = material.task.trigger_message_id.parse()?;
     anyhow::ensure!(
         material.conversation.id == material.task.conversation_id,
         "conversation mismatch"
@@ -251,6 +281,32 @@ pub async fn prepare_scoped(
         material.conversation.revision.clone(),
     ))?;
     let now = chrono::Utc::now();
+    let trigger = match &material.task.trigger {
+        NodeTrigger::Message { message_id, .. } => ContextTrigger::Message(message_id.parse()?),
+        NodeTrigger::Contact {
+            intent_id,
+            revision,
+            creator_id,
+            content,
+            due_at,
+        } => ContextTrigger::Contact(ContactIntent {
+            id: intent_id.parse()?,
+            conversation_id,
+            actor_id: ai,
+            created_by: creator_id.parse()?,
+            authorization_id: intent_id.parse()?,
+            text: content.clone(),
+            due_at: due_at.parse()?,
+            expires_at: material.task.expires_at.parse()?,
+            utc_offset_minutes: 0,
+            status: ContactIntentStatus::Executing,
+            plan_id: None,
+            revision: crate::consciousness::revision(revision)?,
+            reason: None,
+            created_at: now,
+            updated_at: now,
+        }),
+    };
     let messages = messages(
         client,
         &material.task.id,
@@ -342,7 +398,10 @@ pub async fn prepare_scoped(
         vec![]
     };
     let input = ContextInput {
-        required_message_ids: vec![trigger],
+        required_message_ids: required_ids
+            .iter()
+            .map(|id| id.parse())
+            .collect::<Result<_, _>>()?,
         reference,
         summaries,
         memories,
@@ -419,7 +478,7 @@ pub async fn prepare_scoped(
             .map(|member| member.name.clone())
             .collect(),
         messages,
-        trigger: ContextTrigger::Message(trigger),
+        trigger,
     };
     let prepared =
         ConsciousnessService::prepare(input, &resolved.spec, options.max_tokens.unwrap())?;
@@ -515,7 +574,11 @@ mod tests {
                 conversation_id: conversation.clone(),
                 binding_version: "1".into(),
                 revision: "1".into(),
-                trigger_message_id: trigger.clone(),
+                trigger: NodeTrigger::Message {
+                    message_id: trigger.clone(),
+                    input_ids: vec![trigger.clone()],
+                },
+                automatic: false,
                 status: "queued".into(),
                 expires_at: chrono::Utc::now().to_rfc3339(),
             },
@@ -587,7 +650,98 @@ image_input=false
             },
             temperature: None,
             max_tokens: None,
+            auto_daily_tokens: None,
         }
+    }
+    #[tokio::test]
+    async fn merged_inputs_are_all_required_and_never_truncated() {
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let mut material = materials();
+        let mut first = material.messages[0].clone();
+        first.id = uuid::Uuid::new_v4().to_string();
+        first.text = "first necessary input".into();
+        first.position = "1".into();
+        material.messages[0].position = "2".into();
+        material.messages[0].text = "last necessary input".into();
+        let trigger = material.messages[0].id.clone();
+        material.task.trigger = NodeTrigger::Message {
+            message_id: trigger.clone(),
+            input_ids: vec![first.id.clone(), trigger],
+        };
+        material.messages.insert(0, first);
+        let (request, _) = prepare(&api, &router(), &profile(), material.clone())
+            .await
+            .unwrap();
+        let text = format!("{:?}", request.messages);
+        assert!(text.contains("first necessary input") && text.contains("last necessary input"));
+        material.messages[0].text = "required".repeat(2000);
+        assert!(
+            prepare(&api, &router(), &profile(), material.clone())
+                .await
+                .is_err()
+        );
+        material.messages.remove(0);
+        let error = prepare(&api, &router(), &profile(), material)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "missing required input message");
+    }
+    #[test]
+    fn merged_input_images_are_reserved_before_optional_history() {
+        let first = image_message("first", 2, IMAGE_BYTES);
+        let history = image_message("history", 2, IMAGE_BYTES);
+        let trigger = image_message("trigger", 2, IMAGE_BYTES);
+        let required = vec!["first".to_string(), "trigger".to_string()];
+        let selected = select_images(vec![first, history, trigger], &required, 0, 0).unwrap();
+        assert_eq!(
+            selected.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["first", "trigger"]
+        );
+        assert!(
+            select_images(
+                vec![
+                    image_message("first", 3, IMAGE_BYTES),
+                    image_message("trigger", 2, IMAGE_BYTES)
+                ],
+                &required,
+                0,
+                0
+            )
+            .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn contact_is_an_independent_trigger_with_empty_history_and_no_reference() {
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        let mut material = materials();
+        material.task.automatic = true;
+        material.task.trigger = NodeTrigger::Contact {
+            intent_id: uuid::Uuid::new_v4().to_string(),
+            revision: "2".into(),
+            creator_id: material.messages[0].sender_id.clone(),
+            content: "authorized follow up".into(),
+            due_at: chrono::Utc::now().to_rfc3339(),
+        };
+        material.messages.clear();
+        let (request, _) = prepare(&api, &router(), &profile(), material.clone())
+            .await
+            .unwrap();
+        let text = format!("{:?}", request.messages);
+        assert!(text.contains("authorized follow up"));
+        assert!(text.contains("不是新的聊天消息"));
+        assert!(!text.contains("hello"));
+        material.reference = Some(NodeReference {
+            message_id: uuid::Uuid::new_v4().to_string(),
+            revision: "1".into(),
+            required: false,
+            conversation: material.conversation.clone(),
+            messages: vec![],
+            sources: vec![],
+        });
+        let error = prepare(&api, &router(), &profile(), material)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "invalid_contact_trigger");
     }
     #[tokio::test]
     async fn context_uses_core_and_file_metadata_without_fetching_bytes() {

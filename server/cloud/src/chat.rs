@@ -973,26 +973,7 @@ mod tests {
                 .connect(&url)
                 .await
                 .unwrap();
-            sqlx::raw_sql(include_str!("../migrations/0001_accounts.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
-            sqlx::raw_sql(include_str!("../migrations/0002_chat.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
-            sqlx::raw_sql(include_str!("../migrations/0003_nodes.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
-            sqlx::raw_sql(include_str!("../migrations/0004_groups.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
-            sqlx::raw_sql(include_str!("../migrations/0005_consciousness.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
+            sqlx::migrator().run(&pool).await.unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
                 relay: Default::default(),

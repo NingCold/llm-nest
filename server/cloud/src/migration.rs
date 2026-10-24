@@ -273,6 +273,9 @@ async fn import(
     h: HeaderMap,
     v: std::result::Result<Json<MigrationImport>, JsonRejection>,
 ) -> Result<Json<MigrationMapping>> {
+    if s.require_encryption {
+        return Err(crate::crypto::required());
+    }
     let p = auth::authenticate(&s, &h).await?;
     let request = body(v)?;
     validate(&request.snapshot)?;

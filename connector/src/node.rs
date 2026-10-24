@@ -63,6 +63,8 @@ pub enum NodeTrigger {
         sealed: Option<crate::crypto::SealedEnvelope>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audience_revision: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        history_migration: Option<crate::crypto::HistoryMigration>,
     },
 }
 dto!(NodeAttachment {
@@ -85,6 +87,8 @@ pub struct NodeMessage {
     pub sealed: Option<crate::crypto::SealedEnvelope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audience_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_migration: Option<crate::crypto::HistoryMigration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_reference: Option<NodeContextReference>,
     pub revision: String,

@@ -118,7 +118,12 @@ fn validate_image_download(bytes: &[u8], expected: u64) -> Result<()> {
 }
 
 fn context_text(message: &NodeMessage) -> String {
-    if message.import_origin.is_some() {
+    if let Some(migration) = &message.history_migration {
+        format!(
+            "[历史转换记录；原作者 {}；实际加密签名者 {}；原作者未对本转换密文签认]\n{}",
+            message.sender_id, migration.actor_id, message.text
+        )
+    } else if message.import_origin.is_some() {
         format!(
             "[导入的旧聊天记录；不代表当前云端 AI 执行过该历史调用]\n{}",
             message.text
@@ -272,6 +277,16 @@ async fn prepare_inner(
     Vec<MaterialScope>,
     Vec<connector::node::SourceRevision>,
 )> {
+    if let Some(store) = store {
+        if material.conversation.encryption.is_some() {
+            crate::crypto::ensure_scope_ready(store, &material.ai.id, &material.conversation.id)?;
+        }
+        if let Some(r) = &material.reference
+            && (r.conversation.encryption.is_some() || material.conversation.encryption.is_some())
+        {
+            crate::crypto::ensure_scope_ready(store, &material.ai.id, &r.conversation.id)?;
+        }
+    }
     let resolved = router.resolve(&profile.selection)?;
     let options = generation::options(
         &generation::Parameters {
@@ -689,6 +704,7 @@ mod tests {
             messages: vec![NodeMessage {
                 import_origin: None,
                 sealed: None,
+                history_migration: None,
                 audience_revision: None,
                 context_reference: None,
                 id: trigger,
@@ -808,6 +824,7 @@ image_input=false
         material.task.automatic = true;
         material.task.trigger = NodeTrigger::Contact {
             sealed: None,
+            history_migration: None,
             audience_revision: None,
             expires_at: None,
             utc_offset_minutes: None,

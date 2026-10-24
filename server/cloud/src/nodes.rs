@@ -528,7 +528,9 @@ async fn expire(tx: &mut Tx<'_>, ai: Uuid) -> Result<()> {
     Ok(())
 }
 async fn authorized_task(tx: &mut Tx<'_>, n: &Node, tid: Uuid) -> Result<sqlx::postgres::PgRow> {
-    sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_members c ON c.conversation=t.conversation JOIN accounts a ON a.id=t.ai_id WHERE t.id=$1 AND t.ai_id=$2 AND t.binding_version=$3 AND c.account_id=$2 AND a.status='active'").bind(tid).bind(n.ai).bind(n.version).fetch_optional(&mut **tx).await?.ok_or_else(AppError::not_found)
+    let row=sqlx::query("SELECT t.* FROM cloud_node_tasks t JOIN cloud_members c ON c.conversation=t.conversation JOIN accounts a ON a.id=t.ai_id WHERE t.id=$1 AND t.ai_id=$2 AND t.binding_version=$3 AND c.account_id=$2 AND a.status='active'").bind(tid).bind(n.ai).bind(n.version).fetch_optional(&mut **tx).await?.ok_or_else(AppError::not_found)?;
+    crate::history_migration::node_capability(tx, n.ai, n.version, row.get("conversation")).await?;
+    Ok(row)
 }
 async fn tasks(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value>> {
     let mut tx = s.pool.begin().await?;
@@ -588,6 +590,7 @@ fn sources(rows: &[sqlx::postgres::PgRow]) -> Value {
 async fn check_conversation(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow) -> Result<()> {
     crate::participation::validate_task(tx, r).await?;
     let cid = r.get::<Uuid, _>("conversation");
+    crate::history_migration::frozen(tx, cid).await?;
     if crate::crypto::enabled(tx, cid).await? {
         let capable:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_ai_bindings WHERE ai_id=$1 AND version=$2 AND capabilities ? 'sealedV1')").bind(r.get::<Uuid,_>("ai_id")).bind(r.get::<i64,_>("binding_version")).fetch_one(&mut **tx).await?;
         if !capable {
@@ -642,6 +645,9 @@ async fn materials(
     if !matches!(r.get::<String, _>("state").as_str(), "queued" | "running") {
         return Err(AppError::conflict("任务已结束"));
     }
+    if s.require_encryption && !crate::crypto::enabled(&mut tx, r.get("conversation")).await? {
+        return Err(crate::crypto::required());
+    }
     crate::crypto_resources::ready(&mut tx, n.ai, r.get("conversation")).await?;
     let rows = if r.get::<String, _>("state") == "running" {
         frozen_history(&mut tx, &r).await?
@@ -654,6 +660,19 @@ async fn materials(
     let reference =
         crate::consciousness::task_reference(&mut tx, &r, r.get::<String, _>("state") == "running")
             .await?;
+    if let Some(reference) = &reference {
+        crate::history_migration::node_capability(
+            &mut tx,
+            n.ai,
+            n.version,
+            reference["conversation"]["id"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap(),
+        )
+        .await?;
+    }
     let out = json!({"task":task_value(&r),"ai":account(&mut tx,n.ai).await?,"conversation":conversation,"messages":rows.iter().map(crate::consciousness::node_message).collect::<Vec<_>>(),"sources":src,"reference":reference});
     tx.commit().await?;
     Ok(Json(out))
@@ -689,6 +708,17 @@ async fn attachment(
         crate::consciousness::task_reference(&mut tx, &r, r.get::<String, _>("state") == "running")
             .await?
     {
+        crate::history_migration::node_capability(
+            &mut tx,
+            n.ai,
+            n.version,
+            reference["conversation"]["id"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap(),
+        )
+        .await?;
         for source in reference["sources"].as_array().unwrap() {
             let mid: Uuid = source["messageId"].as_str().unwrap().parse().unwrap();
             rows.push(
@@ -711,8 +741,10 @@ async fn attachment(
     if part["kind"] != "image" && part["kind"] != "encrypted" {
         return Err(AppError::forbidden());
     }
-    let bytes =
-        tokio::fs::read(s.attachments.join(mid.to_string()).join(index.to_string())).await?;
+    let bytes = tokio::fs::read(
+        crate::history_migration::attachment_path(&mut tx, &s.attachments, mid, index).await?,
+    )
+    .await?;
     Ok((
         [
             (header::CONTENT_TYPE, part["mime"].as_str().unwrap()),
@@ -783,6 +815,9 @@ async fn start(
         let mut e = AppError::conflict("任务尚未轮到");
         e.code = "task_not_ready";
         return Err(e);
+    }
+    if s.require_encryption && !crate::crypto::enabled(&mut tx, r.get("conversation")).await? {
+        return Err(crate::crypto::required());
     }
     crate::crypto_resources::ready(&mut tx, n.ai, r.get("conversation")).await?;
     let rows = if r.get::<String, _>("state") == "running" {
@@ -879,6 +914,9 @@ async fn result(
     }
     if v["errorCode"].as_str().is_some_and(|s| s.len() > 256) {
         return Err(AppError::bad("错误标识过长"));
+    }
+    if s.require_encryption && v["sealed"].is_null() {
+        return Err(crate::crypto::required());
     }
     let mut tx = s.pool.begin().await?;
     lock(&mut tx).await?;
@@ -1101,6 +1139,9 @@ async fn delta(
     }
     let v = json!({"runId":run_id,"messageId":message_id,"confirmationId":confirmation_id});
     let tid = task_id.parse().map_err(|_| AppError::bad("任务标识无效"))?;
+    if s.require_encryption && sealed.is_none() {
+        return Err(crate::crypto::required());
+    }
     let mut tx = s.pool.begin().await?;
     lock(&mut tx).await?;
     let n = authenticate(&mut tx, h).await?;

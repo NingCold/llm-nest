@@ -30,7 +30,7 @@ cargo run -p agent-node -- run C:\private\llmn-agent
 cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\profile.json
 ```
 
-修改时提升 `revision`；下一次启动与新任务使用保存后的设置。空温度和输出上限使用模型默认温度与意识系统预算。运行期间配置冻结，不在飞行请求中切换供应商。
+未启用加密时，修改后提升 `revision`，下一次启动与新任务使用保存后的设置。加密启用后通过管理页保存角色与模型，等待云端保存和节点应用；旧本机档案命令的修改不能替代密文同步。空温度和输出上限使用模型默认温度与意识系统预算。运行期间配置冻结，不在飞行请求中切换供应商。
 
 云端任务通过每个绑定的 WSS 连接接入，所有 AI 共享 4 个社交模型调用槽，摘要独立使用 1 个槽；同一 AI 仍按顺序执行；单次调用最长 120 秒。每日次数和完整上下文 token 容量先在 SQLite 预留，已开始后的失败不返还；墙钟回拨不重开旧日预算。云端任务在模型调用前先保存开始意图、获得云端确认，再保存确认。重启遇到不明确的开始只报告 uncertain，绝不重调模型；已保存 final 可原样重发。云端任务在节点断线时停止生成，源编辑、取消或撤权由服务端复核并阻止失效结果提交。
 
@@ -60,9 +60,11 @@ cargo run -p agent-node -- profile C:\private\llmn-agent <AI-ID> C:\private\prof
 
 ### 加密设备与资料
 
-新私聊可显式启用 `sealedV1`。节点使用官方 Matrix SDK，验证设备与账号 master 双签后解密材料；角色、模型、记忆和每 AI 摘要按范围保存密文资源 CAS，离线待同步，当前绑定节点应用后另发确认。云端不保管恢复解密材料或模型 Key。
+私聊和群聊可开启加密。节点验证发送者身份后读取消息和附件，并将角色、模型、记忆和各窗口摘要作为密文同步；云端保存后，由当前节点另行确认应用。恢复文件和模型 Key 留在自己的设备。
 
 使用 `crypto-init <directory> <AI id>` 建立身份，`crypto-status` 查看状态；`crypto-trust` 需独立核对账号 master、设备 Ed25519 和 Curve25519 指纹。`crypto-export-recovery` 保存私有恢复文件，换节点用 `crypto-recover` 恢复；仅登录或重新配对不能获得历史解密能力。向新管理员分享历史前，先确认当前管理员身份与设备信任，再用 `crypto-authorize-admin` 明确授权。恢复文件不提交、分享或交给服务管理员。参数与传输契约见[加密契约](../../docs/design/crypto-contract.md)，联调状态见[当前安排](../../docs/project/current.md)。
+
+旧节点资料使用 `crypto-migration-preview <directory> <AI id>` 预览，再用 `crypto-migrate <directory> <AI id> <digest>` 转为云端密文资料。先备份、停止节点并完成身份和恢复准备；转换不会调用模型重写摘要，已有云端资料与遗忘记录优先。完整步骤见[迁移说明](../../docs/migration.md#现有云端记录转为加密)。迁移历史会保留原作者，并明确标为由迁移者转换的旧记录。
 
 ### 同机文字私聊
 

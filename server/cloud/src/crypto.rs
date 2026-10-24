@@ -797,7 +797,7 @@ async fn recovery_save(
 }
 pub(crate) fn encryption(r: &sqlx::postgres::PgRow) -> Value {
     if r.get::<bool, _>("crypto_enabled") {
-        json!({"version":1,"activationPosition":r.get::<Option<i64>,_>("crypto_from_position").unwrap_or(0).to_string()})
+        json!({"version":1,"activationPosition":r.get::<Option<i64>,_>("crypto_from_position").unwrap_or(0).to_string(),"historyComplete":r.get::<bool,_>("crypto_history_complete")})
     } else {
         Value::Null
     }

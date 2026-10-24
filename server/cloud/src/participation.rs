@@ -60,8 +60,8 @@ async fn changed(tx: &mut Tx<'_>, cid: Uuid) -> Result<()> {
     sqlx::query("INSERT INTO cloud_events(owner,conversation) SELECT account_id,conversation FROM cloud_members WHERE conversation=$1").bind(cid).execute(&mut **tx).await?;
     Ok(())
 }
-fn intent(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"creatorId":r.get::<Uuid,_>("creator_id"),"aiId":r.get::<Uuid,_>("ai_id"),"content":r.get::<String,_>("content"),"dueAt":r.get::<DateTime<Utc>,_>("due_at"),"expiresAt":r.get::<DateTime<Utc>,_>("expires_at"),"utcOffsetMinutes":r.get::<i32,_>("utc_offset_minutes"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision").to_string(),"reason":r.get::<Option<String>,_>("reason"),"taskId":r.get::<Option<Uuid>,_>("task_id"),"sealed":r.get::<Option<Value>,_>("sealed"),"audienceRevision":r.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})
+pub(crate) fn intent(r: &sqlx::postgres::PgRow) -> Value {
+    json!({"id":r.get::<Uuid,_>("id"),"creatorId":r.get::<Uuid,_>("creator_id"),"aiId":r.get::<Uuid,_>("ai_id"),"content":r.get::<String,_>("content"),"dueAt":r.get::<DateTime<Utc>,_>("due_at"),"expiresAt":r.get::<DateTime<Utc>,_>("expires_at"),"utcOffsetMinutes":r.get::<i32,_>("utc_offset_minutes"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision").to_string(),"reason":r.get::<Option<String>,_>("reason"),"taskId":r.get::<Option<Uuid>,_>("task_id"),"sealed":r.get::<Option<Value>,_>("sealed"),"historyMigration":r.get::<Option<Value>,_>("history_migration"),"audienceRevision":r.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})
 }
 async fn view(tx: &mut Tx<'_>, cid: Uuid, owner: Uuid) -> Result<Value> {
     let manage = permission(tx, cid, owner).await?;
@@ -292,6 +292,10 @@ async fn create(
     nodes::lock(&mut tx).await?;
     permission(&mut tx, cid, p.id).await?;
     chat::writable(&mut tx, cid).await?;
+    crate::history_migration::frozen(&mut tx, cid).await?;
+    if s.require_encryption && v["sealed"].is_null() {
+        return Err(crate::crypto::required());
+    }
     if v["sealed"].is_null() {
         crate::crypto::plaintext(&mut tx, cid).await?;
     }
@@ -632,7 +636,7 @@ pub async fn tick(pool: &sqlx::PgPool, now: DateTime<Utc>) -> Result<()> {
         }
         nodes::publish(&mut tx, r.get("id")).await?;
     }
-    let invalid=sqlx::query("SELECT i.* FROM cloud_contact_intents i JOIN cloud_participation p ON p.conversation=i.conversation WHERE (i.status='pending' AND i.due_at<=$1 OR i.status IN ('claimed','executing') AND (i.expires_at<=$1 OR NOT p.enabled OR p.paused OR i.ai_id=ANY(p.paused_ai) OR i.status='claimed' AND p.quiet_until>$1)) ORDER BY i.due_at,i.id").bind(now).fetch_all(&mut *tx).await?;
+    let invalid=sqlx::query("SELECT i.* FROM cloud_contact_intents i JOIN cloud_participation p ON p.conversation=i.conversation WHERE NOT EXISTS(SELECT 1 FROM cloud_conversations c JOIN cloud_history_migrations h ON h.id=c.history_migration WHERE c.id=i.conversation AND h.state='active') AND (i.status='pending' AND i.due_at<=$1 OR i.status IN ('claimed','executing') AND (i.expires_at<=$1 OR NOT p.enabled OR p.paused OR i.ai_id=ANY(p.paused_ai) OR i.status='claimed' AND p.quiet_until>$1)) ORDER BY i.due_at,i.id").bind(now).fetch_all(&mut *tx).await?;
     for i in invalid {
         let cid = i.get::<Uuid, _>("conversation");
         let iid = i.get::<Uuid, _>("id");

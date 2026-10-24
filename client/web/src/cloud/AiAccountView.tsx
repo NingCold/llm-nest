@@ -64,7 +64,7 @@ export function AiAccountView({ aiId, operatorId }: { aiId: string; operatorId?:
       <div className="cloud-actions"><button className="text-button" disabled={busy} onClick={() => void history(active)}>刷新当前窗口</button>{page.hasMore && <button className="text-button" disabled={busy} onClick={() => void history(active, true)}>读取更早消息</button>}</div>
       {page.messages.length === 0 && <p>还没有消息。</p>}
       {page.messages.map(message => <article className="cloud-ai-readonly-message" key={message.id}>
-        <div className="live-message-label"><strong>{message.senderName}</strong><time>{new Date(message.createdAt).toLocaleString()}</time>{message.importOrigin && <small>导入历史</small>}</div>
+        <div className="live-message-label"><strong>{message.senderName}</strong><time>{new Date(message.createdAt).toLocaleString()}</time>{message.historyMigration && <small>迁入旧记录 · 转换者 {message.historyMigration.actorId}（保留原作者记录）</small>}{message.importOrigin && <small>导入历史</small>}</div>
         {message.status === "withdrawn" ? <p className="withdrawn-message">消息已撤回</p> : <>
           {message.replyTo && <small>回复消息 {message.replyTo}</small>}
           {message.cryptoError ? <p role="status">加密内容暂不可读：{message.cryptoError}</p> : <MarkdownView content={message.text} />}

@@ -53,7 +53,7 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/node/summaries/{id}/finish", post(summary_finish))
 }
 pub(crate) async fn node_conversation(tx: &mut Tx<'_>, cid: Uuid) -> Result<Value> {
-    let row = sqlx::query("SELECT kind,name,revision,crypto_enabled,crypto_from_position FROM cloud_conversations WHERE id=$1")
+    let row = sqlx::query("SELECT kind,name,revision,crypto_enabled,crypto_from_position,crypto_history_complete FROM cloud_conversations WHERE id=$1")
         .bind(cid)
         .fetch_optional(&mut **tx)
         .await?
@@ -73,7 +73,7 @@ pub(crate) async fn node_conversation(tx: &mut Tx<'_>, cid: Uuid) -> Result<Valu
     )
 }
 pub(crate) fn node_message(m: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin"),"sealed":m.get::<Option<Value>,_>("sealed"),"audienceRevision":m.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string()),"contextReference":m.get::<Option<Value>,_>("context_reference")})
+    json!({"id":m.get::<Uuid,_>("id"),"senderId":m.get::<Uuid,_>("sender"),"senderName":m.get::<String,_>("sender_name"),"replyTo":m.get::<Option<Uuid>,_>("reply_to"),"mentions":m.get::<Vec<Uuid>,_>("mentions"),"position":m.get::<i64,_>("position").to_string(),"revision":m.get::<i64,_>("revision").to_string(),"text":m.get::<String,_>("body"),"createdAt":m.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"attachments":m.get::<Value,_>("attachments"),"importOrigin":m.get::<Option<Value>,_>("import_origin"),"sealed":m.get::<Option<Value>,_>("sealed"),"historyMigration":m.get::<Option<Value>,_>("history_migration"),"audienceRevision":m.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string()),"contextReference":m.get::<Option<Value>,_>("context_reference")})
 }
 async fn is_member(tx: &mut Tx<'_>, cid: Uuid, actor: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar(
@@ -553,6 +553,7 @@ async fn history(
     nodes::lock(&mut tx).await?;
     let n = nodes::authenticate(&mut tx, &h).await?;
     chat::member(&mut tx, cid, n.ai).await?;
+    crate::history_migration::node_capability(&mut tx, n.ai, n.version, cid).await?;
     let rows=sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND position>$2 AND status='committed' AND NOT withdrawn ORDER BY position LIMIT $3").bind(cid).bind(number(q.after.as_deref().unwrap_or("0"))?).bind(q.limit.unwrap_or(100).clamp(1,100)).fetch_all(&mut *tx).await?;
     let boundary:Option<i64>=sqlx::query_scalar("SELECT min(position) FROM (SELECT position FROM cloud_messages WHERE conversation=$1 AND status='committed' AND NOT withdrawn ORDER BY position DESC LIMIT 12) m").bind(cid).fetch_one(&mut *tx).await?;
     Ok(Json(
@@ -746,6 +747,10 @@ async fn manage(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     management_permission(&mut tx, cid, ai, p.id, summary).await?;
+    if s.require_encryption {
+        return Err(crate::crypto::required());
+    }
+    crate::history_migration::frozen(&mut tx, cid).await?;
     crate::crypto::plaintext(&mut tx, cid).await?;
     if !matches!(
         v.operation,
@@ -851,6 +856,11 @@ async fn summary_start(
     let mut tx = s.pool.begin().await?;
     nodes::lock(&mut tx).await?;
     let n = nodes::authenticate(&mut tx, &h).await?;
+    crate::history_migration::frozen(&mut tx, cid).await?;
+    crate::history_migration::node_capability(&mut tx, n.ai, n.version, cid).await?;
+    if s.require_encryption && !crate::crypto::enabled(&mut tx, cid).await? {
+        return Err(crate::crypto::required());
+    }
     if !summary_sources(&mut tx, n.ai, cid, rev, &v.sources, &v.material_scope).await? {
         return Err(error("source_stale", "摘要来源、权限或配置已失效"));
     }
@@ -995,6 +1005,9 @@ pub(crate) async fn manage_profile(
     Json(v): Json<ProfileManagement>,
 ) -> Result<axum::response::Response> {
     use axum::response::IntoResponse;
+    if s.require_encryption {
+        return Err(crate::crypto::required());
+    }
     let p = auth::authenticate(&s, &h).await?;
     if serde_json::to_vec(&v.operation).unwrap().len() > 64 * 1024 {
         return Err(AppError::bad("管理请求过大"));

@@ -315,7 +315,15 @@ async fn save(
         if let Some(old) = &old {
             old.get::<Value, _>("sources")
         } else {
-            sources(&mut tx, scope.conversation_id, &v.sources).await?;
+            if v.sources.len() > 512 {
+                return Err(AppError::bad("资料来源超限"));
+            }
+            for source in &v.sources {
+                crypto::uid(&source.message_id)?;
+                if source.revision.parse::<u64>().ok().is_none_or(|r| r == 0) {
+                    return Err(AppError::bad("来源版本无效"));
+                }
+            }
             json!(v.sources)
         }
     } else {

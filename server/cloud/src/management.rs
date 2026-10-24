@@ -242,8 +242,10 @@ async fn attachment(
     if inline && part["kind"] != "image" {
         return Err(AppError::bad("普通文件不可内联"));
     }
-    let bytes =
-        tokio::fs::read(s.attachments.join(mid.to_string()).join(index.to_string())).await?;
+    let bytes = tokio::fs::read(
+        crate::history_migration::attachment_path(&mut tx, &s.attachments, mid, index).await?,
+    )
+    .await?;
     let name = if part["kind"] == "image" {
         format!(
             "{mid}-{index}.{}",

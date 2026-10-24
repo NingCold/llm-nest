@@ -28,6 +28,17 @@ pub struct SealedEnvelope {
 pub struct ConversationEncryption {
     pub version: u32,
     pub activation_position: String,
+    #[serde(default)]
+    pub history_complete: bool,
+}
+
+/// Attests who encrypted an existing record; it is not the original author's signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryMigration {
+    pub id: String,
+    pub actor_id: String,
+    pub source_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

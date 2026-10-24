@@ -167,6 +167,7 @@ pub fn send_message(
         context_reference: None,
         import_origin: None,
         sealed: None,
+        history_migration: None,
     };
     let mut human = input.unwrap_or_else(|| message(&bootstrap.human, text.into()));
     human.sender_name = bootstrap.human.name.clone();

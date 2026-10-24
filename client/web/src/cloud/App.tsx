@@ -487,6 +487,7 @@ export default function CloudApp() {
       if (!draftReady || busy || target?.directBlocked || target?.readOnly) return;
       setBusy(true);
       try {
+        if (snapshotRef.current?.requireEncryption && !target?.encryption) throw new Error("服务器已要求加密，请先准备可信设备并开启此窗口加密");
         const current = recordRef.current;
         const pending = current.pending || {
           ...current.draft,

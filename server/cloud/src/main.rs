@@ -80,7 +80,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     cloud_server::nodes::recover(&pool).await?;
     println!("云端聊天服务已启动：{bind}");
     let maintenance = tokio::spawn(cloud_server::nodes::maintain(pool.clone()));
+    let require_encryption = match std::env::var("CLOUD_REQUIRE_ENCRYPTION") {
+        Ok(v) => match v.as_str() {
+            "true" | "1" => true,
+            "false" | "0" => false,
+            _ => return Err("CLOUD_REQUIRE_ENCRYPTION须为true或false".into()),
+        },
+        Err(std::env::VarError::NotPresent) => false,
+        Err(_) => return Err("CLOUD_REQUIRE_ENCRYPTION编码无效".into()),
+    };
     let state = Arc::new(AppState {
+        require_encryption,
         relay: Default::default(),
         pool,
         attachments,

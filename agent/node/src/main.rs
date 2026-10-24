@@ -105,9 +105,11 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             | "crypto-trust"
             | "crypto-recover"
             | "crypto-authorize-admin"
+            | "crypto-migration-preview"
+            | "crypto-migrate"
     ) {
         println!(
-            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>; export-ai <directory> <AI id> <output.json>; preview-import-ai|import-ai <directory> <AI id> <package.json> <expected-profile-revision>; crypto-init|crypto-status <directory> <AI id>; crypto-export-recovery|crypto-recover <directory> <AI id> <recovery.json>; crypto-trust <directory> <AI id> <account id> <device id> <Ed25519> <Curve25519> <master key>; crypto-authorize-admin <directory> <AI id> <account id> <device id>"
+            "llmn-agent init|pair|pair-json|check|run|run-managed|status|stop [directory]; profile <directory> <AI id> <profile.json>; export-ai <directory> <AI id> <output.json>; preview-import-ai|import-ai <directory> <AI id> <package.json> <expected-profile-revision>; crypto-init|crypto-status <directory> <AI id>; crypto-export-recovery|crypto-recover <directory> <AI id> <recovery.json>; crypto-trust <directory> <AI id> <account id> <device id> <Ed25519> <Curve25519> <master key>; crypto-migration-preview <directory> <AI id>; crypto-migrate <directory> <AI id> <preview digest>; crypto-authorize-admin <directory> <AI id> <account id> <device id>"
         );
         return Ok(());
     }
@@ -169,6 +171,17 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
             .context("此节点尚未绑定指定 AI")?;
         let api = client(&config, &binding.secret)?;
         match command {
+            "crypto-migration-preview" => println!(
+                "{}",
+                crypto::migration_preview(&api, &store, &config, &binding).await?
+            ),
+            "crypto-migrate" => {
+                let digest = args.get(4).context("请指定资料迁移预览 digest")?;
+                println!(
+                    "{}",
+                    crypto::migrate(&api, &store, &config, &binding, digest).await?
+                );
+            }
             "crypto-init" => println!("{}", crypto::enroll(&api, &store, &config, &binding).await?),
             "crypto-status" => println!("{}", crypto::status(&store, ai).await?),
             "crypto-export-recovery" => {
@@ -558,6 +571,7 @@ async fn cycle(
     let mut capabilities = vec!["profileManagement".into()];
     if crypto::capable(store, &binding.ai)? {
         capabilities.push("sealedV1".into());
+        capabilities.push("historyMigrationV1".into());
     }
     socket
         .send(&ClientFrame::Hello {

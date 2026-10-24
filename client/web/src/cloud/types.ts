@@ -41,7 +41,9 @@ export interface Attachment {
   mime: string;
   byteLength: number;
 }
+export interface HistoryMigration { id: string; actorId: string; sourceDigest: string }
 export interface Message {
+  historyMigration?: HistoryMigration | null;
   attachmentRoute?: "local";
   audienceRevision?: string | null;
   sealed?: import("./crypto/content").Sealed | null;
@@ -64,7 +66,7 @@ export interface Message {
   importOrigin?: { importId: string; sourceMessageId: string; sourceRevision: string } | null;
 }
 export interface Conversation {
-  encryption?: { version: 1; activationPosition: string } | null;
+  encryption?: { version: 1; activationPosition: string; historyComplete?: boolean } | null;
   id: string;
   kind: "direct" | "group";
   name: string;
@@ -81,6 +83,7 @@ export interface Conversation {
   latestPosition: string;
 }
 export interface Snapshot {
+  requireEncryption?: boolean;
   self: Account;
   contacts: Account[];
   conversations: Conversation[];
@@ -101,6 +104,7 @@ export interface ContactSettings {
   quietAction: "defer" | "skip";
 }
 export interface ContactIntent {
+  historyMigration?: HistoryMigration | null;
   sealed?: import("./crypto/content").Sealed | null;
   audienceRevision?: string | null;
   cryptoError?: string;
@@ -135,7 +139,7 @@ export interface ReferenceSelection { conversationId: string; sources: SourceRev
 export interface DraftReference { actorId: string; selection: ReferenceSelection }
 export type CloudDraftRecord = import("../social/drafts").DraftRecord<DraftReference>;
 export interface NodeConversation { encryption?: Conversation["encryption"]; id: string; kind: "direct" | "group"; name: string; revision: string; members: Account[] }
-export interface ReferenceMessage { sealed?: import("./crypto/content").Sealed | null; audienceRevision?: string | null; contextReference?: Message["contextReference"]; id: string; senderId: string; senderName: string; text: string; revision: string; createdAt: string; position: string; attachments: Attachment[]; replyTo: string | null; mentions: string[] }
+export interface ReferenceMessage { historyMigration?: HistoryMigration | null; sealed?: import("./crypto/content").Sealed | null; audienceRevision?: string | null; contextReference?: Message["contextReference"]; id: string; senderId: string; senderName: string; text: string; revision: string; createdAt: string; position: string; attachments: Attachment[]; replyTo: string | null; mentions: string[] }
 export interface ReferencePreview { conversation: NodeConversation; messages: ReferenceMessage[] }
 export type MemoryKind = "preference" | "fact" | "shared_experience" | "open_topic";
 export interface MemoryItem { id: string; revision: string; kind: MemoryKind; text: string; status: "confirmed" | "stale" | "forgotten"; source: SourceRevision | null; createdAt: string; updatedAt: string }

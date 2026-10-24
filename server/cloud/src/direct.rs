@@ -49,6 +49,7 @@ struct Access {
 async fn permitted(tx: &mut Tx<'_>, a: &Access, idle: bool) -> Result<()> {
     let members = chat::member(tx, a.cid, a.human).await?;
     chat::writable(tx, a.cid).await?;
+    crate::history_migration::frozen(tx, a.cid).await?;
     nodes::admin(tx, a.ai, a.human).await?;
     let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_conversations c JOIN accounts h ON h.id=$2 JOIN accounts a ON a.id=$3 WHERE c.id=$1 AND c.kind='direct' AND h.kind='human' AND h.status='active' AND a.kind='ai' AND a.status='active')").bind(a.cid).bind(a.human).bind(a.ai).fetch_one(&mut **tx).await?;
     if !valid
@@ -107,6 +108,9 @@ async fn grant(
         version,
     };
     permitted(&mut tx, &a, true).await?;
+    if s.require_encryption && !crate::crypto::enabled(&mut tx, a.cid).await? {
+        return Err(crate::crypto::required());
+    }
     crate::handover::active(&mut tx, a.ai).await?;
     let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_ai_bindings WHERE ai_id=$1 AND node_id=$2 AND version=$3 AND token_hash IS NOT NULL)").bind(ai).bind(uid(&v.node_id)?).bind(version).fetch_one(&mut *tx).await?;
     if !valid {
@@ -139,7 +143,11 @@ async fn prepare(
     nodes::lock(&mut tx).await?;
     let a = access(&mut tx, &h, &v.grant).await?;
     permitted(&mut tx, &a, true).await?;
+    if s.require_encryption && !crate::crypto::enabled(&mut tx, a.cid).await? {
+        return Err(crate::crypto::required());
+    }
     crate::handover::active(&mut tx, a.ai).await?;
+    crate::history_migration::node_capability(&mut tx, a.ai, a.version, a.cid).await?;
     let mut rows=sqlx::query("SELECT * FROM cloud_messages WHERE conversation=$1 AND status IN ('committed','failed','interrupted') AND NOT withdrawn ORDER BY position DESC LIMIT 65").bind(a.cid).fetch_all(&mut *tx).await?;
     let has_more = rows.len() > 64;
     rows.truncate(64);
@@ -153,6 +161,13 @@ async fn prepare(
             let mut value =
                 consciousness::direct_reference(&mut tx, a.cid, a.human, r.get("id"), &selection)
                     .await?;
+            crate::history_migration::node_capability(
+                &mut tx,
+                a.ai,
+                a.version,
+                uid(value["conversation"]["id"].as_str().unwrap())?,
+            )
+            .await?;
             value["required"] = json!(false);
             references.push(serde_json::from_value(value).map_err(|_| AppError::internal())?);
         }
@@ -200,6 +215,13 @@ async fn reference(
     permitted(&mut tx, &a, false).await?;
     let value =
         consciousness::direct_reference(&mut tx, a.cid, a.human, Uuid::nil(), &v.selection).await?;
+    crate::history_migration::node_capability(
+        &mut tx,
+        a.ai,
+        a.version,
+        uid(&v.selection.conversation_id)?,
+    )
+    .await?;
     tx.commit().await?;
     Ok(Json(
         serde_json::from_value(value).map_err(|_| AppError::internal())?,
@@ -243,6 +265,7 @@ async fn attachment(
         .as_str()
         .ok_or_else(|| AppError::bad("窗口无效"))?)?;
     common_scope(&mut tx, &a, cid).await?;
+    crate::history_migration::node_capability(&mut tx, a.ai, a.version, cid).await?;
     let mid = uid(v["messageId"]
         .as_str()
         .ok_or_else(|| AppError::bad("消息无效"))?)?;
@@ -257,8 +280,10 @@ async fn attachment(
     if parts.get(index).is_none() {
         return Err(AppError::not_found());
     }
-    let bytes =
-        tokio::fs::read(s.attachments.join(mid.to_string()).join(index.to_string())).await?;
+    let bytes = tokio::fs::read(
+        crate::history_migration::attachment_path(&mut tx, &s.attachments, mid, index).await?,
+    )
+    .await?;
     tx.commit().await?;
     Ok(chat::binary(
         bytes,
@@ -297,6 +322,9 @@ async fn sync(
     h: HeaderMap,
     Json(v): Json<DirectSyncRequest>,
 ) -> Result<Json<DirectSyncReceipt>> {
+    if s.require_encryption && v.messages.iter().any(|m| m.sealed.is_none()) {
+        return Err(crate::crypto::required());
+    }
     let rid = uid(&v.request_id)?;
     let fp = hash(&serde_json::to_string(&v).unwrap());
     let mut tx = s.pool.begin().await?;
@@ -1023,6 +1051,86 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 6);
+        f.close().await;
+    }
+    #[tokio::test]
+    async fn strict_direct_requires_encryption_before_grant_or_prepare_but_keeps_old_read_access() {
+        let Some(mut f) = Fixture::new().await else {
+            return;
+        };
+        let (cid, ai, h, g) = setup(&f).await;
+        Arc::get_mut(&mut f.state).unwrap().require_encryption = true;
+        let node: Uuid = sqlx::query_scalar("SELECT node_id FROM cloud_ai_bindings WHERE ai_id=$1")
+            .bind(ai)
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+        let request = DirectGrantRequest {
+            node_id: node.to_string(),
+            binding_version: "1".into(),
+        };
+        let error = grant(
+            State(f.state.clone()),
+            f.users[0].1.clone(),
+            Path(cid),
+            Json(request.clone()),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.status.as_u16(), 409);
+        assert_eq!(error.code, "encryption_required");
+        let error = prepare(
+            State(f.state.clone()),
+            h.clone(),
+            Json(DirectPrepare {
+                grant: g.token.clone(),
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.status.as_u16(), 409);
+        assert_eq!(error.code, "encryption_required");
+        let grants: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM cloud_direct_grants WHERE conversation=$1")
+                .bind(cid)
+                .fetch_one(&f.state.pool)
+                .await
+                .unwrap();
+        assert_eq!(grants, 1);
+        let mid = Uuid::new_v4();
+        let dir = f.state.attachments.join(mid.to_string());
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("0"), b"authorized old bytes")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,attachments) VALUES($1,$2,$3,'old plaintext',$4)").bind(mid).bind(cid).bind(f.users[0].0).bind(json!([{"index":0,"kind":"file","name":"old.txt","mime":"text/plain","byteLength":20}])).execute(&f.state.pool).await.unwrap();
+        assert!(attachment(State(f.state.clone()),h.clone(),Path(ai),Json(json!({"grant":g.token,"conversationId":cid,"messageId":mid,"index":0,"revision":"1"}))).await.is_ok());
+        sqlx::query("UPDATE cloud_conversations SET crypto_enabled=true WHERE id=$1")
+            .bind(cid)
+            .execute(&f.state.pool)
+            .await
+            .unwrap();
+        assert!(
+            grant(
+                State(f.state.clone()),
+                f.users[0].1.clone(),
+                Path(cid),
+                Json(request)
+            )
+            .await
+            .is_ok()
+        );
+        assert!(
+            prepare(
+                State(f.state.clone()),
+                h,
+                Json(DirectPrepare { grant: g.token })
+            )
+            .await
+            .is_ok()
+        );
         f.close().await;
     }
 }

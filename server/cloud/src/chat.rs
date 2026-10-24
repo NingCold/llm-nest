@@ -92,11 +92,11 @@ pub(crate) async fn account(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     )
 }
 pub(crate) fn message(r: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin"),"sealed":r.get::<Option<Value>,_>("sealed"),"audienceRevision":r.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})
+    json!({"id":r.get::<Uuid,_>("id"),"conversationId":r.get::<Uuid,_>("conversation"),"senderId":r.get::<Uuid,_>("sender"),"text":r.get::<String,_>("body"),"createdAt":r.get::<chrono::DateTime<chrono::Utc>,_>("created_at"),"updatedAt":r.get::<chrono::DateTime<chrono::Utc>,_>("updated_at"),"revision":r.get::<i64,_>("revision").to_string(),"position":r.get::<i64,_>("position").to_string(),"status":if r.get::<bool,_>("withdrawn"){String::from("withdrawn")}else{r.get::<String,_>("status")},"attachments":r.get::<Value,_>("attachments"),"senderName":r.get::<String,_>("sender_name"),"replyTo":r.get::<Option<Uuid>,_>("reply_to"),"mentions":r.get::<Vec<Uuid>,_>("mentions"),"aiResponses":r.get::<Value,_>("ai_responses"),"contextReference":r.get::<Option<Value>,_>("context_reference"),"importOrigin":r.get::<Option<Value>,_>("import_origin"),"sealed":r.get::<Option<Value>,_>("sealed"),"historyMigration":r.get::<Option<Value>,_>("history_migration"),"audienceRevision":r.get::<Option<i64>,_>("crypto_audience_revision").map(|v|v.to_string())})
 }
 pub(crate) async fn conversation(tx: &mut Tx<'_>, id: Uuid, owner: Uuid) -> Result<Value> {
     let pair = member(tx, id, owner).await?;
-    let c = sqlx::query("SELECT kind,name,revision,read_only,crypto_enabled,crypto_from_position FROM cloud_conversations WHERE id=$1")
+    let c = sqlx::query("SELECT kind,name,revision,read_only,crypto_enabled,crypto_from_position,crypto_history_complete FROM cloud_conversations WHERE id=$1")
         .bind(id)
         .fetch_one(&mut **tx)
         .await?;
@@ -172,7 +172,7 @@ async fn init(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Json<Value
             .await?;
     tx.commit().await?;
     Ok(Json(
-        json!({"self":me,"contacts":contacts,"conversations":cs,"cursor":cursor.to_string()}),
+        json!({"requireEncryption":s.require_encryption,"self":me,"contacts":contacts,"conversations":cs,"cursor":cursor.to_string()}),
     ))
 }
 #[derive(Deserialize, Default)]
@@ -506,7 +506,7 @@ pub(crate) async fn save_encrypted_uploads(
     for (index, bytes) in decoded.iter().enumerate() {
         let dir = root.join(id.to_string());
         tokio::fs::create_dir_all(&dir).await?;
-        // Callers hold the cloud writer lock and have rejected occupied message IDs.
+        // Callers hold the cloud writer lock; this storage location is not yet published.
         // A failed transaction may leave files here; rewrite only this uncommitted ID.
         let pending = dir.join(format!("{index}.pending"));
         let mut file = tokio::fs::OpenOptions::new()
@@ -605,8 +605,12 @@ async fn send(
     lock(&mut tx).await?;
     let pair = member(&mut tx, id, p.id).await?;
     writable(&mut tx, id).await?;
+    crate::history_migration::frozen(&mut tx, id).await?;
     if let Some(r) = receipt(&mut tx, p.id, &v, "send", id).await? {
         return Ok(Json(r));
+    }
+    if s.require_encryption && v.sealed.is_none() {
+        return Err(crate::crypto::required());
     }
     let text = v.text.as_deref().unwrap_or("");
     let mid = v.message_id.unwrap_or_else(Uuid::new_v4);
@@ -683,6 +687,10 @@ async fn mutate(
     let cid: Uuid = row.get("conversation");
     let pair = member(&mut tx, cid, p.id).await?;
     writable(&mut tx, cid).await?;
+    crate::history_migration::frozen(&mut tx, cid).await?;
+    if !remove && s.require_encryption && v.sealed.is_none() {
+        return Err(crate::crypto::required());
+    }
     if row.get::<Uuid, _>("sender") != p.id {
         return Err(AppError::forbidden());
     }
@@ -753,7 +761,7 @@ async fn mutate(
     {
         return Err(bad("消息为空或过长"));
     }
-    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,context_reference=CASE WHEN $3 THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,sealed=CASE WHEN $3 THEN NULL ELSE $4 END,crypto_audience_revision=$5,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).bind(v.sealed.as_ref().map(|e|json!(e))).bind(audience).execute(&mut *tx).await?;
+    sqlx::query("UPDATE cloud_messages SET body=$2,withdrawn=$3,history_migration=NULL,context_reference=CASE WHEN $3 THEN NULL ELSE context_reference END,attachments=CASE WHEN $3 THEN '[]'::jsonb ELSE attachments END,sealed=CASE WHEN $3 THEN NULL ELSE $4 END,crypto_audience_revision=$5,revision=revision+1,updated_at=now() WHERE id=$1").bind(id).bind(text).bind(remove).bind(v.sealed.as_ref().map(|e|json!(e))).bind(audience).execute(&mut *tx).await?;
     crate::consciousness::message_changed(&mut tx, id).await?;
     let r = sqlx::query("SELECT * FROM cloud_messages WHERE id=$1")
         .bind(id)
@@ -764,7 +772,14 @@ async fn mutate(
     save_receipt(&mut tx, p.id, &v, kind, id, &result).await?;
     tx.commit().await?;
     if remove {
-        let path = s.attachments.join(id.to_string());
+        let path = match row.get::<Option<Uuid>, _>("attachment_generation") {
+            Some(g) => s
+                .attachments
+                .join(".sealed")
+                .join(g.to_string())
+                .join(id.to_string()),
+            None => s.attachments.join(id.to_string()),
+        };
         if path.exists() {
             tokio::fs::remove_dir_all(path).await?;
         }
@@ -931,7 +946,10 @@ async fn download(
     if inline && part["kind"] != "image" {
         return Err(bad("普通文件不可内联"));
     }
-    let bytes = tokio::fs::read(s.attachments.join(id.to_string()).join(index.to_string())).await?;
+    let bytes = tokio::fs::read(
+        crate::history_migration::attachment_path(&mut tx, &s.attachments, id, index).await?,
+    )
+    .await?;
     let name = if part["kind"] == "image" {
         format!(
             "{id}-{index}.{}",
@@ -968,6 +986,7 @@ async fn export(
         .execute(&mut *tx)
         .await?;
     member(&mut tx, id, p.id).await?;
+    crate::history_migration::frozen(&mut tx, id).await?;
     crate::crypto::plaintext(&mut tx, id).await?;
     let rows = sqlx::query(
         "SELECT * FROM cloud_messages WHERE conversation=$1 ORDER BY position FOR SHARE",
@@ -1039,9 +1058,16 @@ async fn export(
                         social::attachment::file_name(part["name"].as_str())
                     )
                 };
-                let bytes =
-                    tokio::fs::read(s.attachments.join(mid.to_string()).join(index.to_string()))
-                        .await?;
+                let bytes = tokio::fs::read(
+                    crate::history_migration::attachment_path(
+                        &mut tx,
+                        &s.attachments,
+                        mid,
+                        index as usize,
+                    )
+                    .await?,
+                )
+                .await?;
                 md.push_str(&format!(
                     "[附件]({})\n\n",
                     name.split('/')
@@ -1174,6 +1200,7 @@ pub(crate) mod tests {
             sqlx::migrator().run(&pool).await.unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
+                require_encryption: false,
                 relay: Default::default(),
                 pool,
                 attachments: dir.path().join("attachments"),

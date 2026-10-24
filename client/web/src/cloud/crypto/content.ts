@@ -1,9 +1,9 @@
 import { cryptoDevice, matrixRoom, matrixUser, seal, unseal, signEnvelope, recoveryConfirmed } from "./engine";
 import type { SignedEnvelope } from "./envelope";
 import { request, server } from "../api";
-import type { Conversation, Message, Page, Snapshot, Attachment, ReferenceSelection, ReferencePreview, ContactIntent } from "../types";
+import type { Conversation, Message, Page, Snapshot, Attachment, ReferenceSelection, ReferencePreview, ContactIntent, HistoryMigration } from "../types";
 export type Sealed = SignedEnvelope;
-export interface Content { version: 1; server: string; kind: "message" | "delta" | "resource" | "contactIntent"; conversationId: string | null; messageId: string; senderId: string; revision: string; text: string; replyTo: string | null; mentions: string[]; runId: string | null; sequence: number | null; conversationRevision?: string; attachments?: Attachment[]; reference?: ReferenceSelection | null; aiId?: string; dueAt?: string; expiresAt?: string; utcOffsetMinutes?: number; scope?: string; id?: string; expectedRevision?: string }
+export interface Content { version: 1; server: string; kind: "message" | "delta" | "resource" | "contactIntent" | "historyMessage" | "historyContactIntent"; conversationId: string | null; messageId: string; senderId: string; revision: string; text: string; replyTo: string | null; mentions: string[]; runId: string | null; sequence: number | null; historyMigration?: HistoryMigration; conversationRevision?: string; attachments?: Attachment[]; reference?: ReferenceSelection | null; aiId?: string; dueAt?: string; expiresAt?: string; utcOffsetMinutes?: number; scope?: string; id?: string; expectedRevision?: string }
 export async function encryptMessage(conversation: Conversation, sender: string, messageId: string, text: string, revision = "1", replyTo: string | null = null, mentions: string[] = [], offline = false, attachments: Attachment[] = [], reference: ReferenceSelection | null = null): Promise<Sealed> {
   const deviceId = cryptoDevice(sender);
   if (!deviceId || !recoveryConfirmed(sender)) throw new Error("请先解锁可信设备并确认恢复文件已保存");
@@ -11,17 +11,19 @@ export async function encryptMessage(conversation: Conversation, sender: string,
   const inner: Content = { version: 1, server, kind: "message", conversationId: conversation.id, messageId, senderId: sender, revision, text, replyTo, mentions, runId: null, sequence: null, conversationRevision: conversation.revision, attachments, reference };
   return signEnvelope({ version: 1, roomId, sender: matrixUser(sender), deviceId, eventId, content: await seal(roomId, conversation.members.map(m => m.account.id), "com.llmn.content.v1", inner, offline, conversation.members.map(m => m.account.id), true) });
 }
-export async function projectMessage(message: Message, conversation?: Pick<Conversation, "encryption">): Promise<Message> {
+export async function projectMessage(message: Message, conversation?: Pick<Conversation, "encryption">, decrypt = unseal): Promise<Message> {
   if (!message.sealed) {
-    if (conversation?.encryption && BigInt(message.position) > BigInt(conversation.encryption.activationPosition) && message.status !== "withdrawn") return { ...message, text: "", attachments: [], cryptoError: "此位置要求密文，但服务器未提供密文；已阻止明文回退" };
+    if (conversation?.encryption && (conversation.encryption.historyComplete || BigInt(message.position) > BigInt(conversation.encryption.activationPosition)) && message.status !== "withdrawn") return { ...message, text: "", attachments: [], cryptoError: "此位置要求密文，但服务器未提供密文；已阻止明文回退" };
     return message;
   }
   const encrypted = message.sealed;
   try {
-    if (encrypted.version !== 1 || encrypted.roomId !== matrixRoom(message.conversationId) || encrypted.sender !== matrixUser(message.senderId) || encrypted.deviceId !== encrypted.content.device_id) throw new Error("密文路由或发送设备身份不匹配");
-    const event = await unseal(encrypted);
+    const migration = message.historyMigration;
+    if (encrypted.version !== 1 || encrypted.roomId !== matrixRoom(message.conversationId) || encrypted.sender !== matrixUser(migration?.actorId ?? message.senderId) || encrypted.deviceId !== encrypted.content.device_id) throw new Error("密文路由或发送设备身份不匹配");
+    const event = await decrypt(encrypted);
     const inner = event.content as unknown as Content;
-    if (event.type !== "com.llmn.content.v1" || inner.version !== 1 || typeof inner.text !== "string" || inner.server !== server || inner.conversationId !== message.conversationId || inner.messageId !== message.id || inner.senderId !== message.senderId || inner.revision !== message.revision || (inner.kind !== "message" && inner.kind !== "delta") || inner.replyTo !== message.replyTo || JSON.stringify(inner.mentions) !== JSON.stringify(message.mentions)) throw new Error("消息完整性校验失败，不能显示被替换的内容");
+    if (event.type !== "com.llmn.content.v1" || inner.version !== 1 || typeof inner.text !== "string" || inner.server !== server || inner.conversationId !== message.conversationId || inner.messageId !== message.id || inner.senderId !== message.senderId || inner.revision !== message.revision || (migration ? inner.kind !== "historyMessage" : (inner.kind !== "message" && inner.kind !== "delta")) || inner.replyTo !== message.replyTo || JSON.stringify(inner.mentions) !== JSON.stringify(message.mentions)) throw new Error("消息完整性校验失败，不能显示被替换的内容");
+    if (JSON.stringify(inner.historyMigration ?? null) !== JSON.stringify(migration ?? null)) throw new Error("历史转换证明不匹配");
     if ((message.audienceRevision != null && inner.conversationRevision !== message.audienceRevision) || (conversation && "kind" in conversation && conversation.kind === "group" && !inner.conversationRevision)) throw new Error("消息成员版本不匹配");
     const reference = message.contextReference ? { conversationId: message.contextReference.conversationId, sources: message.contextReference.sources } : null;
     if (JSON.stringify(inner.reference ?? null) !== JSON.stringify(reference)) throw new Error("引用完整性校验失败");
@@ -30,7 +32,7 @@ export async function projectMessage(message: Message, conversation?: Pick<Conve
     const images = attachments.filter(a => a.kind === "image"), files = attachments.filter(a => a.kind === "file");
     if (images.length > 4 || files.length > 4 || images.some(a => a.byteLength === 0 || a.byteLength > 4 * 1024 * 1024 || !["image/png", "image/jpeg", "image/webp"].includes(a.mime)) || images.reduce((n, a) => n + a.byteLength, 0) > 8 * 1024 * 1024 || files.some(a => a.byteLength > 10 * 1024 * 1024) || files.reduce((n, a) => n + a.byteLength, 0) > 20 * 1024 * 1024) throw new Error("附件超出格式或大小限制");
     if (files.some(a => !a.mime || new TextEncoder().encode(a.mime).length > 255 || /\p{Cc}/u.test(a.mime) || (a.name != null && (!a.name.trim() || new TextEncoder().encode(a.name).length > 240 || /[\\/:*?"<>|\p{Cc}]/u.test(a.name) || /[ .]$/.test(a.name) || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(a.name))))) throw new Error("文件名或类型无效");
-    const expectedEvent = `$${message.id}.${inner.revision}.${inner.kind === "delta" ? inner.sequence : "final"}`;
+    const expectedEvent = migration ? `$${message.id}.${inner.revision}.migration.${migration.id}` : `$${message.id}.${inner.revision}.${inner.kind === "delta" ? inner.sequence : "final"}`;
     if (encrypted.eventId !== expectedEvent || (inner.kind === "delta" && (!inner.runId || !Number.isSafeInteger(inner.sequence)))) throw new Error("流式片段标识不匹配");
     return { ...message, text: inner.text, attachments, cryptoError: undefined };
   } catch (error) {
@@ -43,8 +45,10 @@ export async function projectConversations(conversations: Conversation[], accoun
     let c = original;
     if (account) {
       const key = `llmn-encrypted-window:${JSON.stringify([server, account, c.id])}`, saved = localStorage.getItem(key);
-      if (saved && !c.encryption) c = { ...c, encryption: JSON.parse(saved) };
-      else if (c.encryption) localStorage.setItem(key, JSON.stringify(c.encryption));
+      const pinned = saved ? JSON.parse(saved) as NonNullable<Conversation["encryption"]> : null;
+      if (pinned && !c.encryption) c = { ...c, encryption: pinned };
+      if (pinned?.historyComplete && c.encryption) c = { ...c, encryption: { ...c.encryption, activationPosition: "0", historyComplete: true } };
+      if (c.encryption) localStorage.setItem(key, JSON.stringify(c.encryption));
     }
     return { ...c, lastMessage: c.lastMessage ? await projectMessage(c.lastMessage, c) : null };
   }));
@@ -73,13 +77,13 @@ export async function encryptIntent(conversation: Conversation, sender: string, 
   const inner: Content = { version: 1, server, kind: "contactIntent", conversationId: conversation.id, conversationRevision: conversation.revision, messageId: intentId, senderId: sender, revision: "1", text: input.content, aiId: input.aiId, dueAt: input.dueAt, expiresAt: input.expiresAt, utcOffsetMinutes: input.utcOffsetMinutes, replyTo: null, mentions: [], runId: null, sequence: null };
   return signEnvelope({ version: 1, roomId, sender: matrixUser(sender), deviceId, eventId: `$${intentId}.1.final`, content: await seal(roomId, conversation.members.map(m => m.account.id), "com.llmn.content.v1", inner, false, conversation.members.map(m => m.account.id), true) });
 }
-export async function projectIntent(intent: ContactIntent, conversation: Conversation): Promise<ContactIntent> {
-  if (!intent.sealed) return conversation.encryption && (intent.audienceRevision != null || ["pending", "claimed", "executing"].includes(intent.status)) ? { ...intent, content: "", cryptoError: "约定缺少密文" } : intent;
+export async function projectIntent(intent: ContactIntent, conversation: Conversation, decrypt = unseal): Promise<ContactIntent> {
+  if (!intent.sealed) return conversation.encryption && (conversation.encryption.historyComplete || intent.audienceRevision != null || ["pending", "claimed", "executing"].includes(intent.status)) ? { ...intent, content: "", cryptoError: "约定缺少密文" } : intent;
   try {
-    const sealed = intent.sealed;
-    if (sealed.roomId !== matrixRoom(conversation.id) || sealed.sender !== matrixUser(intent.creatorId) || sealed.eventId !== `$${intent.id}.1.final`) throw new Error("约定密文身份不匹配");
-    const event = await unseal(sealed), inner = event.content as unknown as Content;
-    if (event.type !== "com.llmn.content.v1" || inner.version !== 1 || inner.kind !== "contactIntent" || inner.server !== server || inner.conversationId !== conversation.id || inner.messageId !== intent.id || inner.senderId !== intent.creatorId || inner.revision !== "1" || inner.aiId !== intent.aiId || new Date(inner.dueAt!).getTime() !== new Date(intent.dueAt).getTime() || new Date(inner.expiresAt!).getTime() !== new Date(intent.expiresAt).getTime() || inner.utcOffsetMinutes !== intent.utcOffsetMinutes || inner.conversationRevision !== intent.audienceRevision || typeof inner.text !== "string") throw new Error("约定完整性校验失败");
+    const sealed = intent.sealed, migration = intent.historyMigration;
+    if (sealed.roomId !== matrixRoom(conversation.id) || sealed.sender !== matrixUser(migration?.actorId ?? intent.creatorId) || sealed.eventId !== (migration ? `$${intent.id}.1.migration.${migration.id}` : `$${intent.id}.1.final`)) throw new Error("约定密文身份不匹配");
+    const event = await decrypt(sealed), inner = event.content as unknown as Content;
+    if (event.type !== "com.llmn.content.v1" || inner.version !== 1 || inner.kind !== (migration ? "historyContactIntent" : "contactIntent") || inner.server !== server || inner.conversationId !== conversation.id || inner.messageId !== intent.id || inner.senderId !== intent.creatorId || inner.revision !== "1" || JSON.stringify(inner.historyMigration ?? null) !== JSON.stringify(migration ?? null) || inner.aiId !== intent.aiId || new Date(inner.dueAt!).getTime() !== new Date(intent.dueAt).getTime() || new Date(inner.expiresAt!).getTime() !== new Date(intent.expiresAt).getTime() || inner.utcOffsetMinutes !== intent.utcOffsetMinutes || inner.conversationRevision !== intent.audienceRevision || typeof inner.text !== "string") throw new Error("约定完整性校验失败");
     return { ...intent, content: inner.text };
   } catch (error) { return { ...intent, content: "", cryptoError: error instanceof Error ? error.message : String(error) }; }
 }

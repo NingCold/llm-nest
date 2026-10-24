@@ -8,6 +8,8 @@ use rand::RngCore;
 use rusqlite::{OptionalExtension, params};
 use serde_json::json;
 use std::rc::Rc;
+mod migration;
+pub use migration::{commit as migrate, preview as migration_preview};
 pub struct Session {
     pub device: Device,
     pub ai: String,
@@ -30,6 +32,8 @@ fn initialize(store: &Store) -> Result<()> {
  CREATE TABLE IF NOT EXISTS crypto_history_shares(ai TEXT NOT NULL,cid TEXT NOT NULL,device TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(ai,cid,device));
  CREATE TABLE IF NOT EXISTS crypto_incoming_history(ai TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(ai,id));
  CREATE TABLE IF NOT EXISTS crypto_windows(cid TEXT PRIMARY KEY,ai TEXT NOT NULL,encrypted INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS crypto_resource_scopes(id TEXT PRIMARY KEY,ai TEXT NOT NULL,cid TEXT,kind TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS crypto_material_migrations(ai TEXT PRIMARY KEY,digest TEXT NOT NULL,json TEXT NOT NULL,status TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS crypto_resources(id TEXT PRIMARY KEY,revision TEXT NOT NULL,status TEXT NOT NULL);")?;
     Ok(())
 }
@@ -113,6 +117,15 @@ pub async fn sync(
     store: &Store,
     config: &Config,
     binding: &Binding,
+) -> Result<()> {
+    sync_inner(api, store, config, binding, true).await
+}
+async fn sync_inner(
+    api: &NodeClient,
+    store: &Store,
+    config: &Config,
+    binding: &Binding,
+    apply_profile: bool,
 ) -> Result<()> {
     initialize(store)?;
     let enrolled: bool = store.db.query_row(
@@ -210,7 +223,9 @@ pub async fn sync(
         params![binding.ai, cursor],
     )?;
     tx.commit()?;
-    apply_resources(api, store, Some(config), &s, None).await?;
+    if apply_profile {
+        apply_resources(api, store, Some(config), &s, None).await?;
+    }
     let conversations = api.crypto_conversations().await?;
     let mut windows = Vec::with_capacity(conversations.len());
     receive_group_history(store, &s, &conversations).await?;
@@ -309,6 +324,7 @@ pub async fn sync(
             "0",
             serde_json::to_value(store.profile(&s.ai)?)?,
             vec![],
+            None,
         )
         .await?;
         apply_resource(api, store, Some(config), &s, &resource).await?;
@@ -362,7 +378,19 @@ pub async fn sync(
             false
         };
         let pending_summaries:bool=store.db.query_row("SELECT EXISTS(SELECT 1 FROM conscious_summaries WHERE ai=?1 AND json_extract(json,'$.item.status') IN ('queued','running','pending_sync'))",[&binding.ai],|r|r.get(0))?;
-        if !pending && !pending_local && !pending_summaries {
+        let key_counts = s
+            .device
+            .machine()
+            .backup_machine()
+            .room_key_counts()
+            .await?;
+        if !pending
+            && key_counts.backed_up == key_counts.total
+            && !pending_local
+            && !pending_summaries
+            && capable(store, &binding.ai)?
+            && !migration::has_gaps(store, &binding.ai)?
+        {
             let version = s
                 .device
                 .machine()
@@ -389,6 +417,14 @@ pub fn ensure_ready(store: &Store, ai: &str) -> Result<()> {
     );
     Ok(())
 }
+pub fn ensure_scope_ready(store: &Store, ai: &str, cid: &str) -> Result<()> {
+    ensure_ready(store, ai)?;
+    ensure!(
+        !migration::scope_has_gaps(store, ai, Some(cid))?,
+        "encrypted window has node materials awaiting explicit migration"
+    );
+    Ok(())
+}
 async fn decrypt_message(
     api: &NodeClient,
     s: &Session,
@@ -396,12 +432,23 @@ async fn decrypt_message(
     message: &mut NodeMessage,
 ) -> Result<()> {
     let Some(envelope) = &message.sealed else {
+        ensure!(
+            message.history_migration.is_none(),
+            "history migration requires sealed content"
+        );
         return Ok(());
     };
     ensure!(
         envelope.version == 1
             && envelope.room_id == room_id(cid)
-            && envelope.sender == user_id(&message.sender_id)
+            && envelope.sender
+                == user_id(
+                    message
+                        .history_migration
+                        .as_ref()
+                        .map(|m| m.actor_id.as_str())
+                        .unwrap_or(&message.sender_id)
+                )
             && envelope.content["device_id"] == envelope.device_id,
         "sealed route mismatch"
     );
@@ -410,7 +457,13 @@ async fn decrypt_message(
         .event_id
         .strip_prefix(&prefix)
         .ok_or_else(|| anyhow::anyhow!("sealed event id mismatch"))?;
-    let sequence = if suffix == "final" {
+    let sequence = if let Some(migration) = &message.history_migration {
+        ensure!(
+            suffix == format!("migration.{}", migration.id),
+            "history migration event id mismatch"
+        );
+        None
+    } else if suffix == "final" {
         None
     } else {
         Some(suffix.parse::<u64>()?)
@@ -424,11 +477,16 @@ async fn decrypt_message(
         p["version"] == 1
             && p["server"] == api.origin()
             && p["kind"]
-                == if sequence.is_some() {
+                == if message.history_migration.is_some() {
+                    "historyMessage"
+                } else if sequence.is_some() {
                     "delta"
                 } else {
                     "message"
                 }
+            && p.get("historyMigration")
+                .unwrap_or(&serde_json::Value::Null)
+                == &json!(message.history_migration)
             && p["sequence"] == json!(sequence)
             && p["conversationId"] == cid
             && p["messageId"] == message.id
@@ -599,7 +657,9 @@ async fn decrypt_conversation_messages(
             );
         }
         if let Some(encryption) = &conversation.encryption
-            && message.position.parse::<u64>()? > encryption.activation_position.parse::<u64>()?
+            && (encryption.history_complete
+                || message.position.parse::<u64>()?
+                    > encryption.activation_position.parse::<u64>()?)
         {
             ensure!(
                 message.sealed.is_some(),
@@ -635,6 +695,7 @@ async fn decrypt_contact(
         utc_offset_minutes,
         sealed,
         audience_revision,
+        history_migration,
         ..
     } = trigger
     {
@@ -647,8 +708,18 @@ async fn decrypt_contact(
             .ok_or_else(|| anyhow::anyhow!("encrypted contact requires sealed content"))?;
         ensure!(
             envelope.room_id == room_id(&conversation.id)
-                && envelope.sender == user_id(creator_id)
-                && envelope.event_id == format!("${intent_id}.1.final"),
+                && envelope.sender
+                    == user_id(
+                        history_migration
+                            .as_ref()
+                            .map(|m| m.actor_id.as_str())
+                            .unwrap_or(creator_id)
+                    )
+                && envelope.event_id
+                    == history_migration
+                        .as_ref()
+                        .map(|m| format!("${intent_id}.1.migration.{}", m.id))
+                        .unwrap_or_else(|| format!("${intent_id}.1.final")),
             "sealed contact route mismatch"
         );
         let event = s
@@ -659,7 +730,15 @@ async fn decrypt_contact(
         ensure!(
             p["version"] == 1
                 && p["server"] == api.origin()
-                && p["kind"] == "contactIntent"
+                && p["kind"]
+                    == if history_migration.is_some() {
+                        "historyContactIntent"
+                    } else {
+                        "contactIntent"
+                    }
+                && p.get("historyMigration")
+                    .unwrap_or(&serde_json::Value::Null)
+                    == &json!(history_migration)
                 && p["conversationId"] == conversation.id
                 && p["messageId"] == *intent_id
                 && p["senderId"] == *creator_id
@@ -674,10 +753,17 @@ async fn decrypt_contact(
                 && p["conversationRevision"] == json!(audience_revision),
             "sealed contact binding mismatch"
         );
-        *content = p["text"]
+        let text = p["text"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("invalid contact content"))?
-            .into();
+            .ok_or_else(|| anyhow::anyhow!("invalid contact content"))?;
+        *content = if let Some(m) = history_migration {
+            format!(
+                "[历史迁移约定；原创建者 {}；实际加密签名者 {}；原创建者未对转换密文签认]\n{}",
+                creator_id, m.actor_id, text
+            )
+        } else {
+            text.into()
+        };
     }
     Ok(())
 }
@@ -769,21 +855,11 @@ pub async fn decrypt_history(
     let Some(encryption) = &history.conversation.encryption else {
         return Ok(());
     };
-    ensure_ready(store, ai)?;
-    let activation = encryption.activation_position.parse::<u64>()?;
+    ensure_scope_ready(store, ai, &history.conversation.id)?;
+    let _ = encryption;
     let s = session(store, ai).await?;
-    for message in &mut history.messages {
-        if message.position.parse::<u64>()? > activation {
-            ensure!(
-                message.sealed.is_some(),
-                "encrypted window contains unsealed message"
-            );
-        }
-        if let Some(envelope) = &message.sealed {
-            query_sender_identity(api, store, &s, envelope).await?;
-        }
-        decrypt_message(api, &s, &history.conversation.id, message).await?;
-    }
+    decrypt_conversation_messages(api, store, &s, &history.conversation, &mut history.messages)
+        .await?;
     Ok(())
 }
 fn frozen_run_revision(store: &Store, ai: &str, cid: &str, run: &str) -> Result<String> {
@@ -997,6 +1073,7 @@ async fn apply_resources(
         let mut resources = api.crypto_resources(&s.ai, cid, kind).await?.items;
         resources.sort_by_key(|r| r.tombstone.is_none());
         for resource in resources {
+            remember_resource_scope(store, &resource)?;
             let previous: Option<(String, String)> = store
                 .db
                 .query_row(
@@ -1005,6 +1082,15 @@ async fn apply_resources(
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
+            if kind == "profile"
+                && let Some((revision, status)) = &previous
+                && status == "applied"
+            {
+                ensure!(
+                    store.profile(&s.ai)?.revision == *revision,
+                    "local profile changes require encrypted resource save or explicit migration"
+                );
+            }
             if previous.as_ref().is_some_and(|(rev, state)| {
                 rev == &resource.revision
                     && matches!(state.as_str(), "applied" | "forgotten" | "stale")
@@ -1071,6 +1157,10 @@ async fn apply_resources(
     }
     Ok(())
 }
+fn remember_resource_scope(store: &Store, r: &Resource) -> Result<()> {
+    store.db.execute("INSERT INTO crypto_resource_scopes VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET ai=excluded.ai,cid=excluded.cid,kind=excluded.kind",params![r.id,r.ai_id,r.conversation_id,r.kind])?;
+    Ok(())
+}
 async fn apply_resource(
     api: &NodeClient,
     store: &Store,
@@ -1079,6 +1169,7 @@ async fn apply_resource(
     r: &Resource,
 ) -> Result<()> {
     ensure!(r.ai_id == s.ai, "resource actor mismatch");
+    remember_resource_scope(store, r)?;
     if let Some(tombstone) = &r.tombstone {
         if let Some(cid) = &r.conversation_id {
             if r.kind == "summarySettings" {
@@ -1240,6 +1331,12 @@ async fn apply_resource(
 
 pub fn capable(store: &Store, ai: &str) -> Result<bool> {
     initialize(store)?;
+    if !identity_ready(store, ai)? {
+        return Ok(false);
+    }
+    Ok(store.db.query_row("SELECT EXISTS(SELECT 1 FROM profiles p JOIN crypto_resource_scopes s ON s.ai=p.ai AND s.kind='profile' JOIN crypto_resources r ON r.id=s.id WHERE p.ai=?1 AND r.status='applied' AND r.revision=json_extract(p.json,'$.revision'))",[ai],|r|r.get(0))?)
+}
+fn identity_ready(store: &Store, ai: &str) -> Result<bool> {
     Ok(store
         .db
         .query_row("SELECT ready AND EXISTS(SELECT 1 FROM crypto_recovery_ready WHERE ai=?1) FROM crypto_devices WHERE ai=?1", [ai], |r| {
@@ -1687,23 +1784,14 @@ pub async fn decrypt_bootstrap(
         Some(&bootstrap.conversation.revision),
     )
     .await?;
-    for message in &mut bootstrap.messages {
-        if message.position.parse::<u64>()?
-            > bootstrap
-                .conversation
-                .encryption
-                .as_ref()
-                .unwrap()
-                .activation_position
-                .parse::<u64>()?
-        {
-            ensure!(
-                message.sealed.is_some(),
-                "encrypted window contains unsealed message"
-            );
-        }
-        decrypt_message(api, &s, &bootstrap.conversation.id, message).await?;
-    }
+    decrypt_conversation_messages(
+        api,
+        store,
+        &s,
+        &bootstrap.conversation,
+        &mut bootstrap.messages,
+    )
+    .await?;
     Ok(())
 }
 #[allow(clippy::too_many_arguments)]
@@ -1784,6 +1872,7 @@ pub async fn direct_input(
             stale: false,
         }),
         import_origin: None,
+        history_migration: None,
         sealed,
     };
     if !encrypted {
@@ -1897,6 +1986,7 @@ async fn publish_resource(
     expected: &str,
     data: serde_json::Value,
     sources: Vec<SourceRevision>,
+    tombstone: Option<String>,
 ) -> Result<Resource> {
     let existing: Option<String> = store
         .db
@@ -1942,17 +2032,24 @@ async fn publish_resource(
         let scope = format!("{}.{}.{}", s.ai, kind, cid.unwrap_or("global"));
         let revision = (expected.parse::<u64>()? + 1).to_string();
         let p = json!({"version":1,"server":api.origin(),"kind":"resource","conversationId":cid,"messageId":id,"senderId":s.ai,"revision":revision,"text":"","replyTo":null,"mentions":[],"runId":null,"sequence":null,"scope":scope,"id":id,"expectedRevision":expected,"expectedAudienceRevision":audience.revision,"data":data});
-        let sealed = SealedEnvelope {
-            version: 1,
-            room_id: room,
-            sender: user_id(&s.ai),
-            device_id: s.device.machine().device_id().to_string(),
-            event_id: format!("${id}.{revision}.final"),
-            content: s.device.seal(&scope, "com.llmn.content.v1", &p).await?,
-            device_keys: serde_json::Value::Null,
-            signatures: serde_json::Value::Null,
+        let sealed = if tombstone.is_none() {
+            Some(SealedEnvelope {
+                version: 1,
+                room_id: room,
+                sender: user_id(&s.ai),
+                device_id: s.device.machine().device_id().to_string(),
+                event_id: format!("${id}.{revision}.final"),
+                content: s.device.seal(&scope, "com.llmn.content.v1", &p).await?,
+                device_keys: serde_json::Value::Null,
+                signatures: serde_json::Value::Null,
+            })
+        } else {
+            None
         };
-        let sealed = sign(s, sealed).await?;
+        let sealed = match sealed {
+            Some(sealed) => Some(sign(s, sealed).await?),
+            None => None,
+        };
         let request = SaveResource {
             request_id: crate::id(),
             device_id: s.device.machine().device_id().to_string(),
@@ -1961,9 +2058,9 @@ async fn publish_resource(
             kind: kind.into(),
             expected_revision: expected.into(),
             expected_audience_revision: audience.revision,
-            sealed: Some(sealed),
+            sealed,
             sources,
-            tombstone: None,
+            tombstone,
         };
         store.db.execute(
             "INSERT INTO crypto_resource_outbox VALUES(?1,?2)",
@@ -2046,6 +2143,7 @@ pub async fn publish_summary(
         expected,
         data,
         record.item.sources.clone(),
+        None,
     )
     .await?;
     Ok(())
@@ -2422,6 +2520,25 @@ async fn sign(s: &Session, envelope: SealedEnvelope) -> Result<SealedEnvelope> {
 }
 
 fn register_window(store: &Store, conversation: &NodeConversation, ai: &str) -> Result<()> {
+    let old: Option<String> = store
+        .db
+        .query_row(
+            "SELECT json FROM crypto_conversations WHERE ai=?1 AND cid=?2",
+            params![ai, conversation.id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(old) = old {
+        let old: NodeConversation = serde_json::from_str(&old)?;
+        ensure!(
+            !old.encryption.as_ref().is_some_and(|e| e.history_complete)
+                || conversation
+                    .encryption
+                    .as_ref()
+                    .is_some_and(|e| e.history_complete),
+            "complete history encryption downgrade rejected"
+        );
+    }
     let previous: Option<(String, bool)> = store
         .db
         .query_row(
@@ -2452,9 +2569,16 @@ fn register_window(store: &Store, conversation: &NodeConversation, ai: &str) -> 
             .optional()?;
         if let Some(activation) = activation {
             ensure!(
-                activation == encryption.activation_position,
+                activation == encryption.activation_position
+                    || encryption.history_complete && encryption.activation_position == "0",
                 "encryption activation boundary changed"
             );
+            if activation != encryption.activation_position {
+                store.db.execute(
+                    "UPDATE crypto_window_activation SET position=?2 WHERE cid=?1",
+                    params![conversation.id, encryption.activation_position],
+                )?;
+            }
         } else {
             store.db.execute(
                 "INSERT INTO crypto_window_activation VALUES(?1,?2)",
@@ -2475,7 +2599,7 @@ pub async fn prepare_direct_run(
     if !encrypted(store, cid)? {
         return Ok(());
     }
-    ensure_ready(store, ai)?;
+    ensure_scope_ready(store, ai, cid)?;
     let s = session(store, ai).await?;
     let users = members
         .iter()
@@ -2673,6 +2797,7 @@ mod tests {
             encryption: Some(ConversationEncryption {
                 version: 1,
                 activation_position: "0".into(),
+                history_complete: false,
             }),
         };
         let a = crate::id();
@@ -2761,6 +2886,7 @@ mod tests {
             encryption: Some(ConversationEncryption {
                 version: 1,
                 activation_position: "0".into(),
+                history_complete: false,
             }),
         };
         let event = json!({"sender":user_id(&sender),"content":{"conversationId":cid,"revision":"3","keys":keys}});
@@ -2836,6 +2962,90 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].room_id.as_str(), room_id(&cid));
     }
+    #[tokio::test]
+    async fn migrated_history_authenticates_migrator_without_impersonating_original_author() {
+        let directory = tempfile::tempdir().unwrap();
+        let signer = crate::id();
+        let original = crate::id();
+        let cid = crate::id();
+        let mid = crate::id();
+        let device = Device::open(directory.path(), &signer, "MIGRATOR", &[4; 32])
+            .await
+            .unwrap();
+        device
+            .machine()
+            .bootstrap_cross_signing(false)
+            .await
+            .unwrap();
+        device
+            .machine()
+            .share_room_key(
+                &llmn_crypto::ruma::RoomId::parse(room_id(&cid)).unwrap(),
+                std::iter::empty::<&llmn_crypto::ruma::UserId>(),
+                llmn_crypto::matrix_sdk_crypto::EncryptionSettings::default(),
+            )
+            .await
+            .unwrap();
+        let marker = HistoryMigration {
+            id: crate::id(),
+            actor_id: signer.clone(),
+            source_digest: "digest".into(),
+        };
+        let payload = json!({"version":1,"server":"http://127.0.0.1:1","kind":"historyMessage","historyMigration":marker,"conversationId":cid,"messageId":mid,"senderId":original,"revision":"5","text":"converted history","replyTo":null,"mentions":[],"runId":null,"sequence":null,"reference":null,"attachments":[]});
+        let mut envelope = json!({"version":1,"roomId":room_id(&cid),"sender":user_id(&signer),"deviceId":"MIGRATOR","eventId":format!("${mid}.5.migration.{}",marker.id),"content":device.seal(&cid,"com.llmn.content.v1",&payload).await.unwrap()});
+        device.sign_envelope(&mut envelope).await.unwrap();
+        let mut message:NodeMessage=serde_json::from_value(json!({"id":mid,"position":"1","senderId":original,"senderName":"original author","replyTo":null,"mentions":[],"text":"","revision":"5","createdAt":"2026-10-24T00:00:00Z","attachments":[],"sealed":envelope,"historyMigration":marker})).unwrap();
+        let s = Session {
+            device,
+            ai: signer.clone(),
+            router: Default::default(),
+        };
+        let api = NodeClient::new("http://127.0.0.1:1", "test", None).unwrap();
+        decrypt_message(&api, &s, &cid, &mut message).await.unwrap();
+        assert_eq!(message.text, "converted history");
+        assert_ne!(message.sender_id, signer);
+        let mut plain = message.clone();
+        plain.sealed = None;
+        plain.history_migration = None;
+        plain.position = "0".into();
+        let mut conversation = NodeConversation {
+            id: cid.clone(),
+            kind: "direct".into(),
+            name: "history".into(),
+            revision: "1".into(),
+            members: vec![],
+            encryption: Some(ConversationEncryption {
+                version: 1,
+                activation_position: "0".into(),
+                history_complete: true,
+            }),
+        };
+        let store = store();
+        initialize(&store).unwrap();
+        assert!(
+            decrypt_conversation_messages(
+                &api,
+                &store,
+                &s,
+                &conversation,
+                std::slice::from_mut(&mut plain)
+            )
+            .await
+            .is_err()
+        );
+        conversation.encryption.as_mut().unwrap().history_complete = false;
+        decrypt_conversation_messages(
+            &api,
+            &store,
+            &s,
+            &conversation,
+            std::slice::from_mut(&mut plain),
+        )
+        .await
+        .unwrap();
+        message.history_migration.as_mut().unwrap().actor_id = original;
+        assert!(decrypt_message(&api, &s, &cid, &mut message).await.is_err());
+    }
     #[test]
     fn output_revision_uses_persisted_start_even_after_roster_refresh() {
         let store = store();
@@ -2862,6 +3072,7 @@ mod tests {
             encryption: Some(ConversationEncryption {
                 version: 1,
                 activation_position: "0".into(),
+                history_complete: false,
             }),
         };
         register_window(&store, &current, &ai).unwrap();
@@ -2871,6 +3082,7 @@ mod tests {
     #[tokio::test]
     async fn summary_settings_tombstone_disables_local_configuration_and_fences_work() {
         let store = store();
+        initialize(&store).unwrap();
         let ai = crate::id();
         let cid = crate::id();
         store

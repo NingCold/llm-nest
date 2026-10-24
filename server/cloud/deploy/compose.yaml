@@ -22,6 +22,7 @@ services:
       CLOUD_DATABASE_URL: postgres://llmn:${POSTGRES_PASSWORD}@postgres:5432/llmn
       CLOUD_PUBLIC_URL: ${CLOUD_PUBLIC_URL:?set CLOUD_PUBLIC_URL}
       CLOUD_MAIL_OUTBOX: /data/outbox
+      CLOUD_REQUIRE_ENCRYPTION: ${CLOUD_REQUIRE_ENCRYPTION:-false}
     volumes:
       - ${CLOUD_DATA_DIR}/attachments:/data/attachments
       - ${CLOUD_DATA_DIR}/outbox:/data/outbox

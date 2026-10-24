@@ -87,6 +87,13 @@ pub fn migrator() -> sqlx_core::migrate::Migrator {
                 include_str!("../migrations/0011_crypto_social.sql").into(),
                 false,
             ),
+            Migration::new(
+                12,
+                "history migration".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/0012_history_migration.sql").into(),
+                false,
+            ),
         ]
         .into(),
         ..Migrator::DEFAULT

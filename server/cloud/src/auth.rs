@@ -664,6 +664,7 @@ mod tests {
             .unwrap();
             let dir = tempfile::tempdir().unwrap();
             let state = Arc::new(AppState {
+                require_encryption: false,
                 relay: Default::default(),
                 pool,
                 attachments: dir.path().join("attachments"),

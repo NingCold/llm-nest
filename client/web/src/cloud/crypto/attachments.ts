@@ -18,6 +18,9 @@ export function prepareAttachments(images: DraftImage[] = [], files: DraftFile[]
 }
 export async function attachmentBytes(message: Message, attachment: Attachment, path: string): Promise<Uint8Array> {
   const data = message.attachmentRoute === "local" || message.local ? Uint8Array.from(atob(await invoke<string>("local_chat_attachment", { conversationId: message.conversationId, messageId: message.id, index: attachment.index, revision: message.revision })), c => c.charCodeAt(0)) : await downloadBytes(message.sealed ? path.replace(/&inline=true$/, "") : path);
+  return decodeAttachment(message, attachment, data);
+}
+export async function decodeAttachment(message: Message, attachment: Attachment, data: Uint8Array): Promise<Uint8Array> {
   if (!message.sealed) return data;
   if (!attachment.mediaEncryptionInfo || message.cryptoError) throw new Error("附件缺少已验证的解密信息");
   const bytes = decryptAttachment(data, attachment.mediaEncryptionInfo);

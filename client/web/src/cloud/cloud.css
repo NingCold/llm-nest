@@ -320,4 +320,10 @@
 .cloud-local-advanced label { margin-top: 14px; }
 .cloud-ai-dialog .cloud-form .cloud-check { display: flex; align-items: center; gap: 8px; }
 .cloud-ai-dialog .cloud-check input { width: auto; }
+.cloud-compact-navigation { display: none; }
+@media (max-width: 850px) {
+  .cloud-compact-navigation { display: flex; flex-shrink: 0; gap: 4px; padding: 12px; overflow-x: auto; border-bottom: 1px solid var(--s-line); }
+  .cloud-compact-navigation button { padding: 8px 10px; white-space: nowrap; border-radius: 8px; color: var(--s-muted); font-size: 12px; }
+  .cloud-compact-navigation button:hover, .cloud-compact-navigation button[aria-current="page"] { color: var(--s-text); background: var(--s-hover); }
+}
 @media (max-width: 640px) { .cloud-ai-form-grid { grid-template-columns: 1fr; } .cloud-ai-tabs button { padding: 8px; } }

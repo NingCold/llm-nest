@@ -53,6 +53,7 @@ import type { LocalView } from "./local-api";
 import { downloadAttachment } from "./crypto/attachments";
 import { exportHistory } from "./crypto/history";
 import { shareConversationHistory } from "./crypto/engine";
+import { HistoryMigrationPanel } from "./crypto/HistoryMigrationPanel";
 import { CryptoDevices } from "./crypto/Devices";
 
 interface Props {
@@ -935,6 +936,18 @@ export function Workspace(p: Props) {
           </aside>
         </SocialSidebar>
         <main className="social-workspace">
+          {(p.tab === "account" || p.tab === "settings") && (
+            <nav className="cloud-compact-navigation" aria-label="账号与设置导航">
+              <button onClick={() => navigate("messages")}>返回消息</button>
+              {(p.tab === "account"
+                ? [["profile", "账号资料"], ["crypto", "可信设备与恢复"], ["ai", "我管理的 AI"]]
+                : [["appearance", "外观"], ["about", "关于"]]
+              ).map(([key, label]) => (
+                <button key={key} aria-current={(p.tab === "account" ? accountSection : settings) === key ? "page" : undefined}
+                  onClick={() => p.tab === "account" ? setAccountSection(key) : setSettings(key)}>{label}</button>
+              ))}
+            </nav>
+          )}
           {p.error && (
             <div className="social-error" role="alert">
               <span>{p.error}</span>
@@ -1038,11 +1051,12 @@ export function Workspace(p: Props) {
                         <small>{p.localChat ? `同机私聊 · ${p.localChat.syncState === "synced" ? "已同步云端" : p.localChat.syncState === "conflict" ? "云端同步冲突" : "等待云端同步"}` : conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊 · 聊天记录持续保存"}</small>
                       </span>
                     </button>
-                    {!conversation.encryption && (conversation.kind === "direct" || conversation.members.some(m => m.account.id === p.me.id && m.role !== "member")) && p.enableEncryption && <button className="text-button" onClick={() => { if (window.confirm("开启后不可回退明文。请确认双方可信设备及恢复文件已准备好，旧历史留待后续迁移。")) void p.act(p.enableEncryption!); }}>开启端到端加密</button>}
-                    {conversation.encryption && <><small role="status">端到端加密 · 旧记录尚未迁移</small><button className="text-button" disabled={!p.cryptoUnlocked} onClick={() => void p.act(() => shareConversationHistory(conversation))}>向当前可信成员设备分享历史密钥</button><small>新成员或新设备缺少历史密钥时，请由可读取历史的成员分享；所有当前成员须先完成设备核验。</small></>}
+                    {p.snapshot?.requireEncryption && !conversation.encryption && !conversation.readOnly && <p role="status">服务器已要求加密。请先准备可信设备并开启此窗口加密，再发送新内容。</p>}
+                    {!conversation.readOnly && !conversation.encryption && (conversation.kind === "direct" || conversation.members.some(m => m.account.id === p.me.id && m.role !== "member")) && p.enableEncryption && <button className="text-button" onClick={() => { if (window.confirm("开启后不可回退明文。请确认双方可信设备及恢复文件已准备好，旧历史可在聊天详情的“转换旧历史”中备份并转换。")) void p.act(p.enableEncryption!); }}>开启端到端加密</button>}
+                    {conversation.encryption && <><small role="status">端到端加密 · {conversation.encryption.historyComplete ? "旧历史已转换" : "旧记录尚未迁移"}</small><button className="text-button" disabled={!p.cryptoUnlocked} onClick={() => void p.act(() => shareConversationHistory(conversation))}>向当前可信成员设备分享历史密钥</button><small>新成员或新设备缺少历史密钥时，请由可读取历史的成员分享。{conversation.encryption.historyComplete ? "只发给当前已核验的成员设备，其他成员须先授权。" : "所有当前成员须先完成设备核验。"}</small></>}
                     {conversation.kind === "direct" && conversation.peer?.kind === "ai" && p.prepareLocal && !p.localSelected && <button className="text-button" onClick={() => void p.act(p.prepareLocal!)}>开启同机私聊</button>}
                     {p.localSelected && !p.localChat && <div role="status">同机私聊暂未连接；发送仍使用本机 Agent，不会自动改发云端。<button className="text-button" onClick={() => void p.act(() => p.history())}>重新连接本机</button></div>}
-                    {p.localChat && <div role="status"><small>同机私聊仅支持普通文字；附件、回复与群引用请使用云端。{p.localChat.error}{p.localChat.hasMore && "仅显示节点已缓存的历史。"}</small><button className="text-button" onClick={() => void p.act(p.syncLocal!)}>重试云端同步</button><button className="text-button" disabled={p.localChat.running || p.localChat.syncState !== "synced" || !!p.record.pending} onClick={() => void p.act(p.closeLocal!)}>返回云端发送</button>{p.localChat.running && <button className="text-button" onClick={() => void p.act(p.stopLocal!)}>停止本机回复</button>}</div>}
+                    {p.localChat && <div role="status"><small>{conversation.encryption ? "加密同机私聊支持文字、图片、文件、回复及已预取的群话题来源。" : "未加密的同机私聊暂不支持附件；可先开启端到端加密。"}{p.localChat.error}{p.localChat.hasMore && "仅显示节点已缓存的历史。"}</small><button className="text-button" onClick={() => void p.act(p.syncLocal!)}>重试云端同步</button><button className="text-button" disabled={p.localChat.running || p.localChat.syncState !== "synced" || !!p.record.pending} onClick={() => void p.act(p.closeLocal!)}>返回云端发送</button>{p.localChat.running && <button className="text-button" onClick={() => void p.act(p.stopLocal!)}>停止本机回复</button>}</div>}
                     <IconButton
                       label="聊天详情"
                       aria-pressed={details}
@@ -1118,7 +1132,7 @@ export function Workspace(p: Props) {
                               <time>{shortTime(m.createdAt)}</time>
                               {m.cryptoError && <small role="status">加密内容暂不可读：{m.cryptoError}</small>}
                               {conversation.encryption && !m.sealed && <small>旧明文记录 · 尚未迁移</small>}
-                              {m.importOrigin && <small title="从旧版聊天记录导入">导入历史</small>}
+                              {m.historyMigration && <small>迁入旧记录 · 转换者 {m.historyMigration.actorId}（保留原作者记录）</small>}{m.importOrigin && <small title="从旧版聊天记录导入">导入历史</small>}
                             </div>
                             {m.contextReference && m.status !== "withdrawn" && <ReferenceCard directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
                             {m.status === "committed" && !conversation.readOnly && !p.localSelected && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
@@ -1337,7 +1351,7 @@ export function Workspace(p: Props) {
                         aria-label="消息输入框"
                         rows={2}
                         maxLength={20000}
-                        disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked || (!!conversation.encryption && !p.cryptoUnlocked)}
+                        disabled={!p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked || ((!!conversation.encryption && !p.cryptoUnlocked) || (!!p.snapshot?.requireEncryption && !conversation.encryption))}
                         placeholder={
                           dragging
                             ? "松开添加附件"
@@ -1425,7 +1439,7 @@ export function Workspace(p: Props) {
                           aria-label="发送消息"
                           disabled={
                             !p.draftReady ||
-                            (!!conversation.encryption && !p.cryptoUnlocked) ||
+                            ((!!conversation.encryption && !p.cryptoUnlocked) || (!!p.snapshot?.requireEncryption && !conversation.encryption)) ||
                             conversation.directBlocked ||
                             p.busy ||
                             !!p.record.pending ||
@@ -1480,7 +1494,7 @@ export function Workspace(p: Props) {
                       </IconButton>
                     </header>
                     <div className="details-scroll">
-                      {!conversation.readOnly && <ParticipationPanel operatorId={p.me.id} key={`participation/${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} />}
+                      {!conversation.readOnly && <ParticipationPanel operatorId={p.me.id} key={`participation/${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} requireEncryption={p.snapshot?.requireEncryption} />}
                       {!conversation.readOnly && <ConsciousnessPanel operatorId={p.me.id} key={`${p.me.id}/${conversation.id}`} conversation={conversation} cursor={p.snapshot!.cursor} summaryAiIds={managedAiIds} summaryError={managementError} />}
                       {conversation.kind === "group" && !conversation.readOnly && <GroupDetails key={conversation.id + conversation.revision} conversation={conversation} me={p.me.id} busy={p.busy} act={p.act} refresh={p.refresh} leave={() => p.selectConversation("")} />}
                       <div className="details-hero">
@@ -1527,6 +1541,7 @@ export function Workspace(p: Props) {
                         </button>
                         {conversation.peer && <button className="social-button secondary" onClick={() => openContact(conversation.peer!)}>查看联系人资料</button>}
                       </section>
+                      <HistoryMigrationPanel key={`migration/${p.me.id}/${conversation.id}`} account={p.me.id} conversation={conversation} blocked={!p.draftReady || !!p.record.pending || !!p.localChat?.running || (!!p.localSelected && p.localChat?.syncState !== "synced")} onComplete={p.refresh} />
                       <section className="cloud-detail-section">
                         <h3>导出聊天记录</h3>
                         <p>{conversation.encryption ? "在本机读取并解密完整授权历史后导出；无法解密时停止导出。" : "导出完整窗口；附件可以分别选择。"}</p>

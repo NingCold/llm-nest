@@ -86,6 +86,7 @@ fn record(id: &str) -> SummaryRecord {
 fn message(pos: usize) -> NodeMessage {
     NodeMessage {
         sealed: None,
+        history_migration: None,
         audience_revision: None,
         context_reference: None,
         import_origin: None,

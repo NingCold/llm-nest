@@ -400,7 +400,8 @@ export function decryptAttachment(data: Uint8Array, mediaEncryptionInfo: string)
 }
 export async function shareConversationHistory(conversation: import("../types").Conversation) {
   const s = session(), room = matrixRoom(conversation.id);
-  await prepareEncryption(room, conversation.members.map(m => m.account.id));
+  const users = conversation.members.map(m => m.account.id);
+  await prepareEncryption(room, users, false, conversation.encryption?.historyComplete ? [s.account] : users);
   const keys = JSON.parse(await s.machine.exportRoomKeys(key => key.roomId.toString() === room));
   for (const member of conversation.members) {
     const devices = await s.machine.getUserDevices(new s.sdk.UserId(matrixUser(member.account.id)));
@@ -412,4 +413,42 @@ export async function shareConversationHistory(conversation: import("../types").
     }
   }
   await flush(s);
+}
+
+// The reader has no current room keys or Olm sessions: only the selected recovery bundle and downloaded backup.
+export async function recoveryReader(file: RecoveryFile) {
+  const s = session();
+  if (file.format !== "llmn-recovery-v1" || file.server !== server || file.accountId !== s.account) throw new Error("恢复文件不属于当前服务器与账号");
+  await syncCrypto();
+  for (let backup = await s.machine.backupRoomKeys(); backup; backup = await s.machine.backupRoomKeys()) await sendOutgoing(s, backup);
+  const recovery = await request<{ version: string; ciphertext: string }>("/crypto/recovery");
+  if (recovery.version !== file.version) throw new Error("恢复文件版本已变化，请选择当前文件");
+  const machine = await s.sdk.OlmMachine.initialize(new s.sdk.UserId(matrixUser(s.account)), new s.sdk.DeviceId(crypto.randomUUID()));
+  try {
+    const bytes = s.sdk.Attachment.decrypt(new s.sdk.EncryptedAttachment(from64(recovery.ciphertext), file.mediaEncryptionInfo));
+    try { await machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(JSON.parse(new TextDecoder().decode(bytes)))); } finally { bytes.fill(0); }
+    const keys = await enableStoredBackup({ ...s, machine });
+    const backup = await request<{ rooms: Record<string, { sessions: Record<string, { session_data: { ephemeral: string; mac: string; ciphertext: string } }> }> }>("/crypto/backup/keys");
+    const rooms = new Map<Matrix.RoomId, Map<string, unknown>>();
+    for (const [room, value] of Object.entries(backup.rooms)) {
+      const sessions = new Map<string, unknown>();
+      for (const [id, entry] of Object.entries(value.sessions)) sessions.set(id, JSON.parse(keys.decryptionKey!.decryptV1(entry.session_data.ephemeral, entry.session_data.mac, entry.session_data.ciphertext)));
+      rooms.set(new s.sdk.RoomId(room), sessions);
+    }
+    await machine.importBackedUpRoomKeys(rooms, () => {}, keys.backupVersion!);
+    current(s);
+    return {
+      close: () => machine.close(),
+      unseal: async (envelope: SignedEnvelope) => {
+        current(s);
+        const identity = await s.machine.getIdentity(new s.sdk.UserId(envelope.sender));
+        if (!identity?.isVerified()) throw new Error("历史签名账号主指纹尚未核验");
+        verifyEnvelope(envelope, masterFingerprint(identity.masterKey));
+        const event = { type: "m.room.encrypted", event_id: envelope.eventId, sender: envelope.sender, origin_server_ts: 0, content: envelope.content };
+        const decoded = await machine.decryptRoomEvent(JSON.stringify(event), new s.sdk.RoomId(envelope.roomId), new s.sdk.DecryptionSettings(s.sdk.TrustRequirement.Untrusted));
+        current(s);
+        return JSON.parse(decoded.event) as { type: string; content: Record<string, unknown> };
+      },
+    };
+  } catch (error) { machine.close(); throw error; }
 }

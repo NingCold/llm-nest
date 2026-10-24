@@ -1,0 +1,106 @@
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript'), { indexedDB } = require('fake-indexeddb');
+class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); this.status = status; } }
+const canonical = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/canonical.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: canonical });
+const calls = [], encrypted = [], signed = [], readers = [], checked = [];
+const status = { id: 'migration', conversationId: 'room', conversationRevision: '7', sourceDigest: 'a'.repeat(64), state: 'active', remaining: 1, backupDigest: 'b'.repeat(64), recoveryDigest: 'c'.repeat(64), verificationDigest: null };
+const original = { id: 'old', conversationId: 'room', senderId: 'old-author', revision: '3', position: '1', text: 'old plaintext', mentions: [], replyTo: null, contextReference: null, status: 'committed', attachments: [], sealed: null, historyMigration: null, audienceRevision: '5' };
+const item = { originalAudienceRevision: '5', kind: 'message', id: 'old', revision: '3', sourceDigest: require('node:crypto').createHash('sha256').update(canonical.canonicalJson([original, []])).digest('hex'), converted: false, record: original };
+const retainedRecord = { ...original, id: 'retained', text: '', attachments: [{ index: 0, kind: 'encrypted', mime: 'application/octet-stream', name: null, byteLength: 2 }], sealed: { cipher: 'already-sealed' }, historyMigration: { id: 'previous-migration', actorId: 'previous', sourceDigest: 'prior' } };
+const retained = { kind: 'message', id: 'retained', revision: '3', converted: true, sourceDigest: require('node:crypto').createHash('sha256').update(canonical.canonicalJson([retainedRecord, [require('node:crypto').createHash('sha256').update(Buffer.from([1, 2])).digest('hex')]])).digest('hex'), record: retainedRecord };
+const receipts = new Map();
+const fingerprint = (operation, body) => require('node:crypto').createHash('sha256').update(canonical.canonicalJson([operation, body])).digest('hex');
+let lose = true, rejectBegin = false, revokedUpload = false, currentDevice = 'device', recoveredText = 'old plaintext', receiptMode = 'valid', failBeforeBegin = true, loseBegin = true, loseFinish = true;
+const api = { server: 'https://migration.invalid', HttpError, downloadBytes: async () => new Uint8Array([1, 2]), request: async (path, method = 'GET', body) => {
+  calls.push(structuredClone({ path, method, body }));
+  if (path.startsWith('/crypto/history-migration-receipts/')) { const value = receipts.get(path.split('/').pop()); return { receipt: receiptMode === 'none' || !value ? null : { fingerprint: receiptMode === 'mismatch' ? '0'.repeat(64) : value, migration: structuredClone(status) } }; }
+  if (body?.deviceId && body.deviceId !== currentDevice) throw new HttpError(403);
+  if (path.startsWith('/crypto/history-migrations?conversationId=')) return { migration: structuredClone(status) };
+  if (method === 'POST' && path === '/crypto/history-migrations') { if (rejectBegin) throw new HttpError(409); if (failBeforeBegin) throw Error('lost before begin commit'); receipts.set(body.requestId, fingerprint('begin', body)); if (loseBegin) { loseBegin = false; throw Error('lost begin acknowledgement'); } return structuredClone(status); }
+  if (path.endsWith('/items?after=0&limit=32')) return { items: item.converted ? [] : [structuredClone(item)], next: '1', hasMore: false };
+  if (path.endsWith('/items?after=0&limit=32&includeConverted=true')) return { items: [structuredClone(item), structuredClone(retained)], next: '2', hasMore: false };
+  if (method === 'PUT') { if (revokedUpload) throw new HttpError(403); item.converted = true; item.record = { ...original, sealed: body.sealed, historyMigration: { id: status.id, actorId: 'human', sourceDigest: item.sourceDigest }, audienceRevision: '7' }; status.remaining = 0; const parts = path.split('/'); receipts.set(body.requestId, fingerprint(`${parts[3]}:${parts[5]}:${parts[6]}`, body)); if (lose) { lose = false; throw Error('lost response'); } return { ...item }; }
+  if (path.endsWith('/finish')) { status.state = 'complete'; status.verificationDigest = body.verificationDigest; receipts.set(body.requestId, fingerprint(`finish:${status.id}`, body)); if (loseFinish) { loseFinish = false; throw Error('lost finish acknowledgement'); } return structuredClone(status); }
+  return structuredClone(status);
+} };
+const engine = { cryptoDevice: () => currentDevice, recoveryConfirmed: () => true, matrixRoom: id => `!${id}:llmn`, matrixUser: id => `@${id}:llmn`, recoveryReader: async () => { const reader = { close() { reader.closed = true; }, unseal: async sealed => { checked.push(sealed); return { type: 'com.llmn.content.v1', content: { text: recoveredText } }; } }; readers.push(reader); return reader; }, seal: async (room, users, type, content, offline, required) => { encrypted.push(structuredClone({ content, required })); return { cipher: `frozen-${encrypted.length}` }; }, signEnvelope: async envelope => { signed.push(envelope); return envelope; } };
+const migrationExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/migration.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: migrationExports, indexedDB, crypto: require('node:crypto').webcrypto, TextEncoder, Uint8Array, btoa, require: name => name === '../api' ? api : name === './engine' ? engine : name === './content' ? { projectMessage: async (record, conversation, unseal) => { const event = await unseal(record.sealed); return { ...record, text: event.content.text, ...(record.id === 'retained' ? { attachments: [{ index: 0, kind: 'file', mime: 'text/plain', byteLength: 2, mediaEncryptionInfo: 'sdk-info' }] } : {}) }; } } : name === './canonical' ? canonical : name === './attachments' ? { decodeAttachment: async () => new Uint8Array([7, 8]) } : {} });
+(async () => {
+  const conversation = { id: 'room', kind: 'direct', members: [{ account: { id: 'human' } }, { account: { id: 'old-author' } }] };
+  await assert.rejects(migrationExports.beginMigration('human', conversation, { conversationRevision: '7', sourceDigest: status.sourceDigest }, status.backupDigest, status.recoveryDigest, {}), /lost before begin/);
+  const beginPending = (await migrationExports.migrationSession('human', 'room')).pending;
+  await assert.rejects(migrationExports.confirmMigrationResult('human', 'room'), /尚未找到/);
+  assert.deepEqual((await migrationExports.migrationSession('human', 'room')).pending, beginPending, 'no receipt for a new request is unknown, never evidence that it may be discarded');
+  failBeforeBegin = false;
+  await assert.rejects(migrationExports.retryMigration('human', 'room'), /lost begin acknowledgement/);
+  currentDevice = 'begin-restored-device';
+  await assert.rejects(migrationExports.retryMigration('human', 'room'), e => e.status === 403);
+  await migrationExports.confirmMigrationResult('human', 'room');
+  assert.equal((await migrationExports.migrationSession('human', 'room')).pending, undefined, 'a matching begin fingerprint resolves the effect after original device revocation');
+  assert.ok(readers[0].closed);
+  await assert.rejects(migrationExports.convertMigrationPage('human', conversation), /lost response/);
+  const pending = (await migrationExports.migrationSession('human', 'room')).pending;
+  assert.equal(JSON.stringify(pending).includes('old plaintext'), false, 'pending command contains frozen ciphertext, never source plaintext');
+  assert.equal(signed[0].sender, '@human:llmn');
+  assert.equal(signed[0].eventId, '$old.3.migration.migration');
+  assert.equal(encrypted[0].content.senderId, 'old-author', 'historical author is preserved separately from the migration signature');
+  assert.equal(JSON.stringify(encrypted[0].required), '["human"]', 'a stopped old AI need not have a fake device');
+  currentDevice = 'recovered-device'; revokedUpload = true;
+  await assert.rejects(migrationExports.retryMigration('human', 'room'), e => e.status === 403);
+  await migrationExports.refreshMigration('human', 'room');
+  assert.deepEqual((await migrationExports.migrationSession('human', 'room')).pending, pending, 'a 403 or status refresh alone cannot resolve an unknown PUT');
+  assert.equal(item.converted, true); assert.deepEqual(item.record.sealed, pending.body.sealed);
+  await assert.rejects(migrationExports.verifyAndFinishMigration('human', conversation, {}, status.recoveryDigest), /原转换请求/);
+  receiptMode = 'mismatch';
+  await assert.rejects(migrationExports.confirmMigrationResult('human', 'room'), /不一致/);
+  assert.deepEqual((await migrationExports.migrationSession('human', 'room')).pending, pending, 'different fingerprint never clears the original request');
+  receiptMode = 'valid';
+  await migrationExports.confirmMigrationResult('human', 'room');
+  assert.equal((await migrationExports.migrationSession('human', 'room')).pending, undefined);
+  assert.equal(currentDevice, 'recovered-device');
+  revokedUpload = false;
+  assert.equal(encrypted.length, 1);
+  const writes = calls.filter(c => c.method === 'PUT');
+  assert.deepEqual(writes[0], writes[1], 'unknown upload retries the same request and cipher');
+  recoveredText = 'tampered text with otherwise valid authenticated envelope';
+  await assert.rejects(migrationExports.verifyAndFinishMigration('human', conversation, {}, status.recoveryDigest), /与预览原内容不一致/);
+  assert.equal((await migrationExports.migrationSession('human', 'room')).pending, undefined, 'a decryptable but altered migration never queues finish');
+  recoveredText = 'old plaintext';
+  await assert.rejects(migrationExports.verifyAndFinishMigration('human', conversation, {}, status.recoveryDigest), /lost finish acknowledgement/);
+  currentDevice = 'finish-restored-device';
+  await assert.rejects(migrationExports.retryMigration('human', 'room'), e => e.status === 403);
+  await migrationExports.confirmMigrationResult('human', 'room');
+  assert.equal(readers.length, 3); assert.ok(readers[1].closed); assert.ok(readers[2].closed);
+  assert.equal(checked.length, 3, 'whole converted manifest is decrypted through the independent reader');
+  assert.match(status.verificationDigest, /^[a-f0-9]{64}$/);
+  assert.equal((await migrationExports.migrationSession('human', 'room')).status.state, 'complete');
+  rejectBegin = true;
+  await assert.rejects(migrationExports.beginMigration('human', conversation, { conversationRevision: '7', sourceDigest: status.sourceDigest }, status.backupDigest, status.recoveryDigest, {}), e => e.status === 409);
+  const rejected = await migrationExports.migrationSession('human', 'room');
+  assert.equal(rejected.pending, undefined, 'first definitive rejection cannot remain an unresolvable send lock');
+  assert.equal(rejected.rejected.length, 1, 'the exact rejected intent is preserved rather than overwritten');
+  const React = require('react'), unauthorizedLoads = [];
+  function panelHarness({ blocked = false, pending = false, complete = false, role = 'owner', kind = 'group' } = {}) {
+    const slots = [[], { conversationId: 'room', messageCount: 1, contactIntentCount: 0, attachmentCount: 0, sourceDigest: 'source' }, pending ? { pending: { path: 'saved', body: {} }, ...(complete ? { status: { state: 'complete' } } : {}) } : {}, 'b'.repeat(64), {}, 'c'.repeat(64), true];
+    let index = 0; const result = {};
+    const hooks = { ...React, useState(initial) { const i = index++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], value => { slots[i] = value; }]; }, useRef: () => ({ current: 0 }), useEffect(fn) { if (kind === 'group' && role === 'member') fn(); } };
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/HistoryMigrationPanel.tsx'), 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: result, require: name => name === 'react' ? hooks : name === '../api' ? { HttpError } : name === './engine' ? { cryptoDevice: () => 'device' } : name === './migration' ? { migrationSession: async () => { unauthorizedLoads.push('local'); return {}; }, refreshMigration: async () => { unauthorizedLoads.push('network'); return {}; } } : require(name) });
+    return result.HistoryMigrationPanel({ account: 'human', conversation: { id: 'room', kind, readOnly: true, members: [{ account: { id: 'human' }, role }] }, blocked, onComplete: async () => {} });
+  }
+  const all = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(all)];
+  const label = node => typeof node === 'string' ? node : React.Children.toArray(node?.props?.children).map(label).join('');
+  const buttons = options => all(panelHarness(options)).filter(n => n.type === 'button');
+  assert.equal(buttons({ blocked: true }).find(n => label(n) === '确认备份并开始转换').props.disabled, true, 'unconfirmed or unsynced local sends block migration');
+  const memberTree = panelHarness({ role: 'member' });
+  assert.equal(all(memberTree).some(n => n.type === 'p' && label(n) === '群历史转换须由当前群主或管理员操作。'), true);
+  assert.equal(all(memberTree).some(n => n.type === 'button' || n.type === 'input'), false, 'ordinary group members see only the permission explanation');
+  assert.equal(buttons({ role: 'member', pending: true }).length, 0, 'cached pending commands do not expose unauthorized confirmation actions');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(unauthorizedLoads, [], 'opening group details as a member reads neither cached migration session nor privileged remote status');
+  assert.equal(buttons({ kind: 'direct', role: 'member' }).find(n => label(n) === '确认备份并开始转换').props.disabled, false, 'read-only direct archives permit authorized conversion while staying read-only');
+  assert.ok(buttons({ pending: true }).some(n => label(n) === '手动重试原转换请求'));
+  assert.ok(buttons({ pending: true }).some(n => label(n) === '核对原转换结果'));
+  assert.ok(buttons({ pending: true, complete: true }).some(n => label(n) === '核对原转换结果'), 'finish result remains confirmable even if authoritative status is already complete');
+  assert.equal(buttons({ pending: true }).some(n => label(n) === '确认备份并开始转换'), false);
+  console.log('PASS: historical author and migration signer remain separate; persisted ciphertext retries exactly and completion reads the full manifest with an independent reader');
+})().catch(error => { console.error(error); process.exitCode = 1; });

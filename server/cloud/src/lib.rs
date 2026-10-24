@@ -7,6 +7,7 @@ pub mod db;
 mod direct;
 mod groups;
 mod handover;
+mod history_migration;
 mod management;
 mod migration;
 pub mod nodes;
@@ -27,6 +28,7 @@ use std::{
 };
 
 pub struct AppState {
+    pub require_encryption: bool,
     pub relay: consciousness::RelayHub,
     pub pool: sqlx::PgPool,
     pub attachments: PathBuf,
@@ -165,6 +167,7 @@ pub fn router(state: Arc<AppState>, web_dir: PathBuf) -> Router {
     });
     let api = Router::new()
         .merge(handover::routes().layer(DefaultBodyLimit::max(16 * 1024)))
+        .merge(history_migration::routes().layer(DefaultBodyLimit::max(40 * 1024 * 1024)))
         .merge(crypto::routes().layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .merge(crypto_resources::routes().layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .merge(auth::routes().layer(DefaultBodyLimit::max(16 * 1024)))

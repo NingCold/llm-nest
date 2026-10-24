@@ -24,7 +24,7 @@ const database = `crypto_acceptance_${randomUUID().replaceAll('-', '')}`;
 const base = new URL(process.env.CLOUD_TEST_DATABASE_URL);
 const sqlEnv = { ...process.env, PGHOST: base.hostname, PGPORT: base.port || '5432', PGUSER: decodeURIComponent(base.username), PGPASSWORD: decodeURIComponent(base.password), PGDATABASE: base.pathname.slice(1) };
 function sql(statement, db = database) {
-  const p = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-At', '-c', statement], { env: { ...sqlEnv, PGDATABASE: db }, encoding: 'utf8', windowsHide: true });
+  const p = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-At', '-f', '-'], { input: statement, env: { ...sqlEnv, PGDATABASE: db, PGCLIENTENCODING: 'UTF8' }, encoding: 'utf8', windowsHide: true });
   if (p.status !== 0) throw new Error(`test SQL failed: ${p.stderr}`);
   return p.stdout.trim();
 }
@@ -49,12 +49,13 @@ const roomId = id => `!${id}:llmn`;
 async function signup(name) {
   const p = spawnSync(executable, ['invite'], { env, encoding: 'utf8', windowsHide: true });
   assert.equal(p.status, 0, 'invite command failed');
-  const session = { cookie: '' }, email = `${randomUUID()}@example.invalid`;
-  await http(session, '/auth/register', 'POST', { invite: p.stdout.trim(), email, password: randomUUID(), name });
+  const session = { cookie: '' }, email = `${randomUUID()}@example.invalid`, password = randomUUID();
+  await http(session, '/auth/register', 'POST', { invite: p.stdout.trim(), email, password, name });
   const mail = fs.readdirSync(env.CLOUD_MAIL_OUTBOX).map(f => JSON.parse(fs.readFileSync(path.join(env.CLOUD_MAIL_OUTBOX, f), 'utf8'))).find(m => m.to === email);
   const token = mail.body.match(/token=([a-f0-9]+)/)[1];
   const verified = await http(session, '/auth/verify', 'POST', { token });
   session.account = verified.account.id;
+  if (process.argv.includes('--serve-ui')) Object.assign(session, { email, password });
   return session;
 }
 async function device(session) {
@@ -150,7 +151,14 @@ async function waitFor(read, accept, description) {
   }
   throw new Error(`Timed out: ${description}`);
 }
-async function agentFlow(human) {
+async function setRequireEncryption(enabled) {
+  server.kill();
+  await waitFor(async () => server.exitCode ?? server.signalCode, code => code !== null, 'cloud stopped for policy switch');
+  env.CLOUD_REQUIRE_ENCRYPTION = String(enabled);
+  server = spawn(executable, [], { env, windowsHide: true, stdio: ['ignore', log, log] });
+  await waitFor(async () => { try { return (await fetch(origin + '/health')).ok; } catch { return false; } }, Boolean, 'cloud policy switch');
+}
+async function agentFlow(human, other) {
   phase = 'Agent enrollment and recovery setup';
   const agent = path.join(root, 'target/debug', process.platform === 'win32' ? 'llmn-agent.exe' : 'llmn-agent');
   const agentEnv = { ...env, LLMN_E2EE_TEST_KEY: 'mock-provider-only' };
@@ -218,6 +226,8 @@ max_tokens = 512
   }
   async function stopNode(child) { child.kill(); await waitFor(async () => child.exitCode ?? child.signalCode, code => code !== null, 'node exit'); }
   const nodeDir = await pairNode('node-first', ai.bindingVersion);
+  const materialMigration = process.argv.includes('--migration-only') ? require('./crypto_material_migration_acceptance.cjs') : null;
+  const materialFixture = materialMigration ? await materialMigration.seed({ human, other, aiId, nodeDir, step, http, sql, directory }) : null;
   let rpcDirectory = nodeDir;
   const identity = JSON.parse(step('crypto-init', nodeDir, aiId));
   const recoveryPath = path.join(directory, 'ai-recovery.private.json');
@@ -229,6 +239,13 @@ max_tokens = 512
   let running = startNode(nodeDir);
   const managed = () => http(human, '/ai');
   await waitFor(managed, rows => rows.find(row => row.account.id === aiId)?.node?.online, 'encrypted node online');
+  if (materialMigration) {
+    phase = 'legacy Agent materials and recovered replacement';
+    const result = await materialMigration.run({ fixture: materialFixture, human, other, aiId, nodeDir, step, http, sql, directory, running, stopNode, startNode, waitFor, modelInputs, pairNode, recoveryPath, identity, peer, trust, share });
+    await stopNode(result.running);
+    assert.equal(modelInputs.length, 0, 'material conversion must not call the model');
+    return 0;
+  }
   const cid = (await http(human, '/chat/direct', 'POST', { accountId: aiId })).id;
   const messagePath = `/chat/conversations/${cid}/messages`;
   await share(human, peer, cid);
@@ -425,6 +442,19 @@ async function main() {
   const cid = conversation.id;
   await bootstrap(a); await bootstrap(b);
   await trust(a, b); await trust(b, a);
+  if (process.argv.includes('--migration-only')) {
+    phase = 'history conversion and independent SDK recovery';
+    await require('./crypto_migration_acceptance.cjs').run({ a, b, http, sdk, signup, device, bootstrap, trust, sync, decrypt, sql, roomId, userId, origin, sign, outgoing, query, setRequireEncryption, directory, serveUI: process.argv.includes('--serve-ui') });
+    const modelCalls = await agentFlow(a, b);
+    for (const s of [a, b]) s.machine.close();
+    fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify({ passed: true, mode: 'migration', modelCalls, database, date: new Date().toISOString() }));
+    console.log('PASS: encrypted history conversion, independent recovery, node material migration and strict deployment policy.');
+    if (process.argv.includes('--serve-ui')) {
+      console.log(`Isolated UI fixture retained at ${directory}; create its stop file when finished.`);
+      while (!fs.existsSync(path.join(directory, 'stop'))) await sleep(1000);
+    }
+    return;
+  }
   phase = 'Olm room-key sharing';
   await share(a, b, cid);
   const enabled = await http(a, `/chat/conversations/${cid}/encryption`, 'POST', { deviceId: a.device, requestId: randomUUID(), expectedConversationRevision: conversation.revision });
@@ -488,7 +518,7 @@ async function main() {
   assert.deepEqual(await decrypt(a, rust.sealed), inner);
   phase = 'encrypted groups and historical keys';
   await require('./crypto_social_acceptance.cjs').human({ a, b, http, sdk, signup, device, bootstrap, trust, sync, decrypt, sql, roomId, userId, origin, sign, outgoing, query });
-  const modelCalls = await agentFlow(a);
+  const modelCalls = await agentFlow(a, b);
   await http(b, `/crypto/devices/${untrusted.device}/revoke`, 'POST', {});
   await http(untrusted, `/crypto/sync?deviceId=${untrusted.device}&after=0`, 'GET', undefined, 403);
   for (const s of [a, b, untrusted]) s.machine.close();

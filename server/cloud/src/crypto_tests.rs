@@ -1382,3 +1382,648 @@ async fn encrypted_uploads_recover_partial_files_and_fixed_id_retries() {
         parts
     );
 }
+
+#[tokio::test]
+async fn history_conversion_preserves_identity_sources_readstate_and_private_backups() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let api = Api::new(&f).await;
+    let (a, ha) = &f.users[0];
+    let (b, hb) = &f.users[1];
+    let cid = conversation(&f, *a, *b).await;
+    let original=api.ok(hb,Method::POST,&format!("/chat/conversations/{cid}/messages"),json!({"requestId":Uuid::new_v4(),"text":"old author's words","files":[{"name":"old.txt","mime":"text/plain","data":"b2xkLWJ5dGVz"}]})).await;
+    let mid: Uuid = serde_json::from_value(original["id"].clone()).unwrap();
+    sqlx::query("UPDATE cloud_messages SET revision=4,crypto_audience_revision=9 WHERE id=$1")
+        .bind(mid)
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    let reply = api
+        .ok(
+            ha,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+            json!({"requestId":Uuid::new_v4(),"text":"reply history","replyTo":mid}),
+        )
+        .await;
+    let replyid: Uuid = serde_json::from_value(reply["id"].clone()).unwrap();
+    sqlx::query("INSERT INTO cloud_reference_sources(message_id,conversation,source_id,source_revision) VALUES($1,$2,$3,4)").bind(replyid).bind(cid).bind(mid).execute(&f.state.pool).await.unwrap();
+    sqlx::query("UPDATE cloud_list SET read_position=$3 WHERE owner=$1 AND conversation=$2")
+        .bind(a)
+        .bind(cid)
+        .bind(
+            original["position"]
+                .as_str()
+                .unwrap()
+                .parse::<i64>()
+                .unwrap(),
+        )
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    let ai = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,name,kind) VALUES($1,'former AI','ai')")
+        .bind(ai)
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    let intent = Uuid::new_v4();
+    sqlx::query("INSERT INTO cloud_contact_intents(id,conversation,creator_id,ai_id,content,due_at,expires_at,utc_offset_minutes,status,revision) VALUES($1,$2,$3,$4,'old intent',now()-interval '2 day',now()-interval '1 day',480,'cancelled',7)").bind(intent).bind(cid).bind(b).bind(ai).execute(&f.state.pool).await.unwrap();
+    sqlx::query("UPDATE cloud_conversations SET read_only=true WHERE id=$1")
+        .bind(cid)
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    let device = registered(&api, ha, *a).await;
+    let preview = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid}),
+        )
+        .await;
+    let begin = json!({"requestId":Uuid::new_v4(),"deviceId":device,"conversationId":cid,"expectedConversationRevision":preview["conversationRevision"],"sourceDigest":preview["sourceDigest"],"backupDigest":"a".repeat(64),"recoveryDigest":"b".repeat(64),"localPendingResolved":true});
+    let started = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations",
+            begin.clone(),
+        )
+        .await;
+    assert_eq!(
+        api.ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations",
+            begin.clone()
+        )
+        .await["id"],
+        started["id"]
+    );
+    let mut competing = begin.clone();
+    competing["requestId"] = json!(Uuid::new_v4());
+    assert_eq!(
+        api.call(ha, Method::POST, "/crypto/history-migrations", competing)
+            .await
+            .0,
+        409
+    );
+    let id: Uuid = serde_json::from_value(started["id"].clone()).unwrap();
+    assert_eq!(
+        api.ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migrations?conversationId={cid}"),
+            Value::Null
+        )
+        .await["migration"]["id"],
+        started["id"]
+    );
+    let finish =
+        json!({"requestId":Uuid::new_v4(),"deviceId":device,"verificationDigest":"c".repeat(64)});
+    assert_eq!(
+        api.call(
+            ha,
+            Method::POST,
+            &format!("/crypto/history-migrations/{id}/finish"),
+            finish.clone()
+        )
+        .await
+        .0,
+        409
+    );
+    let list = api
+        .ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migrations/{id}/items?includeConverted=true"),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 3);
+    let old_message = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == mid.to_string())
+        .unwrap();
+    assert_eq!(old_message["originalAudienceRevision"], "9");
+    for entry in list["items"].as_array().unwrap() {
+        let item: Uuid = serde_json::from_value(entry["id"].clone()).unwrap();
+        let kind = entry["kind"].as_str().unwrap();
+        let rev = entry["revision"].as_str().unwrap().parse::<u32>().unwrap();
+        let mut blob = sealed(*a, &device, cid, item, rev);
+        blob["eventId"] = json!(format!(
+            "${item}.{}.migration.{id}",
+            if kind == "contactIntent" { 1 } else { rev }
+        ));
+        let mut command = json!({"requestId":Uuid::new_v4(),"deviceId":device,"expectedRevision":entry["revision"],"sourceDigest":entry["sourceDigest"],"sealed":blob});
+        if item == mid {
+            command["encryptedAttachments"] = json!([{"index":0,"data":"bmV3LWNpcGhlcg=="}]);
+        }
+        let path = format!("/crypto/history-migrations/{id}/items/{kind}/{item}");
+        if item == mid {
+            tokio::fs::write(
+                f.state.attachments.join(mid.to_string()).join("0"),
+                b"unexpected changed bytes",
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                api.call(ha, Method::PUT, &path, command.clone()).await.0,
+                409
+            );
+            tokio::fs::write(
+                f.state.attachments.join(mid.to_string()).join("0"),
+                b"old-bytes",
+            )
+            .await
+            .unwrap();
+        }
+        let converted = api.ok(ha, Method::PUT, &path, command.clone()).await;
+        assert_eq!(
+            api.ok(ha, Method::PUT, &path, command.clone()).await,
+            converted
+        );
+        assert_eq!(
+            converted["record"]["historyMigration"]["actorId"],
+            a.to_string()
+        );
+        assert_eq!(converted["record"]["revision"], entry["revision"]);
+        if item == mid {
+            assert_eq!(converted["record"]["senderId"], b.to_string());
+            assert_eq!(converted["record"]["position"], original["position"]);
+        }
+        command["sourceDigest"] = json!("0".repeat(64));
+        assert_eq!(api.call(ha, Method::PUT, &path, command).await.0, 409);
+    }
+    assert_eq!(
+        tokio::fs::read(f.state.attachments.join(mid.to_string()).join("0"))
+            .await
+            .unwrap(),
+        b"old-bytes"
+    );
+    let response = Client::new()
+        .get(format!(
+            "{}/api/chat/messages/{mid}/attachments/0?revision=4",
+            api.url
+        ))
+        .headers(ha.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.bytes().await.unwrap().as_ref(), b"new-cipher");
+    let done = api
+        .ok(
+            ha,
+            Method::POST,
+            &format!("/crypto/history-migrations/{id}/finish"),
+            finish.clone(),
+        )
+        .await;
+    assert_eq!(done["state"], "complete");
+    assert_eq!(
+        api.ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migrations?conversationId={cid}"),
+            Value::Null
+        )
+        .await["migration"]["state"],
+        "complete"
+    );
+
+    assert_eq!(
+        api.ok(
+            ha,
+            Method::POST,
+            &format!("/crypto/history-migrations/{id}/finish"),
+            finish
+        )
+        .await["state"],
+        "complete"
+    );
+    let init = api.ok(ha, Method::GET, "/chat/init", Value::Null).await;
+    let conv = init["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == cid.to_string())
+        .unwrap();
+    assert_eq!(conv["encryption"]["historyComplete"], true);
+    assert_eq!(conv["encryption"]["activationPosition"], "0");
+    assert_eq!(conv["readOnly"], true);
+    assert_eq!(conv["readPosition"], original["position"]);
+    let sources: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM cloud_reference_sources WHERE source_id=$1 AND source_revision=4",
+    )
+    .bind(mid)
+    .fetch_one(&f.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(sources, 1);
+    let tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cloud_node_tasks WHERE conversation=$1")
+            .bind(cid)
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(tasks, 0);
+    drop(api);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn forced_encryption_rejects_plain_paths_and_reports_requirement() {
+    let Some(mut f) = Fixture::new().await else {
+        return;
+    };
+    Arc::get_mut(&mut f.state).unwrap().require_encryption = true;
+    let api = Api::new(&f).await;
+    let (a, h) = &f.users[0];
+    let cid = conversation(&f, *a, f.users[1].0).await;
+    assert_eq!(
+        api.ok(h, Method::GET, "/chat/init", Value::Null).await["requireEncryption"],
+        true
+    );
+    assert_eq!(
+        api.call(
+            h,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+            json!({"requestId":Uuid::new_v4(),"text":"plain"})
+        )
+        .await
+        .0,
+        409
+    );
+    assert_eq!(
+        api.call(
+            h,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/contact-intents"),
+            json!({"requestId":Uuid::new_v4(),"content":"plain"})
+        )
+        .await
+        .0,
+        409
+    );
+    assert_eq!(
+        api.call(h, Method::POST, "/migration/import", json!({}))
+            .await
+            .0,
+        409
+    );
+    drop(api);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn history_migration_freezes_content_but_allows_revocation_and_repreview() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let api = Api::new(&f).await;
+    let (a, ha) = &f.users[0];
+    let (_, hb) = &f.users[1];
+    let device = registered(&api, ha, *a).await;
+    let group=api.ok(ha,Method::POST,"/chat/groups",json!({"requestId":Uuid::new_v4(),"name":"migration conflict","memberIds":[f.users[1].0]})).await;
+    let cid: Uuid = serde_json::from_value(group["id"].clone()).unwrap();
+    let message = api
+        .ok(
+            ha,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+            json!({"requestId":Uuid::new_v4(),"text":"original"}),
+        )
+        .await;
+    let mid: Uuid = serde_json::from_value(message["id"].clone()).unwrap();
+    assert_eq!(
+        api.call(
+            hb,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid})
+        )
+        .await
+        .0,
+        403
+    );
+    let preview = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid}),
+        )
+        .await;
+    let mut request = json!({"requestId":Uuid::new_v4(),"deviceId":device,"conversationId":cid,"expectedConversationRevision":preview["conversationRevision"],"sourceDigest":preview["sourceDigest"],"backupDigest":"a".repeat(64),"recoveryDigest":"b".repeat(64),"localPendingResolved":true});
+    let first = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations",
+            request.clone(),
+        )
+        .await;
+    let old_id = first["id"].as_str().unwrap();
+    assert_eq!(
+        api.call(
+            ha,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+            json!({"requestId":Uuid::new_v4(),"text":"must not send"})
+        )
+        .await
+        .0,
+        409
+    );
+    api.ok(
+        ha,
+        Method::POST,
+        &format!("/chat/groups/{cid}/members"),
+        json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","accountId":f.users[2].0}),
+    )
+    .await;
+    assert_eq!(
+        api.ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migrations/{old_id}"),
+            Value::Null
+        )
+        .await["state"],
+        "conflicted"
+    );
+    let preview = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid}),
+        )
+        .await;
+    request["requestId"] = json!(Uuid::new_v4());
+    request["expectedConversationRevision"] = preview["conversationRevision"].clone();
+    request["sourceDigest"] = preview["sourceDigest"].clone();
+    let next = api
+        .ok(ha, Method::POST, "/crypto/history-migrations", request)
+        .await;
+    let id: Uuid = serde_json::from_value(next["id"].clone()).unwrap();
+    assert_ne!(next["id"], first["id"]);
+    let list = api
+        .ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migrations/{id}/items"),
+            Value::Null,
+        )
+        .await;
+    let entry = &list["items"][0];
+    let mut blob = sealed(*a, &device, cid, mid, 1);
+    blob["eventId"] = json!(format!("${mid}.1.migration.{id}"));
+    api.ok(ha,Method::PUT,&format!("/crypto/history-migrations/{id}/items/message/{mid}"),json!({"requestId":Uuid::new_v4(),"deviceId":device,"expectedRevision":"1","sourceDigest":entry["sourceDigest"],"sealed":blob})).await;
+    api.ok(
+        ha,
+        Method::POST,
+        &format!("/crypto/history-migrations/{id}/finish"),
+        json!({"requestId":Uuid::new_v4(),"deviceId":device,"verificationDigest":"c".repeat(64)}),
+    )
+    .await;
+    let edited=api.ok(ha,Method::PATCH,&format!("/chat/messages/{mid}"),json!({"requestId":Uuid::new_v4(),"text":"","expectedRevision":"1","expectedConversationRevision":"2","sealed":sealed(*a,&device,cid,mid,2)})).await;
+    assert!(edited["historyMigration"].is_null());
+    assert_eq!(edited["revision"], "2");
+    sqlx::query("UPDATE cloud_conversations SET read_only=true WHERE id=$1")
+        .bind(cid)
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        api.call(
+            hb,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid})
+        )
+        .await
+        .0,
+        403
+    );
+    drop(api);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn migrated_materials_require_node_history_capability() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let api = Api::new(&f).await;
+    let human = f.users[0].0;
+    let ai = Uuid::new_v4();
+    let node = Uuid::new_v4();
+    let token = "d".repeat(64);
+    sqlx::query("INSERT INTO accounts(id,name,kind) VALUES($1,'old node AI','ai')")
+        .bind(ai)
+        .execute(&f.state.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO cloud_ai_bindings(ai_id,version,node_id,token_hash,capabilities) VALUES($1,1,$2,$3,'[\"sealedV1\"]')").bind(ai).bind(node).bind(format!("{:x}",Sha256::digest(token.as_bytes()))).execute(&f.state.pool).await.unwrap();
+    let cid = conversation(&f, human, ai).await;
+    let mid = Uuid::new_v4();
+    let migration = Uuid::new_v4();
+    let device = Uuid::new_v4().to_string();
+    sqlx::query("UPDATE cloud_conversations SET crypto_enabled=true,crypto_history_complete=true WHERE id=$1").bind(cid).execute(&f.state.pool).await.unwrap();
+    sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body,sealed,history_migration) VALUES($1,$2,$3,'',$4,$5)").bind(mid).bind(cid).bind(human).bind(sealed(human,&device,cid,mid,1)).bind(json!({"id":migration,"actorId":human,"sourceDigest":"a".repeat(64)})).execute(&f.state.pool).await.unwrap();
+    let tid = Uuid::new_v4();
+    sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at,trigger) VALUES($1,$2,$3,$4,1,1,now()+interval '1 hour',$5)").bind(tid).bind(ai).bind(cid).bind(mid).bind(json!({"type":"message","messageId":mid,"inputIds":[mid]})).execute(&f.state.pool).await.unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+    let path = format!("/node/tasks/{tid}/materials");
+    let rejected = api.call(&headers, Method::GET, &path, Value::Null).await;
+    assert_eq!(rejected.0, 409);
+    assert_eq!(rejected.1["code"], "history_migration_unsupported");
+    sqlx::query("UPDATE cloud_ai_bindings SET capabilities='[\"sealedV1\",\"historyMigrationV1\"]' WHERE ai_id=$1").bind(ai).execute(&f.state.pool).await.unwrap();
+    let materials = api.ok(&headers, Method::GET, &path, Value::Null).await;
+    assert_eq!(
+        materials["messages"][0]["historyMigration"]["id"],
+        migration.to_string()
+    );
+    drop(api);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn history_commit_receipts_survive_device_recovery_and_recheck_current_authority() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let api = Api::new(&f).await;
+    let (a, ha) = &f.users[0];
+    let (b, hb) = &f.users[1];
+    let device = registered(&api, ha, *a).await;
+    let group = api
+        .ok(
+            ha,
+            Method::POST,
+            "/chat/groups",
+            json!({"requestId":Uuid::new_v4(),"name":"receipt recovery","memberIds":[b]}),
+        )
+        .await;
+    let cid: Uuid = serde_json::from_value(group["id"].clone()).unwrap();
+    let original = api
+        .ok(
+            ha,
+            Method::POST,
+            &format!("/chat/conversations/{cid}/messages"),
+            json!({"requestId":Uuid::new_v4(),"text":"old receipt source"}),
+        )
+        .await;
+    let mid: Uuid = serde_json::from_value(original["id"].clone()).unwrap();
+    let preview = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid}),
+        )
+        .await;
+    let begin = json!({"requestId":Uuid::new_v4(),"deviceId":device,"conversationId":cid,"expectedConversationRevision":preview["conversationRevision"],"sourceDigest":preview["sourceDigest"],"backupDigest":"a".repeat(64),"recoveryDigest":"b".repeat(64),"localPendingResolved":true});
+    let started = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations",
+            begin.clone(),
+        )
+        .await;
+    let id: Uuid = serde_json::from_value(started["id"].clone()).unwrap();
+    let entries = api
+        .ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migrations/{id}/items"),
+            Value::Null,
+        )
+        .await;
+    let mut blob = sealed(*a, &device, cid, mid, 1);
+    blob["eventId"] = json!(format!("${mid}.1.migration.{id}"));
+    let conversion = json!({"requestId":Uuid::new_v4(),"deviceId":device,"expectedRevision":"1","sourceDigest":entries["items"][0]["sourceDigest"],"sealed":blob});
+    let item_path = format!("/crypto/history-migrations/{id}/items/message/{mid}");
+    api.ok(ha, Method::PUT, &item_path, conversion.clone())
+        .await;
+    api.ok(
+        ha,
+        Method::POST,
+        &format!("/crypto/devices/{device}/revoke"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        api.call(ha, Method::PUT, &item_path, conversion.clone())
+            .await
+            .0,
+        403
+    );
+    for (operation, command) in [
+        ("begin".to_owned(), begin.clone()),
+        (format!("{id}:message:{mid}"), conversion),
+    ] {
+        let path = format!(
+            "/crypto/history-migration-receipts/{}",
+            command["requestId"].as_str().unwrap()
+        );
+        let response = api.ok(ha, Method::GET, &path, Value::Null).await;
+        let fingerprint = format!(
+            "{:x}",
+            Sha256::digest(json!([operation, command]).to_string().as_bytes())
+        );
+        assert_eq!(response["receipt"]["fingerprint"], fingerprint);
+        assert_eq!(response["receipt"]["migration"]["id"], id.to_string());
+        assert!(api.ok(hb, Method::GET, &path, Value::Null).await["receipt"].is_null());
+    }
+    assert!(
+        api.ok(
+            ha,
+            Method::GET,
+            &format!("/crypto/history-migration-receipts/{}", Uuid::new_v4()),
+            Value::Null
+        )
+        .await["receipt"]
+            .is_null()
+    );
+    let recovered = registered(&api, ha, *a).await;
+    let finish = json!({"requestId":Uuid::new_v4(),"deviceId":recovered,"verificationDigest":"c".repeat(64)});
+    api.ok(
+        ha,
+        Method::POST,
+        &format!("/crypto/history-migrations/{id}/finish"),
+        finish.clone(),
+    )
+    .await;
+    let response = api
+        .ok(
+            ha,
+            Method::GET,
+            &format!(
+                "/crypto/history-migration-receipts/{}",
+                finish["requestId"].as_str().unwrap()
+            ),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(
+        response["receipt"]["fingerprint"],
+        format!(
+            "{:x}",
+            Sha256::digest(
+                json!([format!("finish:{id}"), finish])
+                    .to_string()
+                    .as_bytes()
+            )
+        )
+    );
+    assert_eq!(response["receipt"]["migration"]["state"], "complete");
+    let preview = api
+        .ok(
+            ha,
+            Method::POST,
+            "/crypto/history-migrations/preview",
+            json!({"conversationId":cid}),
+        )
+        .await;
+    let next = json!({"requestId":Uuid::new_v4(),"deviceId":recovered,"conversationId":cid,"expectedConversationRevision":preview["conversationRevision"],"sourceDigest":preview["sourceDigest"],"backupDigest":"a".repeat(64),"recoveryDigest":"b".repeat(64),"localPendingResolved":true});
+    api.ok(ha, Method::POST, "/crypto/history-migrations", next.clone())
+        .await;
+    api.ok(ha,Method::PUT,&format!("/chat/groups/{cid}"),json!({"requestId":Uuid::new_v4(),"expectedRevision":"1","name":"membership revision changed"})).await;
+    let path = format!(
+        "/crypto/history-migration-receipts/{}",
+        next["requestId"].as_str().unwrap()
+    );
+    assert_eq!(
+        api.ok(ha, Method::GET, &path, Value::Null).await["receipt"]["migration"]["state"],
+        "conflicted"
+    );
+    api.ok(
+        ha,
+        Method::POST,
+        &format!("/chat/groups/{cid}/owner"),
+        json!({"requestId":Uuid::new_v4(),"expectedRevision":"2","accountId":b}),
+    )
+    .await;
+    assert_eq!(api.call(ha, Method::GET, &path, Value::Null).await.0, 403);
+    assert!(api.ok(hb, Method::GET, &path, Value::Null).await["receipt"].is_null());
+    api.ok(
+        hb,
+        Method::DELETE,
+        &format!("/chat/groups/{cid}/members/{a}"),
+        json!({"requestId":Uuid::new_v4(),"expectedRevision":"3"}),
+    )
+    .await;
+    assert_eq!(api.call(ha, Method::GET, &path, Value::Null).await.0, 403);
+    drop(api);
+    f.close().await;
+}

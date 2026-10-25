@@ -56,6 +56,8 @@ keysUpload、keysQuery、keysClaim、signatures、signingKeys 的 body 为标准
 
 同机发送的 `keyMessages` 和返回 DirectView 中的同名字段，携带官方 Olm to-device 请求 `{event_type,txn_id,messages}`。本机 Agent 从已授权的真人身份派生 sender，客户端从已绑定 AI 身份派生 sender，两端只读取自己的收件设备，并先由 SDK 处理密钥包，再解开正文。原请求持久保存，联网后沿用原 txn/request ID；本机密钥投递记录不依赖云端回执存活。断网前必须已核验设备并建立 Olm 会话，缺少这一准备时明确提示联网，不改走明文。
 
+本机密钥投递没有云端 OTK 库存和 fallback 状态，缺失信息必须保持“未知”，不能当作库存为 0。Web 用官方 `receiveSyncChangesMsc4186`、Agent 用 `receive_sync_changes_msc4186` 处理本机事件，空计数保持未知，fallback 状态不提供，且不推进云端游标。真实云端 sync 仍使用服务器实际计数，明确返回 0 时 SDK 必须照常补库；不能为了避免本机重复补库而忽略真实的 0 或关闭上传。否则反复处理本机密钥包可能不断生成新 OTK，使服务器残留无法与设备私钥匹配的旧公钥，影响后续设备建立 Olm 会话。
+
 ## 群历史、附件与接续
 
 群成员仍共享完整群历史。已持有历史密钥的授权端，经 Olm 向当前群成员的可信设备分享该群的历史钥。内部事件为 `com.llmn.group-history.v1`，内容是 `{conversationId,revision,keys}`；外层始终是 `m.room.encrypted`。投递请求另带 `llmn_purpose:"conversationHistory"`、`llmn_conversation_id`、`llmn_expected_revision`，服务器在首次投递和重放时均核对双方当前成员身份与群版本。接收端只接受经过 SDK 验证的 Olm 事件，并在导入前检查当前权限、版本及每份密钥所属的房间。不能把 AI 的恢复秘密、其他窗口或角色资料密钥混入群历史。

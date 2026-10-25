@@ -1041,7 +1041,7 @@ export function Workspace(p: Props) {
                       onClick={() => conversation.peer ? openContact(conversation.peer) : setDetails(true)}
                     >
                       <Avatar contact={avatar({ name: conversation.name })} />
-                      <span>
+                      <span className="cloud-chat-title">
                         <strong title={conversation.name}>{conversation.name}</strong>
                         <small className="cloud-chat-subtitle">
                           <span>{p.localSelected ? `同机私聊 · ${localConnectionLabel(p.localChat)}` : conversation.kind === "group" ? `群聊 · ${conversation.members.length} 位成员` : conversation.peer?.kind === "ai" ? "AI · 长期私聊" : "长期私聊"}</span>
@@ -1049,6 +1049,7 @@ export function Workspace(p: Props) {
                         </small>
                       </span>
                     </button>
+                    <span className="cloud-chat-drag-spacer" aria-hidden="true" data-tauri-drag-region={CUSTOM_WINDOW_CHROME || undefined} />
                     {p.localChat?.running && <button className="cloud-chat-stop" aria-label="停止本机回复" data-tauri-drag-region="false" onClick={() => void p.act(p.stopLocal!)}><Square aria-hidden="true" /><span>停止</span></button>}
                     <IconButton
                       label="聊天详情"

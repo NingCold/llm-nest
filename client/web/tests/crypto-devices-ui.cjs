@@ -6,11 +6,11 @@ const React = require('react');
 const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/Devices.tsx'), 'utf8'), {compilerOptions: {jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
 const device = {deviceId:'local', trusted:true, master:'master', fingerprint:'ed', curve:'curve', hasRecoverySecrets:true};
 const other = {deviceId:'other', name:'Other device', fingerprint:'other-ed', curve:'other-curve', master:'other-master', trusted:false};
-function harness(status, saved, known = !!status) {
+function harness(status, saved, known = !!status, desktop = false) {
   const values = [status, false, '', false, 'human', [], null, false, false, '', '', '', null, false, 0];
   let cursor = 0;
   const exports = {};
-  vm.runInNewContext(source, {exports, window:{}, require:name => name === 'react' ? {...React, useEffect(){}, useState(initial){ const i=cursor++; if (values[i] === undefined) values[i]=initial; return [values[i], value => {values[i]=typeof value==='function'?value(values[i]):value;}]; }} : name === './engine' ? {hasCryptoDevice:()=>known, recoveryConfirmed:()=>saved} : name.endsWith('.css') || name === '../api' ? {} : require(name)});
+  vm.runInNewContext(source, {exports, window:{}, require:name => name === 'react' ? {...React, useEffect(){}, useState(initial){ const i=cursor++; if (values[i] === undefined) values[i]=initial; return [values[i], value => {values[i]=typeof value==='function'?value(values[i]):value;}]; }} : name === '@/lib/desktop' ? {CUSTOM_WINDOW_CHROME:desktop} : name === './engine' ? {hasCryptoDevice:()=>known, recoveryConfirmed:()=>saved} : name.endsWith('.css') || name === '../api' ? {} : require(name)});
   return {values, render(){cursor=0; return exports.CryptoDevices({accountId:'human'});}};
 }
 function nodes(tree) { if (!tree || typeof tree !== 'object') return []; return [tree, ...React.Children.toArray(tree.props?.children).flatMap(nodes)]; }
@@ -48,6 +48,13 @@ assert.ok(headings(setup).indexOf('建立加密身份') < headings(setup).indexO
 const recoveryOrder=headings(recovery.render());
 assert.ok(recoveryOrder.indexOf('恢复文件') < recoveryOrder.indexOf('本机设备'), 'unfinished recovery precedes device details in DOM and keyboard order');
 assert.ok(headings(complete).indexOf('本机设备') < headings(complete).indexOf('恢复文件'), 'ready state keeps everyday device controls first');
+for (const [status, saved, known] of [[null,false,false],[null,true,true],[device,true,true]]) {
+  const tree=harness(status,saved,known,true).render();
+  const header=nodes(tree).find(node=>node.type==='header');
+  assert.equal(header.props['data-tauri-drag-region'],'deep','every device state exposes the native header drag and double-click region');
+  assert.deepEqual(nodes(tree).filter(node=>node.props?.['data-tauri-drag-region']).map(node=>node.type),['header'],'fingerprints, recovery controls and fields remain outside all drag regions');
+}
+assert.ok(!nodes(complete).some(node=>node.props?.['data-tauri-drag-region']),'web device pages do not expose native drag regions');
 console.log('PASS: crypto device setup, compact ready state, recovery confirmation and independent three-fingerprint trust');
 if (process.argv[2]) {
   const path = require('node:path');

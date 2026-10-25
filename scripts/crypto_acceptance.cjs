@@ -163,6 +163,7 @@ async function agentFlow(human, other) {
   const agent = path.join(root, 'target/debug', process.platform === 'win32' ? 'llmn-agent.exe' : 'llmn-agent');
   const agentEnv = { ...env, LLMN_E2EE_TEST_KEY: 'mock-provider-only' };
   const modelInputs = [];
+  let cloudReplyHold;
   modelServer = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const input = JSON.parse(Buffer.concat(chunks));
@@ -172,6 +173,7 @@ async function agentFlow(human, other) {
     const emit = data => res.write(`data: ${JSON.stringify({ id: 'fixture', ...data })}\n\n`);
     const isSummary = input.messages[0].content.includes('你负责生成窗口分段摘要');
     emit({ choices: [{ index: 0, delta: { content: isSummary ? '加密窗口摘要' : '节点密文' }, finish_reason: null }] });
+    if (cloudReplyHold) await cloudReplyHold;
     await sleep(700);
     emit({ choices: [{ index: 0, delta: { content: `回复-${modelInputs.length}` }, finish_reason: null }] });
     emit({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 } });
@@ -362,7 +364,20 @@ max_tokens = 512
   assert.equal(sql(`SELECT count(*) FROM cloud_messages WHERE id='${localId}'`), '1');
   assert.equal(sql(`SELECT count(*) FROM cloud_node_tasks WHERE input_id='${localId}'`), '0');
   phase = 'encrypted window summary';
-  for (let i = 0; i < 11; i++) await send(`摘要原文-${i}`);
+  let releaseCloudReply;
+  cloudReplyHold = new Promise(resolve => { releaseCloudReply = resolve; });
+  const overlappingCloudSend = send('摘要原文-0');
+  try {
+    await waitFor(async () => sql(`SELECT count(*) FROM cloud_node_tasks WHERE conversation='${cid}' AND state='running'`), count => count === '1', 'ordinary cloud task overlaps local cache');
+    await waitFor(() => rpc({ type: 'view', conversationId: cid }), view => {
+      assert.notEqual(view.syncState, 'conflict', 'a running cloud task must not permanently conflict a fully synced local cache');
+      return view.error?.includes('云端正在回复');
+    }, 'local cache waits for cloud task');
+  } finally { releaseCloudReply(); cloudReplyHold = undefined; }
+  const remoteInput = await overlappingCloudSend;
+  await waitFor(() => rpc({ type: 'view', conversationId: cid }), view => view.syncState === 'synced' && !view.error && view.messages.some(m => m.message.id === remoteInput), 'local cache automatically refreshes completed cloud history');
+  assert.equal(modelInputs.length, 4, 'refreshing the local cache must not invoke the model again');
+  for (let i = 1; i < 11; i++) await send(`摘要原文-${i}`);
   const settingsId = randomUUID();
   await resource('summarySettings', cid, settingsId, '0', { revision: '1', enabled: true, binding: { providerId: 'fixture', modelId: 'fixture', reasoningEffort: null, maxTokens: 256 } });
   const summary = (await waitFor(() => resourceList('summary', cid), page => page.items.some(item => item.sealed), 'encrypted summary publication')).items.find(item => item.sealed);
@@ -494,13 +509,18 @@ async function main() {
   phase = 'recovery';
   const plain = sdk.Attachment.decrypt(new sdk.EncryptedAttachment(Buffer.from(recovered.ciphertext, 'base64'), media));
   await untrusted.machine.importSecretsBundle(sdk.SecretsBundle.from_json(JSON.parse(Buffer.from(plain).toString())));
+  plain.fill(0);
+  const recoveredBackup = await untrusted.machine.getBackupKeys();
+  assert(recoveredBackup.decryptionKey, 'the new device must recover its own backup private key from SecretsBundle');
+  assert.equal(recoveredBackup.backupVersion, version, 'the recovered backup version must match the published backup');
+  assert.equal(recoveredBackup.decryptionKey.megolmV1PublicKey.publicKeyBase64, auth_data.public_key, 'the recovered private key must match the published backup identity');
   const keys = await http(untrusted, '/crypto/backup/keys'), restored = new Map();
   for (const [room, data] of Object.entries(keys.rooms)) {
     const sessions = new Map();
-    for (const [id, record] of Object.entries(data.sessions)) sessions.set(id, JSON.parse(backupKey.decryptV1(record.session_data.ephemeral, record.session_data.mac, record.session_data.ciphertext)));
+    for (const [id, record] of Object.entries(data.sessions)) sessions.set(id, JSON.parse(recoveredBackup.decryptionKey.decryptV1(record.session_data.ephemeral, record.session_data.mac, record.session_data.ciphertext)));
     restored.set(new sdk.RoomId(room), sessions);
   }
-  await untrusted.machine.importBackedUpRoomKeys(restored, () => {}, version);
+  await untrusted.machine.importBackedUpRoomKeys(restored, () => {}, recoveredBackup.backupVersion);
   await query(untrusted, [a.account, b.account]);
   const knownSender = await untrusted.machine.getDevice(new sdk.UserId(userId(a.account)), new sdk.DeviceId(a.device));
   assert(knownSender, 'restored SDK must have the original sender device');

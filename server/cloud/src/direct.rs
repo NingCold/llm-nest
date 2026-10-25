@@ -61,9 +61,14 @@ async fn permitted(tx: &mut Tx<'_>, a: &Access, idle: bool) -> Result<()> {
     }
     if idle {
         crate::participation::ensure(tx, a.cid).await?;
-        let blocked:bool=sqlx::query_scalar("SELECT paused OR $2=ANY(paused_ai) OR EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state IN ('queued','running','uncertain')) FROM cloud_participation WHERE conversation=$1").bind(a.cid).bind(a.ai).fetch_one(&mut **tx).await?;
-        if blocked {
+        let state=sqlx::query("SELECT paused OR $2=ANY(paused_ai) AS paused,EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state='uncertain') AS uncertain,EXISTS(SELECT 1 FROM cloud_node_tasks WHERE conversation=$1 AND state IN ('queued','running')) AS busy FROM cloud_participation WHERE conversation=$1").bind(a.cid).bind(a.ai).fetch_one(&mut **tx).await?;
+        if state.get::<bool, _>("paused") || state.get::<bool, _>("uncertain") {
             return Err(conflict());
+        }
+        if state.get::<bool, _>("busy") {
+            let mut error = AppError::conflict("窗口仍有云端任务，完成后再同步");
+            error.code = "conversation_busy";
+            return Err(error);
         }
     }
     Ok(())
@@ -628,6 +633,109 @@ mod tests {
                 },
             ],
         }
+    }
+    #[tokio::test]
+    async fn direct_prepare_waits_only_for_queued_or_running_cloud_tasks() {
+        let Some(f) = Fixture::new().await else {
+            return;
+        };
+        let (cid, ai, h, g) = setup(&f).await;
+        let input = Uuid::new_v4();
+        let task = Uuid::new_v4();
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body) VALUES($1,$2,$3,'remote input')").bind(input).bind(cid).bind(f.users[0].0).execute(&f.state.pool).await.unwrap();
+        sqlx::query("INSERT INTO cloud_node_tasks(id,ai_id,conversation,input_id,input_revision,binding_version,expires_at,conversation_revision) VALUES($1,$2,$3,$4,1,1,now()+interval '5 minutes',1)").bind(task).bind(ai).bind(cid).bind(input).execute(&f.state.pool).await.unwrap();
+        for state in ["queued", "running", "uncertain"] {
+            sqlx::query("UPDATE cloud_node_tasks SET state=$2 WHERE id=$1")
+                .bind(task)
+                .bind(state)
+                .execute(&f.state.pool)
+                .await
+                .unwrap();
+            let error = prepare(
+                State(f.state.clone()),
+                h.clone(),
+                Json(DirectPrepare {
+                    grant: g.token.clone(),
+                }),
+            )
+            .await
+            .err()
+            .unwrap();
+            assert_eq!(error.status.as_u16(), 409);
+            assert_eq!(
+                error.code,
+                if state == "uncertain" {
+                    "direct_conflict"
+                } else {
+                    "conversation_busy"
+                }
+            );
+        }
+        sqlx::query("UPDATE cloud_node_tasks SET state='completed' WHERE id=$1")
+            .bind(task)
+            .execute(&f.state.pool)
+            .await
+            .unwrap();
+        let answer = Uuid::new_v4();
+        sqlx::query("INSERT INTO cloud_messages(id,conversation,sender,body) VALUES($1,$2,$3,'remote answer')").bind(answer).bind(cid).bind(ai).execute(&f.state.pool).await.unwrap();
+        let refreshed = prepare(
+            State(f.state.clone()),
+            h.clone(),
+            Json(DirectPrepare {
+                grant: g.token.clone(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(refreshed.messages.len(), 2);
+        assert_eq!(refreshed.base.unwrap().message_id, answer.to_string());
+        for pause in ["paused=true", "paused=false,paused_ai=ARRAY[$2::uuid]"] {
+            let query = format!("UPDATE cloud_participation SET {pause} WHERE conversation=$1");
+            if pause.contains("$2") {
+                sqlx::query(&query)
+                    .bind(cid)
+                    .bind(ai)
+                    .execute(&f.state.pool)
+                    .await
+                    .unwrap();
+            } else {
+                sqlx::query(&query)
+                    .bind(cid)
+                    .execute(&f.state.pool)
+                    .await
+                    .unwrap();
+            }
+            let error = prepare(
+                State(f.state.clone()),
+                h.clone(),
+                Json(DirectPrepare {
+                    grant: g.token.clone(),
+                }),
+            )
+            .await
+            .err()
+            .unwrap();
+            assert_eq!(error.code, "direct_conflict");
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM cloud_node_tasks WHERE conversation=$1"
+            )
+            .bind(cid)
+            .fetch_one(&f.state.pool)
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM cloud_direct_runs")
+                .fetch_one(&f.state.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        f.close().await;
     }
     #[tokio::test]
     async fn direct_authorization_idempotency_withdraw_and_no_tasks() {

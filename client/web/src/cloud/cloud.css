@@ -351,8 +351,17 @@
   .cloud-compact-navigation { display: flex; flex-shrink: 0; gap: 4px; padding: 12px; overflow-x: auto; border-bottom: 1px solid var(--s-line); }
   .cloud-compact-navigation button { padding: 8px 10px; white-space: nowrap; border-radius: 8px; color: var(--s-muted); font-size: 12px; }
   .cloud-compact-navigation button:hover, .cloud-compact-navigation button[aria-current="page"] { color: var(--s-text); background: var(--s-hover); }
-  .desktop-chrome .cloud-compact-navigation { padding-top: 48px; }
-  .desktop-chrome .cloud-compact-navigation ~ .workspace-content .contact-header { padding: 12px 16px; }
+}
+/* The desktop window is at least 800px wide; keep its navigation beside the
+   shared header band instead of switching to the web's compact top navigation. */
+@media (min-width: 701px) {
+  .cloud-workspace.desktop-chrome .social-sidebar { display: flex; width: 288px; }
+  .cloud-workspace.desktop-chrome .social-workspace { display: flex; }
+  .cloud-workspace.desktop-chrome .cloud-compact-navigation,
+  .cloud-workspace.desktop-chrome .mobile-back { display: none; }
+  .cloud-workspace.desktop-chrome .conversation-heading .social-avatar { width: 42px; height: 42px; font-size: 18px; }
+  .cloud-workspace.desktop-chrome .social-error,
+  .cloud-workspace.desktop-chrome .cloud-notice { order: 1; }
 }
 @media (max-width: 640px) { .cloud-ai-form-grid { grid-template-columns: 1fr; } .cloud-ai-tabs button { padding: 8px; } }
 @media (max-width: 420px) {

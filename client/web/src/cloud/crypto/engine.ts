@@ -252,7 +252,8 @@ export async function receiveLocalKeys(sender: string, messages: Record<string, 
     const content = recipients?.[s.deviceId];
     return content ? [{ type: body.event_type, sender: matrixUser(sender), content }] : [];
   });
-  if (events.length) await s.machine.receiveSyncChanges(JSON.stringify(events), new s.sdk.DeviceLists([], []), new Map(), new Set(), new s.sdk.DecryptionSettings(s.sdk.TrustRequirement.CrossSigned));
+  // Local delivery has no server key counts; missing counts must remain unknown.
+  if (events.length) await s.machine.receiveSyncChangesMsc4186(JSON.stringify(events), new s.sdk.DeviceLists([], []), new Map(), undefined, new s.sdk.DecryptionSettings(s.sdk.TrustRequirement.CrossSigned));
   current(s);
 }
 export async function signEnvelope(base: Omit<SignedEnvelope, "deviceKeys" | "signatures">): Promise<SignedEnvelope> {

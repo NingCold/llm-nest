@@ -8,6 +8,7 @@ const fs = require("node:fs"),
 const root = path.resolve(__dirname, "../src"),
   cache = new Map();
 const location = { hash: "", search: "" };
+const desktop = { CUSTOM_WINDOW_CHROME: false, IS_DESKTOP: false };
 let confirmEnable = true;
 const ui = {
   theme: "light",
@@ -43,7 +44,7 @@ function load(name) {
       clearTimeout,
       require: (spec) => {
         if (spec === "@/lib/desktop")
-          return { CUSTOM_WINDOW_CHROME: false, IS_DESKTOP: false };
+          return desktop;
         if (spec === "@/store/ui") return { useUiStore: (fn) => fn(ui) };
         if (spec === "@/lib/utils")
           return { cn: (...args) => args.filter(Boolean).join(" ") };
@@ -320,6 +321,7 @@ console.log("PASS: cloud memory is member scoped and summaries are private per A
 const { ChatConnectionDetails } = load("cloud/ChatConnection");
 const aiDirect = { ...conversation, peer: ai1, name: "一个足够长的聊天名称用于确认标题保持单行省略", members: [{ account: me, role: "member" }, { account: ai1, role: "member" }] };
 const encryptedDirect = { ...aiDirect, encryption: { version: 1, activationPosition: "1", historyComplete: false } };
+const encryptedGroup = { ...group, encryption: encryptedDirect.encryption };
 const localChat = { ai: ai1, human: me, conversation: { id: conversation.id }, messages: [], hasMore: false, syncState: "synced", error: null, running: false };
 const connectionProps = { conversation: aiDirect, meId: me.id, hasPlaintextMessages: false, pending: false, act: fn => fn(), reconnect: asyncNoop, enableEncryption: asyncNoop, prepareLocal: asyncNoop, syncLocal: asyncNoop, closeLocal: asyncNoop, stopLocal: asyncNoop };
 const renderConnection = overrides => renderToStaticMarkup(React.createElement(ChatConnectionDetails, { ...connectionProps, ...overrides }));
@@ -340,7 +342,28 @@ assert.match(header, /同机私聊/);
 assert.match(header, /aria-label="停止本机回复"/);
 assert.match(header, /aria-label="聊天详情"/);
 assert.match(header, /aria-label="返回消息列表"/);
+assert.match(header, /class="social-avatar[^>]+>[^]*?<\/span><span class="cloud-chat-title">/);
 assert.doesNotMatch(header, /分享历史密钥|开启同机私聊|新成员或新设备|未迁移|返回云端发送/);
+desktop.CUSTOM_WINDOW_CHROME = true;
+const desktopHeader = render(encryptedProps).match(/<header class="conversation-header cloud-chat-header[^]*?<\/header>/)[0];
+assert.match(desktopHeader, /class="conversation-heading" data-tauri-drag-region="false"/);
+assert.match(desktopHeader, /class="cloud-chat-drag-spacer" aria-hidden="true" data-tauri-drag-region="true"/);
+assert.match(desktopHeader, /aria-label="聊天详情"[^>]*data-tauri-drag-region="false"/);
+const managedAi = { account: ai1, role: "initial", profileRevision: "1", bindingVersion: "1", statusRevision: "1", node: null };
+const { AiManagement } = load("cloud/AiManagement"), { AiDetails } = load("cloud/AiDetails");
+for (const [name, markup] of [
+  ["account profile", render({ tab: "account" })],
+  ["appearance settings", render({ tab: "settings" })],
+  ["AI management", renderToStaticMarkup(React.createElement(AiManagement, { operatorId: me.id, conversations: [], cursor: "1", back: noop, openDirect: asyncNoop, refresh: asyncNoop }))],
+  ["AI details", renderToStaticMarkup(React.createElement(AiDetails, { ai: managedAi, operatorId: me.id, conversations: [], cursor: "1", back: noop, changed: asyncNoop }))],
+]) {
+  assert.match(markup, /<header class="contact-header" data-tauri-drag-region="deep"/, `${name} retains a native blank header drag region`);
+  assert.match(markup, /<div class="contact-scroll">/, `${name} keeps its selectable content outside the header`);
+}
+assert.match(authRender({}), /<header class="auth-header" data-tauri-drag-region="deep"/);
+desktop.CUSTOM_WINDOW_CHROME = false;
+assert.doesNotMatch(render({ tab: "account" }), /data-tauri-drag-region="deep"/);
+assert.doesNotMatch(authRender({}), /data-tauri-drag-region="deep"/);
 html = render({ ...encryptedProps, localChat: { ...localChat, syncState: "conflict" } });
 assert.match(html, /云端同步冲突 · 本机记录已保留/);
 assert.match(html, /查看详情/);
@@ -353,10 +376,17 @@ assert.match(html, /设置加密/);
 html = renderConnection({ conversation: encryptedDirect, cryptoUnlocked: false });
 assert.match(html, /旧历史转换尚未确认完成/);
 assert.doesNotMatch(html, /含尚未转换的明文|旧记录尚未迁移/);
-assert.match(html, /<button[^>]*disabled[^>]*>分享历史密钥/);
+assert.doesNotMatch(html, /分享历史密钥|新成员或新设备|所有当前成员须先完成设备核验/);
+assert.match(html, /新设备请在“我的账号 → 可信设备与恢复”使用恢复文件或已有可信设备授权恢复/);
 html = renderConnection({ conversation: encryptedDirect, cryptoUnlocked: true, hasPlaintextMessages: true });
 assert.match(html, /当前已加载的消息中含尚未转换的明文记录/);
-assert.doesNotMatch(html, /<button[^>]*disabled[^>]*>分享历史密钥/);
+assert.doesNotMatch(html, /分享历史密钥|新成员或新设备/);
+html = renderConnection({ conversation: encryptedGroup, cryptoUnlocked: false });
+assert.match(html, /<button[^>]*disabled[^>]*>分享历史密钥/);
+assert.match(html, /新成员或新设备缺少历史密钥/);
+html = renderConnection({ conversation: encryptedGroup, cryptoUnlocked: true });
+assert.match(html, /<button(?![^>]*disabled)[^>]*>分享历史密钥/);
+assert.doesNotMatch(html, /新设备请在/);
 assert.match(renderConnection({ conversation: { ...encryptedDirect, encryption: { ...encryptedDirect.encryption, historyComplete: true } } }), /旧历史已转换/);
 assert.doesNotMatch(renderConnection({ conversation: { ...aiDirect, readOnly: true } }), />开启端到端加密<\/button>/);
 assert.doesNotMatch(renderConnection({ conversation: { ...group, members: group.members.map(m => ({ ...m, role: "member" })) } }), />开启端到端加密<\/button>/);

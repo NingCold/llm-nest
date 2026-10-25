@@ -20,6 +20,19 @@
 .desktop-frame-fallback[data-focused="false"] { border-color: #bcbcbc; }
 .dark .desktop-frame-fallback[data-focused="false"] { border-color: #4c4c4c; }
 
+:root { --desktop-header-height: 72px; --desktop-controls-width: 148px; }
+.desktop-window-controls {
+  position: fixed;
+  top: 0;
+  right: 8px;
+  z-index: 50;
+  height: var(--desktop-header-height);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  user-select: none;
+}
+
 html.desktop-starting, .desktop-starting body { background: transparent !important; transition: none; }
 .desktop-startup-surface { height: 100dvh; width: 100%; background: transparent; }
 .web-startup-surface { height: 100dvh; display: grid; place-items: center; background: var(--background); color: var(--muted-foreground); font-size: 13px; }

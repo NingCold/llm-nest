@@ -43,6 +43,7 @@ function fixture(relative, name, props, seeds={}, theme='light', desktop=false) 
       if (spec==='@/components/ui/dialog') return mockDialog;
       if (spec==='@/components/chat/MarkdownView') return {MarkdownView:({content})=>h('div',{className:'md'},content)};
       if (spec==='@tauri-apps/api/core') return {invoke:blocked};
+      if (spec==='@tauri-apps/api/window') return {getCurrentWindow:blocked};
       const resolved = spec.startsWith('@/') ? path.join(root,spec.slice(2)) : spec.startsWith('.') ? path.resolve(path.dirname(file),spec) : null;
       if (resolved) {
         const basename = path.basename(resolved);
@@ -129,7 +130,8 @@ for (const theme of ['light','dark']) for (const desktop of [false,true]) for (c
   const modal = ['ai-create','group-create'].includes(name);
   if (!full) markup=modal ? markup : `<main class="social-shell cloud-workspace ${desktop?'desktop-chrome':''}"><div class="fixture-content">${markup}</div></main>`;
   const filename=`${name}-${theme}-${desktop?'desktop':'web'}.html`;
-  fs.writeFileSync(path.join(out,filename),`<!doctype html><html class="${theme}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} · offline layout preview</title><style>${css}\nbody{margin:0;font-family:Arial,sans-serif;background:${theme==='dark'?'#181818':'#fff'}}.fixture-content{height:100%;max-width:880px;margin:auto;padding:24px;overflow:auto}.fixture-content>.contact-view{height:100%}body>.social-dialog{position:relative;transform:none;left:auto;top:auto;margin:24px auto;display:grid;gap:16px}@media(max-width:600px){.fixture-content{padding:18px 16px}}</style>${markup}</html>`);
+  const controls = desktop ? fixture('components/layout/WindowControls.tsx','WindowControls',{}, {},theme,true) : '';
+  fs.writeFileSync(path.join(out,filename),`<!doctype html><html class="${theme}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} · offline layout preview</title><style>${css}\nbody{margin:0;font-family:Arial,sans-serif;background:${theme==='dark'?'#181818':'#fff'}}.fixture-content{height:100%;max-width:880px;margin:auto;padding:24px;overflow:auto}.fixture-content>.contact-view{height:100%}body>.social-dialog{position:relative;transform:none;left:auto;top:auto;margin:24px auto;display:grid;gap:16px}@media(max-width:600px){.fixture-content{padding:18px 16px}}</style>${markup}${controls}</html>`);
   links.push(`<a href="${filename}">${name} · ${theme} · ${desktop?'desktop':'web'}</a>`);
 }
 fs.writeFileSync(path.join(out,'index.html'),`<!doctype html><meta charset="utf-8"><title>LLM Nest offline layout previews</title><style>body{font:14px/1.6 Arial;margin:32px}nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:8px}a{color:#3573c4}</style><h1>离线布局预览</h1><p>来自实际 React 组件，仅使用虚构资料。请在 390、800、1200、1440px 宽度检查。所有动作均不执行。</p><nav>${links.join('')}</nav>`);

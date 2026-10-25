@@ -18,6 +18,8 @@ function load(name) {
   const exports={}; cache.set(name,exports);
   vm.runInNewContext(output, { exports, location:{hash:''}, require:spec=> {
     if (spec==='@/lib/desktop') return {IS_DESKTOP:true,CUSTOM_WINDOW_CHROME:true};
+    if (spec==='@tauri-apps/api/core') return {invoke(){throw new Error('SSR must not invoke native commands');}};
+    if (spec==='@tauri-apps/api/window') return {getCurrentWindow(){throw new Error('SSR must not operate the native window');}};
     if (spec==='@/store/ui') return {useUiStore:Object.assign(fn=>fn(ui),{getState:()=>ui})};
     if (spec==='./live-store') return {useLiveSocialStore:selector=>selector?selector(state):state};
     if (spec==='./AccountPages') return {AccountDetails:()=>null,AccountViewer:()=>null,AiManagement:()=>null};
@@ -57,4 +59,9 @@ html=render();
 assert.match(html,/主导航/);
 assert.match(html,/记录持续保存/);
 assert.doesNotMatch(html,/social-titlebar|重试连接/);
+const WindowControls=load('components/layout/WindowControls').WindowControls;
+html=renderToStaticMarkup(React.createElement(WindowControls));
+assert.match(html,/class="desktop-window-controls" aria-label="窗口控制" data-tauri-drag-region="deep"/);
+for (const label of ['最小化窗口','最大化窗口','关闭窗口']) assert.match(html,new RegExp(`<button[^>]*aria-label="${label}"`));
+assert.equal((html.match(/data-tauri-drag-region/g)||[]).length,1,'native buttons retain their normal clickable exclusion inside the draggable gaps');
 console.log('PASS: blank desktop startup, visible initialization failure, retry after dismissed error, and connected titlebar-free social shell');

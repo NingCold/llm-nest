@@ -83,14 +83,15 @@ impl Device {
         Ok((response.next_batch, events))
     }
     /// Same-device transport for ordinary SDK Olm events. It never advances a
-    /// server mailbox cursor and retains the same strict sender verification.
+    /// server mailbox cursor or changes unknown key counts, and retains the same
+    /// strict sender verification.
     pub async fn receive_local_events(&self, events: Vec<serde_json::Value>) -> Result<()> {
         let events = events
             .into_iter()
             .map(|event| ruma::serde::Raw::new(&event).map(|raw| raw.cast_unchecked()))
             .collect::<Result<Vec<_>, _>>()?;
         self.machine
-            .receive_sync_changes(
+            .receive_sync_changes_msc4186(
                 matrix_sdk_crypto::EncryptionSyncChanges {
                     to_device_events: events,
                     changed_devices: &Default::default(),
@@ -266,6 +267,24 @@ mod tests {
         let (cursor,events) = device.receive_sync_events(serde_json::json!({"next_batch":"1","to_device":{"events":[{"sender":"@00000000-0000-4000-8000-000000000002:llmn","type":"com.llmn.group-history.v1","content":{"keys":[]}}]},"device_lists":{"changed":[],"left":[]},"device_one_time_keys_count":{}})).await.unwrap();
         assert_eq!(cursor, "1");
         assert!(events.is_empty());
+    }
+    #[tokio::test]
+    async fn local_delivery_preserves_unknown_key_counts_but_cloud_zero_replenishes() {
+        let temp = tempfile::tempdir().unwrap();
+        let device = Device::open(temp.path(), "fixture", "LOCAL", &[7; 32])
+            .await
+            .unwrap();
+        for request in device.outgoing().await.unwrap() {
+            if request.kind == "keysUpload" {
+                device.acknowledge(&request, serde_json::json!({"one_time_key_counts":{"signed_curve25519":100}})).await.unwrap();
+            }
+        }
+        for _ in 0..8 {
+            device.receive_local_events(vec![serde_json::json!({"sender":"@fixture:llmn","type":"m.dummy","content":{}})]).await.unwrap();
+            assert!(device.outgoing().await.unwrap().iter().all(|request| request.kind != "keysUpload"), "local delivery must not turn unknown server key counts into zero");
+        }
+        device.receive_sync(serde_json::json!({"next_batch":"1","to_device":{"events":[]},"device_lists":{"changed":[],"left":[]},"device_one_time_keys_count":{"signed_curve25519":0}})).await.unwrap();
+        assert!(device.outgoing().await.unwrap().iter().any(|request| request.kind == "keysUpload"));
     }
     #[tokio::test]
     async fn recovery_attachment_restores_secrets_and_rejects_tampering() {

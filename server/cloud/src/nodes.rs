@@ -762,9 +762,9 @@ async fn start(
     State(s): State<Arc<AppState>>,
     h: HeaderMap,
     Path(tid): Path<Uuid>,
-    Json(v): Json<connector::node::StartRequest>,
+    Json(request): Json<connector::node::StartRequest>,
 ) -> Result<Json<Value>> {
-    let v = serde_json::to_value(v).unwrap();
+    let v = serde_json::to_value(&request).unwrap();
     let rid = id(&v, "requestId")?;
     let fp = hash(&v.to_string());
     let config = field(&v, "configurationRevision")?;
@@ -844,10 +844,8 @@ async fn start(
         return Err(e);
     }
     let reference = crate::consciousness::task_reference(&mut tx, &r, false).await?;
-    let derived: Vec<connector::node::ScopedSource> =
-        serde_json::from_value(v["derivedSources"].clone()).unwrap();
-    let scopes: Vec<connector::node::MaterialScope> =
-        serde_json::from_value(v["materialScopes"].clone()).unwrap();
+    let derived = request.derived_sources;
+    let scopes = request.material_scopes;
     crate::consciousness::task_materials_valid(&mut tx, &r, &derived, &scopes, reference.as_ref())
         .await?;
     let used_reference = reference.filter(|reference| {
@@ -899,9 +897,9 @@ async fn result(
     State(s): State<Arc<AppState>>,
     h: HeaderMap,
     Path(tid): Path<Uuid>,
-    Json(v): Json<connector::node::ResultRequest>,
+    Json(request): Json<connector::node::ResultRequest>,
 ) -> Result<Json<Value>> {
-    let v = serde_json::to_value(v).unwrap();
+    let v = serde_json::to_value(&request).unwrap();
     let rid = id(&v, "requestId")?;
     let fp = hash(&v.to_string());
     let status = field(&v, "status")?;
@@ -935,8 +933,7 @@ async fn result(
         return Ok(Json(task_value(&r)));
     }
     check_sources(&mut tx, &r).await?;
-    let sealed: Option<connector::crypto::SealedEnvelope> =
-        serde_json::from_value(v["sealed"].clone()).unwrap();
+    let sealed = request.sealed;
     crate::crypto::content(
         &mut tx,
         r.get("conversation"),

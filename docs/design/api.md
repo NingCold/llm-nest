@@ -158,6 +158,8 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 
 同步请求携带固定 requestId、grant、conversationRevision、base、实际使用的 sources/derivedSources/materialScopes、configurationRevision，以及本轮稳定 UUID 的消息、终态、用量与错误。云端复核当前授权、绑定、来源、材料版本及末条历史，在同一事务保存消息、回执和事件。相同请求按指纹幂等；确认丢失时重交原请求，不能重开模型，也不能用旧回执恢复已撤回正文。权限、来源或历史变化产生冲突，节点保留本机记录供用户确认。
 
+授权准备及新批次同步完成当前权限核对后，若窗口仅有 queued/running 云端任务，返回 409 `conversation_busy`，表示暂时等待，不记为永久 `direct_conflict`。节点保留原请求及本机记录，继续正常轮询；云端任务结束后重新核对并刷新历史或同步原批次，不重调模型。暂停或 uncertain 仍为冲突，权限、绑定、来源、材料版本及历史变化继续按原规则拒绝；普通 409、未知响应和网络失败不能当作明确暂忙。已有同步回执的幂等重放沿用原权威边界，不借暂忙处理跳过新历史或清除真实冲突。
+
 同步回执的 `head` 是该回执最后一条消息的当前权威 `{messageId,revision,position}`，表示本批已接纳的边界。重放旧请求不能把其他设备后来发送、节点尚未读过的消息算成已同步；只有 prepare 的 `base` 取窗口真实末条。若回执丢失后云端已有新消息，原请求仍可幂等取得本批回执，但后续本机批次使用旧边界同步时应返回冲突，不能跳过新历史。
 
 桌面原生命令包括 `local_chat_prepare`、`local_chat_view`、`local_chat_send`、`local_chat_stop` 和 `local_chat_sync`，返回 `DirectView`。发送携带下文的固定消息标识、密文、附件及引用；原生层从当前登录会话选择真人及受限节点目录，不接受网页指定路径或操作者。`DirectView` 区分每条消息的 status/local/synced，并提供 running、syncState（pending/synced/conflict）、error 和 hasMore；本机顺序不冒充云端 position。网页每 500ms 刷新当前同机窗口。

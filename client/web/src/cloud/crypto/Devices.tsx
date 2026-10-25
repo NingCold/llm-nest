@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop";
 import { cryptoDevice, hasCryptoDevice, unlockCrypto, lockCrypto, deviceStatus, initializeIdentity, devices, trustDevice, authorizeDevice, acceptAuthorization, syncCrypto, createRecoveryFile, commitRecoveryFile, recoveryConfirmed, restoreRecoveryFile, type RecoveryFile } from "./engine";
 import { request } from "../api";
 import "./devices.css";
@@ -41,7 +42,7 @@ export function CryptoDevices({ accountId }: { accountId: string }) {
       <div className="crypto-actions">
       <button className="social-button secondary" disabled={busy} onClick={() => { lockCrypto(); setStatus(null); setListed([]); setRecovery(null); setCandidate(null); }}>锁定本机资料</button>
       <button className="social-button secondary" disabled={busy} onClick={() => void act(syncCrypto)}>检查授权与密钥更新</button></div></section>);
-  return <section className="contact-view crypto-devices"><header className="contact-header"><h2>可信设备与恢复</h2></header><div className="contact-scroll"><div className="profile-content crypto-devices-content">
+  return <section className="contact-view crypto-devices"><header className="contact-header" data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined}><h2>可信设备与恢复</h2></header><div className="contact-scroll"><div className="profile-content crypto-devices-content">
     <div className="crypto-overview"><span className="crypto-eyebrow">{ready ? "加密已就绪" : status ? "继续设置" : known && !newDevice ? "本机资料已锁定" : "首次设置"}</span><h3>{ready ? "本机设备已获可信授权" : locked ? "解锁本机资料" : "准备可信设备"}</h3><p role="status">{next}</p>{!ready && !locked && <ol className="crypto-steps" aria-label="首次设置进度"><li data-complete={!!status}>创建本机设备</li><li data-complete={!!status?.master}>建立加密身份</li><li data-complete={saved}>保存恢复文件</li></ol>}</div>
     {error && <p role="alert" className="social-error">{error}</p>}
     {!status ? <form className="cloud-form crypto-card crypto-current-step" onSubmit={e => { e.preventDefault(); const form = e.currentTarget; const passphrase = String(new FormData(form).get("passphrase")); void act(async () => { await unlockCrypto(accountId, passphrase, newDevice ? "new-device" : !known); form.reset(); setNewDevice(false); }); }}>

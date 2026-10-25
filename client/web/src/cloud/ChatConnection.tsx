@@ -38,8 +38,10 @@ export function ChatConnectionDetails(p: ChatConnectionProps & {
       {conversation.encryption ? <>
         <p>{p.cryptoUnlocked ? "新消息已启用端到端加密。" : "新消息已启用端到端加密；请先在“我的账号 → 可信设备与恢复”解锁此设备。"}</p>
         <p>{conversation.encryption.historyComplete ? "旧历史已转换。" : p.hasPlaintextMessages ? "当前已加载的消息中含尚未转换的明文记录。可在下方预览完整转换范围。" : "旧历史转换尚未确认完成；可在下方预览转换范围。"}</p>
-        <button className="social-button secondary" disabled={!p.cryptoUnlocked} onClick={() => void p.act(() => shareConversationHistory(conversation))}>分享历史密钥</button>
-        <p>新成员或新设备缺少历史密钥时，请由可读取历史的成员分享。{conversation.encryption.historyComplete ? "只发给当前已核验的成员设备，其他成员须先授权。" : "所有当前成员须先完成设备核验。"}</p>
+        {conversation.kind === "group" ? <>
+          <button className="social-button secondary" disabled={!p.cryptoUnlocked} onClick={() => void p.act(() => shareConversationHistory(conversation))}>分享历史密钥</button>
+          <p>新成员或新设备缺少历史密钥时，请由可读取历史的成员分享。{conversation.encryption.historyComplete ? "只发给当前已核验的成员设备，其他成员须先授权。" : "所有当前成员须先完成设备核验。"}</p>
+        </> : <p>新设备请在“我的账号 → 可信设备与恢复”使用恢复文件或已有可信设备授权恢复。</p>}
       </> : <>
         <p>{p.requireEncryption ? "服务器已要求加密，请先准备可信设备并开启此窗口加密，再发送新内容。" : "此窗口尚未开启端到端加密。"}</p>
         {canEnableEncryption && p.enableEncryption && <button className="social-button secondary" onClick={() => {

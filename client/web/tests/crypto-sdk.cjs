@@ -45,6 +45,11 @@ require('fake-indexeddb/auto');
   revokedReader.close();
   const key = sdk.BackupDecryptionKey.createRandomKey();
   await machine.saveBackupDecryptionKey(key, 'backup-version');
+  const backupPublic = key.megolmV1PublicKey.publicKeyBase64;
+  await machine.enableBackupV1(backupPublic, 'backup-version');
+  const backup = await machine.backupRoomKeys();
+  assert.ok(backup, 'the fixture must have actual encrypted room-key backup data');
+  const backupBody = JSON.parse(backup.body);
   const bundle = (await machine.exportSecretsBundle()).to_json();
   assert.ok(bundle);
   machine.close();
@@ -54,6 +59,61 @@ require('fake-indexeddb/auto');
   assert.equal((await reopened.getBackupKeys()).backupVersion, 'backup-version');
   assert.equal((await reopened.crossSigningStatus()).hasMaster, true);
   reopened.close();
+  key.free();
+  const recovery = {}, storage = new Map(), reads = [];
+  let recoveryCiphertext;
+  const api = { server: 'https://sdk-recovery.invalid', request: async (path, method, body) => {
+    reads.push(path);
+    if (path === '/crypto/recovery') return { version: 'recovery-version', ciphertext: recoveryCiphertext };
+    if (path === '/crypto/backup') return { version: 'backup-version', algorithm: 'm.megolm_backup.v1.curve25519-aes-sha2', auth_data: { public_key: backupPublic } };
+    if (path === '/crypto/backup/keys') return backupBody;
+    if (path === '/crypto/requests') { assert.equal(body.kind, 'signatures'); return {}; }
+    throw Error(`unexpected recovery request: ${path}`);
+  } };
+  const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/engine.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  vm.runInNewContext(source + '\nexports.seed = machine => { active = { sdk: testSdk, machine, account: testAccount, owner:ownerOf(testAccount), deviceId:machine.deviceId.toString(), cursor:"0" }; syncCrypto = async () => {}; };', {
+    exports: recovery, testSdk: sdk, testAccount: account, crypto: require('node:crypto').webcrypto, TextEncoder, TextDecoder, Uint8Array, Map, atob, btoa, Event,
+    window: { dispatchEvent() {} }, localStorage: { getItem: name => storage.get(name) ?? null, setItem: (name, value) => storage.set(name, value) },
+    require: name => name === '../api' ? api : name === './envelope' ? envelopes : name === './canonical' ? canonical : require(name),
+  });
+  const recoveryFile = data => {
+    const encrypted = sdk.Attachment.encrypt(new TextEncoder().encode(JSON.stringify(data)));
+    recoveryCiphertext = Buffer.from(encrypted.encryptedData).toString('base64');
+    return { format: 'llmn-recovery-v1', server: api.server, accountId: account, version: 'recovery-version', mediaEncryptionInfo: encrypted.mediaEncryptionInfo };
+  };
+  const restored = await sdk.OlmMachine.initialize(new sdk.UserId(uid), new sdk.DeviceId('independent-recovered-device'));
+  recovery.seed(restored);
+  assert.equal((await restored.getBackupKeys()).decryptionKey, undefined);
+  await assert.rejects(restored.decryptRoomEvent(event(after), room, permissive));
+  const file = recoveryFile(bundle);
+  await assert.rejects(recovery.restoreRecoveryFile({ ...file, accountId: 'another-account' }), /不属于/);
+  assert.equal(reads.length, 0, 'a wrong-account recovery file must fail before cloud access');
+  await recovery.restoreRecoveryFile(file);
+  const restoredBackup = await restored.getBackupKeys();
+  assert.equal(restoredBackup.backupVersion, 'backup-version');
+  assert.equal(restoredBackup.decryptionKey.megolmV1PublicKey.publicKeyBase64, backupPublic);
+  assert.equal(JSON.parse((await restored.decryptRoomEvent(event(after), room, permissive)).event).content.text, 'second offline message');
+  restored.close();
+  const incomplete = await sdk.OlmMachine.initialize(new sdk.UserId(uid), new sdk.DeviceId('incomplete-recovery-device'));
+  recovery.seed(incomplete);
+  const withoutBackup = structuredClone(bundle); delete withoutBackup.backup;
+  await assert.rejects(recovery.restoreRecoveryFile(recoveryFile(withoutBackup)), /缺少历史备份密钥/);
+  assert.equal((await incomplete.getBackupKeys()).decryptionKey, undefined);
+  await assert.rejects(incomplete.decryptRoomEvent(event(after), room, permissive));
+  incomplete.close();
+  const localReceiver = await sdk.OlmMachine.initialize(new sdk.UserId(uid), new sdk.DeviceId('local-key-receiver'));
+  recovery.seed(localReceiver);
+  for (const outgoing of await localReceiver.outgoingRequests()) {
+    if (outgoing.type === sdk.RequestType.KeysUpload) await localReceiver.markRequestAsSent(outgoing.id, outgoing.type, JSON.stringify({ one_time_key_counts: { signed_curve25519: 100 } }));
+  }
+  const localDelivery = [{ event_type: 'm.dummy', messages: { [uid]: { 'local-key-receiver': {} } } }];
+  for (let i = 0; i < 8; i++) {
+    await recovery.receiveLocalKeys(account, localDelivery);
+    assert.equal((await localReceiver.outgoingRequests()).filter(request => request.type === sdk.RequestType.KeysUpload).length, 0, 'replayed local deliveries have no server key counts and must not replenish healthy one-time or fallback keys');
+  }
+  await localReceiver.receiveSyncChanges('[]', new sdk.DeviceLists([], []), new Map([['signed_curve25519', 0]]), undefined);
+  assert.ok((await localReceiver.outgoingRequests()).some(request => request.type === sdk.RequestType.KeysUpload), 'a real cloud count of zero must still replenish one-time keys');
+  localReceiver.close();
   const original = new TextEncoder().encode(JSON.stringify({ master_key: 'synthetic-secret', backup: 'synthetic-backup' }));
   const encrypted = sdk.Attachment.encrypt(original);
   const info = encrypted.mediaEncryptionInfo;
@@ -61,5 +121,5 @@ require('fake-indexeddb/auto');
   assert.deepEqual(sdk.Attachment.decrypt(new sdk.EncryptedAttachment(encrypted.encryptedData, info)), original);
   const bad = encrypted.encryptedData; bad[0] ^= 1;
   assert.throws(() => sdk.Attachment.decrypt(new sdk.EncryptedAttachment(bad, info)), /hash|decrypt|mismatch/i);
-  console.log('PASS: official SDK persists encrypted device keys without silent reset, parses resource rooms and authenticates recovery attachment ciphertext');
+  console.log('PASS: official SDK persists device identity, rotates room keys, restores history using only a fresh device and downloaded recovery/backup, rejects missing backup keys and wrong-account files, and authenticates attachment ciphertext');
 })().catch(e => { console.error(e); process.exitCode = 1; });

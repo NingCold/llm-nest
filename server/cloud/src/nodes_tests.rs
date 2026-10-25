@@ -201,6 +201,68 @@ fn final_result(receipt: &Value, text: &str) -> Value {
 }
 
 #[tokio::test]
+async fn malformed_execution_payloads_preserve_task_budget_and_messages() {
+    async fn execution_state(pool: &sqlx::PgPool, cid: Uuid) -> Value {
+        sqlx::query_scalar("SELECT jsonb_build_object('tasks',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.id) FROM cloud_node_tasks t WHERE t.conversation=$1),'participation',(SELECT to_jsonb(p) FROM cloud_participation p WHERE p.conversation=$1),'daily',(SELECT jsonb_agg(to_jsonb(d) ORDER BY d.day) FROM cloud_participation_daily d WHERE d.conversation=$1),'messages',(SELECT jsonb_agg(to_jsonb(m) ORDER BY m.position) FROM cloud_messages m WHERE m.conversation=$1))")
+            .bind(cid)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ai = f.ai().await;
+    let aid = ai["account"]["id"].as_str().unwrap();
+    let (secret, _, _) = f.bind_ai(aid, "0").await;
+    let cid = f.conversation(aid).await;
+    f.send(&cid, "validate execution protocol boundaries").await;
+    let (task, start) = f.prepare(&secret).await;
+    let path = format!("/node/tasks/{}/start", task["id"].as_str().unwrap());
+    let cid: Uuid = cid.parse().unwrap();
+    let queued = execution_state(&f.state.pool, cid).await;
+    for field in ["derivedSources", "materialScopes"] {
+        for invalid in [json!({}), json!([{"conversationId":42}])] {
+            let mut malformed = start.clone();
+            malformed[field] = invalid;
+            assert_eq!(
+                f.node(&secret, Method::POST, &path)
+                    .json(&malformed)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "typed start extraction must reject invalid {field}"
+            );
+            assert_eq!(execution_state(&f.state.pool, cid).await, queued);
+        }
+    }
+    let receipt = value(f.node(&secret, Method::POST, &path).json(&start)).await;
+    let running = execution_state(&f.state.pool, cid).await;
+    let result_path = path.replace("/start", "/result");
+    let result = final_result(&receipt, "valid result after rejected payloads");
+    for invalid in [json!({"version":1}), json!("not an envelope")] {
+        let mut malformed = result.clone();
+        malformed["sealed"] = invalid;
+        let response = f
+            .node(&secret, Method::POST, &result_path)
+            .json(&malformed)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(execution_state(&f.state.pool, cid).await, running);
+    }
+    assert_eq!(
+        value(f.node(&secret, Method::POST, &result_path).json(&result)).await["status"],
+        "completed"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
 async fn pairing_authorization_and_idempotent_execution() {
     let Some(f) = Fixture::new().await else {
         return;

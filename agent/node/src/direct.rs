@@ -371,6 +371,14 @@ async fn validate_pending(store: &Store, client: &NodeClient, cid: &str, ai: &st
 pub async fn sync(store: &Store, client: &NodeClient, cid: &str) -> Result<()> {
     let result = sync_inner(store, client, cid).await;
     if let Err(error) = &result {
+        let busy = matches!(error.downcast_ref::<NodeError>(), Some(NodeError::Api { status: 409, body }) if serde_json::from_str::<serde_json::Value>(body).is_ok_and(|value| value["code"] == "conversation_busy"));
+        if busy {
+            store.db.execute(
+                "UPDATE direct_windows SET error='云端正在回复，完成后自动刷新本机历史' WHERE cid=?1",
+                [cid],
+            )?;
+            return Ok(());
+        }
         let transient = error.downcast_ref::<NodeError>().is_some_and(|e| match e {
             NodeError::Api { status, .. } => *status >= 500 || *status == 429,
             _ => true,
@@ -842,6 +850,177 @@ mod tests {
         cache(&store, &bootstrap.human.id, "grant", &bootstrap).unwrap();
         (store, bootstrap)
     }
+    #[tokio::test]
+    async fn cloud_busy_waits_then_refreshes_cache_but_real_conflicts_stay_blocked() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (store, mut previous) = fixture();
+        let cid = previous.conversation.id.clone();
+        for _ in 0..2 {
+            let request = crate::id();
+            send_message(
+                &store,
+                &previous.human.id,
+                &cid,
+                &request,
+                "old local input",
+                None,
+                &[],
+            )
+            .unwrap();
+            save(
+                &store,
+                &request,
+                "old local answer",
+                "committed",
+                &Execution::default(),
+                None,
+            )
+            .unwrap();
+            let (human, answer, _) = turn(&store, &request).unwrap();
+            previous.messages.extend([human, answer]);
+            store
+                .db
+                .execute(
+                    "UPDATE direct_turns SET synced=1 WHERE request=?1",
+                    [&request],
+                )
+                .unwrap();
+        }
+        for (index, message) in previous.messages.iter_mut().enumerate() {
+            message.position = (index + 1).to_string();
+        }
+        previous.base = Some(DirectHead {
+            message_id: previous.messages.last().unwrap().id.clone(),
+            revision: "1".into(),
+            position: "4".into(),
+        });
+        cache(&store, &previous.human.id, "grant", &previous).unwrap();
+        let old_turns: Vec<(String, String, String)> = store
+            .db
+            .prepare("SELECT request,human,answer FROM direct_turns ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let mut current = previous.clone();
+        for sender in [&current.human, &current.ai] {
+            let mut message = previous.messages[0].clone();
+            message.id = crate::id();
+            message.sender_id = sender.id.clone();
+            message.position = (current.messages.len() + 1).to_string();
+            message.text = "new cloud history".into();
+            current.messages.push(message);
+        }
+        current.base = Some(DirectHead {
+            message_id: current.messages.last().unwrap().id.clone(),
+            revision: "1".into(),
+            position: "6".into(),
+        });
+        let mut changed = current.clone();
+        changed.conversation.revision = "2".into();
+        let changes = json!({"cursor":"0","hasMore":false,"changes":[]});
+        let mut responses = vec![];
+        for (status, body) in [
+            (409, json!({"code":"conversation_busy"})),
+            (200, serde_json::to_value(&current).unwrap()),
+            (403, json!({"code":"forbidden"})),
+            (409, json!({"code":"direct_conflict"})),
+            (200, serde_json::to_value(&changed).unwrap()),
+        ] {
+            responses.push((200, changes.clone()));
+            responses.push((status, body));
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = NodeClient::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "fixture",
+            None,
+        )
+        .unwrap();
+        let server = tokio::spawn(async move {
+            for (index, (status, body)) in responses.into_iter().enumerate() {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = vec![0; 16384];
+                let size = socket.read(&mut bytes).await.unwrap();
+                let request = String::from_utf8_lossy(&bytes[..size]);
+                assert!(request.contains(if index % 2 == 0 {
+                    "/node/consciousness/changes"
+                } else {
+                    "/node/direct/prepare"
+                }));
+                let body = body.to_string();
+                socket.write_all(format!("HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        sync(&store, &api, &cid).await.unwrap();
+        let waiting = view(&store, &previous.human.id, &cid).unwrap();
+        assert_eq!(waiting.sync_state, "synced");
+        assert!(waiting.error.unwrap().contains("云端正在回复"));
+        for (ready, _, _) in windows(&store).unwrap() {
+            sync(&store, &api, &ready).await.unwrap();
+        }
+        let refreshed = view(&store, &previous.human.id, &cid).unwrap();
+        assert_eq!(refreshed.messages.len(), 6);
+        assert!(refreshed.error.is_none());
+        assert_eq!(refreshed.sync_state, "synced");
+        let retained: Vec<(String, String, String)> = store
+            .db
+            .prepare("SELECT request,human,answer FROM direct_turns ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(retained, old_turns);
+        assert_eq!(
+            store
+                .db
+                .query_row(
+                    "SELECT (SELECT count(*) FROM model_reservations)+(SELECT count(*) FROM tasks)",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        for _ in 0..2 {
+            assert!(sync(&store, &api, &cid).await.is_err());
+            assert_eq!(
+                view(&store, &previous.human.id, &cid).unwrap().sync_state,
+                "conflict"
+            );
+            assert!(windows(&store).unwrap().is_empty());
+            cache(&store, &previous.human.id, "grant", &current).unwrap();
+        }
+        let request = crate::id();
+        send_message(
+            &store,
+            &previous.human.id,
+            &cid,
+            &request,
+            "unsynced input",
+            None,
+            &[],
+        )
+        .unwrap();
+        assert!(sync(&store, &api, &cid).await.is_err());
+        assert!(unfinished(&store, &cid).unwrap());
+        assert_eq!(
+            view(&store, &previous.human.id, &cid).unwrap().sync_state,
+            "conflict"
+        );
+        assert!(windows(&store).unwrap().is_empty());
+        assert_eq!(
+            store
+                .db
+                .query_row("SELECT count(*) FROM direct_turns", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        server.await.unwrap();
+    }
     #[test]
     fn attachment_failure_rolls_back_turn_and_successful_retry_is_idempotent() {
         let (store, b) = fixture();
@@ -929,6 +1108,128 @@ mod tests {
             attachment(&store, cid, &message.id, "1", 0).unwrap(),
             b"abc"
         );
+    }
+    #[tokio::test]
+    async fn busy_preserves_frozen_pending_sync_and_conflict_never_replays_it() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (store, bootstrap) = fixture();
+        let cid = &bootstrap.conversation.id;
+        let request = crate::id();
+        send_message(
+            &store,
+            &bootstrap.human.id,
+            cid,
+            &request,
+            "pending input",
+            None,
+            &[],
+        )
+        .unwrap();
+        save(
+            &store,
+            &request,
+            "saved answer",
+            "committed",
+            &Execution::default(),
+            None,
+        )
+        .unwrap();
+        let (human, answer, _) = turn(&store, &request).unwrap();
+        let wire = |message: NodeMessage, run: Option<&str>| json!({"id":message.id,"senderId":message.sender_id,"text":message.text,"status":"committed","createdAt":message.created_at,"replyTo":message.reply_to,"runId":run,"usage":null,"error":null});
+        let frozen=json!({"requestId":crate::id(),"grant":"grant","conversationRevision":"1","base":null,"sources":[],"derivedSources":[],"materialScopes":[],"configurationRevision":"profile-1","messages":[wire(human,None),wire(answer,Some(&request))]}).to_string();
+        store
+            .db
+            .execute(
+                "UPDATE direct_windows SET sync_json=?2 WHERE cid=?1",
+                params![cid, frozen],
+            )
+            .unwrap();
+        let saved: (String, String, String, String, i64) = store
+            .db
+            .query_row(
+                "SELECT state,human,answer,payload,synced FROM direct_turns WHERE request=?1",
+                [&request],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = NodeClient::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "fixture",
+            None,
+        )
+        .unwrap();
+        let expected: serde_json::Value = serde_json::from_str(&frozen).unwrap();
+        let server = tokio::spawn(async move {
+            for code in ["conversation_busy", "direct_conflict"] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0; 4096];
+                    let size = socket.read(&mut chunk).await.unwrap();
+                    assert!(size > 0);
+                    bytes.extend_from_slice(&chunk[..size]);
+                    if let Some(offset) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&bytes[..offset]);
+                        assert!(header.contains("/node/direct/sync"));
+                        let length: usize = header
+                            .lines()
+                            .find_map(|line| {
+                                line.to_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .map(str::to_owned)
+                            })
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        if bytes.len() >= offset + 4 + length {
+                            assert_eq!(
+                                serde_json::from_slice::<serde_json::Value>(
+                                    &bytes[offset + 4..offset + 4 + length]
+                                )
+                                .unwrap(),
+                                expected
+                            );
+                            break;
+                        }
+                    }
+                }
+                let body = json!({"code":code}).to_string();
+                socket.write_all(format!("HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        sync(&store, &api, cid).await.unwrap();
+        assert_eq!(
+            view(&store, &bootstrap.human.id, cid).unwrap().sync_state,
+            "pending"
+        );
+        assert!(sync(&store, &api, cid).await.is_err());
+        assert_eq!(
+            view(&store, &bootstrap.human.id, cid).unwrap().sync_state,
+            "conflict"
+        );
+        assert!(windows(&store).unwrap().is_empty());
+        let retained: (String, String, String, String, i64) = store
+            .db
+            .query_row(
+                "SELECT state,human,answer,payload,synced FROM direct_turns WHERE request=?1",
+                [&request],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(retained, saved);
+        assert_eq!(
+            store
+                .db
+                .query_row(
+                    "SELECT sync_json FROM direct_windows WHERE cid=?1",
+                    [cid],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            frozen
+        );
+        server.await.unwrap();
     }
     #[test]
     fn known_source_invalidations_remove_only_affected_offline_references() {

@@ -1,0 +1,42 @@
+.crypto-devices { min-height: 0; height: 100%; }
+.crypto-devices .contact-scroll { min-height: 0; }
+.crypto-devices-content { width: 100%; max-width: 800px; box-sizing: border-box; padding-top: 24px; display: flex; flex-direction: column; gap: 18px; }
+.crypto-overview { padding: 4px 2px 8px; }
+.crypto-eyebrow { color: var(--s-muted); font-size: 12px; font-weight: 600; }
+.crypto-devices h3 { margin: 0 0 12px; font-size: 17px; color: var(--s-text); }
+.crypto-overview h3 { margin-top: 8px; font-size: 23px; }
+.crypto-devices p { margin: 8px 0 14px; color: var(--s-muted); line-height: 1.65; }
+.crypto-steps { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 22px; margin: 18px 0 0; font-size: 13px; color: var(--s-muted); }
+.crypto-steps li[data-complete="true"] { color: var(--s-text); }
+.crypto-card { background: var(--s-paper); border: 1px solid var(--s-line); border-radius: 12px; padding: 22px; min-width: 0; }
+.crypto-current-step { border-color: var(--s-accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--s-accent) 12%, transparent); }
+.crypto-card-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.crypto-status { color: var(--s-muted); font-size: 12px; }
+.crypto-device-id { overflow-wrap: anywhere; font-size: 13px; }
+.crypto-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.crypto-disclosure { margin-top: 16px; }
+.crypto-devices summary { cursor: pointer; color: var(--s-text); font-size: 14px; line-height: 1.6; }
+.crypto-devices summary:focus-visible { outline: 2px solid var(--s-accent); outline-offset: 4px; border-radius: 3px; }
+.crypto-devices details[open] > summary { margin-bottom: 16px; }
+.crypto-fingerprints { padding: 4px 14px 14px; background: var(--s-panel); border-radius: 8px; }
+.crypto-fingerprints p { font-size: 12px; margin: 12px 0 4px; }
+.crypto-devices code { display: block; overflow-wrap: anywhere; white-space: normal; font-size: 12px; line-height: 1.6; color: var(--s-text); }
+.crypto-confirmation { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; background: var(--s-panel); border: 1px solid var(--s-line); padding: 18px; border-radius: 8px; margin-top: 18px; }
+.crypto-confirmation p { margin: 0; }
+.crypto-confirmation label { display: flex; align-items: flex-start; gap: 9px; line-height: 1.65; width: 100%; box-sizing: border-box; }
+.crypto-confirmation label:has(input:not([type="checkbox"])) { flex-direction: column; gap: 5px; }
+.crypto-confirmation input[type="checkbox"] { flex: 0 0 auto; margin-top: 5px; }
+.crypto-confirmation .social-button { max-width: 100%; white-space: normal; text-align: left; }
+.crypto-listed-device { padding: 18px 0; border-top: 1px solid var(--s-line); }
+.crypto-listed-device > small { display: block; color: var(--s-muted); overflow-wrap: anywhere; margin-top: 5px; }
+.crypto-listed-device > button { margin-top: 12px; margin-right: 16px; }
+.crypto-devices input[type="file"] { max-width: 100%; box-sizing: border-box; }
+.crypto-other-devices > h3 { margin-top: 20px; }
+@media (max-width: 600px) {
+  .crypto-devices-content { padding: 18px 16px 28px; gap: 14px; }
+  .crypto-card { padding: 18px; }
+  .crypto-actions { flex-direction: column; align-items: flex-start; }
+  .crypto-confirmation { padding: 14px; }
+}
+
+.crypto-devices .crypto-confirmation label.cloud-check { flex-direction: row; align-items: flex-start; }

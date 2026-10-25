@@ -249,23 +249,26 @@
 .text-button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; font-size: 13px; color: var(--s-accent) !important; }
 .text-button svg { width: 13px; height: 13px; }
 .section-description { color: var(--s-muted); font-size: 12px; line-height: 1.8; margin: 8px 0 15px; }
-.social-shell input[type="checkbox"], .social-dialog input[type="checkbox"] { accent-color: var(--s-accent); width: 15px; height: 15px; }
+.social-shell input[type="checkbox"], .social-dialog input[type="checkbox"] { accent-color: var(--s-accent); width: 15px; height: 15px; flex-shrink: 0; }
 .details-memory-link { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 12px; background: var(--s-soft); border-radius: 9px; color: var(--s-accent) !important; font-size: 12px; }
 .details-memory-link span:first-of-type { flex: 1; }
 .details-memory-link small { display: block; font-size: 12px; color: var(--s-muted); margin-top: 4px; }
 .memory-card { border: 1px solid var(--s-line); background: var(--s-paper); border-radius: 10px; padding: 14px; margin: 12px 0; }
 .memory-card p { font-size: 12px; line-height: 1.9; margin: 11px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .summary-heading { margin-top: 28px; }
-.contact-view { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+.contact-view { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; }
 .contact-header { min-height: 72px; flex-shrink: 0; padding: 12px 24px; border-bottom: 1px solid var(--s-line); display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--s-muted); font-size: 14px; background: var(--s-paper); }
-.contact-scroll { flex: 1; overflow-y: auto; }
+.contact-header > :is(span, h2, strong) { min-width: 0; overflow-wrap: anywhere; }
+.contact-header > .social-icon-button { flex-shrink: 0; }
+.contact-header > span:first-of-type { flex: 1; }
+.contact-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .profile-cover { height: 96px; background: var(--s-panel); position: relative; overflow: hidden; }
 .profile-content { max-width: 880px; margin: 0 auto; padding: 0 32px 32px; }
 .profile-intro { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding: 0 0 24px; margin-top: -24px; position: relative; }
 .profile-intro > .social-avatar { border: 4px solid var(--s-bg); width: 76px; height: 76px; }
 .profile-intro > div { padding-top: 24px; flex: 1; min-width: 0; }
-.profile-intro h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 24px; font-weight: 600; }
-.profile-intro p { font-size: 12px; color: var(--s-muted); margin-top: 7px; }
+.profile-intro h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 24px; font-weight: 600; overflow-wrap: anywhere; }
+.profile-intro p { font-size: 12px; color: var(--s-muted); margin-top: 7px; overflow-wrap: anywhere; }
 .profile-intro > button { margin-top: 24px; }
 .profile-tabs { padding: 0; gap: 30px; }
 .profile-tabs button { font-size: 12px; padding: 14px 0; }
@@ -275,7 +278,9 @@
 .profile-sections h2 > span { font-size: 12px; color: var(--s-muted); margin-left: 5px; }
 .persona-text { font-size: 14px; color: var(--s-muted); white-space: pre-wrap; line-height: 1.85; overflow-wrap: anywhere; }
 .social-dialog { background: var(--s-paper); border-color: var(--s-line); width: min(560px, calc(100vw - 32px)); max-width: 560px; max-height: calc(100dvh - 40px); overflow-y: auto; padding: 28px; border-radius: 16px; box-shadow: var(--s-shadow); }
-.social-dialog h2 { font-size: 19px; font-weight: 600; }
+.social-dialog h2 { font-size: 19px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.social-dialog > h2 { padding-right: 28px; }
+.social-dialog > button:last-child:has(.sr-only) { display: grid; place-items: center; width: 32px; height: 32px; top: 12px; right: 12px; }
 .social-dialog > p { color: var(--s-muted); font-size: 12px; }
 .social-form { display: flex; flex-direction: column; gap: 17px; }
 .social-form label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 500; }
@@ -286,7 +291,7 @@
 .avatar-picker p { font-size: 12px; color: var(--s-muted); margin-bottom: 8px; }
 .form-note { color: var(--s-muted); font-size: 12px; line-height: 1.9; display: flex; gap: 6px; }
 .form-note svg { width: 13px; height: 13px; margin-top: 3px; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .form-error { color: var(--s-danger) !important; padding: 8px 12px; background: var(--s-hover); border-radius: 8px; overflow-wrap: anywhere; font-size: 13px; }
 .settings-container { height: 100%; }
 .social-settings { height: 100%; display: flex; flex-direction: column; background: var(--background); color: var(--foreground); }
@@ -500,6 +505,9 @@
 .reference-choices > label > span { min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
 
 .social-form .summary-toggle { flex-direction: row; justify-content: flex-start; }
+@media (max-width: 600px) {
+  .desktop-chrome .contact-header { padding: 48px 16px 14px; gap: 10px; }
+}
 .participation-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .contact-intent { display: grid; gap: 8px; padding: 14px 0; border-top: 1px solid var(--s-line); }
 .contact-intent > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -542,3 +550,10 @@
 .message-file > svg { flex-shrink: 0; }
 .message-file > div { min-width: 0; }
 .message-file small { display: block; color: var(--s-muted); }
+
+@media (max-width: 700px) {
+  .social-rail { padding-right: 148px; }
+  .social-rail .rail-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1; min-width: 0; gap: 4px; }
+  .social-rail .rail-nav button { min-width: 0; min-height: 48px; padding: 10px 8px; gap: 6px; white-space: nowrap; }
+  .social-rail .rail-nav button small { white-space: nowrap; }
+}

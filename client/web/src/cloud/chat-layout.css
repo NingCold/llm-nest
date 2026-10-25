@@ -1,0 +1,114 @@
+/* Keep connection controls out of the shared chat title row. */
+.cloud-workspace .cloud-chat-header {
+  height: 72px;
+  min-height: 72px;
+  gap: 12px;
+}
+.cloud-workspace .cloud-chat-header .conversation-heading {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.cloud-workspace .cloud-chat-header .conversation-heading > .social-avatar {
+  flex-shrink: 0;
+}
+.cloud-workspace .cloud-chat-header .conversation-heading > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+}
+.cloud-workspace .cloud-chat-header .conversation-heading strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.cloud-workspace .cloud-chat-header .cloud-chat-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cloud-chat-subtitle > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cloud-chat-subtitle .cloud-chat-encrypted {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--s-accent);
+}
+.cloud-workspace .cloud-chat-encrypted svg { width: 13px; height: 13px; }
+.cloud-workspace .cloud-chat-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--s-line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.cloud-workspace .cloud-chat-stop:hover { background: var(--s-hover); }
+.cloud-workspace .cloud-chat-stop svg { width: 12px; height: 12px; }
+.cloud-workspace .cloud-chat-header > .social-icon-button { flex-shrink: 0; }
+.cloud-workspace .cloud-chat-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  flex-shrink: 0;
+  padding: 7px 24px;
+  border-bottom: 1px solid var(--s-line);
+  background: var(--s-panel);
+  color: var(--s-muted);
+  font-size: 12px;
+}
+.cloud-chat-status > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-chat-status > button { flex-shrink: 0; color: var(--s-accent); }
+.cloud-chat-status.has-conflict > span { color: var(--s-danger); }
+.cloud-chat-details .details-hero { padding-bottom: 20px; }
+.cloud-chat-details .details-hero h2 { overflow-wrap: anywhere; }
+.cloud-chat-details .cloud-chat-connection p { overflow-wrap: anywhere; line-height: 1.75; }
+.cloud-chat-details .cloud-chat-connection .social-button { white-space: normal; }
+.cloud-chat-advanced { border-top: 1px solid var(--s-line); }
+.cloud-chat-advanced > summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 20px 0; }
+.cloud-chat-advanced > .cloud-detail-section { padding-top: 0; border-top: 0; }
+/* The details title and close button sit below the native window controls. */
+.cloud-workspace.desktop-chrome .cloud-chat-details > header {
+  min-height: 88px;
+  height: 88px;
+  padding: 40px 20px 12px;
+  flex-shrink: 0;
+}
+@media (min-width: 1051px) {
+  .cloud-workspace.desktop-chrome .cloud-chat-header.details-open { padding-right: 24px; }
+}
+@media (max-width: 850px) {
+  .cloud-workspace .cloud-chat-header { gap: 8px; }
+  .cloud-workspace .cloud-chat-status { padding-inline: 12px; }
+}
+@media (max-width: 600px) {
+  .cloud-workspace.desktop-chrome .cloud-chat-header {
+    height: 112px;
+    min-height: 112px;
+    padding: 52px 12px 12px;
+  }
+}
+@media (max-width: 480px) {
+  .cloud-workspace .cloud-chat-header .cloud-chat-subtitle { gap: 6px; }
+  .cloud-workspace .cloud-chat-encrypted { font-size: 0; gap: 0; }
+  .cloud-workspace .cloud-chat-stop { padding-inline: 8px; }
+}

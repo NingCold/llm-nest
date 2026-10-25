@@ -26,3 +26,7 @@
 .auth-page-footer { padding: 20px 24px; text-align: center; font-size: 12px; color: var(--s-muted); }
 .auth-page.desktop-chrome .auth-header { padding-right: 154px; }
 @media (max-width: 600px) { .auth-header { padding: 20px 24px; } .auth-body { padding-top: 24px; } }
+@media (max-width: 600px) {
+  .auth-page.desktop-chrome .auth-header { padding: 48px 24px 16px; }
+  .auth-label-row, .auth-link-row { flex-wrap: wrap; }
+}

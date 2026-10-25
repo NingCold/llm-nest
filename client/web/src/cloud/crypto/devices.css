@@ -26,6 +26,8 @@
 .crypto-confirmation label { display: flex; align-items: flex-start; gap: 9px; line-height: 1.65; width: 100%; box-sizing: border-box; }
 .crypto-confirmation label:has(input:not([type="checkbox"])) { flex-direction: column; gap: 5px; }
 .crypto-confirmation input[type="checkbox"] { flex: 0 0 auto; margin-top: 5px; }
+.crypto-confirmation input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--s-line); border-radius: 8px; background: var(--s-paper); color: var(--s-text); font: inherit; }
+.crypto-devices .cloud-form.crypto-card { max-width: none; }
 .crypto-confirmation .social-button { max-width: 100%; white-space: normal; text-align: left; }
 .crypto-listed-device { padding: 18px 0; border-top: 1px solid var(--s-line); }
 .crypto-listed-device > small { display: block; color: var(--s-muted); overflow-wrap: anywhere; margin-top: 5px; }

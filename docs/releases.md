@@ -4,9 +4,9 @@
 
 本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](../server/cloud/deploy/README.md)。
 
-`0.1.1-alpha.5` 已通过 NSIS 更新本机程序，内网 Web 页面同步更新；服务端业务未改动。MSI 只完成构建，未安装。这是测试部署和本机试用更新，不是公共 Release。最新验证见[可信设备界面验证](validation/README.md#可信设备界面验证)和 [Windows 记录](validation/windows.md#可信设备页面与日常账号2026-10-25)。
+内网 Web 已更新 `0.1.1-alpha.6` 前端覆盖层，后端可执行文件沿用原镜像层；旧 Web 与镜像已备份，健康及实际首页资产核对通过。`alpha.6` NSIS/MSI 的版本、品牌、图标和 WiX 检查通过；本机已用 NSIS 覆盖安装，重新登录解锁后的历史读回、聊天头和详情复验通过；MSI 未实际安装。这是测试部署和本机试用更新，不是公共 Release。验证结果见[聊天布局与 Web 更新](validation/README.md#聊天布局与-web-更新)，桌面结果见 [Windows 记录](validation/windows.md)。
 
-日常账号和 AI 已完成设备信任、恢复文件保存与两轮真实加密私聊；同机断云和换设备仍待试用。强制加密仍关闭，不能把安装更新写成第四批已全部验收。
+日常账号和 AI 已完成设备信任、恢复文件保存、云端加密私聊，以及同机断云接续和自动补传；换设备恢复仍待试用。强制加密仍关闭，不能把版本更新写成第四批已全部验收。
 
 ## 安装包范围
 
@@ -30,22 +30,22 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 | `client/desktop/package.json` | `version` |
 | `client/web/package.json` | `version` |
 
-每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前为 `0.1.1-alpha.5`；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
+每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.6`；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
-MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.5`。前三段与应用基础版本一致，第四段是安装器构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
+MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.6`。前三段与应用基础版本一致，第四段是安装器构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
 
 修改 Cargo 版本后运行 `cargo check -p web-server` 更新 `Cargo.lock` 中的工作区包版本，一并提交。然后检查版本和发布脚本：
 
 ```bash
-python scripts/release.py validate --tag v0.1.1-alpha.5
+python scripts/release.py validate --tag v0.1.1-alpha.6
 python scripts/test_release.py
 ```
 
 示例标签替换为实际版本。确认代码、检查和安装包验收完成后，再在待发布提交上打标签并推送：
 
 ```bash
-git tag -a v0.1.1-alpha.5 -m "LLM Nest 0.1.1-alpha.5"
-git push origin v0.1.1-alpha.5
+git tag -a v0.1.1-alpha.6 -m "LLM Nest 0.1.1-alpha.6"
+git push origin v0.1.1-alpha.6
 ```
 
 修改版本、构建安装包、推送标签和公开 Release 是分别执行的操作。已公开版本需要修复时，发布新版本，保留旧标签和资产。

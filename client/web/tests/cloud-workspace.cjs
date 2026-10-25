@@ -8,6 +8,7 @@ const fs = require("node:fs"),
 const root = path.resolve(__dirname, "../src"),
   cache = new Map();
 const location = { hash: "", search: "" };
+let confirmEnable = true;
 const ui = {
   theme: "light",
   setTheme() {},
@@ -36,6 +37,7 @@ function load(name) {
       URL,
       URLSearchParams,
       location,
+      window: { confirm: () => confirmEnable },
       console,
       setTimeout,
       clearTimeout,
@@ -314,3 +316,75 @@ const consciousness = ids => renderToStaticMarkup(React.createElement(Consciousn
 html = consciousness([]); assert.match(html, /当前窗口记忆/); assert.doesNotMatch(html, /私有窗口摘要|摘要设置/);
 html = consciousness([ai1.id]); assert.match(html, /蓝雀 · 私有窗口摘要/); assert.match(html, /仅其管理员且仍有本窗口访问权/); assert.doesNotMatch(html, /本群当前成员共享/);
 console.log("PASS: cloud memory is member scoped and summaries are private per AI with an administrator-only entry");
+
+const { ChatConnectionDetails } = load("cloud/ChatConnection");
+const aiDirect = { ...conversation, peer: ai1, name: "一个足够长的聊天名称用于确认标题保持单行省略", members: [{ account: me, role: "member" }, { account: ai1, role: "member" }] };
+const encryptedDirect = { ...aiDirect, encryption: { version: 1, activationPosition: "1", historyComplete: false } };
+const localChat = { ai: ai1, human: me, conversation: { id: conversation.id }, messages: [], hasMore: false, syncState: "synced", error: null, running: false };
+const connectionProps = { conversation: aiDirect, meId: me.id, hasPlaintextMessages: false, pending: false, act: fn => fn(), reconnect: asyncNoop, enableEncryption: asyncNoop, prepareLocal: asyncNoop, syncLocal: asyncNoop, closeLocal: asyncNoop, stopLocal: asyncNoop };
+const renderConnection = overrides => renderToStaticMarkup(React.createElement(ChatConnectionDetails, { ...connectionProps, ...overrides }));
+function connectionButton(tree, text) {
+  for (const child of React.Children.toArray(tree)) {
+    if (!React.isValidElement(child)) continue;
+    if (child.type === "button" && renderToStaticMarkup(child).includes(text)) return child;
+    const nested = connectionButton(child.props.children, text);
+    if (nested) return nested;
+  }
+}
+const encryptedProps = { snapshot: { ...p.snapshot, conversations: [encryptedDirect] }, page: { ...p.page, messages: [{ ...message, sealed: {} }] }, localSelected: true, localChat: { ...localChat, running: true }, cryptoUnlocked: true, stopLocal: asyncNoop };
+html = render(encryptedProps);
+const header = html.match(/<header class="conversation-header cloud-chat-header[^]*?<\/header>/)[0];
+assert.match(header, /title="一个足够长的聊天名称用于确认标题保持单行省略"/);
+assert.match(header, /端到端加密/);
+assert.match(header, /同机私聊/);
+assert.match(header, /aria-label="停止本机回复"/);
+assert.match(header, /aria-label="聊天详情"/);
+assert.match(header, /aria-label="返回消息列表"/);
+assert.doesNotMatch(header, /分享历史密钥|开启同机私聊|新成员或新设备|未迁移|返回云端发送/);
+html = render({ ...encryptedProps, localChat: { ...localChat, syncState: "conflict" } });
+assert.match(html, /云端同步冲突 · 本机记录已保留/);
+assert.match(html, /查看详情/);
+html = render({ ...encryptedProps, localChat: undefined });
+assert.match(html, /本机连接中断 · 发送仍使用本机/);
+html = render({ snapshot: { ...p.snapshot, requireEncryption: true } });
+assert.match(html, /开启端到端加密后即可发送/);
+assert.match(html, /设置加密/);
+
+html = renderConnection({ conversation: encryptedDirect, cryptoUnlocked: false });
+assert.match(html, /旧历史转换尚未确认完成/);
+assert.doesNotMatch(html, /含尚未转换的明文|旧记录尚未迁移/);
+assert.match(html, /<button[^>]*disabled[^>]*>分享历史密钥/);
+html = renderConnection({ conversation: encryptedDirect, cryptoUnlocked: true, hasPlaintextMessages: true });
+assert.match(html, /当前已加载的消息中含尚未转换的明文记录/);
+assert.doesNotMatch(html, /<button[^>]*disabled[^>]*>分享历史密钥/);
+assert.match(renderConnection({ conversation: { ...encryptedDirect, encryption: { ...encryptedDirect.encryption, historyComplete: true } } }), /旧历史已转换/);
+assert.doesNotMatch(renderConnection({ conversation: { ...aiDirect, readOnly: true } }), />开启端到端加密<\/button>/);
+assert.doesNotMatch(renderConnection({ conversation: { ...group, members: group.members.map(m => ({ ...m, role: "member" })) } }), />开启端到端加密<\/button>/);
+assert.match(renderConnection({ conversation: group }), />开启端到端加密<\/button>/);
+assert.match(renderConnection({}), /开启同机私聊/);
+assert.doesNotMatch(renderConnection({ conversation: group }), /开启同机私聊/);
+assert.match(renderConnection({ localSelected: true }), /重新连接本机/);
+assert.match(renderConnection({ localSelected: true, localChat }), /<button(?![^>]*disabled)[^>]*>返回云端发送/);
+for (const overrides of [{ localChat: { ...localChat, running: true } }, { localChat: { ...localChat, syncState: "conflict" } }, { localChat: { ...localChat, syncState: "pending" } }, { localChat, pending: true }]) {
+  assert.match(renderConnection({ localSelected: true, ...overrides }), /<button[^>]*disabled[^>]*>返回云端发送/);
+}
+let enabled = 0, prepared = 0, synced = 0, closed = 0, stopped = 0, reconnected = 0;
+let tree = ChatConnectionDetails({ ...connectionProps, enableEncryption: async () => { enabled++; }, prepareLocal: async () => { prepared++; } });
+confirmEnable = false;
+connectionButton(tree, "开启端到端加密").props.onClick();
+assert.equal(enabled, 0);
+confirmEnable = true;
+connectionButton(tree, "开启端到端加密").props.onClick();
+connectionButton(tree, "开启同机私聊").props.onClick();
+assert.equal(enabled, 1); assert.equal(prepared, 1);
+tree = ChatConnectionDetails({ ...connectionProps, localSelected: true, localChat: { ...localChat, running: true }, syncLocal: async () => { synced++; }, stopLocal: async () => { stopped++; } });
+connectionButton(tree, "重试云端同步").props.onClick();
+connectionButton(tree, "停止本机回复").props.onClick();
+assert.equal(synced, 1); assert.equal(stopped, 1);
+tree = ChatConnectionDetails({ ...connectionProps, localSelected: true, localChat, closeLocal: async () => { closed++; } });
+connectionButton(tree, "返回云端发送").props.onClick();
+assert.equal(closed, 1);
+tree = ChatConnectionDetails({ ...connectionProps, localSelected: true, reconnect: async () => { reconnected++; } });
+connectionButton(tree, "重新连接本机").props.onClick();
+assert.equal(reconnected, 1);
+console.log("PASS: compact chat header, reachable encryption/local actions, trusted-key gating, group permissions, explicit history status and cloud-return guards");

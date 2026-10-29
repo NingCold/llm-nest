@@ -1,7 +1,7 @@
 {
   "name": "llmnest-tauri-shell",
   "private": true,
-  "version": "0.1.1-alpha.12",
+  "version": "0.1.1-alpha.13",
   "packageManager": "pnpm@11.22.0",
   "description": "Tauri desktop shell \u2014 the actual React frontend lives in ../web",
   "scripts": {

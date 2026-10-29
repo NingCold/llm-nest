@@ -120,6 +120,21 @@ jobs:
           mkdir cargo-about-bin
           tar -xzf cargo-about.tar.gz --strip-components=1 -C cargo-about-bin
           echo "CARGO_ABOUT=$GITHUB_WORKSPACE/cargo-about-bin/$about_bin" >> "$GITHUB_ENV"
+      - name: Preserve the verified Agent ELF in AppImage resources
+        if: runner.os == 'Linux'
+        run: |
+          # CLI 2.11.4's linuxdeploy scans all ELF resources under usr/lib and rewrites RPATH.
+          # Its PATCHELF override lets this already-built Agent retain its verified manifest hash.
+          cat > "$RUNNER_TEMP/llmn-patchelf" <<'SH'
+          #!/usr/bin/env bash
+          if [[ "$#" == 3 && "$1" == --set-rpath && "$3" == */usr/lib/"LLM Nest"/agent/llmn-agent ]]; then
+            echo 'Preserving official Agent ELF bytes: skipping resource RPATH rewrite' >&2
+            exit 0
+          fi
+          exec /usr/bin/patchelf "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/llmn-patchelf"
+          echo "PATCHELF=$RUNNER_TEMP/llmn-patchelf" >> "$GITHUB_ENV"
       - name: Build embedded desktop installers
         working-directory: desktop
         run: node node_modules/@tauri-apps/cli/tauri.js build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --ci -- --locked

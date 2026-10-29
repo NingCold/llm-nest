@@ -62,7 +62,7 @@ class ReleaseTests(unittest.TestCase):
             tauri_path = root / "desktop/src-tauri/tauri.conf.json"
             with self.assertRaisesRegex(ValueError, "numeric"):
                 release.validate(root)
-            for msi_version in ("0.1.0.1", "0.1.1.alpha.1", "0.1.1.65536"):
+            for msi_version in ("0.1.0.1", "0.1.1.alpha.1", "0.1.1.65536", "0.1.1.0", "0.1.1.2"):
                 tauri_path.write_text(json.dumps({"version": "0.1.1-alpha.1", "bundle": {"windows": {"wix": {"version": msi_version}}}}))
                 with self.assertRaises(ValueError):
                     release.validate(root)

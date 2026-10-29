@@ -32,6 +32,9 @@ def validate(root=ROOT, tag=""):
     if "-" in version and not msi:
         raise ValueError("Pre-release builds require a numeric bundle.windows.wix.version for MSI")
     if msi:
+        alpha = re.fullmatch(r"(\d+\.\d+\.\d+)-alpha\.(\d+)", version)
+        if alpha and msi != f"{alpha[1]}.{alpha[2]}":
+            raise ValueError(f"MSI version {msi!r} must match the alpha build number in {version}")
         core = version.split("-", 1)[0]
         if not re.fullmatch(rf"{re.escape(core)}(?:\.\d+)?", msi):
             raise ValueError(f"MSI version {msi!r} must match {core}.build (numeric build is optional)")

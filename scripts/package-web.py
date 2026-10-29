@@ -13,6 +13,8 @@ def package(dist, output, version):
     files = sorted(dist.rglob('*'))
     if not (dist / 'index.html').is_file():
         raise ValueError('Web dist must contain index.html')
+    if any(not (dist / name).is_file() for name in ['THIRD_PARTY_NOTICES.txt', 'LICENSE.txt', 'NOTICE.txt']):
+        raise ValueError('Web dist must contain THIRD_PARTY_NOTICES.txt, LICENSE.txt and NOTICE.txt')
     if any(p.is_symlink() for p in files):
         raise ValueError('Web dist must not contain symlinks')
     output.mkdir(parents=True, exist_ok=True)

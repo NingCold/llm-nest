@@ -65,4 +65,5 @@ jobs:
           python scripts/release.py validate
           python scripts/test_release.py
           python scripts/test_build_artifacts.py
-          node --test desktop/scripts/prepare-agent.test.mjs
+          node --test desktop/scripts/prepare-agent.test.mjs scripts/web-notices.test.cjs
+          node scripts/web-notices.cjs target/web-THIRD_PARTY_NOTICES.txt

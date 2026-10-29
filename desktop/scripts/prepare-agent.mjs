@@ -28,11 +28,18 @@ export async function prepare(env = process.env, destination = fileURLToPath(new
   if (!env.LLMN_AGENT_FILE && !source.startsWith('https://')) throw new Error('Published Agent artifacts require HTTPS');
   const bytes = env.LLMN_AGENT_FILE ? await readFile(source) : await download(source);
   if (createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error('Agent SHA256 mismatch');
+  const notices = entry.notices;
+  if (!notices || !notices.file || !/^[a-f0-9]{64}$/.test(notices.sha256)) throw new Error('Missing valid Agent notices');
+  const noticesSource = env.LLMN_AGENT_NOTICES_FILE || notices.url;
+  if (!noticesSource || (!env.LLMN_AGENT_NOTICES_FILE && !noticesSource.startsWith('https://'))) throw new Error('Set LLMN_AGENT_NOTICES_FILE or provide an HTTPS Agent notices URL');
+  const noticesBytes = env.LLMN_AGENT_NOTICES_FILE ? await readFile(noticesSource) : await download(noticesSource);
+  if (createHash('sha256').update(noticesBytes).digest('hex') !== notices.sha256) throw new Error('Agent notices SHA256 mismatch');
   const name = `llmn-agent${target.includes('windows') ? '.exe' : ''}`;
   await mkdir(destination, { recursive: true });
   await writeFile(path.join(destination, name), bytes);
+  await writeFile(path.join(destination, 'llmn-agent-THIRD_PARTY_NOTICES.txt'), noticesBytes);
   if (!target.includes('windows')) await chmod(path.join(destination, name), 0o755);
-  await writeFile(path.join(destination, 'agent-artifact.json'), JSON.stringify({ agentVersion: version, target, sha256: entry.sha256 }, null, 2) + '\n');
+  await writeFile(path.join(destination, 'agent-artifact.json'), JSON.stringify({ agentVersion: version, target, sha256: entry.sha256, notices: { file: notices.file, sha256: notices.sha256 } }, null, 2) + '\n');
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   prepare().catch(error => { console.error(error.message); process.exitCode = 1; });

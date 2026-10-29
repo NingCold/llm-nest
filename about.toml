@@ -1,0 +1,6 @@
+# Generate full Rust license text with cargo-about 0.9.3.
+accepted = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Unicode-DFS-2016", "Zlib", "MPL-2.0", "OpenSSL", "CC0-1.0", "BSL-1.0", "CDLA-Permissive-2.0", "Unlicense", "0BSD", "Apache-2.0 WITH LLVM-exception"]
+ignore-dev-dependencies = true
+ignore-build-dependencies = false
+ignore-transitive-dependencies = false
+workarounds = ["chrono", "rustix", "linux-raw-sys", "unicode-ident"]

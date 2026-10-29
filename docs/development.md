@@ -6,7 +6,7 @@
 
 ## 准备环境
 
-CI 与云端 Dockerfile 使用 Rust 1.99.1，前端使用 Node.js 24.18.0、pnpm 11.22.0；脚本需要 Python 3.11+。Windows 使用 MSVC 工具链。按对应构建入口准备版本，避免因工具差异改动锁文件。
+CI 与云端 Dockerfile 使用 Rust 1.99.1，前端使用 Node.js 24.18.0、pnpm 11.22.0；脚本需要 Python 3.11+。Windows 使用 MSVC 工具链。按对应构建入口准备版本，避免因工具差异改动锁文件。还需可用的 `corepack` 命令：许可生成脚本通过 `corepack pnpm@11.22.0` 读取本机依赖，单独安装全局 pnpm 不替代这一要求。
 
 先安装共用前端和桌面壳的依赖：
 
@@ -63,11 +63,19 @@ Tauri 开发和构建入口会先准备独立 `llmn-agent` 可执行文件，再
 $env:LLMN_AGENT_VERSION = "<产物清单中的固定版本>"
 $env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
 $env:LLMN_AGENT_MANIFEST = "<已核验的本地清单绝对路径或固定 HTTPS URL>"
-# 本地离线验证另设 LLMN_AGENT_FILE 为清单对应程序绝对路径
+# 本地离线验证另设以下两项；必须对应清单中的程序与 notices
+$env:LLMN_AGENT_FILE = "<程序绝对路径>"
+$env:LLMN_AGENT_NOTICES_FILE = "<notices.file 对应文本的绝对路径>"
 pnpm --dir desktop exec tauri dev
 ```
 
-Linux 使用对应目标三元组与无 `.exe` 的程序。版本必须匹配程序 `--version`。已有官方 HTTPS 产物时，将 `LLMN_AGENT_MANIFEST` 指向固定版本清单，省略 `LLMN_AGENT_FILE`，从清单的 HTTPS URL 获取程序并核对 SHA-256。缺少或不匹配时构建失败，不查找兄弟源码或自动改用其他版本。客户端与 Agent 可分别发版。
+Linux 使用对应目标三元组与无 `.exe` 的程序。版本必须匹配程序 `--version`。已有官方 HTTPS 产物时，将 `LLMN_AGENT_MANIFEST` 指向固定版本清单，省略 `LLMN_AGENT_FILE` 和 `LLMN_AGENT_NOTICES_FILE`，从清单的 HTTPS URL 获取程序和第三方声明，分别核对 SHA-256。缺少或不匹配时构建失败，不查找兄弟源码或自动改用其他版本。客户端与 Agent 可分别发版。
+
+### 生成随包声明
+
+桌面安装包构建需要官方 [cargo-about 0.9.3](https://github.com/EmbarkStudios/cargo-about/releases/tag/0.9.3) 预编译工具，下载后核对官方 SHA-256；各平台固定摘要见[发布工作流](../.github/workflows/release.yml)。将工具加入 PATH，或设置 `CARGO_ABOUT` 为可执行文件绝对路径。Web 开发和普通类型检查不需要该工具；桌面构建按本仓 `about.toml`、`about.hbs` 和锁文件生成当前目标的 Rust 声明。它会运行 Cargo metadata，并可能联网取得依赖或缺失的许可正文，不编译 Rust。
+
+Web 构建从已安装的生产依赖读取完整许可正文，再合并 `packaging/licenses` 中按精确版本保存的补充材料；不会下载 Matrix SDK 源码。升级依赖时，重新检查缺失正文、附带字体与预编译 WASM 的内部依赖，更新固定文本、`sources.json` 的来源及 SHA-256。Matrix WASM 的源码提交、锁文件、分发 WASM 和声明摘要保存在对应 provenance 文件；升级该 SDK 时须用新版本的固定源码和锁文件重新生成，不能沿用旧版本声明。补充材料缺失或摘要不符会中止构建。Web 和桌面构建自动附带第三方声明及本项目 LICENSE、NOTICE，不提交派生 dist 或资源文件。
 
 ### 独立 Agent 与外部接入
 

@@ -26,6 +26,12 @@ RUN case "$(dpkg --print-architecture)" in amd64) arch=x64 ;; arm64) arch=arm64 
     && npm install -g "pnpm@${PNPM_VERSION}" \
     && rm node-*.tar.xz SHASUMS256.txt
 
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && curl --fail --location --proto '=https' https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.3/cargo-about-0.9.3-x86_64-unknown-linux-musl.tar.gz -o /tmp/cargo-about.tar.gz \
+    && echo '3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4  /tmp/cargo-about.tar.gz' | sha256sum --check \
+    && tar -xzf /tmp/cargo-about.tar.gz --strip-components=1 -C /usr/local/bin \
+    && rm /tmp/cargo-about.tar.gz
+
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 WORKDIR /workspace
 CMD ["bash", "scripts/linux/build.sh"]

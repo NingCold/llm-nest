@@ -1,12 +1,12 @@
 {
   "name": "llmnest-tauri-shell",
   "private": true,
-  "version": "0.1.1-alpha.11",
+  "version": "0.1.1-alpha.12",
   "packageManager": "pnpm@11.22.0",
-  "description": "Tauri desktop shell — the actual React frontend lives in ../web",
+  "description": "Tauri desktop shell \u2014 the actual React frontend lives in ../web",
   "scripts": {
     "dev": "pnpm --dir ../web dev",
-    "build": "pnpm --dir ../web exec vite build --outDir ../desktop/dist --emptyOutDir",
+    "build": "pnpm --dir ../web exec vite build --outDir ../desktop/dist --emptyOutDir && node ../scripts/web-notices.cjs dist/THIRD_PARTY_NOTICES.txt && node ../scripts/desktop-notices.cjs",
     "typecheck": "pnpm --dir ../web typecheck",
     "icons": "node ../scripts/generate-icons.mjs",
     "tauri": "tauri",
@@ -15,5 +15,6 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
-  }
+  },
+  "license": "Apache-2.0"
 }

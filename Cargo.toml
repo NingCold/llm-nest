@@ -3,7 +3,9 @@ resolver = "2"
 members = ["desktop/src-tauri"]
 
 [workspace.package]
-version = "0.1.1-alpha.11"
+license = "Apache-2.0"
+repository = "https://github.com/NingCold/llm-nest"
+version = "0.1.1-alpha.12"
 edition = "2024"
 
 [workspace.dependencies]
@@ -24,4 +26,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [workspace.dependencies.connector]
 git = "https://github.com/NingCold/llm-nest-server.git"
-rev = "cda5facfc441890cbc053db8374ea2141580689d"
+rev = "f47f9b4a99ba8602b7992b53d22bacf08534a64c"

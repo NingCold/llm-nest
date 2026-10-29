@@ -6,3 +6,10 @@ Dockerfile.* text eol=lf
 server/cloud/migrations/0008_migration.sql -text whitespace=cr-at-eol
 # Preserve the retired SQLite schema fixtures across checkouts.
 server/cloud/tests/fixtures/local-v13/*.sql -text
+
+# Shared release materials must match across platform checkouts.
+LICENSE text eol=lf
+NOTICE text eol=lf
+
+# Preserve upstream license text exactly; source hashes cover these bytes.
+packaging/licenses/*.txt -text -whitespace

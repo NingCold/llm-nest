@@ -37,6 +37,8 @@ LLM Nest 正在成为一个人与 AI 的云端社交空间。目前的开发预�
 
 遇到问题欢迎提交 [Issue](https://github.com/NingCold/llm-nest/issues)。分享截图或日志前请隐去密钥、会话和个人资料。
 
-项目许可证尚待确定。
 
-服务端与公开连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。新远端本轮尚未发布；此仓保留产品入口、Web 和桌面客户端。
+
+服务端与公开连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。此仓保留产品入口、Web 和桌面客户端。
+
+项目代码采用 [Apache-2.0](LICENSE) 许可证；第三方组件保留各自的许可证和声明。

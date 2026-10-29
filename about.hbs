@@ -1,0 +1,19 @@
+LLM Nest desktop Rust third-party notices
+
+{{#each licenses}}
+========================================================================
+{{name}}
+Used by:
+{{#each used_by}}
+{{crate.name}} {{crate.version}}
+{{#if (eq crate.source "registry+https://github.com/rust-lang/crates.io-index")}}
+Source: https://static.crates.io/crates/{{crate.name}}/{{crate.name}}-{{crate.version}}.crate
+{{else}}
+Source: {{{crate.source}}}
+{{/if}}
+Repository: {{{crate.repository}}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

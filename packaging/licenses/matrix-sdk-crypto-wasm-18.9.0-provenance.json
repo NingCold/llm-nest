@@ -1,0 +1,17 @@
+{
+  "npmVersion": "18.9.0",
+  "npmIntegrity": "sha512-NtLzNDTEfNASBjNCTGZHuk7N0jrQhS6Zx2CM857rCHZYYh/rpbKGQNrJ7azktm4S1P5Jy3WU3nwJTGohGw26qQ==",
+  "gitTag": "v18.9.0",
+  "gitCommit": "a3d573d1aa41b9d593a9615837e812cb77cff336",
+  "sourceArchiveUrl": "https://codeload.github.com/matrix-org/matrix-sdk-crypto-wasm/tar.gz/a3d573d1aa41b9d593a9615837e812cb77cff336",
+  "sourceArchiveSha256": "50735db18d9cf10561bf714b9b77e2b1324318c7296ee70669ac5f037329880f",
+  "npmTarballSha256": "5cdfb6a3957988fcc86ab2b9291545efeb622b4b2cddd149ad85a044b6230155",
+  "wasmSha256": "e6fc166a85fc6aef11d67228768a2d61f964e22e37d218f237ce13641c76522d",
+  "cargoLockSha256": "f8d1c00a2210fd2869f37bcf693dd5028b7c59fda0125c52e6c6b6ad90844302",
+  "noticesSha256": "9c803fbeba7fb0ed95c49395d3bdeeb58e0428a5dbd624169859fc62ed409144",
+  "noticesBytes": 411876,
+  "cargoAboutVersion": "0.9.3",
+  "target": "wasm32-unknown-unknown",
+  "features": "upstream default features (qrcode), matching scripts/build.sh",
+  "uniqueComponents": 275
+}

@@ -334,7 +334,7 @@ dependencies = [
 [[package]]
 name = "connector"
 version = "0.1.1-alpha.11"
-source = "git+https://github.com/NingCold/llm-nest-server.git?rev=cda5facfc441890cbc053db8374ea2141580689d#cda5facfc441890cbc053db8374ea2141580689d"
+source = "git+https://github.com/NingCold/llm-nest-server.git?rev=f47f9b4a99ba8602b7992b53d22bacf08534a64c#f47f9b4a99ba8602b7992b53d22bacf08534a64c"
 dependencies = [
  "futures-util",
  "native-tls",
@@ -3445,7 +3445,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-frontend"
-version = "0.1.1-alpha.11"
+version = "0.1.1-alpha.12"
 dependencies = [
  "base64 0.22.1",
  "connector",

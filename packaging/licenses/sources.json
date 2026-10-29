@@ -1,0 +1,107 @@
+{
+  "rehype-katex@7.0.1": {
+    "file": "rehype-katex-7.0.1.txt",
+    "source": "https://raw.githubusercontent.com/remarkjs/remark-math/88a9497e1ede93b958237c85edbf5651faeca7af/license",
+    "npmMetadata": "https://registry.npmjs.org/rehype-katex/7.0.1",
+    "sha256": "cb992262f361a5359e6771c28740d33c7041e15332ae8537fae40538992591a9"
+  },
+  "remark-math@6.0.0": {
+    "file": "remark-math-6.0.0.txt",
+    "source": "https://raw.githubusercontent.com/remarkjs/remark-math/d5d0660b150810a535bbb07eac6cc96a4510aa24/license",
+    "npmMetadata": "https://registry.npmjs.org/remark-math/6.0.0",
+    "sha256": "cb992262f361a5359e6771c28740d33c7041e15332ae8537fae40538992591a9"
+  },
+  "fastdom@1.0.12": {
+    "file": "fastdom-1.0.12.txt",
+    "source": "https://registry.npmjs.org/fastdom/-/fastdom-1.0.12.tgz#package/README.md",
+    "npmMetadata": "https://registry.npmjs.org/fastdom/1.0.12",
+    "npmIntegrity": "sha512-LB+xjSTEbjHE1cWsxu+tN2Xqr1kpi+V9aADI7sVM5ZMaXyYGPHULQMzpJMYqOTULK/73pUkWVzzObFRBkPr+hg==",
+    "sha256": "50c0de64f5cd5e39859b43f7eca7f5843fb3c3d5ac7e34a453e27419ad51e08c"
+  },
+  "strictdom@1.0.1": {
+    "file": "strictdom-1.0.1.txt",
+    "source": "https://registry.npmjs.org/strictdom/-/strictdom-1.0.1.tgz#package/README.md",
+    "npmMetadata": "https://registry.npmjs.org/strictdom/1.0.1",
+    "npmIntegrity": "sha512-cEmp9QeXXRmjj/rVp9oyiqcvyocWab/HaoN4+bwFeZ7QzykJD6L3yD4v12K1x0tHpqRqVpJevN3gW7kyM39Bqg==",
+    "sha256": "2c0cd14e6202a458ca4831c68bbd5c6f22458fb95e9edce3c48a25db8cbb9273"
+  },
+  "react-remove-scroll-bar@2.3.8": {
+    "file": "react-remove-scroll-bar-2.3.8.txt",
+    "source": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE",
+    "npmMetadata": "https://registry.npmjs.org/react-remove-scroll-bar/2.3.8",
+    "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
+    "sourceNote": "npm 2.3.8 declares MIT; its gitHead b3b1287aad81def2e2ae707274b74531b61ddbaf is unavailable upstream. This MIT text is pinned from upstream commit whose package.json says 2.3.7; The published 2.3.8 package itself declares MIT; the exact 2.3.8 source commit has not been verified."
+  },
+  "katex@0.18.4": {
+    "file": "katex-0.18.4-fonts.txt",
+    "additional": true,
+    "source": "https://registry.npmjs.org/katex/-/katex-0.18.4.tgz#package/dist/fonts",
+    "npmMetadata": "https://registry.npmjs.org/katex/0.18.4",
+    "npmIntegrity": "sha512-IMPntbRLOU+eu88XDiFKqQ8Akhr9Tv7jDMXqPhjG9SI1JMA4DIgXk4x9k4skJz2NZJXBRbC+2pYBLj9olqcZow==",
+    "fontSha256": {
+      "KaTeX_AMS-Regular.ttf": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13",
+      "KaTeX_Caligraphic-Bold.ttf": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268",
+      "KaTeX_Caligraphic-Regular.ttf": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7",
+      "KaTeX_Fraktur-Bold.ttf": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1",
+      "KaTeX_Fraktur-Regular.ttf": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3",
+      "KaTeX_Main-Bold.ttf": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8",
+      "KaTeX_Main-BoldItalic.ttf": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f",
+      "KaTeX_Main-Italic.ttf": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a",
+      "KaTeX_Main-Regular.ttf": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830",
+      "KaTeX_Math-BoldItalic.ttf": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5",
+      "KaTeX_Math-Italic.ttf": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a",
+      "KaTeX_SansSerif-Bold.ttf": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0",
+      "KaTeX_SansSerif-Italic.ttf": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083",
+      "KaTeX_SansSerif-Regular.ttf": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad",
+      "KaTeX_Script-Regular.ttf": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67",
+      "KaTeX_Size1-Regular.ttf": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b",
+      "KaTeX_Size2-Regular.ttf": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b",
+      "KaTeX_Size3-Regular.ttf": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082",
+      "KaTeX_Size4-Regular.ttf": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877",
+      "KaTeX_Typewriter-Regular.ttf": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa"
+    },
+    "licenseTextSource": "https://raw.githubusercontent.com/silnrsi/font-charis/5ec7633b01adb2dec51a7c258c5e7e1fc1b82120/OFL.txt",
+    "sha256": "809f9f8ea253d76f959aad87cb14139cae0673aaba42e5129c72892cf2e3f94e"
+  },
+  "katex@0.16.47": {
+    "file": "katex-0.16.47-fonts.txt",
+    "additional": true,
+    "source": "https://registry.npmjs.org/katex/-/katex-0.16.47.tgz#package/dist/fonts",
+    "npmMetadata": "https://registry.npmjs.org/katex/0.16.47",
+    "npmIntegrity": "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==",
+    "fontSha256": {
+      "KaTeX_AMS-Regular.ttf": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13",
+      "KaTeX_Caligraphic-Bold.ttf": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268",
+      "KaTeX_Caligraphic-Regular.ttf": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7",
+      "KaTeX_Fraktur-Bold.ttf": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1",
+      "KaTeX_Fraktur-Regular.ttf": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3",
+      "KaTeX_Main-Bold.ttf": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8",
+      "KaTeX_Main-BoldItalic.ttf": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f",
+      "KaTeX_Main-Italic.ttf": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a",
+      "KaTeX_Main-Regular.ttf": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830",
+      "KaTeX_Math-BoldItalic.ttf": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5",
+      "KaTeX_Math-Italic.ttf": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a",
+      "KaTeX_SansSerif-Bold.ttf": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0",
+      "KaTeX_SansSerif-Italic.ttf": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083",
+      "KaTeX_SansSerif-Regular.ttf": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad",
+      "KaTeX_Script-Regular.ttf": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67",
+      "KaTeX_Size1-Regular.ttf": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b",
+      "KaTeX_Size2-Regular.ttf": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b",
+      "KaTeX_Size3-Regular.ttf": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082",
+      "KaTeX_Size4-Regular.ttf": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877",
+      "KaTeX_Typewriter-Regular.ttf": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa"
+    },
+    "licenseTextSource": "https://raw.githubusercontent.com/silnrsi/font-charis/5ec7633b01adb2dec51a7c258c5e7e1fc1b82120/OFL.txt",
+    "sha256": "f32f86875619b49e4fc3cdced27b48440501bf0eb11c492fc0ff995c5d10a8b4"
+  },
+  "@matrix-org/matrix-sdk-crypto-wasm@18.9.0": {
+    "file": "matrix-sdk-crypto-wasm-18.9.0.txt",
+    "additional": true,
+    "source": "https://codeload.github.com/matrix-org/matrix-sdk-crypto-wasm/tar.gz/a3d573d1aa41b9d593a9615837e812cb77cff336",
+    "sha256": "9c803fbeba7fb0ed95c49395d3bdeeb58e0428a5dbd624169859fc62ed409144",
+    "sourceArchiveSha256": "50735db18d9cf10561bf714b9b77e2b1324318c7296ee70669ac5f037329880f",
+    "npmIntegrity": "sha512-NtLzNDTEfNASBjNCTGZHuk7N0jrQhS6Zx2CM857rCHZYYh/rpbKGQNrJ7azktm4S1P5Jy3WU3nwJTGohGw26qQ==",
+    "wasmSha256": "e6fc166a85fc6aef11d67228768a2d61f964e22e37d218f237ce13641c76522d",
+    "provenance": "matrix-sdk-crypto-wasm-18.9.0-provenance.json"
+  }
+}

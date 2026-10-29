@@ -75,7 +75,7 @@ jobs:
           python scripts/release.py validate
           python scripts/test_release.py
           python scripts/test_build_artifacts.py
-          node --test desktop/scripts/prepare-agent.test.mjs
+          node --test desktop/scripts/prepare-agent.test.mjs scripts/web-notices.test.cjs
       - name: Install toolchain
         run: |
           rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy --target ${{ matrix.target }}
@@ -104,6 +104,22 @@ jobs:
           echo "LLMN_AGENT_VERSION=$AGENT_VERSION" >> "$GITHUB_ENV"
           echo "LLMN_AGENT_TARGET=${{ matrix.target }}" >> "$GITHUB_ENV"
           echo "LLMN_AGENT_MANIFEST=$AGENT_MANIFEST" >> "$GITHUB_ENV"
+      - name: Install verified cargo-about 0.9.3
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            about_target=x86_64-pc-windows-msvc
+            about_sha=9e2942533ef1c592c4a70bdb384cae1550a3f5fc9ae40379b6662e3d2f16fe02
+            about_bin=cargo-about.exe
+          else
+            about_target=x86_64-unknown-linux-musl
+            about_sha=3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+            about_bin=cargo-about
+          fi
+          curl --fail --location --proto '=https' "https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.3/cargo-about-0.9.3-$about_target.tar.gz" --output cargo-about.tar.gz
+          echo "$about_sha  cargo-about.tar.gz" | sha256sum --check
+          mkdir cargo-about-bin
+          tar -xzf cargo-about.tar.gz --strip-components=1 -C cargo-about-bin
+          echo "CARGO_ABOUT=$GITHUB_WORKSPACE/cargo-about-bin/$about_bin" >> "$GITHUB_ENV"
       - name: Build embedded desktop installers
         working-directory: desktop
         run: node node_modules/@tauri-apps/cli/tauri.js build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --ci -- --locked

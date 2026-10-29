@@ -1,12 +1,12 @@
 {
   "name": "llmnest-web",
   "private": true,
-  "version": "0.1.1-alpha.11",
+  "version": "0.1.1-alpha.12",
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node ../scripts/web-notices.cjs dist/THIRD_PARTY_NOTICES.txt",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node tests/cloud-api.cjs && node tests/local-chat.cjs && node tests/crypto-sdk.cjs && node tests/crypto-session.cjs && node tests/crypto-auto-unlock.cjs && node tests/cloud-lock-ui.cjs && node tests/session-gate.cjs && node tests/crypto-devices-ui.cjs && node tests/crypto-projection.cjs && node tests/crypto-social.cjs && node tests/crypto-history.cjs && node tests/crypto-migration.cjs && node tests/crypto-recovery-reader.cjs && node tests/crypto-resources.cjs && node tests/cloud-workspace.cjs && node tests/cloud-group-actions.cjs && node tests/cloud-send.cjs && node tests/cloud-consciousness.cjs && node tests/cloud-participation.cjs && node tests/cloud-management.cjs && node tests/image-ui.cjs && node tests/image-drafts.cjs && node tests/file-attachments.cjs",
@@ -41,5 +41,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
-  }
+  },
+  "license": "Apache-2.0"
 }

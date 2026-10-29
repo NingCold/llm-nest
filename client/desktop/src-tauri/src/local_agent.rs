@@ -126,7 +126,7 @@ impl LocalAgentState {
         std::fs::create_dir_all(&self.root).map_err(io_error)?;
         atomic_bytes(&self.root.join("background-explained"), b"1")
     }
-    pub async fn any_running(&self, app: &tauri::AppHandle) -> Result<bool, String> {
+    pub async fn any_running(&self) -> Result<bool, String> {
         let _op = self.operation.lock().await;
         if let Some(e) = &self.initial_error {
             return Err(e.clone());
@@ -137,7 +137,7 @@ impl LocalAgentState {
         let owners = self.owners.lock().unwrap().clone();
         for o in owners {
             let p = self.dir(&o);
-            if p.join("node.toml").exists() && live(app, &p).await?["running"] == true {
+            if running(&p)? {
                 return Ok(true);
             }
         }
@@ -165,9 +165,7 @@ impl LocalAgentState {
         let owners = self.owners.lock().unwrap().clone();
         for o in owners {
             let p = self.dir(&o);
-            if p.join("node.toml").exists() {
-                stop(app, &p).await?;
-            }
+            stop(app, &p).await?;
         }
         Ok(())
     }
@@ -334,13 +332,31 @@ async fn init(app: &tauri::AppHandle, p: &Path) -> Result<(), String> {
 async fn live(app: &tauri::AppHandle, p: &Path) -> Result<Value, String> {
     output(app, "status", p, None).await
 }
+// Match the Agent's node.lock ownership without launching its executable. In
+// particular, an old configuration or descriptor does not mean an Agent is live.
+fn running(p: &Path) -> Result<bool, String> {
+    let lock = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(p.join("node.lock"))
+    {
+        Ok(lock) => lock,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io_error(error)),
+    };
+    match lock.try_lock() {
+        Ok(()) => Ok(false),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+        Err(std::fs::TryLockError::Error(error)) => Err(io_error(error)),
+    }
+}
 async fn stop(app: &tauri::AppHandle, p: &Path) -> Result<(), String> {
-    if live(app, p).await?["running"] != true {
+    if !running(p)? {
         return Ok(());
     }
     output(app, "stop", p, None).await?;
     for _ in 0..50 {
-        if live(app, p).await?["running"] != true {
+        if !running(p)? {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -754,6 +770,85 @@ mod tests {
     }
     fn options() -> SetupOptions {
         serde_json::from_value(json!({"nodeName":"本机节点","provider":"deepseek","model":"deepseek-chat","apiKey":"test-key-private-only"})).unwrap()
+    }
+    #[tokio::test]
+    async fn close_probe_ignores_stopped_configs_and_stale_descriptors_without_creating_locks() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = LocalAgentState::at_root(dir.path().into());
+        let o = owner();
+        state.remember(&o).unwrap();
+        let node = state.dir(&o);
+        assert!(!state.any_running().await.unwrap());
+        assert!(!node.exists());
+        std::fs::create_dir_all(&node).unwrap();
+        std::fs::write(node.join("node.toml"), b"stopped fixture").unwrap();
+        std::fs::write(node.join("desktop-agent.json"), b"stale descriptor").unwrap();
+        assert!(!state.any_running().await.unwrap());
+        assert!(!node.join("node.lock").exists());
+        std::fs::File::create(node.join("node.lock")).unwrap();
+        assert!(!state.any_running().await.unwrap());
+        std::fs::remove_file(node.join("node.lock")).unwrap();
+        std::fs::create_dir(node.join("node.lock")).unwrap();
+        assert!(state.any_running().await.is_err());
+    }
+    #[test]
+    #[ignore]
+    fn managed_lock_child_fixture() {
+        let Some(dir) = std::env::var_os("LLMN_CHILD_TEST_DIR") else {
+            return;
+        };
+        let path = PathBuf::from(dir);
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.join("node.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        std::fs::write(path.join("started"), b"1").unwrap();
+        std::thread::sleep(Duration::from_secs(10));
+    }
+    #[tokio::test]
+    async fn close_probe_recognizes_background_owner_after_desktop_restart_and_pairing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = LocalAgentState::at_root(dir.path().into());
+        let o = owner();
+        state.remember(&o).unwrap();
+        let node = state.dir(&o);
+        std::fs::create_dir_all(&node).unwrap();
+        let mut command = command_at(
+            &std::env::current_exe().unwrap(),
+            "--exact",
+            Path::new("local_agent::tests::managed_lock_child_fixture"),
+            None,
+        )
+        .unwrap();
+        command
+            .args(["--ignored", "--nocapture"])
+            .env("LLMN_CHILD_TEST_DIR", &node)
+            .stdout(Stdio::null());
+        let mut child = command.spawn().unwrap();
+        for _ in 0..100 {
+            if node.join("started").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(node.join("started").exists());
+        let restarted = LocalAgentState::at_root(dir.path().into());
+        assert!(restarted.any_running().await.unwrap());
+        child.kill().await.unwrap();
+        child.wait().await.unwrap();
+        assert!(!restarted.any_running().await.unwrap());
+        restarted.pairs.lock().unwrap().insert(
+            node,
+            PairState {
+                active: true,
+                ..PairState::default()
+            },
+        );
+        assert!(restarted.any_running().await.unwrap());
     }
     #[test]
     fn config_keys_stay_private_and_child_only_never_renderer_or_argv() {

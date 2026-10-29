@@ -1,7 +1,7 @@
 // Offline visual fixtures built from the real components. No effects, credentials,
 // network requests or application-only preview routes are involved.
 // Hook states and data are simulated; business actions do not execute.
-// The 120 pages are state/theme/platform combinations, not 120 independent tests.
+// Pages cover state/theme/platform combinations, not independent behavior tests.
 // Run after `pnpm build`: node tests/layout-preview.cjs <output-directory>
 const fs = require('node:fs');
 const path = require('node:path');
@@ -33,7 +33,11 @@ function fixture(relative, name, props, seeds={}, theme='light', desktop=false) 
     const mockDialog = {
       Dialog:({open,children})=>open ? h(React.Fragment,null,children):null,
       DialogTitle:({children})=>h('h2',null,children),
-      DialogContent:({children,className})=>h('div',{className,role:'dialog'},children,h('button',{className:'absolute right-4 top-4',type:'button','aria-label':'关闭'},h('span',{className:'sr-only'},'关闭'),'×')),
+      DialogDescription:({children})=>h('p',null,children),
+      DialogContent:({children,className})=>{
+        const serverDialog=className?.includes('auth-server-dialog');
+        return h(React.Fragment,null,serverDialog&&h('div',{style:{position:'fixed',inset:0,zIndex:50,background:'#000c'}}),h('div',{className,role:'dialog',...(serverDialog?{style:{position:'fixed',left:'50%',top:'50%',transform:'translate(-50%,-50%)',zIndex:50,display:'grid',gap:16}}:{})},children,h('button',{className:'absolute right-4 top-4',type:'button','aria-label':'关闭'},h('span',{className:'sr-only'},'关闭'),'×')));
+      },
     };
     function localRequire(spec) {
       if (spec==='react') return hooks;
@@ -110,6 +114,13 @@ const pages = {
   'contact-intent':(theme,desktop)=>fixture('cloud/Participation.tsx','IntentEditor',{ais:[ai.account],state,done:noop},{},theme,desktop),
 };
 for (const mode of ['login','register','verify','forgot','reset']) pages['auth-'+mode]=(theme,desktop)=>fixture('cloud/AuthPage.tsx','AuthPage',{mode,onMode:noop,busy:false,connected:true,connecting:false,serverUrl:'https://offline.invalid',onServerUrl:noop,onConnect:noop,onSubmit:blocked,error:'',notice:'',canResume:true,onCorrectEmail:noop,onResend:noop},{},theme,desktop);
+for (const [name, overrides, seeds] of [
+  ['disconnected', {connected:false}, []],
+  ['notice', {notice:'服务器已连接，请登录'}, []],
+  ['error', {error:'邮箱或密码不正确，请检查后重试。'}, []],
+  ['server', {connected:false,error:'无法连接服务器，请检查地址和网络后重试。'}, [false,true]],
+  ['verify-email', {mode:'verify',notice:'验证邮件已发送，请填写邮件中的验证码。'}, [true]],
+]) pages['auth-'+name]=(theme,desktop)=>fixture('cloud/AuthPage.tsx','AuthPage',{mode:'login',onMode:noop,busy:false,connected:true,connecting:false,serverUrl:'https://offline.invalid',onServerUrl:noop,onConnect:noop,onSubmit:blocked,error:'',notice:'',canResume:true,onCorrectEmail:noop,onResend:noop,...overrides},{'cloud/AuthPage.tsx':seeds},theme,desktop);
 
 const assets = path.resolve(__dirname,'../dist/assets');
 assert.ok(fs.existsSync(assets),'Run pnpm build before generating previews');

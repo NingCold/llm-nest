@@ -7,18 +7,19 @@ const React = require('react');
 const {renderToStaticMarkup} = require('react-dom/server');
 
 function harness(file, desktop = false) {
-  const values=[]; let cursor=0;
+  const values=[], dependencies=[]; let cursor=0, effects=[];
   const source=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/cloud',file+'.tsx'),'utf8'), {compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const exports={};
   vm.runInNewContext(source,{exports,location:{hash:'',search:''},URLSearchParams,require(name){
-    if(name==='react') return {...React,useState(initial){const i=cursor++;if(values[i]===undefined)values[i]=initial;return [values[i],v=>{values[i]=typeof v==='function'?v(values[i]):v;}];}};
+    if(name==='react') return {...React,useState(initial){const i=cursor++;if(values[i]===undefined)values[i]=initial;return [values[i],v=>{values[i]=typeof v==='function'?v(values[i]):v;}];},useEffect(work,deps){const i=cursor++;if(!dependencies[i]||deps.some((value,n)=>value!==dependencies[i][n])){dependencies[i]=deps;effects.push(work);}}};
     if(name==='@/lib/desktop') return {CUSTOM_WINDOW_CHROME:desktop,IS_DESKTOP:desktop};
     if(name==='@/store/ui') return {useUiStore:fn=>fn({theme:'light',toggleTheme(){}})};
     if(name==='@/components/BrandMark') return {BrandMark:()=>React.createElement('span',{'aria-hidden':true},'◈')};
+    if(name==='@/components/ui/dialog') return {Dialog:({children})=>React.createElement(React.Fragment,null,children),DialogContent:({children})=>React.createElement('div',{role:'dialog'},children),DialogTitle:({children})=>React.createElement('h2',null,children),DialogDescription:({children})=>React.createElement('p',null,children)};
     if(name.endsWith('.css'))return {};
     return require(name);
   }});
-  return {render(props){cursor=0;return exports[file](props);}};
+  return {render(props){cursor=0;effects=[];const tree=exports[file](props);for(const effect of effects)effect();return tree;}};
 }
 function nodes(tree){if(!tree||typeof tree!=='object')return [];return [tree,...React.Children.toArray(tree.props?.children).flatMap(nodes)];}
 function text(tree){return React.Children.toArray(tree?.props?.children).map(n=>typeof n==='object'?text(n):String(n)).join('');}
@@ -37,6 +38,32 @@ for(const mode of ['login','verify']){
   assert.match(text(disabled),/此平台暂不支持保持登录/);
 }
 for(const mode of ['register','forgot','reset'])assert.ok(!nodes(harness('AuthPage').render({...authProps,mode})).some(n=>n.props?.name==='rememberLogin'));
+
+// Changing servers stays behind an explicit action and reuses the existing
+// connect callbacks. It does not replace or reset the login form.
+{
+  const h=harness('AuthPage',true);let connects=0,changed='';
+  const props={...authProps,serverUrl:'https://offline.invalid',onConnect(){connects++;},onServerUrl(value){changed=value;}};
+  let tree=h.render(props);
+  assert.equal(nodes(tree).some(n=>n.type==='input'&&n.props.type==='url'),false,'connected server settings stay compact');
+  assert.ok(button(tree,'更改'));
+  assert.equal(nodes(tree).find(n=>n.type==='header').props['data-tauri-drag-region'],'deep');
+  assert.deepEqual(nodes(tree).filter(n=>n.props?.['data-tauri-drag-region']).map(n=>n.type),['header']);
+  button(tree,'更改').props.onClick();tree=h.render(props);
+  const input=nodes(tree).find(n=>n.type==='input'&&n.props.type==='url');
+  assert.equal(input.props.value,props.serverUrl);
+  input.props.onChange({target:{value:'https://other.invalid'}});assert.equal(changed,'https://other.invalid');
+  tree=h.render({...props,connected:false,error:'服务器暂时无法连接'});
+  const serverForm=nodes(tree).find(n=>n.type==='form'&&n.props.className==='social-form');
+  serverForm.props.onSubmit({preventDefault(){}});assert.equal(connects,1);
+  assert.ok(nodes(tree).some(n=>n.props?.role==='alert'&&text(n)==='服务器暂时无法连接'));
+  assert.equal(button(tree,'登录').props.disabled,true,'login still requires a connected server');
+  h.render(props);tree=h.render(props);
+  assert.equal(nodes(tree).some(n=>n.type==='input'&&n.props.type==='url'),false,'successful connection closes the server editor');
+  assert.equal(button(tree,'登录').props.disabled,false);
+  const web=harness('AuthPage').render(props);
+  assert.equal(button(web,'更改'),undefined,'web keeps its existing server selection behavior');
+}
 
 let unlocked, recovered=0,loggedOut=0;
 const lockProps={accountName:'测试账号',busy:false,error:'',onUnlock:value=>{unlocked=value;},onRecovery(){recovered++;},onLogout(){loggedOut++;}};

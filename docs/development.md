@@ -94,6 +94,17 @@ python scripts/social_acceptance.py --only-files
 
 这些脚本使用独立临时数据和本机模拟 provider，具体覆盖范围见[验证指南](validation/README.md)。真实模型调用需要另有明确授权。
 
+每批编译结束后，由代理主动整理产物。等所有并行编译结束，先预览再清理：
+
+```bash
+python scripts/clean-build-artifacts.py
+python scripts/clean-build-artifacts.py --apply
+```
+
+脚本只删除 `target` 下默认及常见 Windows、Linux、macOS 目标的 `incremental` 增量缓存，未知或自定义目标目录保留。依赖、构建缓存、可执行文件、安装包和工作资料都保留，避免每次全量重编；下次受影响的 Rust 编译会重新生成增量缓存。有 Cargo/rustc 正在运行，或候选包含链接、junction 时，脚本停止。自身验证使用独立临时目录：`python scripts/test_clean_build_artifacts.py`。
+
+清理是每批工作的收尾步骤，不挂在并行构建钩子上。工具策略拒绝时保留预览，交由用户执行，不能写成已经清理。安装包保留当前和上一可回退版，不在多个工作目录重复复制；账号、聊天、密钥和恢复备份按内容核对，不按日期自动删除。
+
 旧模拟 provider 验收脚本属于本地 SocialFeature 回归，不会把默认页面切回旧界面。云端页面与桌面实际网络转发需要单独验收，见 [Windows](validation/windows.md) / [Linux](validation/linux.md) 和[验证指南](validation/README.md)。
 
 ## 云端数据库测试

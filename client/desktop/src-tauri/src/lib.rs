@@ -112,7 +112,7 @@ fn request_shutdown(app: &tauri::AppHandle, force_exit: bool) {
             return;
         }
         let local = app.state::<local_agent::LocalAgentState>();
-        let running = match local.any_running(&app).await {
+        let running = match local.any_running().await {
             Ok(v) => v,
             Err(e) => {
                 let _ = app.emit("backend-shutdown-failed", e);

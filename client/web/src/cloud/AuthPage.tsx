@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { ArrowLeft, Moon, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Moon, Server, Sun } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { CUSTOM_WINDOW_CHROME, IS_DESKTOP } from "@/lib/desktop";
 import { useUiStore } from "@/store/ui";
 import "../social/social.css";
@@ -37,6 +38,8 @@ export function AuthPage(props: AuthPageProps) {
   const theme = useUiStore(s => s.theme);
   const toggleTheme = useUiStore(s => s.toggleTheme);
   const [correctingEmail, setCorrectingEmail] = useState(false);
+  const [editingServer, setEditingServer] = useState(false);
+  useEffect(() => { if (connected) setEditingServer(false); }, [connected]);
   const content = copy[mode];
   const params = new URLSearchParams(location.hash.split("?")[1] || location.search);
   const changeMode = (next: string) => { setCorrectingEmail(false); onMode(next); };
@@ -53,13 +56,13 @@ export function AuthPage(props: AuthPageProps) {
         {mode !== "login" && <button className="auth-back" type="button" onClick={() => changeMode("login")}><ArrowLeft size={15} />返回登录</button>}
         <h1 id="auth-heading">{content.title}</h1>
         <p className="auth-description">{content.description}</p>
-        {IS_DESKTOP && <form className="social-form auth-server" onSubmit={e => { e.preventDefault(); props.onConnect(); }}>
-          <label>服务器地址<input type="url" required placeholder="https://您的服务器地址" value={props.serverUrl} disabled={busy || connecting} onChange={e => props.onServerUrl(e.target.value)} /></label>
-          <button className="social-button secondary" disabled={busy || connecting}>{connecting ? "正在连接…" : connected ? "重新连接" : "连接服务器"}</button>
-          {!connected && !connecting && <small>连接服务器后即可登录或注册。</small>}
-        </form>}
-        {props.error && <p className="auth-feedback auth-error" role="alert">{props.error}</p>}
-        {props.notice && <p className="auth-feedback" role="status">{props.notice}</p>}
+        {IS_DESKTOP && <div className="auth-server-status">
+          <Server aria-hidden="true" />
+          <span className="auth-server-summary"><span>{connecting ? "正在连接…" : connected ? "已连接" : "未连接服务器"}</span>{props.serverUrl && <span className="auth-server-address" title={props.serverUrl}>{props.serverUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}</span>}</span>
+          <button type="button" className="auth-link" disabled={busy || connecting} onClick={() => setEditingServer(true)}>{connected ? "更改" : "设置服务器"}</button>
+        </div>}
+        {!editingServer && props.error && <p className="auth-feedback auth-error" role="alert">{props.error}</p>}
+        {!editingServer && props.notice && <p className="auth-feedback" role="status">{props.notice}</p>}
         <form className="social-form auth-form" key={mode} onSubmit={e => { e.preventDefault(); props.onSubmit(e.currentTarget); }}>
           {mode === "register" && <>
             <label>邀请码<input name="invite" required defaultValue={params.get("invite") || ""} autoComplete="off" /></label>
@@ -87,5 +90,17 @@ export function AuthPage(props: AuthPageProps) {
       </section>
     </div>
     <footer className="auth-page-footer">让联系自然发生</footer>
+    {IS_DESKTOP && editingServer && <Dialog open onOpenChange={setEditingServer}>
+      <DialogContent className="social-dialog auth-server-dialog">
+        <DialogTitle>连接服务器</DialogTitle>
+        <DialogDescription>填写你使用的服务器地址，连接后即可登录或注册。</DialogDescription>
+        <form className="social-form" onSubmit={e => { e.preventDefault(); props.onConnect(); }}>
+          <label>服务器地址<input type="url" required placeholder="https://您的服务器地址" value={props.serverUrl} disabled={busy || connecting} onChange={e => props.onServerUrl(e.target.value)} /></label>
+          {props.error && <p className="auth-feedback auth-error" role="alert">{props.error}</p>}
+          {props.notice && <p className="auth-feedback" role="status">{props.notice}</p>}
+          <button className="social-button primary" disabled={busy || connecting}>{connecting ? "正在连接…" : "连接服务器"}</button>
+        </form>
+      </DialogContent>
+    </Dialog>}
   </main>;
 }

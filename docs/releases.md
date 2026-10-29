@@ -61,7 +61,7 @@ git push origin v0.1.1-alpha.11
 
 ## 本地 Windows 打包
 
-先按开发指南安装系统和前端依赖，在仓库根目录的 PowerShell 中运行：
+先按开发指南安装系统和前端依赖，从独立 Agent 构建或正式发布取得清单及对应 Windows 程序。以下路径指向已准备的固定产物，版本须来自实际清单；本轮新远端尚未发布。在仓库根目录的 PowerShell 中运行：
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
@@ -85,10 +85,14 @@ Pop-Location
 在 Linux 的独立 checkout 中构建，分别安装依赖，避免复用 Windows 的 `node_modules` 和 `target`。原生系统依赖见 [Dockerfile](../scripts/linux/Dockerfile)，准备好后运行：
 
 ```bash
+export LLMN_AGENT_VERSION='<实际清单中的固定版本>'
+export LLMN_AGENT_TARGET=x86_64-unknown-linux-gnu
+export LLMN_AGENT_MANIFEST='/已准备的Agent产物目录/agent-manifest.json'
+export LLMN_AGENT_FILE='/已准备的Agent产物目录/清单对应的Linux程序'
 bash scripts/linux/build.sh
 ```
 
-脚本安装前端依赖，运行前端检查、Rust 测试，单独构建并打包 Agent，再构建 deb 和 AppImage。只需要 deb 时设置 `LLMN_LINUX_BUNDLES=deb`。默认产物位于 `target/release/bundle`；指定 Rust target 后，路径多一层 target 名称。
+脚本安装前端依赖，运行前端检查、Rust 测试，核验指定 Agent 产物后构建 deb 和 AppImage，不编译 Agent。正式发布可将 `LLMN_AGENT_MANIFEST` 设为固定 HTTPS 清单 URL，省略 `LLMN_AGENT_FILE`，从清单下载并校验程序。只需要 deb 时设置 `LLMN_LINUX_BUNDLES=deb`。产物位于 `target/$LLMN_AGENT_TARGET/release/bundle`；上述目标为 `target/x86_64-unknown-linux-gnu/release/bundle`。
 
 ### 用 Ubuntu 容器构建
 
@@ -100,6 +104,11 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e HOME=/workspace/target/build-home \
   -e CARGO_HOME=/workspace/target/cargo-cache \
   -e CARGO_BUILD_JOBS=4 \
+  -e LLMN_AGENT_VERSION \
+  -e LLMN_AGENT_TARGET \
+  -e LLMN_AGENT_MANIFEST=/agent-artifacts/agent-manifest.json \
+  -e LLMN_AGENT_FILE=/agent-artifacts/清单对应的Linux程序 \
+  --mount type=bind,source=/已准备的Agent产物目录,target=/agent-artifacts,readonly \
   --mount type=bind,source="$PWD",target=/workspace \
   llmn-build:ubuntu24 \
   bash -c 'mkdir -p "$HOME"; bash scripts/linux/build.sh'
@@ -116,13 +125,11 @@ docker run --rm --user "$(id -u):$(id -g)" \
 ```bash
 pnpm --dir web build
 python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.11 --output /新的web产物目录
-python scripts/prepare-cloud-context.py --web-artifact /新的web产物目录/llmn-web-0.1.1-alpha.11.tar.gz --web-manifest /新的web产物目录/web-manifest.json --web-version 0.1.1-alpha.11 --output /新的cloud构建目录
-docker build -t llmn-cloud:<服务端版本> /新的cloud构建目录
 ```
 
-上下文创建使用已跟踪的云端、连接器和领域类型文件，生成独立小工作区并用 `cargo update --workspace --offline` 收敛现有锁文件，核对依赖版本保持固定；需要本机已有对应 Cargo 索引缓存。Docker 不复制客户端、Agent 或旧 Runtime，也不隐式读取 `web/dist`。Compose 指定 `CLOUD_BUILD_CONTEXT`，详见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。Web、Agent 的打包目录使用新目录，保留上一组可回退产物。正式 Agent 下载必须使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
+将 Web 包及 web-manifest.json 交给独立服务端仓，按[服务端部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)创建构建上下文和镜像。客户端仓不包含服务端准备脚本。保留上一组可回退产物；正式 Agent 下载使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
 
-当前单仓发布工作流显式构建 Agent 后再交给客户端消费；Web 包和清单随 Linux 产物上传。此流程尚不等于已经拆出新仓或部署新版本。部署时记录实际服务端、Web、Agent 与连接器版本/提交、摘要及协议组合。
+客户端发布工作流只消费指定 Agent 清单，Web 包和清单随 Linux 产物上传。填写 release_tag 时，构建直接 checkout 该标签并核对提交；草稿发布再次核对标签仍指向实际构建提交。未填写时按启动工作流的固定提交生成下载产物。实际远端发布属于拆仓第三批，当前不代表已经公开发布或部署。部署时记录服务端、Web、Agent 与连接器的实际版本、提交和摘要。
 
 ## 发布前核对
 

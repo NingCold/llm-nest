@@ -1,19 +1,6 @@
 import { create } from "zustand"
-import { IS_DESKTOP } from "@/lib/desktop"
 
 export type Theme = "dark" | "light"
-export type ApiMode = "tauri" | "http"
-export type SettingsSection = "models" | "appearance" | "config" | "about"
-
-function routeFromHash() {
-  const [, page, section] = location.hash.replace(/^#/, "").split("/")
-  return {
-    page: page === "settings" ? "settings" as const : "messages" as const,
-    settingsSection: (["models", "appearance", "config", "about"].includes(section)
-      ? section : "models") as SettingsSection,
-  }
-}
-
 const THEME_KEY = "llm-nest-theme"
 
 function initialTheme(): Theme {
@@ -30,34 +17,18 @@ function initialTheme(): Theme {
 }
 
 interface UiStore {
-  page: "messages" | "settings"
-  settingsSection: SettingsSection
-  showSettings: (section?: SettingsSection) => void
-  syncRoute: () => void
   theme: Theme
   desktopReady: boolean
   setDesktopReady: () => void
-  apiMode: ApiMode
 
   toggleTheme: () => void
   setTheme: (t: Theme) => void
 }
 
 export const useUiStore = create<UiStore>((set, get) => ({
-  ...routeFromHash(),
-  showSettings: (section = get().settingsSection) => {
-    set({ page: "settings", settingsSection: section })
-    location.hash = `/settings/${section}`
-  },
-  syncRoute: () => {
-    const route = routeFromHash()
-    // Going back to chat should remember the last settings category.
-    set(route.page === "settings" ? route : { page: "messages" })
-  },
   theme: initialTheme(),
   desktopReady: false,
   setDesktopReady: () => set({ desktopReady: true }),
-  apiMode: IS_DESKTOP ? "tauri" : "http",
 
   toggleTheme: () => {
     const next: Theme = get().theme === "dark" ? "light" : "dark"

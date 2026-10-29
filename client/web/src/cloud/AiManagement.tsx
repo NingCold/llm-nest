@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, MessageCircle, Plus, RefreshCw, Server, Settings, Unplug } from "lucide-react";
 import { CUSTOM_WINDOW_CHROME, IS_DESKTOP } from "@/lib/desktop";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Avatar, IconButton } from "../social/components/common";
+import { Avatar, IconButton } from "../chat/components/common";
 import { request } from "./api";
 import { AiDetails } from "./AiDetails";
 import { LocalAgentPanel } from "./LocalAgentPanel";

@@ -16,8 +16,8 @@ services:
     restart: unless-stopped
   app:
     build:
-      context: ../../..
-      dockerfile: server/cloud/Dockerfile
+      context: ${CLOUD_BUILD_CONTEXT:?set verified CLOUD_BUILD_CONTEXT}
+      dockerfile: Dockerfile
     environment:
       CLOUD_DATABASE_URL: postgres://llmn:${POSTGRES_PASSWORD}@postgres:5432/llmn
       CLOUD_PUBLIC_URL: ${CLOUD_PUBLIC_URL:?set CLOUD_PUBLIC_URL}

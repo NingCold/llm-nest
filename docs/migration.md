@@ -53,7 +53,7 @@ llmn-agent run <新节点目录>
 
 ## 验证工具
 
-`python scripts/test_migrate_local.py` 使用临时旧库检查备份和转换。完整的云端迁移、更换节点、备份恢复运行方法见[验证指南](validation/README.md#数据迁移与联网试用验证)，测试都使用专用账号和模拟模型。
+`python scripts/test_migrate_local.py` 使用临时旧库检查备份和转换，v13 SQL 夹具位于 `server/cloud/tests/fixtures/local-v13`。旧宿主已移除，迁移工具继续独立读取旧库。完整的云端迁移、更换节点、备份恢复运行方法见[验证指南](validation/README.md#数据迁移与联网试用验证)，测试都使用专用账号和模拟模型。
 
 ## 现有云端记录转为加密
 

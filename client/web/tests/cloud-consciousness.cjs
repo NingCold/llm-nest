@@ -127,7 +127,7 @@ const button = (tree, label) => { const result = all(tree, node => node.type ===
   assert.match(summaryText, /custom-readable-message/, "unknown safe error text remains visible");
 
   const storageExports = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/social/draft-storage.ts"), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, { exports: storageExports, Blob, Uint8Array, atob, btoa });
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/chat/draft-storage.ts"), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, { exports: storageExports, Blob, Uint8Array, atob, btoa });
   const factory = new (require("fake-indexeddb").IDBFactory)(), legacy = { getItem: () => null };
   const database = new storageExports.DraftDatabase(factory, legacy);
   await database.load("server/human", ["direct"]);

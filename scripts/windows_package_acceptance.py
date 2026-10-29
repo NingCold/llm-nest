@@ -1,8 +1,8 @@
 """Verify installed/extracted Windows payloads against the Tauri release EXE.
 
 Tauri patches a three-byte bundle marker (UNK/NSS/MSI) per installer, then
-restores the original EXE. Compare every other byte and execute each payload's
-worker in an empty environment. Does not install, publish or read user data.
+restores the original EXE. Compare every other byte and verify each bundled
+Agent against its fixed version/SHA256 record. Does not install or read user data.
 """
 import argparse
 import hashlib
@@ -24,11 +24,23 @@ def normalized(path, expected):
     return data[:offset] + b"UNK" + data[offset + 3:], hashlib.sha256(data).hexdigest()
 
 
-def worker(path, tool, body):
-    result = subprocess.run([str(path), "--llmn-tool-worker", tool], input=json.dumps(body).encode(),
-        capture_output=True, env={}, timeout=10, check=True,
+def verify_agent(directory, expected=None):
+    record_path = directory / "agent-artifact.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    if not record.get("agentVersion") or "windows" not in record.get("target", ""):
+        raise ValueError(f"Invalid Windows Agent record: {record_path}")
+    if expected is not None and record != expected:
+        raise ValueError(f"Bundled Agent record differs from build: {record_path}")
+    binary = directory / "llmn-agent.exe"
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    if digest != record.get("sha256"):
+        raise ValueError(f"Bundled Agent SHA256 mismatch: {binary}")
+    result = subprocess.run([str(binary.resolve()), "--version"], capture_output=True,
+        text=True, env={}, timeout=10, check=True,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-    return json.loads(result.stdout)
+    if result.stdout.strip() != f"llmn-agent {record['agentVersion']}":
+        raise ValueError(f"Bundled Agent version mismatch: {binary}")
+    return record
 
 
 def main():
@@ -36,16 +48,19 @@ def main():
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--installed-nsis", type=Path, required=True)
     parser.add_argument("--msi-extracted", type=Path, required=True)
+    parser.add_argument("--agent-directory", type=Path,
+        default=Path(__file__).resolve().parents[1] / "client/desktop/src-tauri/resources",
+        help="Prepared build Agent and agent-artifact.json directory")
     args = parser.parse_args()
+    agent_record = verify_agent(args.agent_directory.resolve(strict=True))
     reference, _ = normalized(args.build.resolve(strict=True), b"UNK")
     for label, path, marker in (("NSIS installed", args.installed_nsis, b"NSS"),
                                 ("MSI extracted", args.msi_extracted, b"MSI")):
         path = path.resolve(strict=True)
         content, digest = normalized(path, marker)
         assert content == reference, f"{label}: EXE differs beyond its expected bundle marker"
-        assert worker(path, "add", {"a": 2, "b": 3}) == {"result": {"sum": 5}}
-        assert "tool not allowed" in worker(path, "shell", {})["error"]
-        print(f"PASS: {label} payload, empty-environment worker and fixed allowlist; SHA256={digest}")
+        verify_agent(path.parent / "agent", agent_record)
+        print(f"PASS: {label} payload and bundled Agent version/SHA256; EXE SHA256={digest}")
 
 
 if __name__ == "__main__":

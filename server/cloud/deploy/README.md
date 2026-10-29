@@ -4,7 +4,15 @@
 
 这套 Compose 在一台 Linux 服务器运行 PostgreSQL、聊天服务和 HTTPS 入口。只有 HTTPS 的 8443 端口发布到指定 Tailscale 地址，数据库和应用端口留在容器网络内。当前配置使用私有测试收件箱，不发送真实邮件。
 
-服务器需要 Docker Compose。先在客户端源码目录构建网页，再把源码和 `client/web/dist` 放到服务器；不要复制个人配置、模型密钥或聊天库。Dockerfile 会编译独立的 `cloud-server`，无需启动模型服务。
+服务器需要 Docker Compose。客户端先构建 Web，再将明确版本的静态产物和 SHA-256 清单交给服务端。Docker 不直接读取客户端目录，也不编译 Agent。
+
+```sh
+pnpm --dir client/web build
+python scripts/package-web.py --dist client/web/dist --version 0.1.1-alpha.11 --output /path/to/web-artifact
+python scripts/prepare-cloud-context.py --web-artifact /path/to/web-artifact/llmn-web-0.1.1-alpha.11.tar.gz --web-manifest /path/to/web-artifact/web-manifest.json --web-version 0.1.1-alpha.11 --output /path/to/cloud-context
+```
+
+版本参数选择实际构建的客户端版本。打包目录与构建上下文必须为空，不会覆盖旧包。上下文创建时验证版本、摘要和归档路径，只加入 `server/cloud`、`connector`、`crates/social` 的受 Git 跟踪文件，并用 `cargo update --workspace --offline` 从现有锁文件收敛最小工作区，核对依赖版本保持固定；需要本机已有对应 Cargo 索引缓存。将生成的上下文复制到构建机器，在部署环境设置 `CLOUD_BUILD_CONTEXT` 为其绝对路径。上下文包含固定 Web 清单，不含个人配置、模型密钥或聊天库。服务端、Web 和 Agent 的版本可以独立选择；部署时保留实际兼容组合及摘要，不用 `latest` 代替产物版本。
 
 ## 准备目录与证书
 

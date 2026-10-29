@@ -5,6 +5,41 @@ use connector::node::*;
 use rusqlite::{OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
+pub fn catalog() -> connector::management::AgentCatalog {
+    use connector::management::{
+        AGENT_CATALOG_PROTOCOL_VERSION, AgentCatalog, AgentCatalogModel, AgentCatalogProvider,
+    };
+    AgentCatalog {
+        protocol_version: AGENT_CATALOG_PROTOCOL_VERSION,
+        agent_version: env!("CARGO_PKG_VERSION").into(),
+        providers: ai_client::catalog::BUILTIN_PROVIDERS
+            .iter()
+            .map(|provider| AgentCatalogProvider {
+                id: provider.id.into(),
+                name: provider.display_name.into(),
+                models: provider
+                    .models
+                    .iter()
+                    .map(|model| AgentCatalogModel {
+                        id: model.id.into(),
+                        name: model.display_name.into(),
+                        context_window: model.context_window,
+                        reasoning_efforts: model
+                            .reasoning
+                            .map(|r| {
+                                r.levels
+                                    .iter()
+                                    .map(|effort| effort.as_wire().into())
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 pub fn models(config: &Config) -> Result<Vec<AgentModelChoice>> {
     Ok(ModelRouter::new(&config.providers)?
         .list_models()

@@ -6,10 +6,10 @@ import { clearConsciousnessCommands } from "./Consciousness";
 import { clearAiConfigurationCommands } from "./AiConfiguration";
 import { clearParticipationCommands } from "./Participation";
 import { Workspace } from "./Workspace";
-import { DraftDatabase } from "../social/draft-storage";
-import { emptyDraft } from "../social/drafts";
-import { readImages } from "../social/images";
-import { readFiles } from "../social/files";
+import { DraftDatabase } from "../chat/draft-storage";
+import { emptyDraft } from "../chat/drafts";
+import { readImages } from "../chat/images";
+import { readFiles } from "../chat/files";
 import {
   request,
   DownloadCancelled,

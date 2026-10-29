@@ -18,7 +18,7 @@ def build_fixture(directory):
     directory=Path(directory);directory.mkdir(exist_ok=True)
     (directory/'.llmn.lock').touch()
     db=sqlite3.connect(directory/'social.sqlite3')
-    schema=ROOT/'crates/storage/src/social'
+    schema=ROOT/'server/cloud/tests/fixtures/local-v13'
     for version in range(1,14):
         db.executescript((schema/('schema.sql' if version==1 else f'schema-v{version}.sql')).read_text())
         db.execute('INSERT INTO schema_migrations VALUES(?,?,?)',(version,'fixture','2026-01-01T00:00:00Z'))

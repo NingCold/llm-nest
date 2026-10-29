@@ -8,4 +8,4 @@
 
 加密聊天与 AI 资料由客户端和 Agent 加解密，服务器保存密文、公开密钥和必要的同步信息；节点保留工作副本，模型 Key 留在运行设备。未启用加密的窗口仍沿用原存储，旧历史不会自动转换。节点运行方法见[节点说明](../agent/node/README.md)，实际验证和部署范围见[当前安排](../docs/project/current.md)。
 
-[http](http/README.md) 与 [social](social/README.md) 保留原来的本地 HTTP/SocialFeature、SQLite 和模型协调实现，供回归及旧库迁移核对。`web-server` 不是默认云端客户端的后端；旧记录通过[迁移工具](../docs/migration.md)进入云端，内部意识资料交给节点。
+旧本地库通过[迁移工具](../docs/migration.md)进入云端，内部意识资料交给节点。部署使用[固定版本的 Web 产物](cloud/deploy/README.md)，服务端 Docker 构建上下文只包含云端服务、连接器和必要领域类型。

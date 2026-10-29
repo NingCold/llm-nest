@@ -1,9 +1,9 @@
 import { download, downloadBytes, saveBlob } from "../api";
 import { decryptAttachment, encryptAttachment } from "./engine";
 import type { Attachment, Message } from "../types";
-import type { DraftImage } from "../../social/images";
-import type { DraftFile } from "../../social/files";
-import { validateFiles } from "../../social/files";
+import type { DraftImage } from "../../chat/images";
+import type { DraftFile } from "../../chat/files";
+import { validateFiles } from "../../chat/files";
 import { invoke } from "@tauri-apps/api/core";
 
 export function prepareAttachments(images: DraftImage[] = [], files: DraftFile[] = []) {

@@ -1,4 +1,4 @@
-"""Check the extracted Agent core and connector using Cargo's actual dependency graph."""
+"""Check client, cloud and Agent source boundaries using Cargo's dependency graph."""
 import json
 from pathlib import Path
 import subprocess
@@ -12,6 +12,9 @@ def main():
         cwd=ROOT, text=True, encoding="utf-8",
     ))
     packages = {p["name"]: p for p in metadata["packages"]}
+    retired = {"runtime", "storage", "tools", "social-feature", "web-server"}
+    if packages.keys() & retired:
+        raise SystemExit("Retired host packages remain in the workspace")
     forbidden = {
         "connector": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
                       "social-feature", "web-server", "cloud-server", "tauri-frontend", "llmn-crypto"},
@@ -23,6 +26,8 @@ def main():
                         "tools", "social-feature", "web-server", "cloud-server", "tauri-frontend"},
         "agent-node": {"runtime", "storage", "social-feature", "web-server",
                        "cloud-server", "tauri-frontend"},
+        "tauri-frontend": {"runtime", "storage", "ai-client", "builtin-agent", "tools",
+                           "social-feature", "web-server", "cloud-server", "llmn-crypto", "common"},
     }
     for start, excluded in forbidden.items():
         pending = [(start, [start])]
@@ -39,6 +44,15 @@ def main():
                 if dependency.get("path") and target in packages:
                     pending.append((target, chain + [target]))
         print(f"{start}: dependency boundary OK")
+
+    prepare = (ROOT / "client/desktop/scripts/prepare-agent.mjs").read_text(encoding="utf-8")
+    if any(token in prepare for token in ("execFile", "spawn(", "cargo build", "target/debug", "target/release")):
+        raise SystemExit("Desktop artifact preparation must not build or locate Agent source output")
+    docker = (ROOT / "server/cloud/Dockerfile").read_text(encoding="utf-8")
+    for line in docker.splitlines():
+        if line.startswith("COPY ") and any(token in line for token in ("client/", "agent/", "crates/runtime", "crates/storage")):
+            raise SystemExit("Cloud Docker build includes another runtime or client source")
+    print("Desktop Agent artifact and cloud build-context boundaries OK")
 
 
 if __name__ == "__main__":

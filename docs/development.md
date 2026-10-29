@@ -2,11 +2,11 @@
 
 [项目首页](../README.md) · [模型配置](configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
 
-默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。旧本地 Runtime/SQLite 保留作回归与 Agent 迁移参考，不由默认桌面页面启动。
+默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面仅管理独立 Agent，旧本地宿主已移除；旧 SQLite 仍可通过独立迁移工具导入。
 
 ## 准备环境
 
-现有 CI/Linux 构建脚本使用 Rust 1.97.0、Node.js 24.18.0、pnpm 11.22.0，云端 Dockerfile 使用 Rust 1.99.1；脚本需要 Python 3.11+。Windows 云端和桌面检查使用 stable MSVC 工具链。按对应构建入口准备版本，避免因工具差异改动锁文件。
+CI 与云端 Dockerfile 使用 Rust 1.99.1，前端使用 Node.js 24.18.0、pnpm 11.22.0；脚本需要 Python 3.11+。Windows 使用 MSVC 工具链。按对应构建入口准备版本，避免因工具差异改动锁文件。
 
 先安装共用前端和桌面壳的依赖：
 
@@ -23,8 +23,9 @@ pnpm --dir client/desktop install --frozen-lockfile
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-pnpm --dir client/desktop exec tauri dev
 ```
+
+准备 Agent 产物后再启动桌面，见下文。
 
 ### Linux
 
@@ -57,11 +58,25 @@ pnpm --dir client/web dev
 pnpm --dir client/desktop exec tauri dev
 ```
 
-在页面填写云端 HTTPS 服务器地址。原生网络层默认仅保管内存 Cookie；Windows 显式选择保持登录后用当前用户 DPAPI 保存令牌，重启仍联网核对会话，非 Windows 原生端暂不支持。登录与 SDK 解锁独立，规则见[账号设计](design/accounts.md#登录会话与本机解锁)。默认不读取 `config/llmn.toml` 或打开旧 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
+在页面填写云端 HTTPS 服务器地址。原生网络层默认仅保管内存 Cookie；Windows 显式选择保持登录后用当前用户 DPAPI 保存令牌，重启仍联网核对会话，非 Windows 原生端暂不支持。登录与 SDK 解锁独立，规则见[账号设计](design/accounts.md#登录会话与本机解锁)。客户端不读取模型配置或节点 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
 
 Tauri 开发和构建入口会先准备独立 `llmn-agent` 可执行文件，再构建共用前端；生成文件不进 Git。桌面运行时从资源目录启动 Agent，界面本身不调用模型。验收本机配置、配对与托盘时，设置临时 `LLMN_DATA_DIR`，按服务器和真人账号隔离节点，避免使用日常资料。构建细节见[桌面说明](../client/desktop/README.md)。
 
-旧本地服务仍可用 `cargo run -p web-server --locked` 维护 Runtime/SocialFeature 与 SQLite，需要独立的 `LLMN_DATA_DIR` 和模型配置，见[模型配置](configuration.md)。默认 CloudApp 不消费其 `/api/social` 接口；不要把两个服务当成同一个后端，也不要为测试启动真实模型调用。
+### 准备桌面 Agent 产物
+
+桌面构建不会编译 Agent 源码。先单独构建和打包；以下是当前单仓开发的 PowerShell 示例，输出目录必须未使用：
+
+```powershell
+cargo build -p agent-node --bin llmn-agent --locked
+python agent/scripts/package-agent.py --binary target/debug/llmn-agent.exe --output target/agent-dev-artifact --version 0.1.1-alpha.11 --target x86_64-pc-windows-msvc
+$env:LLMN_AGENT_VERSION = "0.1.1-alpha.11"
+$env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
+$env:LLMN_AGENT_MANIFEST = (Resolve-Path target/agent-dev-artifact/agent-manifest.json).Path
+$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-dev-artifact/llmn-agent-0.1.1-alpha.11-x86_64-pc-windows-msvc.exe).Path
+pnpm --dir client/desktop exec tauri dev
+```
+
+Linux 使用对应目标三元组与无 `.exe` 的程序。版本必须匹配程序 `--version`。已有官方 HTTPS 产物时，将 `LLMN_AGENT_MANIFEST` 指向固定版本清单，省略 `LLMN_AGENT_FILE`，从清单的 HTTPS URL 获取程序并核对 SHA-256。缺少或不匹配时构建失败，不查找兄弟源码或自动改用其他版本。客户端与 Agent 可分别发版。
 
 ### 独立 Agent 与外部接入
 
@@ -82,17 +97,16 @@ pnpm --dir client/web typecheck
 pnpm --dir client/web test
 ```
 
-跨模块改动再运行 `cargo test --workspace --locked` 和 `cargo clippy --workspace --all-targets --locked`。旧本地实现的离线回归入口（不代表云端客户端验收）：
+跨模块改动再运行 `cargo test --workspace --locked` 和 `cargo clippy --workspace --all-targets --locked`。产物、迁移与发布检查不需要真实模型：
 
 ```bash
-cargo build -p web-server --locked
-python scripts/acceptance.py
-python scripts/social_acceptance.py
-python scripts/social_acceptance.py --only-image-capabilities
-python scripts/social_acceptance.py --only-files
+python scripts/test_build_artifacts.py
+node --test client/desktop/scripts/prepare-agent.test.mjs
+python scripts/test_migrate_local.py
+python scripts/test_release.py
 ```
 
-这些脚本使用独立临时数据和本机模拟 provider，具体覆盖范围见[验证指南](validation/README.md)。真实模型调用需要另有明确授权。
+云端及 Agent 联调使用隔离服务和模拟模型，见[验证指南](validation/README.md)。真实模型调用需要另有明确授权。
 
 每批编译结束后，由代理主动整理产物。等所有并行编译结束，先预览再清理：
 
@@ -105,7 +119,7 @@ python scripts/clean-build-artifacts.py --apply
 
 清理是每批工作的收尾步骤，不挂在并行构建钩子上。使用 PowerShell 逐文件删除时默认不加 `-Force`；遇到文件属性或占用报错，先检查具体原因，不自动强制删除。工具策略拒绝时保留预览，交由用户执行，不能写成已经清理。安装包保留当前和上一可回退版，不在多个工作目录重复复制；账号、聊天、密钥和恢复备份按内容核对，不按日期自动删除。
 
-旧模拟 provider 验收脚本属于本地 SocialFeature 回归，不会把默认页面切回旧界面。云端页面与桌面实际网络转发需要单独验收，见 [Windows](validation/windows.md) / [Linux](validation/linux.md) 和[验证指南](validation/README.md)。
+云端页面与桌面实际网络转发需要单独验收，见 [Windows](validation/windows.md) / [Linux](validation/linux.md) 和[验证指南](validation/README.md)。
 
 ## 云端数据库测试
 
@@ -124,12 +138,14 @@ node client/web/tests/cloud-api.cjs
 
 修改边界和必须保持的行为见 [AGENTS.md](../AGENTS.md)，模块职责见[设计文档](design/README.md)。共享 DTO 或事件变化需要同步 HTTP 和 Tauri 两条链路。
 
-构建会生成 `client/web/dist`、`client/web/.social-runtime-dist`、`client/desktop/dist` 以及桌面 `gen/schemas` 下的权限 schema/manifest，Git 已忽略这些文件。桌面权限修改落在 `capabilities/*.json`。
+构建会生成 `client/web/dist`、`client/desktop/dist` 以及桌面 `gen/schemas` 下的权限 schema/manifest，Git 已忽略这些文件。桌面权限修改落在 `capabilities/*.json`。
 
 图标唯一编辑源为 `assets/branding/app-icon.svg`，更新后生成派生尺寸：
 
 ```bash
 pnpm --dir client/desktop icons
 ```
+
+客户端发版同步 Web/桌面 package.json、Tauri 配置和桌面 Cargo.toml 的显式 `package.version`，不跟随根工作区的服务端/Agent 版本；用 `python scripts/release.py validate` 校对，详见[发布指南](releases.md)。
 
 提交说明写清问题、结果和验证范围。检查没有混入个人配置、聊天数据、密钥或临时产物。项目许可证尚待确定。

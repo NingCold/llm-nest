@@ -7,9 +7,9 @@
 - [identity.rs](src/identity.rs)：账号资料、联系人和 AI 设定。
 - [conversation.rs](src/conversation.rs) 与 [message.rs](src/message.rs)：聊天窗口、成员和消息。
 - [consciousness.rs](src/consciousness.rs)：记忆、摘要和它们引用的内容。
-- [participation.rs](src/participation.rs) 与 [contact_intent.rs](src/contact_intent.rs)：接话规则和约定联系。
+- [contact_intent.rs](src/contact_intent.rs)：约定联系的数据类型。
 
-功能操作由 [server/social](../../server/social/README.md) 完成。设计背后的想法见[设计说明](../../docs/design/README.md)。
+聊天和权限操作由 [cloud-server](../../server/cloud/README.md) 完成。设计背后的想法见[设计说明](../../docs/design/README.md)。
 
 在仓库根目录运行测试：
 

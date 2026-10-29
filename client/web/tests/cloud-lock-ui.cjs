@@ -93,7 +93,7 @@ assert.match(web,/lock-screen-backdrop[^>]*aria-hidden="true"/);
 console.log('PASS: login consent, independent glass lock screen, accessible manual/automatic unlock and safe desktop header');
 
 if(process.argv[2]){
-  const css=['social/social.css','cloud/auth.css','cloud/lock-screen.css'].map(file=>fs.readFileSync(path.join(__dirname,'../src',file),'utf8')).join('\n');
+  const css=['chat/social.css','cloud/auth.css','cloud/lock-screen.css'].map(file=>fs.readFileSync(path.join(__dirname,'../src',file),'utf8')).join('\n');
   const assets=path.join(__dirname,'../dist/assets');
   const base=fs.existsSync(assets)?fs.readdirSync(assets).filter(name=>name.startsWith('index-')&&name.endsWith('.css')).map(name=>fs.readFileSync(path.join(assets,name),'utf8')).join(''):'';
   fs.mkdirSync(process.argv[2],{recursive:true});

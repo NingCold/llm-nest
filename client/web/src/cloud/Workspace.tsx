@@ -25,19 +25,19 @@ import {
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { MarkdownView } from "@/components/chat/MarkdownView";
-import { SocialSidebar } from "../social/components/SocialSidebar";
+import { SocialSidebar } from "../chat/components/SocialSidebar";
 import {
   Avatar,
   EmptyState,
   IconButton,
   shortTime,
-} from "../social/components/common";
+} from "../chat/components/common";
 import { useUiStore } from "@/store/ui";
 import type { CloudDraftRecord as DraftRecord, DraftReference } from "./types";
 import { ConsciousnessPanel, RememberMessage } from "./Consciousness";
 import { ParticipationPanel } from "./Participation";
 import { ContinuePrivately, ReferenceCard } from "./References";
-import { fileSize } from "../social/files";
+import { fileSize } from "../chat/files";
 import { download, request } from "./api";
 import { CreateGroup, GroupDetails, ContactBlock } from "./Groups";
 import { AiManagement } from "./AiManagement";
@@ -49,7 +49,7 @@ import type {
   Snapshot,
   Attachment,
 } from "./types";
-import "../social/social.css";
+import "../chat/social.css";
 import "./cloud.css";
 import "./chat-layout.css";
 import { ChatConnectionDetails, localConnectionLabel, type ChatConnectionProps } from "./ChatConnection";

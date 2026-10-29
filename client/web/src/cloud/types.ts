@@ -137,7 +137,7 @@ export interface Page {
 export interface SourceRevision { messageId: string; revision: string }
 export interface ReferenceSelection { conversationId: string; sources: SourceRevision[] }
 export interface DraftReference { actorId: string; selection: ReferenceSelection }
-export type CloudDraftRecord = import("../social/drafts").DraftRecord<DraftReference>;
+export type CloudDraftRecord = import("../chat/drafts").DraftRecord<DraftReference>;
 export interface NodeConversation { encryption?: Conversation["encryption"]; id: string; kind: "direct" | "group"; name: string; revision: string; members: Account[] }
 export interface ReferenceMessage { historyMigration?: HistoryMigration | null; sealed?: import("./crypto/content").Sealed | null; audienceRevision?: string | null; contextReference?: Message["contextReference"]; id: string; senderId: string; senderName: string; text: string; revision: string; createdAt: string; position: string; attachments: Attachment[]; replyTo: string | null; mentions: string[] }
 export interface ReferencePreview { conversation: NodeConversation; messages: ReferenceMessage[] }

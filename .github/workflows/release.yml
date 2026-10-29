@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
-      RUSTUP_TOOLCHAIN: 1.97.0
+      RUSTUP_TOOLCHAIN: 1.99.1
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: 4
       APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -52,9 +52,11 @@ jobs:
         run: |
           python scripts/release.py validate
           python scripts/test_release.py
+          python scripts/test_build_artifacts.py
+          node --test client/desktop/scripts/prepare-agent.test.mjs
       - name: Install toolchain
         run: |
-          rustup toolchain install 1.97.0 --profile minimal --component rustfmt,clippy --target ${{ matrix.target }}
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy --target ${{ matrix.target }}
           npm install --global pnpm@11.22.0
       - name: Linux system dependencies
         if: runner.os == 'Linux'
@@ -71,11 +73,17 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo test --workspace --locked
-          cargo build -p web-server --locked
-          python scripts/acceptance.py
-          python scripts/social_acceptance.py
-          python scripts/social_acceptance.py --only-image-capabilities
-          python scripts/social_acceptance.py --only-files
+      - name: Package separately built Agent (single-repository transition)
+        run: |
+          cargo build -p agent-node --bin llmn-agent --release --target ${{ matrix.target }} --locked
+          version=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          suffix=""
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix=.exe; fi
+          python agent/scripts/package-agent.py --binary target/${{ matrix.target }}/release/llmn-agent$suffix --output agent-artifacts --version "$version" --target ${{ matrix.target }}
+          echo "LLMN_AGENT_VERSION=$version" >> "$GITHUB_ENV"
+          echo "LLMN_AGENT_TARGET=${{ matrix.target }}" >> "$GITHUB_ENV"
+          echo "LLMN_AGENT_MANIFEST=$GITHUB_WORKSPACE/agent-artifacts/agent-manifest.json" >> "$GITHUB_ENV"
+          echo "LLMN_AGENT_FILE=$GITHUB_WORKSPACE/agent-artifacts/llmn-agent-$version-${{ matrix.target }}$suffix" >> "$GITHUB_ENV"
       - name: Build embedded desktop installers
         working-directory: client/desktop
         run: node node_modules/@tauri-apps/cli/tauri.js build --target ${{ matrix.target }} --bundles "${{ matrix.bundles }}" --ci -- --locked
@@ -85,7 +93,7 @@ jobs:
         run: |
           ./scripts/verify-windows-icons.ps1
           ./scripts/verify-windows-branding.ps1
-      - name: Check packaged Linux startup and worker
+      - name: Check packaged Linux startup
         if: runner.os == 'Linux'
         run: |
           python scripts/linux/smoke.py --deb target/${{ matrix.target }}/release/bundle/deb/*.deb --gui
@@ -95,6 +103,12 @@ jobs:
           extra=()
           if [[ "$RUNNER_OS" == Linux ]]; then extra+=(--appimage); fi
           python scripts/release.py collect --platform ${{ matrix.platform }} --bundle-dir target/${{ matrix.target }}/release/bundle --output release-assets "${extra[@]}"
+      - name: Package versioned Web artifact
+        if: runner.os == 'Linux'
+        run: |
+          pnpm --dir client/web build
+          version=$(node -p "require('./client/web/package.json').version")
+          python scripts/package-web.py --dist client/web/dist --output release-assets --version "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installers-${{ matrix.platform }}

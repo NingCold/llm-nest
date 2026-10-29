@@ -4,7 +4,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { CUSTOM_WINDOW_CHROME, IS_DESKTOP } from "@/lib/desktop";
 import { useUiStore } from "@/store/ui";
-import "../social/social.css";
+import "../chat/social.css";
 import "./auth.css";
 
 interface AuthPageProps {

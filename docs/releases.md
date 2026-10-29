@@ -13,17 +13,17 @@
 | Windows x64 | Windows + MSVC | NSIS `.exe`、`.msi` |
 | Linux x64 | Ubuntu 24.04 + WebKitGTK 4.1 | `.deb`、`.AppImage` |
 
-安装包嵌入共用前端与独立 Agent 可执行文件，不携带个人配置、模型密钥或聊天记录。Tauri 构建前运行 `build:agent`，将本平台 release Agent 复制到忽略的资源目录，打包到 `agent/`；开发入口使用 debug Agent。不要用用户的节点目录作为打包资源。当前没有配置系统代码签名、应用内自动更新，也没有 macOS 或 ARM 的打包流程。
+安装包嵌入共用前端与独立 Agent 可执行文件，不携带个人配置、模型密钥或聊天记录。Tauri 构建前运行 `build:agent`，读取明确的 Agent 版本、target 和 SHA-256 清单，将核验后的程序及产物记录放入资源目录；开发时可显式提供已构建的本地程序。该步骤不编译 Agent 源码。不要用用户的节点目录作为打包资源。当前没有配置系统代码签名、应用内自动更新，也没有 macOS 或 ARM 的打包流程。
 
 Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行库兼容性，AppImage 也有宿主依赖。
 
 ## 版本和标签
 
-版本在以下四处保持一致：
+客户端版本在以下四处保持一致：
 
 | 文件 | 字段 |
 | --- | --- |
-| `Cargo.toml` | `workspace.package.version` |
+| `client/desktop/src-tauri/Cargo.toml` | 显式 `package.version`，不继承根工作区 |
 | `client/desktop/src-tauri/tauri.conf.json` | `version` |
 | `client/desktop/package.json` | `version` |
 | `client/web/package.json` | `version` |
@@ -32,7 +32,7 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 
 MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.11`。前三段与应用基础版本一致，第四段是安装器构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
 
-修改 Cargo 版本后运行 `cargo check -p web-server` 更新 `Cargo.lock` 中的工作区包版本，一并提交。然后检查版本和发布脚本：
+客户端、服务端和 Agent 分别维护版本，不再要求三个产品同版。修改相应 Cargo 包版本时同步锁文件。客户端版本与发布标签检查：
 
 ```bash
 python scripts/release.py validate --tag v0.1.1-alpha.11
@@ -55,7 +55,7 @@ git push origin v0.1.1-alpha.11
 
 首次使用可在 **Actions → Build installers → Run workflow** 选择分支，下载 `installers-windows-x86_64` 和 `installers-linux-x86_64` 验证。工作流使用临时 `GITHUB_TOKEN`，无需模型 API Key 或个人访问令牌。
 
-标签须与四处版本完整匹配，带后缀的版本标记为 prerelease。重跑可以更新同标签草稿，已公开资产不会被覆盖。维护者验收产物、确认许可证并补充变更说明后，再点击 **Publish release**。
+标签须与四处客户端版本完整匹配，带后缀的版本标记为 prerelease。重跑可以更新同标签草稿，已公开资产不会被覆盖。维护者验收产物、确认许可证并补充变更说明后，再点击 **Publish release**。
 
 工作流中的模拟模型检查、包启动检查和真人桌面操作覆盖不同范围，查看[验证指南](validation/README.md)了解各自证明了什么。
 
@@ -65,6 +65,12 @@ git push origin v0.1.1-alpha.11
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
+cargo build -p agent-node --bin llmn-agent --release --target x86_64-pc-windows-msvc --locked
+python agent/scripts/package-agent.py --binary target/x86_64-pc-windows-msvc/release/llmn-agent.exe --output target/agent-release-artifact --version 0.1.1-alpha.11 --target x86_64-pc-windows-msvc
+$env:LLMN_AGENT_VERSION = "0.1.1-alpha.11"
+$env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
+$env:LLMN_AGENT_MANIFEST = (Resolve-Path target/agent-release-artifact/agent-manifest.json).Path
+$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-release-artifact/llmn-agent-0.1.1-alpha.11-x86_64-pc-windows-msvc.exe).Path
 Push-Location client/desktop
 ./node_modules/.bin/tauri.cmd build --target x86_64-pc-windows-msvc --bundles nsis msi --ci --config src-tauri/tauri.windows.conf.json -- --locked
 Pop-Location
@@ -84,7 +90,7 @@ Pop-Location
 bash scripts/linux/build.sh
 ```
 
-脚本安装前端依赖，运行前端检查、Rust 测试、离线验收，再构建 deb 和 AppImage。只需要 deb 时设置 `LLMN_LINUX_BUNDLES=deb`。默认产物位于 `target/release/bundle`；指定 Rust target 后，路径多一层 target 名称。
+脚本安装前端依赖，运行前端检查、Rust 测试，单独构建并打包 Agent，再构建 deb 和 AppImage。只需要 deb 时设置 `LLMN_LINUX_BUNDLES=deb`。默认产物位于 `target/release/bundle`；指定 Rust target 后，路径多一层 target 名称。
 
 ### 用 Ubuntu 容器构建
 
@@ -103,7 +109,22 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 这里的 HOME 仅用于容器中的临时构建用户。Docker 需要权限时可按宿主配置使用 sudo。工具版本和依赖锁文件固定，Ubuntu 镜像及 apt 仓库仍会更新；流程可重复执行，不保证二进制逐字节相同。首次构建需要联网下载依赖。
 
-包内 worker、隔离 GUI/IPC 和 GNOME/Wayland 人工验收命令见 [Linux 验证](validation/linux.md)。
+包内 Agent、隔离 GUI 启动和 GNOME/Wayland 人工验收命令见 [Linux 验证](validation/linux.md)。
+
+## 固定 Web 产物与服务端构建
+
+先构建客户端 Web，再打包指定版本；服务端只接受版本和 SHA-256 匹配的产物：
+
+```bash
+pnpm --dir client/web build
+python scripts/package-web.py --dist client/web/dist --version 0.1.1-alpha.11 --output /新的web产物目录
+python scripts/prepare-cloud-context.py --web-artifact /新的web产物目录/llmn-web-0.1.1-alpha.11.tar.gz --web-manifest /新的web产物目录/web-manifest.json --web-version 0.1.1-alpha.11 --output /新的cloud构建目录
+docker build -t llmn-cloud:<服务端版本> /新的cloud构建目录
+```
+
+上下文创建使用已跟踪的云端、连接器和领域类型文件，生成独立小工作区并用 `cargo update --workspace --offline` 收敛现有锁文件，核对依赖版本保持固定；需要本机已有对应 Cargo 索引缓存。Docker 不复制客户端、Agent 或旧 Runtime，也不隐式读取 `client/web/dist`。Compose 指定 `CLOUD_BUILD_CONTEXT`，详见[部署说明](../server/cloud/deploy/README.md)。Web、Agent 的打包目录使用新目录，保留上一组可回退产物。正式 Agent 下载必须使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
+
+当前单仓发布工作流显式构建 Agent 后再交给客户端消费；Web 包和清单随 Linux 产物上传。此流程尚不等于已经拆出新仓或部署新版本。部署时记录实际服务端、Web、Agent 与连接器版本/提交、摘要及协议组合。
 
 ## 发布前核对
 

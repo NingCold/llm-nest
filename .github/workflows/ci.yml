@@ -26,7 +26,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
-      RUSTUP_TOOLCHAIN: 1.97.0
+      RUSTUP_TOOLCHAIN: 1.99.1
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: 4
     steps:
@@ -41,7 +41,7 @@ jobs:
           python-version: '3.12'
       - name: Install Rust and pnpm
         run: |
-          rustup toolchain install 1.97.0 --profile minimal --component rustfmt,clippy
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
           npm install --global pnpm@11.22.0
       - name: Linux system dependencies
         if: runner.os == 'Linux'
@@ -62,13 +62,10 @@ jobs:
           cargo clippy --workspace --all-targets --locked
       - name: Offline acceptance and release gates
         run: |
-          cargo build -p web-server --locked
-          python scripts/acceptance.py
-          python scripts/social_acceptance.py
-          python scripts/social_acceptance.py --only-image-capabilities
-          python scripts/social_acceptance.py --only-files
           python scripts/release.py validate
           python scripts/test_release.py
+          python scripts/test_build_artifacts.py
+          node --test client/desktop/scripts/prepare-agent.test.mjs
 
   cloud:
     runs-on: ubuntu-24.04

@@ -9,7 +9,7 @@ mod transfer;
 use ai_client::{AiClient, ChatChunk, ModelRouter};
 use anyhow::{Context, Result, bail};
 use connector::node::*;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use rand::RngCore;
 use rusqlite::OptionalExtension;
 use std::{
@@ -54,6 +54,14 @@ fn private_directory(path: &Path) -> Result<()> {
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let command = args.get(1).map(String::as_str).unwrap_or("help");
+    if command == "--version" {
+        println!("llmn-agent {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if command == "catalog" {
+        println!("{}", serde_json::to_string(&management::catalog())?);
+        return Ok(());
+    }
     let directory = PathBuf::from(args.get(2).map(String::as_str).unwrap_or(".llmn-agent"));
     if command == "init" {
         private_directory(&directory)?;
@@ -295,29 +303,35 @@ api_key = {{ env = "API_KEY_CHATECNU" }}
     let summary_slot = tokio::sync::Semaphore::new(1);
     let windows = direct::Windows::default();
     let local_llm = AiClient::from_config(&config.providers)?;
-    let nodes = bindings.iter().map(|binding| async {
-        loop {
-            if let Err(error) = cycle(
-                &config,
-                &store,
-                binding,
-                &social_slots,
-                &summary_slot,
-                &windows,
-            )
-            .await
-            {
-                if error
-                    .downcast_ref::<NodeError>()
-                    .is_some_and(|e| matches!(e, NodeError::Api { status: 401, .. }))
-                    && let Err(failure) = crypto::authorization_lost(&store, &binding.ai)
+    // Keep each node's execution state on the heap, like the local RPC jobs.
+    // Passing the large state machine by value through join_all's adapters can
+    // exhaust the Windows debug main-thread stack before its first poll.
+    let nodes = bindings.iter().map(|binding| {
+        async {
+            loop {
+                if let Err(error) = cycle(
+                    &config,
+                    &store,
+                    binding,
+                    &social_slots,
+                    &summary_slot,
+                    &windows,
+                )
+                .await
                 {
-                    return Err::<(), anyhow::Error>(failure);
+                    if error
+                        .downcast_ref::<NodeError>()
+                        .is_some_and(|e| matches!(e, NodeError::Api { status: 401, .. }))
+                        && let Err(failure) = crypto::authorization_lost(&store, &binding.ai)
+                    {
+                        return Err::<(), anyhow::Error>(failure);
+                    }
+                    eprintln!("Node cycle failed: {error}");
                 }
-                eprintln!("Node cycle failed: {error}");
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
         }
+        .boxed_local()
     });
     let local = async {
         if let Some(listener) = direct_listener.as_mut() {

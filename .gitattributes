@@ -4,3 +4,5 @@ Dockerfile text eol=lf
 Dockerfile.* text eol=lf
 # Already deployed: preserve this migration's exact bytes for SQLx checksums.
 server/cloud/migrations/0008_migration.sql -text whitespace=cr-at-eol
+# Preserve the retired SQLite schema fixtures across checkouts.
+server/cloud/tests/fixtures/local-v13/*.sql -text

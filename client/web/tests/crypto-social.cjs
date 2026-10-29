@@ -11,7 +11,7 @@ function load(file, imports) {
     decryptAttachment(bytes, info) { return sdk.Attachment.decrypt(new sdk.EncryptedAttachment(bytes, info)); },
   };
   let ciphertext, fetchedPath;
-  const attachments = load("../src/cloud/crypto/attachments.ts", { "../api": { downloadBytes: async path => { fetchedPath = path; return ciphertext; } }, "./engine": engine, "../../social/files": { validateFiles(files) { if (files.some(f => f.byteLength > 10 * 1024 * 1024)) throw Error("size"); } }, "@tauri-apps/api/core": {} });
+  const attachments = load("../src/cloud/crypto/attachments.ts", { "../api": { downloadBytes: async path => { fetchedPath = path; return ciphertext; } }, "./engine": engine, "../../chat/files": { validateFiles(files) { if (files.some(f => f.byteLength > 10 * 1024 * 1024)) throw Error("size"); } }, "@tauri-apps/api/core": {} });
   const prepared = attachments.prepareAttachments([], [{ id: "file", name: "private.txt", mime: "text/plain", byteLength: 3, data: "YWJj" }]);
   assert.equal(prepared.descriptors[0].name, "private.txt");
   assert.deepEqual(Object.keys(prepared.encryptedAttachments[0]).sort(), ["data", "index"]);

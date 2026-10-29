@@ -125,7 +125,7 @@ for (const [name, overrides, seeds] of [
 const assets = path.resolve(__dirname,'../dist/assets');
 assert.ok(fs.existsSync(assets),'Run pnpm build before generating previews');
 const base = fs.readdirSync(assets).filter(n=>n.startsWith('index-')&&n.endsWith('.css')).map(n=>fs.readFileSync(path.join(assets,n),'utf8')).join('\n');
-const css = base+['social/social.css','cloud/cloud.css','cloud/auth.css','cloud/crypto/devices.css','cloud/chat-layout.css'].filter(p=>fs.existsSync(path.join(root,p))).map(p=>fs.readFileSync(path.join(root,p),'utf8')).join('\n');
+const css = base+['chat/social.css','cloud/cloud.css','cloud/auth.css','cloud/crypto/devices.css','cloud/chat-layout.css'].filter(p=>fs.existsSync(path.join(root,p))).map(p=>fs.readFileSync(path.join(root,p),'utf8')).join('\n');
 fs.mkdirSync(out,{recursive:true});
 fs.cpSync(path.resolve(__dirname,'../public/brand'),path.join(out,'brand'),{recursive:true});
 const links=[];

@@ -105,7 +105,7 @@ if (process.argv[2]) {
   const {renderToStaticMarkup} = require('react-dom/server');
   const assets = path.resolve(__dirname, '../dist/assets');
   const base = fs.readdirSync(assets).filter(name=>name.startsWith('index-') && name.endsWith('.css')).map(name=>fs.readFileSync(path.join(assets,name),'utf8')).join('');
-  const css = base + fs.readFileSync(require.resolve('../src/social/social.css'),'utf8') + fs.readFileSync(require.resolve('../src/cloud/cloud.css'),'utf8') + fs.readFileSync(require.resolve('../src/cloud/crypto/devices.css'),'utf8');
+  const css = base + fs.readFileSync(require.resolve('../src/chat/social.css'),'utf8') + fs.readFileSync(require.resolve('../src/cloud/cloud.css'),'utf8') + fs.readFileSync(require.resolve('../src/cloud/crypto/devices.css'),'utf8');
   const pending = harness(device,false); pending.values[12]={format:'fixture'}; pending.values[13]=true; pending.values[8]=true;
   const automatic = harness(device,true,true,true,{info:{supported:true,enabled:true,paused:false,expiresAt:Date.UTC(2026,10,28)}}).render();
   const pages = [['ready', complete], ['recovery', pending.render()], ['first', first], ['locked', locked], ['automatic', automatic]];

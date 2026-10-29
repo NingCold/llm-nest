@@ -8,7 +8,7 @@
 
 - [core](core/README.md)：选取聊天、记忆和摘要，组织一次回复所需的材料和预算。
 - [ai-client](ai-client/README.md)：连接模型服务，处理文字、图片和流式回复。
-- [tools](tools/README.md)：已有的工具执行基础，当前聊天尚未开放工具。
+- [crypto](crypto/README.md)：官方 Matrix SDK 与节点密钥库。
 - [node](node/README.md)：独立节点的配对、运行与每个 AI 的角色、模型配置。
 
 `node` 提供独立的 `llmn-agent` 程序，连接云端账号并调用上述库。角色、模型参数、记忆和摘要保存在运行设备上，模型 Key 不交给社交服务器。一个节点目录可以配对多个 AI，同时最多处理四个聊天回复，摘要单独串行处理。
@@ -32,5 +32,7 @@ cargo run -p agent-node -- run C:\private\llmn-agent
 在仓库根目录检查核心：
 
 ```bash
-cargo test -p builtin-agent -p ai-client --locked
+cargo test -p builtin-agent -p ai-client -p agent-node --locked
 ```
+
+桌面附带单独构建并核验的 Agent 产物。用 `python agent/scripts/package-agent.py --binary <已构建程序> --output <新产物目录> --version <Agent版本> --target <目标三元组>` 生成程序与 SHA-256 清单；程序的 `--version` 必须匹配。打包不包含节点目录或密钥，也不会调用 Cargo。`llmn-agent catalog` 提供带 Agent 版本的模型目录 JSON，客户端无需包含模型适配器。

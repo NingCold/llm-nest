@@ -8,12 +8,7 @@ members = [
     "agent/crypto",
     "agent/node",
     "connector",
-    "crates/runtime",
-    "agent/tools",
-    "crates/storage",
-    "server/http",
     "server/cloud",
-    "server/social",
     "client/desktop/src-tauri",
 ]
 
@@ -42,9 +37,6 @@ path = "crates/common"
 
 [workspace.dependencies.ai-client]
 path = "agent/ai-client"
-
-[workspace.dependencies.storage]
-path = "crates/storage"
 
 [workspace.dependencies.social]
 path = "crates/social"

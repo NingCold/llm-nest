@@ -276,15 +276,41 @@ mod tests {
             .unwrap();
         for request in device.outgoing().await.unwrap() {
             if request.kind == "keysUpload" {
-                device.acknowledge(&request, serde_json::json!({"one_time_key_counts":{"signed_curve25519":100}})).await.unwrap();
+                device
+                    .acknowledge(
+                        &request,
+                        serde_json::json!({"one_time_key_counts":{"signed_curve25519":100}}),
+                    )
+                    .await
+                    .unwrap();
             }
         }
         for _ in 0..8 {
-            device.receive_local_events(vec![serde_json::json!({"sender":"@fixture:llmn","type":"m.dummy","content":{}})]).await.unwrap();
-            assert!(device.outgoing().await.unwrap().iter().all(|request| request.kind != "keysUpload"), "local delivery must not turn unknown server key counts into zero");
+            device
+                .receive_local_events(vec![
+                    serde_json::json!({"sender":"@fixture:llmn","type":"m.dummy","content":{}}),
+                ])
+                .await
+                .unwrap();
+            assert!(
+                device
+                    .outgoing()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .all(|request| request.kind != "keysUpload"),
+                "local delivery must not turn unknown server key counts into zero"
+            );
         }
         device.receive_sync(serde_json::json!({"next_batch":"1","to_device":{"events":[]},"device_lists":{"changed":[],"left":[]},"device_one_time_keys_count":{"signed_curve25519":0}})).await.unwrap();
-        assert!(device.outgoing().await.unwrap().iter().any(|request| request.kind == "keysUpload"));
+        assert!(
+            device
+                .outgoing()
+                .await
+                .unwrap()
+                .iter()
+                .any(|request| request.kind == "keysUpload")
+        );
     }
     #[tokio::test]
     async fn recovery_attachment_restores_secrets_and_rejects_tampering() {

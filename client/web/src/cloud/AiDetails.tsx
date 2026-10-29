@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop";
-import { IconButton } from "../social/components/common";
+import { IconButton } from "../chat/components/common";
 import { request } from "./api";
 import { AiConfiguration } from "./AiConfiguration";
 import { AiAccountView } from "./AiAccountView";

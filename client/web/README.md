@@ -33,4 +33,12 @@ pnpm --dir client/web build
 
 构建输出 `dist`，由 `cloud-server` 提供。云端状态、网络和样式位于 [src/cloud](src/cloud/App.tsx)；公共入口见 [src/App.tsx](src/App.tsx)。
 
-`src/social` 的侧栏、公共组件、视觉样式和草稿存储由云端页面复用。云端聊天详情已提供节点记忆、AI 私有摘要和群话题接续；它们使用云端权限与独立节点，不启动本地聊天服务。本地业务页面和图片处理组件仍供回归及后续迁移使用，`build:social-runtime` 不会切换默认产品入口。
+`src/chat` 保存共用聊天组件、视觉样式和草稿存储。云端状态和权限仍由 `src/cloud` 管理。
+
+服务端部署使用固定版本的 Web 包，构建后执行：
+
+```bash
+python scripts/package-web.py --dist client/web/dist --version 0.1.1-alpha.11 --output /新的产物目录
+```
+
+以上命令从仓库根目录运行，版本须与实际客户端构建一致。Web 包和 `web-manifest.json` 一起交给服务端，使用方式见[部署说明](../../server/cloud/deploy/README.md)。

@@ -60,30 +60,11 @@ python scripts/cloud_restore_acceptance.py --server-host 测试服务器 --serve
 
 恢复验收适用于当前隔离 Compose 服务，需要 SSH 和服务器上的免密 sudo。脚本先检查没有执行中的 AI 工作，短暂停住应用取得数据库和附件备份，恢复应用后在临时数据库及私有目录比较内容；不覆盖原库。结束删除本次临时数据库，配套备份留在服务器私有目录。它不负责日常定期备份。
 
-## 保留的本地 API 回归
-
-```bash
-cargo build -p web-server --locked
-python scripts/acceptance.py
-python scripts/social_acceptance.py
-```
-
-第一个脚本检查应用启动、配置和历史导入；第二个检查私聊、群聊、记忆、摘要与约定联系。它们创建临时数据，模型回复由本机测试服务提供。
-
-只检查图片消息时，运行 `python scripts/social_acceptance.py --only-images`。这会验证发送、重开、修改与撤回、群引用，以及较大图片的保存和读取。
-
-检查模型图片能力时，运行 `python scripts/social_acceptance.py --only-image-capabilities`。它会检查人工设置和恢复跟随目录、未知能力的尝试、历史图片与群引用，以及群内不同 AI 的独立回复。
-
-检查普通文件收发和导出时，运行 `python scripts/social_acceptance.py --only-files`。它会发送文件、重开聊天、下载并核对原始内容，也会检查权限、撤回、大小限制和 AI 实际收到的文件说明；导出检查包括附件选项组合、同名文件、中文链接和 ZIP 中的原文件。
-
-这些脚本调用保留的 `web-server` API，不是当前云端真人聊天的验收，也不会证明 AI 节点已经接通。当前默认前端已经改用云端认证与聊天接口，不能通过给旧宿主设置 `--dist` 或运行 `build:social-runtime` 恢复旧本地产品入口。
-
 ## 其他常用脚本
 
 | 要做的事 | 脚本或说明 |
 | --- | --- |
 | 检查 Agent 核心与连接器的依赖边界 | `python scripts/check-boundaries.py` |
-| 准备桌面聊天测试数据 | [social_desktop_fixture.py](social_desktop_fixture.py) |
 | 更新应用图标 | [generate-icons.mjs](generate-icons.mjs)，用法见[图标说明](../assets/branding/README.md) |
 | 构建和检查 Linux 安装包 | [Linux 脚本](linux/README.md) |
 | 检查 Windows 包内程序 | [windows_package_acceptance.py](windows_package_acceptance.py) |
@@ -91,4 +72,4 @@ python scripts/social_acceptance.py
 | 准备 Windows Sandbox 安装测试 | [prepare-windows-sandbox.ps1](prepare-windows-sandbox.ps1) |
 | 校对版本、整理发布文件 | [release.py](release.py)，步骤见[发布指南](../docs/releases.md) |
 
-`social_memory_acceptance.py` 等专项脚本由完整聊天检查调用，用来分别检查记忆、摘要、话题接续和参与节奏。
+固定产物使用 `agent/scripts/package-agent.py`、`scripts/package-web.py` 和 `scripts/prepare-cloud-context.py`；参数与流程见[发布指南](../docs/releases.md)。离线检查可运行 `python scripts/test_build_artifacts.py` 和 `node --test client/desktop/scripts/prepare-agent.test.mjs`。

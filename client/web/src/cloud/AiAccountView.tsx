@@ -3,7 +3,7 @@ import { Download, RefreshCw } from "lucide-react";
 import { MarkdownView } from "@/components/chat/MarkdownView";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DownloadCancelled, request } from "./api";
-import { fileSize } from "../social/files";
+import { fileSize } from "../chat/files";
 import type { Account, Conversation, Message, Page } from "./types";
 import { downloadAttachment } from "./crypto/attachments";
 import { projectPage, projectConversations } from "./crypto/content";

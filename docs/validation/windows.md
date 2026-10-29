@@ -128,7 +128,7 @@ Tauri CLI / MSVC release `--no-bundle --ci`，嵌入生产前端，版本仍为 
 | 已安装 EXE | `21417598F18E4DF6A145F4972C51331558256B765575DA8BC5E3556DFAB44335` |
 | 此前独立验收 debug EXE | `ACABAFD89D2EF517FB2C8CF724EEEC6DC5FF04F90107B716176F321808D76374`；不与 release 混用 |
 
-更新目标为 `C:\Users\16617\AppData\Local\Programs\LLM-Nest\LLM-Nest.exe`。仅把构建 EXE 的 `UNK` 标记改回现有安装版 `NSS`，其余字节相同。原快捷方式、卸载程序及核对的安装登记未变；EXE 图标、名称、空环境 worker add=5 与拒绝 shell 检查通过。
+更新目标为 `C:\Users\16617\AppData\Local\Programs\LLM-Nest\LLM-Nest.exe`。仅把构建 EXE 的 `UNK` 标记改回现有安装版 `NSS`，其余字节相同。原快捷方式、卸载程序及核对的安装登记未变；EXE 图标、名称、当时的空环境 worker add=5 与拒绝 shell 检查通过。旧 worker 现已随宿主退役，这项历史结果不作为新版验收。
 
 完整备份在 `C:\Users\16617\.llmn-backups\daily-trial-20261020-220237`，包含旧 `program/LLM-Nest.exe`、`data/`（`~/.llmn`，排除锁文件）与 `webview.zip`。369 个数据及界面文件逐一核对哈希，旧 EXE 也一致。WebView 按可读内容压入 ZIP 并验证，不声明保留原 EFS 属性。
 
@@ -158,4 +158,4 @@ Tauri CLI / MSVC release `--no-bundle --ci`，嵌入生产前端，版本仍为 
 python scripts/windows_package_acceptance.py --build <release构建EXE> --installed-nsis <已安装EXE> --msi-extracted <MSI解包后的EXE>
 ```
 
-先用各脚本的帮助或参数定义确认输入路径。`windows_package_acceptance.py` 使用已经安装的 NSIS 程序和 MSI 解包结果检查产物，不代为完成干净安装。实际安装、覆盖及卸载按[安装清单](../packaging/windows-clean-install.md)另行安排。
+先用各脚本的帮助或参数定义确认输入路径。`windows_package_acceptance.py` 比对构建 EXE 与已安装 NSIS/MSI 解包 EXE，除 Tauri bundle 标记外必须逐字节相同；它还强制核对随包 Agent 与准备资源的版本记录、SHA-256 及 --version，准备资源目录可由 --agent-directory 指定，不再调用旧 worker。此脚本只检查实际提供的产物，不代为完成干净安装，也不表示当前改动已完成新版安装验收。实际安装、覆盖及卸载按[安装清单](../packaging/windows-clean-install.md)另行安排。

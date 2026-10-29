@@ -3,7 +3,7 @@ import { LockKeyhole, Moon, Sun } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop";
 import { useUiStore } from "@/store/ui";
-import "../social/social.css";
+import "../chat/social.css";
 import "./lock-screen.css";
 
 interface LockScreenProps {

@@ -21,12 +21,32 @@ class ReleaseTests(unittest.TestCase):
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"version": "0.1.0"}))
+            (root / "client/desktop/src-tauri/Cargo.toml").write_text('[package]\nversion="0.1.0"\n')
             self.assertEqual(release.validate(root, "v0.1.0"), "0.1.0")
             for tag in ("v0.2.0", "v0.1.0-extra", "main", "v0.1.0;echo bad"):
                 with self.assertRaises(ValueError):
                     release.validate(root, tag)
             (root / names[0]).write_text('{"version":"0.2.0"}')
             with self.assertRaises(ValueError):
+                release.validate(root)
+
+    def test_client_version_is_independent_of_other_products(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="9.8.7"\n')
+            for name in ("client/desktop/src-tauri/tauri.conf.json",
+                         "client/desktop/package.json", "client/web/package.json"):
+                p = root / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps({"version": "1.2.3"}))
+            native = root / "client/desktop/src-tauri/Cargo.toml"
+            native.write_text('[package]\nversion="1.2.3"\n')
+            self.assertEqual(release.validate(root, "v1.2.3"), "1.2.3")
+            native.write_text('[package]\nversion="9.8.7"\n')
+            with self.assertRaisesRegex(ValueError, 'explicit package.version'):
+                release.validate(root)
+            native.write_text('[package]\nversion.workspace=true\n')
+            with self.assertRaisesRegex(ValueError, 'explicit package.version'):
                 release.validate(root)
 
     def test_prerelease_requires_matching_numeric_msi_version(self):
@@ -38,6 +58,7 @@ class ReleaseTests(unittest.TestCase):
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"version": "0.1.1-alpha.1"}))
+            (root / "client/desktop/src-tauri/Cargo.toml").write_text('[package]\nversion="0.1.1-alpha.1"\n')
             tauri_path = root / "client/desktop/src-tauri/tauri.conf.json"
             with self.assertRaisesRegex(ValueError, "numeric"):
                 release.validate(root)

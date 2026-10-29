@@ -36,10 +36,10 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
       if (name === "@tauri-apps/api/core") return { invoke: async () => {} };
-      if (name === "../social/drafts") return { emptyDraft: () => ({ text: "", requestId: null, mentions: [], replyTo: null }) };
-      if (name === "../social/images") return { readImages: async (...args) => { lifecycle.imageReads++; return repository.readImages ? repository.readImages(...args) : []; } };
-      if (name === "../social/files") return { readFiles: async (...args) => { lifecycle.fileReads++; return repository.readFiles ? repository.readFiles(...args) : []; } };
-      if (name === "../social/draft-storage") return { DraftDatabase: class { async load(owner, ids) { return Object.fromEntries(ids.filter(id => repository.records[id]).map(id => [id, repository.records[id]])); } async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); if (repository.save) await repository.save(owner, id, next); } } };
+      if (name === "../chat/drafts") return { emptyDraft: () => ({ text: "", requestId: null, mentions: [], replyTo: null }) };
+      if (name === "../chat/images") return { readImages: async (...args) => { lifecycle.imageReads++; return repository.readImages ? repository.readImages(...args) : []; } };
+      if (name === "../chat/files") return { readFiles: async (...args) => { lifecycle.fileReads++; return repository.readFiles ? repository.readFiles(...args) : []; } };
+      if (name === "../chat/draft-storage") return { DraftDatabase: class { async load(owner, ids) { return Object.fromEntries(ids.filter(id => repository.records[id]).map(id => [id, repository.records[id]])); } async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); if (repository.save) await repository.save(owner, id, next); } } };
       if (name === "@/hooks/useDesktopReady") return { useDesktopReady() {} };
       if (name.startsWith("@/") || name.startsWith("./") || name.startsWith("../") || name.startsWith("@tauri")) return {};
       return require(name);

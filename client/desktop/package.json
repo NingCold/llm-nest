@@ -11,7 +11,7 @@
     "icons": "node ../../scripts/generate-icons.mjs",
     "tauri": "tauri",
     "build:agent": "node scripts/prepare-agent.mjs",
-    "build:agent:dev": "node scripts/prepare-agent.mjs --dev"
+    "build:agent:dev": "node scripts/prepare-agent.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

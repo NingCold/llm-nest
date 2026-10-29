@@ -1,6 +1,6 @@
 [package]
 name = "tauri-frontend"
-version.workspace = true
+version = "0.1.1-alpha.11"
 edition.workspace = true
 default-run = "LLM-Nest"
 
@@ -32,13 +32,9 @@ futures-util.workspace = true
 percent-encoding = "2"
 toml.workspace = true
 sha2 = "0.10"
+dirs = "6"
 
-social-feature = { path = "../../../server/social" }
-social.workspace = true
-runtime = { path = "../../../crates/runtime" }
 connector = { path = "../../../connector" }
-ai-client.workspace = true
-storage.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

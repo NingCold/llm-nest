@@ -42,7 +42,7 @@ fn hash(value: &str) -> String {
 impl Vault {
     pub(crate) fn new() -> Self {
         #[cfg(not(test))]
-        let root = storage::default_data_dir().join("secure-credentials");
+        let root = crate::config_path::default_data_dir().join("secure-credentials");
         #[cfg(test)]
         let temp = tempfile::tempdir().unwrap();
         #[cfg(test)]

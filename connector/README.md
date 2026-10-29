@@ -1,6 +1,8 @@
 # Connector
 
-`connector` 提供云端节点 HTTP/WSS 协议和社交事件类型。它不加载模型、数据库或应用 Runtime，外部 Agent 可以单独依赖这个包。
+`connector` 提供云端节点 HTTP/WSS、同机通信、密文与迁移协议。它不加载模型、数据库或应用 Runtime，外部 Agent 可以单独依赖这个包。
+
+`management::AgentCatalog` 定义本机 `llmn-agent catalog` 的版本 1 JSON 契约，包含 Agent 版本及供应商和模型选项；不含节点配置、地址或凭据。它独立于云端节点 v4 协议。
 
 `migration` 定义旧聊天迁入云端时的资料与账号映射，`node::transfer` 定义自带 Agent 的 AI 资料包。两种格式都不含模型 Key 或节点凭据；外部 Agent 可以沿用自己的记忆格式。实际操作见[迁移指南](../docs/migration.md)。
 

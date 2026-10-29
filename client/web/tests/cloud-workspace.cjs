@@ -418,3 +418,41 @@ tree = ChatConnectionDetails({ ...connectionProps, localSelected: true, reconnec
 connectionButton(tree, "重新连接本机").props.onClick();
 assert.equal(reconnected, 1);
 console.log("PASS: compact chat header, reachable encryption/local actions, trusted-key gating, group permissions, explicit history status and cloud-return guards");
+
+// Exercise the current composer callbacks, retaining valuable old host assertions.
+const interactionExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root, 'cloud/Workspace.tsx'), 'utf8'), {
+ compilerOptions: {jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS}
+}).outputText, {exports: interactionExports, location, URL, console, setTimeout, clearTimeout,
+ require(spec) {
+  if(spec==='react')return {...React,useState:value=>[value,()=>{}],useRef:value=>({current:value}),useEffect(){},useMemo:fn=>fn(),useCallback:fn=>fn};
+  if(spec==='@/lib/desktop')return desktop;
+  if(spec==='@/store/ui')return {useUiStore:fn=>fn(ui)};
+  if(spec.endsWith('.css'))return {};
+  if(spec.startsWith('@/'))return load(spec.slice(2));
+  if(spec.startsWith('.'))return load(path.relative(root,path.resolve(root,'cloud',spec)).replaceAll('\\','/'));
+  return require(spec);
+ }
+});
+const nodes=node=>!node||typeof node!=='object'?[]:[node,...[node.props?.children].flat(Infinity).flatMap(nodes)];
+let sends=0,changes=[],saved=[];
+const picture={id:'img',name:'中文.png',mime:'image/png',data:'AQID',byteLength:3};
+const generic={id:'file',name:'notes.txt',mime:'text/plain',data:'BAUG',byteLength:3};
+const interactionProps={...p,record:{draft:{...p.record.draft,images:[picture],files:[generic]},pending:null},
+ send:()=>sends++,attach:(files,image)=>changes.push({files,image}),save:record=>saved.push(record)};
+const interaction=overrides=>nodes(interactionExports.Workspace({...interactionProps,...overrides}));
+let elements=interaction(),editor=elements.find(n=>n.type==='textarea'&&n.props['aria-label']==='消息输入框');
+for(const event of [{isComposing:true,keyCode:13},{isComposing:false,keyCode:229}]) editor.props.onKeyDown({key:'Enter',shiftKey:false,nativeEvent:{isComposing:event.isComposing},keyCode:event.keyCode,preventDefault(){throw Error('IME must stay native')}});
+assert.equal(sends,0);editor.props.onKeyDown({key:'Enter',shiftKey:false,nativeEvent:{isComposing:false},keyCode:13,preventDefault(){}});assert.equal(sends,1);
+let prevented=false;editor.props.onPaste({clipboardData:{items:[{kind:'string'}]},preventDefault(){prevented=true}});assert.equal(prevented,false);
+const selection={type:'image/png',name:'clipboard.png'};
+editor.props.onPaste({clipboardData:{items:[{kind:'file',getAsFile:()=>selection}]},preventDefault(){prevented=true}});assert.equal(prevented,true);assert.equal(changes.at(-1).files[0],selection);
+elements.find(n=>n.props?.onDrop).props.onDrop({dataTransfer:{files:[selection]},preventDefault(){}});assert.equal(changes.at(-1).files[0],selection);
+const chooser=elements.find(n=>n.type==='input'&&n.props.type==='file');const choice={target:{files:[selection],value:'selected'}};chooser.props.onChange(choice);assert.equal(choice.target.value,'');
+elements.find(n=>n.props?.label==='移除图片 中文.png').props.onClick();assert.equal(saved.at(-1).draft.images.length,0);assert.equal(saved.at(-1).draft.files[0].id,'file');
+elements.find(n=>n.props?.label==='移除文件 notes.txt').props.onClick();assert.equal(saved.at(-1).draft.files.length,0);assert.equal(saved.at(-1).draft.images[0].id,'img');
+assert.equal(interaction({record:{draft:{...p.record.draft,text:'',images:[],files:[generic]},pending:null}}).find(n=>n.props?.['aria-label']==='发送消息').props.disabled,false,'file-only messages remain sendable');
+assert.equal(interaction({record:{...interactionProps.record,pending:{...interactionProps.record.draft,requestId:'frozen'}}}).find(n=>n.type==='textarea'&&n.props['aria-label']==='消息输入框').props.disabled,true,'pending commands lock editable input');
+html=render({page:{...p.page,messages:[{...message,attachments:[{index:0,kind:'file',name:'<script>alert(1)</script>.txt',mime:'text/plain',byteLength:3}]}]}});
+assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>alert/);assert.match(html,/3 B/);
+console.log('PASS: current Workspace IME/paste/drop/file selection, file-only sends, attachment removal, pending editing lock and escaped attachment metadata');

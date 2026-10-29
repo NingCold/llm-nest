@@ -2,6 +2,8 @@
 
 在仓库根目录运行：
 
+`llmn-agent --version` 输出程序版本；`llmn-agent catalog` 输出内置模型目录 JSON，包含 `protocolVersion: 1`、`agentVersion` 和 `providers`。这两个命令不读取配置、密钥或节点目录，不联网，也不创建节点数据。目录中的模型由 Agent 维护；实际节点配置仍由 `check <directory>` 严格校验。
+
 ```powershell
 cargo run -p agent-node -- init C:\private\llmn-agent
 cargo run -p agent-node -- pair C:\private\llmn-agent

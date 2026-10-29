@@ -72,7 +72,7 @@ impl LocalAgentState {
         Ok((human, self.dir(&Owner { server, human }), generation))
     }
     pub fn new() -> Self {
-        Self::at_root(storage::default_data_dir().join("desktop-agents"))
+        Self::at_root(crate::config_path::default_data_dir().join("desktop-agents"))
     }
     fn at_root(root: PathBuf) -> Self {
         let (owners, initial_error) = match std::fs::read(root.join("owners.json")) {
@@ -209,21 +209,15 @@ fn executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
             .join("agent")
             .join(name),
     ];
-    if cfg!(debug_assertions) {
-        if let Some(p) = std::env::var_os("LLMN_AGENT_EXECUTABLE") {
-            paths.insert(0, p.into());
-        }
-        if let Ok(p) = std::env::current_exe() {
-            paths.push(p.parent().unwrap().join(name));
-        }
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        paths.push(root.join("target/x86_64-pc-windows-msvc/debug").join(name));
-        paths.push(root.join("target/debug").join(name));
+    if cfg!(debug_assertions)
+        && let Some(p) = std::env::var_os("LLMN_AGENT_EXECUTABLE")
+    {
+        paths.insert(0, p.into());
     }
     paths
         .into_iter()
         .find(|p| p.is_file())
-        .ok_or_else(|| "未找到独立 Agent，请先构建 Agent 或重新安装完整桌面程序".into())
+        .ok_or_else(|| "未找到随附 Agent，请准备指定版本产物或重新安装完整桌面程序".into())
 }
 fn command(
     app: &tauri::AppHandle,
@@ -239,9 +233,31 @@ fn command_at(
     p: &Path,
     m: Option<&Manifest>,
 ) -> Result<tokio::process::Command, String> {
+    let mut c = child_command(exe, verb);
+    c.arg(p);
+    if let Some(m) = m {
+        for provider in m.config["providers"]
+            .as_object()
+            .ok_or("本机供应商配置无效")?
+            .values()
+        {
+            let name = provider["api_key"]["env"]
+                .as_str()
+                .ok_or("本机模型凭据须引用环境变量")?;
+            let value = m
+                .secrets
+                .get(name)
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+                .ok_or_else(|| format!("请设置模型环境变量 {name} 或在本机填写 Key"))?;
+            c.env(name, value);
+        }
+    }
+    Ok(c)
+}
+fn child_command(exe: &Path, verb: &str) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(exe);
     c.arg(verb)
-        .arg(p)
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -262,29 +278,9 @@ fn command_at(
             c.env(key, v);
         }
     }
-    if let Some(m) = m {
-        for provider in m.config["providers"]
-            .as_object()
-            .ok_or("本机供应商配置无效")?
-            .values()
-        {
-            let name = provider["api_key"]["env"]
-                .as_str()
-                .ok_or("本机模型凭据须引用环境变量")?;
-            let value = m
-                .secrets
-                .get(name)
-                .cloned()
-                .or_else(|| std::env::var(name).ok())
-                .ok_or_else(|| format!("请设置模型环境变量 {name} 或在本机填写 Key"))?;
-            c.env(name, value);
-        }
-    }
     #[cfg(windows)]
-    {
-        c.creation_flags(0x08000000);
-    }
-    Ok(c)
+    c.creation_flags(0x08000000);
+    c
 }
 async fn output(
     app: &tauri::AppHandle,
@@ -426,26 +422,8 @@ fn build_manifest(
     if o.node_name.trim().is_empty() || o.node_name.chars().count() > 100 {
         return Err("节点名称须为1至100字".into());
     }
-    let builtin = ai_client::catalog::builtin_provider(&o.provider).ok_or_else(|| {
-        format!(
-            "请选择内置供应商：{}",
-            ai_client::catalog::BUILTIN_PROVIDERS
-                .iter()
-                .map(|p| p.id)
-                .collect::<Vec<_>>()
-                .join("、")
-        )
-    })?;
-    if !builtin.models.iter().any(|m| m.id == o.model) {
-        return Err(format!(
-            "请选择该供应商的模型：{}",
-            builtin
-                .models
-                .iter()
-                .map(|m| m.id)
-                .collect::<Vec<_>>()
-                .join("、")
-        ));
+    if o.provider.trim().is_empty() || o.model.trim().is_empty() {
+        return Err("请选择供应商和模型".into());
     }
     if o.api_key.is_some() && o.api_key_env.is_some() {
         return Err("Key 与环境变量只能选择一种".into());
@@ -755,13 +733,51 @@ pub async fn local_agent_stop(
     status(&app, &state, &p).await
 }
 #[tauri::command]
-pub fn local_agent_models() -> Value {
-    json!({"providers":ai_client::catalog::BUILTIN_PROVIDERS.iter().map(|p|json!({"id":p.id,"name":p.display_name,"models":p.models.iter().map(|m|json!({"id":m.id,"name":m.display_name,"contextWindow":m.context_window,"reasoningEfforts":m.reasoning.map(|r|r.levels).unwrap_or(&[])})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+pub async fn local_agent_models(app: tauri::AppHandle) -> Result<Value, String> {
+    let mut command = child_command(&executable(&app)?, "catalog");
+    let result = tokio::time::timeout(Duration::from_secs(20), command.output())
+        .await
+        .map_err(|_| "读取 Agent 模型目录超时")?
+        .map_err(io_error)?;
+    if !result.status.success() {
+        return Err("读取 Agent 模型目录失败，请检查随附 Agent 版本".into());
+    }
+    parse_catalog(&result.stdout)
+}
+
+fn parse_catalog(bytes: &[u8]) -> Result<Value, String> {
+    let catalog: connector::management::AgentCatalog =
+        serde_json::from_slice(bytes).map_err(|e| format!("Agent 模型目录格式无效：{e}"))?;
+    if catalog.protocol_version != connector::management::AGENT_CATALOG_PROTOCOL_VERSION {
+        return Err(format!(
+            "不支持的 Agent 模型目录协议版本：{}",
+            catalog.protocol_version
+        ));
+    }
+    Ok(json!({"providers": catalog.providers}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn catalog_contract_preserves_provider_shape_and_rejects_incompatible_protocol() {
+        let catalog = json!({"protocolVersion": 1, "agentVersion": "0.1.0",
+            "providers": [{"id": "test", "name": "Test", "models": [{"id": "model",
+                "name": "Model", "contextWindow": null, "reasoningEfforts": ["high"]}]}]});
+        assert_eq!(
+            parse_catalog(&serde_json::to_vec(&catalog).unwrap()).unwrap(),
+            json!({"providers": catalog["providers"]})
+        );
+        let mut incompatible = catalog;
+        incompatible["protocolVersion"] = json!(2);
+        assert!(
+            parse_catalog(&serde_json::to_vec(&incompatible).unwrap())
+                .unwrap_err()
+                .contains("协议版本")
+        );
+        assert!(parse_catalog(b"invalid output").is_err());
+    }
     fn owner() -> Owner {
         Owner {
             server: "https://cloud.example".into(),
@@ -941,10 +957,7 @@ mod tests {
         assert_eq!(m.config["profile"]["max_tokens"], 2048);
         let mut other = options();
         other.provider = "openai".into();
-        other.model = ai_client::catalog::builtin_provider("openai")
-            .unwrap()
-            .default_model
-            .into();
+        other.model = "test-model".into();
         other.api_key = None;
         assert!(build_manifest(Some(m), other, &o).is_err());
     }

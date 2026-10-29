@@ -1,3 +1,4 @@
+use crate::secure_credentials::{self, Session, Unlock, Vault};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
 use reqwest::{Client, Method, Url, header};
@@ -8,6 +9,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tauri::Emitter;
 use tauri::ipc::Channel;
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
@@ -17,6 +19,7 @@ use uuid::Uuid;
 pub struct CloudState {
     shared: Arc<Mutex<Inner>>,
 }
+type AuthEventSink = dyn Fn(AuthLost) -> Result<(), String> + Send + Sync;
 struct Inner {
     client: Result<Client, String>,
     server: Option<Url>,
@@ -25,6 +28,19 @@ struct Inner {
     local_human: Option<Uuid>,
     subscriptions: HashMap<String, Subscription>,
     owner_versions: HashMap<String, u64>,
+    vault: Vault,
+    credential_owner: Option<Uuid>,
+    persistent_until: Option<u64>,
+    auth_events: Option<Arc<AuthEventSink>>,
+    #[cfg(test)]
+    emitted_auth_lost: Vec<AuthLost>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthLost {
+    server: String,
+    account_id: Option<Uuid>,
+    message: Option<String>,
 }
 struct Subscription {
     owner: String,
@@ -72,8 +88,22 @@ impl CloudState {
                 local_human: None,
                 subscriptions: HashMap::new(),
                 owner_versions: HashMap::new(),
+                vault: Vault::new(),
+                credential_owner: None,
+                persistent_until: None,
+                auth_events: None,
+                #[cfg(test)]
+                emitted_auth_lost: Vec::new(),
             })),
         }
+    }
+    pub(crate) fn with_events(app: tauri::AppHandle) -> Self {
+        let state = Self::new();
+        state.shared.lock().unwrap().auth_events = Some(Arc::new(move |event| {
+            app.emit("cloud-auth-lost", event)
+                .map_err(|_| "无法通知界面登录已失效".into())
+        }));
+        state
     }
     pub fn release_owner(&self, owner: &str) {
         let mut s = self.shared.lock().unwrap();
@@ -89,6 +119,7 @@ impl CloudState {
     }
     fn context(&self, path: &str, auth_change: bool) -> Result<RequestContext, String> {
         let mut s = self.shared.lock().unwrap();
+        expire_session(&mut s)?;
         let server = s.server.as_ref().ok_or("请先设置云端服务器")?;
         let url = target(server, path)?;
         if auth_change {
@@ -108,7 +139,7 @@ impl CloudState {
             .send()
             .await
             .map_err(connection_error)?;
-        self.reject_session(&ctx, response.status());
+        self.reject_session(&ctx, response.status())?;
         if !response.status().is_success() {
             return Err("请先登录云端真人账号".into());
         }
@@ -132,7 +163,8 @@ impl CloudState {
             .map(|(server, human, _)| (server, human))
     }
     pub(crate) fn authorized_local_session(&self) -> Result<(String, Uuid, u64), String> {
-        let s = self.shared.lock().unwrap();
+        let mut s = self.shared.lock().unwrap();
+        expire_session(&mut s)?;
         Ok((
             s.server
                 .as_ref()
@@ -165,7 +197,7 @@ impl CloudState {
             .send()
             .await
             .map_err(connection_error)?;
-        self.reject_session(&ctx, response.status());
+        self.reject_session(&ctx, response.status())?;
         if !response.status().is_success() {
             return Err("同机私聊授权失败，请检查登录、AI 管理权及当前节点绑定".into());
         }
@@ -176,10 +208,15 @@ impl CloudState {
         }
         Ok(grant.token)
     }
-    fn cookies(&self, ctx: &RequestContext, response: &reqwest::Response) -> Option<u64> {
+    fn cookies(
+        &self,
+        ctx: &RequestContext,
+        response: &reqwest::Response,
+        remember_login: bool,
+    ) -> Result<Option<u64>, String> {
         let mut s = self.shared.lock().unwrap();
         if s.generation != ctx.generation {
-            return None;
+            return Ok(None);
         }
         for h in response.headers().get_all(header::SET_COOKIE) {
             if let Ok(v) = h.to_str()
@@ -188,28 +225,102 @@ impl CloudState {
                     .next()
                     .and_then(|p| p.strip_prefix("nest_session="))
             {
-                let cookie = if value.is_empty() {
-                    None
+                if value.is_empty() {
+                    invalidate(&mut s)?;
                 } else {
-                    Some(format!("nest_session={value}"))
-                };
-                if s.cookie != cookie {
-                    advance(&mut s);
-                    s.cookie = cookie;
+                    let max_age = v
+                        .split(';')
+                        .find_map(|part| part.trim().strip_prefix("Max-Age=")?.parse::<u64>().ok());
+                    // The cookie fixes the deadline; /me and normal traffic never refresh it.
+                    let expires = max_age.filter(|v| remember_login && *v > 0).map(|seconds| {
+                        secure_credentials::now_ms() + seconds.min(2_592_000) * 1000
+                    });
+                    let server = s.server.as_ref().unwrap().origin().ascii_serialization();
+                    s.vault.remove_session(&server)?;
+                    if s.cookie.as_deref() != Some(&format!("nest_session={value}")) {
+                        advance(&mut s);
+                    }
+                    s.cookie = Some(format!("nest_session={value}"));
+                    s.persistent_until = expires;
                 }
             }
         }
-        Some(s.generation)
+        Ok(Some(s.generation))
     }
-    fn reject_session(&self, ctx: &RequestContext, status: reqwest::StatusCode) {
+    fn reject_session(
+        &self,
+        ctx: &RequestContext,
+        status: reqwest::StatusCode,
+    ) -> Result<(), String> {
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let mut s = self.shared.lock().unwrap();
             if s.generation == ctx.generation {
-                advance(&mut s);
-                s.cookie = None;
+                invalidate(&mut s)?;
             }
         }
+        Ok(())
     }
+    fn confirm_account(&self, generation: u64, account: &serde_json::Value) -> Result<(), String> {
+        let mut s = self.shared.lock().unwrap();
+        if s.generation != generation {
+            return Ok(());
+        }
+        if account["kind"] != "human" {
+            return Err("云端身份响应无效".into());
+        }
+        let owner: Uuid = account["id"]
+            .as_str()
+            .and_then(|id| id.parse().ok())
+            .ok_or("云端身份响应无效")?;
+        let server = s.server.as_ref().unwrap().origin().ascii_serialization();
+        s.credential_owner = Some(owner);
+        if let Some(expires_at) = s.persistent_until {
+            s.vault.save_session(
+                &server,
+                &Session {
+                    account: owner,
+                    cookie: s.cookie.clone().ok_or("缺少云端会话")?,
+                    expires_at,
+                },
+            )?;
+        }
+        s.local_human = Some(owner);
+        Ok(())
+    }
+}
+fn expire_session(s: &mut Inner) -> Result<(), String> {
+    if s.persistent_until
+        .is_some_and(|v| v <= secure_credentials::now_ms())
+    {
+        invalidate(s)?;
+    }
+    Ok(())
+}
+fn invalidate(s: &mut Inner) -> Result<(), String> {
+    let event = s.server.as_ref().map(|server| AuthLost {
+        server: server.origin().ascii_serialization(),
+        account_id: s.credential_owner,
+        message: None,
+    });
+    let cleanup = if let Some(server) = &s.server {
+        s.vault
+            .clear(&server.origin().ascii_serialization(), s.credential_owner)
+    } else {
+        Ok(())
+    };
+    advance(s);
+    s.cookie = None;
+    s.credential_owner = None;
+    s.persistent_until = None;
+    if let Some(mut event) = event {
+        event.message = cleanup.as_ref().err().cloned();
+        #[cfg(test)]
+        s.emitted_auth_lost.push(event.clone());
+        if let Some(emit) = &s.auth_events {
+            emit(event)?;
+        }
+    }
+    cleanup
 }
 fn advance(s: &mut Inner) {
     s.generation += 1;
@@ -276,20 +387,138 @@ fn filename(response: &reqwest::Response) -> Option<String> {
     Some(n.to_owned())
 }
 #[tauri::command]
-pub fn cloud_set_server(state: tauri::State<'_, CloudState>, url: String) -> Result<(), String> {
+pub async fn cloud_set_server(
+    state: tauri::State<'_, CloudState>,
+    url: String,
+) -> Result<(), String> {
     let server = server_url(&url)?;
-    let mut s = state.shared.lock().unwrap();
-    if s.server.as_ref() == Some(&server) {
+    {
+        let mut s = state.shared.lock().unwrap();
+        if s.server.as_ref() != Some(&server) {
+            let saved = s
+                .vault
+                .load_session(&server.origin().ascii_serialization())?;
+            advance(&mut s);
+            s.server = Some(server);
+            s.cookie = saved.as_ref().map(|v| v.cookie.clone());
+            s.credential_owner = saved.as_ref().map(|v| v.account);
+            s.persistent_until = saved.map(|v| v.expires_at);
+        } else if s.cookie.is_none() {
+            return Ok(());
+        }
+        if s.cookie.is_none() || s.local_human.is_some() {
+            return Ok(());
+        }
+    }
+    let ctx = state.context("/api/me", false)?;
+    let response = request(&ctx, Method::GET)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(connection_error)?;
+    state.reject_session(&ctx, response.status())?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Ok(());
     }
-    advance(&mut s);
-    s.server = Some(server);
-    s.cookie = None;
-    Ok(())
+    if !response.status().is_success() {
+        return Err("无法验证保存的登录会话，请重试".into());
+    }
+    let account = response.json().await.map_err(|_| "云端身份响应无效")?;
+    state.confirm_account(ctx.generation, &account)
+}
+#[tauri::command]
+pub fn cloud_unlock_support() -> bool {
+    secure_credentials::supported()
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlockSaved {
+    expires_at: u64,
+}
+#[tauri::command]
+pub fn cloud_unlock_save(
+    state: tauri::State<'_, CloudState>,
+    device_id: String,
+    secret: String,
+    expected_server: String,
+    expected_account_id: String,
+) -> Result<UnlockSaved, String> {
+    let device = parse_device(&device_id)?;
+    let mut s = state.shared.lock().unwrap();
+    let (server, owner) = expected_unlock_scope(&mut s, &expected_server, &expected_account_id)?;
+    Ok(UnlockSaved {
+        expires_at: s.vault.save_unlock(&server, owner, device, secret)?,
+    })
+}
+#[tauri::command]
+pub fn cloud_unlock_load(
+    state: tauri::State<'_, CloudState>,
+    device_id: String,
+    expected_server: String,
+    expected_account_id: String,
+) -> Result<Option<Unlock>, String> {
+    let device = parse_device(&device_id)?;
+    let mut s = state.shared.lock().unwrap();
+    let (server, owner) = expected_unlock_scope(&mut s, &expected_server, &expected_account_id)?;
+    s.vault.load_unlock(&server, owner, device)
+}
+#[tauri::command]
+pub fn cloud_unlock_remove(
+    state: tauri::State<'_, CloudState>,
+    device_id: String,
+    expected_server: String,
+    expected_account_id: String,
+) -> Result<(), String> {
+    let device = parse_device(&device_id)?;
+    let mut s = state.shared.lock().unwrap();
+    let (server, owner) = expected_unlock_scope(&mut s, &expected_server, &expected_account_id)?;
+    s.vault.remove_unlock(&server, owner, device)
+}
+fn parse_device(value: &str) -> Result<Uuid, String> {
+    value
+        .parse::<Uuid>()
+        .ok()
+        .filter(|v| !v.is_nil())
+        .ok_or_else(|| "设备 ID 无效".into())
+}
+fn unlock_scope(s: &mut Inner) -> Result<(String, Uuid), String> {
+    expire_session(s)?;
+    let owner = s.local_human.ok_or("请先在线验证当前登录身份")?;
+    Ok((
+        s.server
+            .as_ref()
+            .ok_or("请先设置云端服务器")?
+            .origin()
+            .ascii_serialization(),
+        owner,
+    ))
+}
+fn expected_unlock_scope(
+    s: &mut Inner,
+    expected_server: &str,
+    expected_account: &str,
+) -> Result<(String, Uuid), String> {
+    let expected_server = server_url(expected_server)?.origin().ascii_serialization();
+    let expected_account = expected_account
+        .parse::<Uuid>()
+        .map_err(|_| "登录账号 ID 无效")?;
+    let scope = unlock_scope(s)?;
+    if scope.0 != expected_server || scope.1 != expected_account {
+        return Err("登录身份已变化，请重试".into());
+    }
+    Ok(scope)
 }
 #[tauri::command]
 pub async fn cloud_request(
     state: tauri::State<'_, CloudState>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<CloudResponse, String> {
+    cloud_request_inner(&state, method, path, body).await
+}
+async fn cloud_request_inner(
+    state: &CloudState,
     method: String,
     path: String,
     body: Option<serde_json::Value>,
@@ -300,14 +529,26 @@ pub async fn cloud_request(
             path.as_str(),
             "/api/auth/login" | "/api/auth/verify" | "/api/auth/logout"
         );
+    let remember_login = method == Method::POST && remember_login_requested(&path, body.as_ref());
     let ctx = state.context(&path, auth_change)?;
     let mut b = request(&ctx, method).timeout(Duration::from_secs(60));
     if let Some(body) = body {
         b = b.json(&body);
     }
     let response = b.send().await.map_err(connection_error)?;
-    let response_generation = state.cookies(&ctx, &response);
-    state.reject_session(&ctx, response.status());
+    let response_generation = match state.cookies(&ctx, &response, remember_login) {
+        Ok(generation) => generation,
+        Err(error)
+            if path == "/api/auth/logout"
+                || response.status() == reqwest::StatusCode::UNAUTHORIZED =>
+        {
+            return Ok(credential_cleanup_failure(error));
+        }
+        Err(error) => return Err(error),
+    };
+    if let Err(error) = state.reject_session(&ctx, response.status()) {
+        return Ok(credential_cleanup_failure(error));
+    }
     let status = response.status().as_u16();
     let content_type = response
         .headers()
@@ -318,11 +559,12 @@ pub async fn cloud_request(
     let file_name = filename(&response);
     let binary = !(content_type.starts_with("text/") || content_type.contains("json"));
     let bytes = response.bytes().await.map_err(|_| "云端响应读取失败")?;
-    if path == "/api/auth/reset" && status < 300 {
+    if matches!(path.as_str(), "/api/auth/reset" | "/api/auth/logout") && status < 300 {
         let mut s = state.shared.lock().unwrap();
-        if s.generation == ctx.generation {
-            advance(&mut s);
-            s.cookie = None;
+        if s.generation == ctx.generation
+            && let Err(error) = invalidate(&mut s)
+        {
+            return Ok(credential_cleanup_failure(error));
         }
     }
     let body = if binary {
@@ -331,7 +573,7 @@ pub async fn cloud_request(
         String::from_utf8(bytes.to_vec()).map_err(|_| "云端文本编码无效")?
     };
     if status < 300
-        && response_generation.is_some()
+        && let Some(response_generation) = response_generation
         && matches!(
             path.as_str(),
             "/api/me" | "/api/auth/login" | "/api/auth/verify"
@@ -344,10 +586,7 @@ pub async fn cloud_request(
         } else {
             &account["account"]
         };
-        let mut s = state.shared.lock().unwrap();
-        if Some(s.generation) == response_generation && account["kind"] == "human" {
-            s.local_human = account["id"].as_str().and_then(|id| id.parse().ok());
-        }
+        state.confirm_account(response_generation, account)?;
     }
     Ok(CloudResponse {
         status,
@@ -356,6 +595,24 @@ pub async fn cloud_request(
         file_name,
         binary,
     })
+}
+fn remember_login_requested(path: &str, body: Option<&serde_json::Value>) -> bool {
+    secure_credentials::supported()
+        && matches!(path, "/api/auth/login" | "/api/auth/verify")
+        && body
+            .and_then(|v| v.get("rememberLogin"))
+            .and_then(|v| v.as_bool())
+            == Some(true)
+}
+fn credential_cleanup_failure(message: String) -> CloudResponse {
+    CloudResponse {
+        status: 401,
+        body: serde_json::json!({"message":message,"code":"native_credential_cleanup_failed"})
+            .to_string(),
+        content_type: "application/json".into(),
+        file_name: None,
+        binary: false,
+    }
 }
 fn request_method(value: &str) -> Result<Method, String> {
     let method = Method::from_bytes(value.as_bytes()).map_err(|_| "HTTP 方法无效")?;
@@ -428,7 +685,7 @@ pub async fn cloud_subscribe(
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.starts_with("text/event-stream"))
     {
-        state.reject_session(&ctx, response.status());
+        state.reject_session(&ctx, response.status())?;
         return Err("云端消息订阅失败，请重新登录或重试".into());
     }
     let id = Uuid::new_v4().to_string();
@@ -603,6 +860,277 @@ async fn persist_download(destination: std::path::PathBuf, bytes: Vec<u8>) -> Re
 mod tests {
     use super::*;
     #[test]
+    fn remember_login_requires_explicit_supported_auth_request() {
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({"rememberLogin":false}),
+            serde_json::json!({"rememberLogin":"true"}),
+        ] {
+            assert!(!remember_login_requested("/api/auth/login", Some(&body)));
+        }
+        assert!(!remember_login_requested("/api/auth/verify", None));
+        let body = serde_json::json!({"rememberLogin":true});
+        assert_eq!(
+            remember_login_requested("/api/auth/login", Some(&body)),
+            secure_credentials::supported()
+        );
+        assert_eq!(
+            remember_login_requested("/api/auth/verify", Some(&body)),
+            secure_credentials::supported()
+        );
+        assert!(!remember_login_requested("/api/me", Some(&body)));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn old_server_persistent_cookie_does_not_imply_remember_consent() {
+        for remember in [false, true] {
+            let state = CloudState::new();
+            let server = "https://example.test";
+            state.shared.lock().unwrap().server = Some(server_url(server).unwrap());
+            let ctx = state.context("/api/auth/login", true).unwrap();
+            let response = reqwest::Response::from(
+                tauri::http::Response::builder()
+                    .header(
+                        header::SET_COOKIE,
+                        "nest_session=test-token; HttpOnly; Max-Age=2592000; Path=/",
+                    )
+                    .body("")
+                    .unwrap(),
+            );
+            let generation = state.cookies(&ctx, &response, remember).unwrap().unwrap();
+            state
+                .confirm_account(
+                    generation,
+                    &serde_json::json!({"id":Uuid::new_v4(),"kind":"human"}),
+                )
+                .unwrap();
+            let s = state.shared.lock().unwrap();
+            assert!(s.cookie.is_some());
+            assert_eq!(s.vault.load_session(server).unwrap().is_some(), remember);
+        }
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn cleanup_failure_keeps_401_and_emits_scoped_auth_lost_for_request_and_logout() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for logout in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let server = format!("http://{}", listener.local_addr().unwrap());
+            let state = CloudState::new();
+            let owner = Uuid::new_v4();
+            let device = Uuid::new_v4();
+            let session_file = {
+                let mut s = state.shared.lock().unwrap();
+                s.server = Some(server_url(&server).unwrap());
+                s.cookie = Some("nest_session=test-token".into());
+                s.local_human = Some(owner);
+                s.credential_owner = Some(owner);
+                s.vault
+                    .save_session(
+                        &server,
+                        &Session {
+                            account: owner,
+                            cookie: "nest_session=test-token".into(),
+                            expires_at: secure_credentials::now_ms()
+                                + secure_credentials::THIRTY_DAYS_MS,
+                        },
+                    )
+                    .unwrap();
+                s.vault
+                    .save_unlock(&server, owner, device, "test-secret".into())
+                    .unwrap();
+                s.vault.test_session_path(&server)
+            };
+            let file_lock = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(session_file)
+                .unwrap();
+            let serving = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut input = [0; 2048];
+                let mut headers = Vec::new();
+                loop {
+                    let count = stream.read(&mut input).await.unwrap();
+                    assert!(count > 0);
+                    headers.extend_from_slice(&input[..count]);
+                    if headers.windows(4).any(|v| v == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let response = if logout {
+                    "HTTP/1.1 204 No Content\r\nSet-Cookie: nest_session=; Max-Age=0; Path=/\r\nConnection: close\r\n\r\n"
+                } else {
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                };
+                stream.write_all(response.as_bytes()).await.unwrap();
+            });
+            let response = cloud_request_inner(
+                &state,
+                if logout { "POST" } else { "GET" }.into(),
+                if logout {
+                    "/api/auth/logout"
+                } else {
+                    "/api/me"
+                }
+                .into(),
+                None,
+            )
+            .await
+            .unwrap();
+            serving.await.unwrap();
+            assert_eq!(response.status, 401);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&response.body).unwrap()["code"],
+                "native_credential_cleanup_failed"
+            );
+            let s = state.shared.lock().unwrap();
+            assert!(s.cookie.is_none() && s.local_human.is_none());
+            assert!(
+                s.vault
+                    .load_unlock(&server, owner, device)
+                    .unwrap()
+                    .is_none()
+            );
+            let event = s.emitted_auth_lost.last().unwrap();
+            assert_eq!(event.server, server);
+            assert_eq!(event.account_id, Some(owner));
+            assert!(event.message.is_some());
+            drop(file_lock);
+            s.vault.clear(&server, Some(owner)).unwrap();
+        }
+    }
+    #[test]
+    fn unlock_requires_current_confirmed_human_and_uuid() {
+        let state = CloudState::new();
+        let mut s = state.shared.lock().unwrap();
+        assert!(unlock_scope(&mut s).is_err());
+        s.server = Some(server_url("https://example.test").unwrap());
+        s.credential_owner = Some(Uuid::new_v4());
+        // A saved credential alone does not authorize releasing the SDK secret.
+        assert!(unlock_scope(&mut s).is_err());
+        let human = Uuid::new_v4();
+        s.local_human = Some(human);
+        assert_eq!(
+            unlock_scope(&mut s).unwrap(),
+            ("https://example.test".into(), human)
+        );
+        assert!(expected_unlock_scope(&mut s, "https://other.test", &human.to_string()).is_err());
+        assert!(
+            expected_unlock_scope(&mut s, "https://example.test", &Uuid::new_v4().to_string())
+                .is_err()
+        );
+        assert!(expected_unlock_scope(&mut s, "https://example.test/", &human.to_string()).is_ok());
+        assert!(parse_device("../device").is_err());
+        assert!(parse_device(&Uuid::nil().to_string()).is_err());
+        assert!(parse_device(&Uuid::new_v4().to_string()).is_ok());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn persisted_session_keeps_deadline_and_401_clears_only_current_account() {
+        let state = CloudState::new();
+        let human = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let device = Uuid::new_v4();
+        let server = "https://example.test";
+        {
+            let mut s = state.shared.lock().unwrap();
+            s.server = Some(server_url(server).unwrap());
+            s.cookie = Some("nest_session=test-cookie".into());
+            s.persistent_until =
+                Some(secure_credentials::now_ms() + secure_credentials::THIRTY_DAYS_MS);
+            s.vault
+                .save_unlock(server, human, device, "test-one".into())
+                .unwrap();
+            s.vault
+                .save_unlock(server, other, device, "test-two".into())
+                .unwrap();
+        }
+        let account = serde_json::json!({"id":human,"kind":"human"});
+        state.confirm_account(0, &account).unwrap();
+        let deadline = state
+            .shared
+            .lock()
+            .unwrap()
+            .vault
+            .load_session(server)
+            .unwrap()
+            .unwrap()
+            .expires_at;
+        state.confirm_account(0, &account).unwrap();
+        assert_eq!(
+            state
+                .shared
+                .lock()
+                .unwrap()
+                .vault
+                .load_session(server)
+                .unwrap()
+                .unwrap()
+                .expires_at,
+            deadline
+        );
+        let ctx = state.context("/api/me", false).unwrap();
+        state
+            .reject_session(&ctx, reqwest::StatusCode::SERVICE_UNAVAILABLE)
+            .unwrap();
+        assert!(
+            state
+                .shared
+                .lock()
+                .unwrap()
+                .vault
+                .load_session(server)
+                .unwrap()
+                .is_some()
+        );
+        state
+            .reject_session(&ctx, reqwest::StatusCode::UNAUTHORIZED)
+            .unwrap();
+        let s = state.shared.lock().unwrap();
+        assert!(s.vault.load_session(server).unwrap().is_none());
+        assert!(
+            s.vault
+                .load_unlock(server, human, device)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            s.vault
+                .load_unlock(server, other, device)
+                .unwrap()
+                .is_some()
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn expiry_revokes_local_unlock_authority_and_clears_material() {
+        let state = CloudState::new();
+        let human = Uuid::new_v4();
+        let device = Uuid::new_v4();
+        let server = "https://example.test";
+        {
+            let mut s = state.shared.lock().unwrap();
+            s.server = Some(server_url(server).unwrap());
+            s.local_human = Some(human);
+            s.credential_owner = Some(human);
+            s.persistent_until = Some(secure_credentials::now_ms() - 1);
+            s.vault
+                .save_unlock(server, human, device, "test-one".into())
+                .unwrap();
+        }
+        assert!(state.authorized_local_session().is_err());
+        let mut s = state.shared.lock().unwrap();
+        assert!(unlock_scope(&mut s).is_err());
+        assert!(
+            s.vault
+                .load_unlock(server, human, device)
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[test]
     fn local_authority_survives_connection_errors_but_not_session_change() {
         let state = CloudState::new();
         let human = Uuid::new_v4();
@@ -614,9 +1142,13 @@ mod tests {
         }
         assert_eq!(state.authorized_local_identity().unwrap().1, human);
         let ctx = state.context("/api/me", false).unwrap();
-        state.reject_session(&ctx, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        state
+            .reject_session(&ctx, reqwest::StatusCode::SERVICE_UNAVAILABLE)
+            .unwrap();
         assert_eq!(state.authorized_local_identity().unwrap().1, human);
-        state.reject_session(&ctx, reqwest::StatusCode::UNAUTHORIZED);
+        state
+            .reject_session(&ctx, reqwest::StatusCode::UNAUTHORIZED)
+            .unwrap();
         assert!(state.authorized_local_identity().is_err());
         assert!(CloudState::new().authorized_local_identity().is_err());
     }
@@ -709,6 +1241,11 @@ mod tests {
                 local_human: None,
                 subscriptions: HashMap::new(),
                 owner_versions: HashMap::new(),
+                vault: Vault::new(),
+                credential_owner: None,
+                persistent_until: None,
+                auth_events: None,
+                emitted_auth_lost: Vec::new(),
             })),
         };
         let older = state.context("/api/auth/login", true).unwrap();
@@ -727,8 +1264,18 @@ mod tests {
                     .unwrap(),
             )
         };
-        assert!(state.cookies(&newer, &response("new")).is_some());
-        assert!(state.cookies(&older, &response("stale")).is_none());
+        assert!(
+            state
+                .cookies(&newer, &response("new"), false)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            state
+                .cookies(&older, &response("stale"), false)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             state.shared.lock().unwrap().cookie.as_deref(),
             Some("nest_session=new")

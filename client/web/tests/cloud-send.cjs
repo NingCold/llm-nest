@@ -5,19 +5,19 @@ const conversation = { id: "group", kind: "group", revision: "7", directBlocked:
 const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
 function harness(record, desktop = false, storage = new Map()) {
   const states = [], refs = [], calls = [], saves = [], effects = [], listeners = {};
-  const repository = { records: {} };
-  let si = 0, ri = 0;
+  const repository = { records: {} }, lifecycle = { locks: 0, logouts: 0, imageReads: 0, fileReads: 0 };
+  let si = 0, ri = 0, ei = 0, cleanup;
   // Seed an authenticated, open conversation and a recovered draft. Effects stay off:
   // these cases exercise explicit sends, without any automatic network work.
-  Object.assign(states, { 4: me, 5: true, 8: { self: me, contacts: [], conversations: [conversation], cursor: "1" }, 9: "group", 15: record, 16: true });
+  Object.assign(states, { 2: me, 5: { self: me, contacts: [], conversations: [conversation], cursor: "1" }, 6: "group", 12: record, 13: true });
   const hooks = { ...React,
     useState(initial) { const i = si++; if (!(i in states)) states[i] = typeof initial === "function" ? initial() : initial; return [states[i], value => { states[i] = typeof value === "function" ? value(states[i]) : value; }]; },
-    useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
+    useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (ei++ === 0 && !cleanup) cleanup = fn(); if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
   };
   const api = { server: "https://example.test", encryptions: 0, invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
   const exports = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/App.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
-    exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener() {}, removeEventListener() {} },
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/ChatApp.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
+    exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, document: { querySelector: () => ({ scrollTop: 123 }) }, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener() {}, removeEventListener() {} },
     require(name) {
       if (name === "react") return hooks;
       if (name === "./api") return api;
@@ -37,13 +37,73 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
       if (name === "@tauri-apps/api/core") return { invoke: async () => {} };
       if (name === "../social/drafts") return { emptyDraft: () => ({ text: "", requestId: null, mentions: [], replyTo: null }) };
-      if (name === "../social/draft-storage") return { DraftDatabase: class { async load(owner, ids) { return Object.fromEntries(ids.filter(id => repository.records[id]).map(id => [id, repository.records[id]])); } async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); } } };
+      if (name === "../social/images") return { readImages: async (...args) => { lifecycle.imageReads++; return repository.readImages ? repository.readImages(...args) : []; } };
+      if (name === "../social/files") return { readFiles: async (...args) => { lifecycle.fileReads++; return repository.readFiles ? repository.readFiles(...args) : []; } };
+      if (name === "../social/draft-storage") return { DraftDatabase: class { async load(owner, ids) { return Object.fromEntries(ids.filter(id => repository.records[id]).map(id => [id, repository.records[id]])); } async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); if (repository.save) await repository.save(owner, id, next); } } };
       if (name === "@/hooks/useDesktopReady") return { useDesktopReady() {} };
       if (name.startsWith("@/") || name.startsWith("./") || name.startsWith("../") || name.startsWith("@tauri")) return {};
       return require(name);
     },
   });
-  return { calls, saves, api, repository, effects, listeners, render() { si = ri = 0; return exports.default().props; } };
+  return { calls, saves, api, repository, lifecycle, effects, listeners, render() { si = ri = ei = 0; return exports.default({account:me, location:{active:"group",tab:"messages",accountSection:"profile"}, rememberLocation(){}, onLock(){lifecycle.locks++;}, onLogout(){lifecycle.logouts++;}, onEndSession(){ cleanup(); }}).props; } };
+}
+const tick = () => new Promise(resolve => setImmediate(resolve));
+function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+async function suspendDraftCases() {
+  const frozen = { text: 'unconfirmed send', requestId: 'original-request', mentions: [], replyTo: null };
+  const waiting = harness({ draft, pending: frozen }), write = deferred();
+  waiting.repository.save = () => write.promise;
+  const originalWrite = waiting.render().save({ draft, pending: frozen }); await tick();
+  waiting.render().lock(); await tick();
+  assert.equal(waiting.lifecycle.locks, 0, 'chat cannot unmount while a draft transaction is uncommitted');
+  assert.equal(waiting.render().busy, true);
+  waiting.render().text('late text'); waiting.render().attach([{}], true); waiting.render().attach([{}], false); await waiting.render().send();
+  await assert.rejects(waiting.render().save({ draft: { ...draft, text: 'late save' }, pending: null }), /正在锁定或退出/);
+  assert.equal(waiting.saves.length, 1, 'suspension freezes new draft writes');
+  assert.equal(waiting.lifecycle.imageReads, 0); assert.equal(waiting.lifecycle.fileReads, 0); assert.equal(waiting.calls.length, 0);
+  write.resolve(); await originalWrite; await tick();
+  assert.equal(waiting.lifecycle.locks, 1);
+  assert.deepEqual(waiting.saves[0].next.pending, frozen, 'locking preserves the exact unconfirmed command for manual retry');
+
+  const failed = harness({ draft, pending: null }), failedWrite = deferred();
+  failed.repository.save = () => failedWrite.promise;
+  failed.render().text('must remain visible'); await tick(); failed.render().lock(); await tick();
+  failedWrite.reject(new Error('draft disk full')); await tick(); await tick();
+  assert.equal(failed.lifecycle.locks, 0, 'failed persistence leaves chat unlocked');
+  assert.match(failed.render().error, /draft disk full/); assert.equal(failed.render().busy, false);
+  failed.repository.save = undefined; failed.render().text('retry after error'); await tick();
+  assert.equal(failed.saves.at(-1).next.draft.text, 'retry after error', 'a failed suspension restores editing');
+
+  const reading = harness({ draft: { ...draft, images: [] }, pending: null }), image = deferred(), imageWrite = deferred();
+  reading.repository.readImages = () => image.promise; reading.repository.save = () => imageWrite.promise;
+  reading.render().attach([{}], true); await tick();
+  reading.render().lock(); await tick();
+  assert.equal(reading.lifecycle.locks, 0, 'suspension waits for the original in-progress file read');
+  reading.render().attach([{}], true); assert.equal(reading.lifecycle.imageReads, 1);
+  image.resolve([{ id: 'selected-image', mime: 'image/png', data: 'isolated-fixture' }]); await tick();
+  assert.equal(reading.saves.length, 1, 'a file read started before suspension may still save its result');
+  assert.equal(reading.saves[0].next.draft.images[0].id, 'selected-image');
+  assert.equal(reading.lifecycle.locks, 0, 'the completed file read must also wait for its draft write');
+  imageWrite.resolve(); await tick(); await tick();
+  assert.equal(reading.lifecycle.locks, 1);
+
+  const exiting = harness({ draft, pending: frozen }), exitWrite = deferred();
+  exiting.repository.save = () => exitWrite.promise;
+  const save = exiting.render().save({ draft, pending: frozen }); await tick();
+  const logout = exiting.render().logout(); await tick();
+  assert.equal(exiting.lifecycle.logouts, 0, 'logout also waits for durable drafts');
+  exiting.render().text('late logout input'); await exiting.render().send();
+  assert.equal(exiting.saves.length, 1); assert.equal(exiting.calls.length, 0);
+  exitWrite.resolve(); await save; await logout;
+  assert.equal(exiting.lifecycle.logouts, 1);
+  const failedExit = harness({ draft, pending: frozen }), rejectedExitWrite = deferred();
+  failedExit.repository.save = () => rejectedExitWrite.promise;
+  const rejectedSave = assert.rejects(failedExit.render().save({ draft, pending: frozen }), /draft unavailable/); await tick();
+  const rejectedLogout = assert.rejects(failedExit.render().logout(), /draft unavailable/); await tick();
+  rejectedExitWrite.reject(new Error('draft unavailable')); await rejectedSave; await rejectedLogout;
+  assert.equal(failedExit.lifecycle.logouts, 0, 'failed draft persistence prevents logout as well as lock');
+  assert.equal(failedExit.render().busy, false);
+  console.log('PASS: lock/logout freeze new editing and dispatch, preserve unconfirmed drafts, wait existing attachment work, and keep chat open on persistence failure');
 }
 (async () => {
   const first = harness({ draft, pending: null });
@@ -160,5 +220,6 @@ function harness(record, desktop = false, storage = new Map()) {
   desktop.listeners['desktop-close-retained']();
   desktop.render().text('托盘重新打开后继续输入'); await new Promise(resolve => setImmediate(resolve));
   assert.equal(desktop.saves.at(-1).next.draft.text, '托盘重新打开后继续输入'); cleanup();
+  await suspendDraftCases();
   console.log("PASS: cloud structured sends persist before dispatch, unlock only first explicit rejections and preserve uncertain/recovered command snapshots");
 })().catch(error => { console.error(error); process.exitCode = 1; });

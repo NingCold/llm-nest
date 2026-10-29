@@ -371,3 +371,12 @@
   .cloud-theme-options { gap: 12px; }
   .cloud-workspace .cloud-theme-card { width: min(100%, 180px); }
 }
+.session-recovery { position: relative; display: flex; flex-direction: column; }
+.session-recovery > .crypto-devices { flex: 1; min-height: 0; }
+.session-recovery-actions { position: absolute; right: 24px; top: 18px; z-index: 2; display: flex; align-items: center; gap: 16px; }
+.desktop-chrome .session-recovery-actions { right: calc(var(--desktop-controls-width, 148px) + 24px); }
+.session-recovery > .crypto-devices .contact-header { padding-right: 300px; }
+@media (max-width: 600px) {
+  .session-recovery-actions { position: static; padding: 12px 20px 0; justify-content: space-between; }
+  .session-recovery > .crypto-devices .contact-header { padding-right: 20px; }
+}

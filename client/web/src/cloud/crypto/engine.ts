@@ -29,9 +29,32 @@ function session() {
   if (!active || active.owner !== ownerOf(active.account)) throw new Error("请先在可信设备与恢复中解锁本机加密资料");
   return active;
 }
-function current(s: Session) { if (active !== s) throw new Error("加密设备已锁定或账号已切换"); }
+export class CryptoSessionChanged extends Error {}
+function current(s: Session) { if (active !== s) throw new CryptoSessionChanged("加密设备已锁定或账号已切换"); }
 export function cryptoDevice(account: string) { return active?.owner === ownerOf(account) ? active.deviceId : undefined; }
 export function hasCryptoDevice(account: string) { return localStorage.getItem(metadataKey(account)) !== null; }
+export function localCryptoDevice(account: string): string | undefined {
+  const saved = localStorage.getItem(metadataKey(account));
+  return saved ? (JSON.parse(saved) as { deviceId: string }).deviceId : undefined;
+}
+export function cryptoGeneration() { return generation; }
+async function cryptoStoreName(account: string, deviceId: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([ownerOf(account), deviceId])));
+  return `llmn-crypto-${Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("")}`;
+}
+async function requireCryptoStore(storeName: string) {
+  const names = new Set((await indexedDB.databases()).map(db => db.name));
+  if (!names.has(`${storeName}::matrix-sdk-crypto-meta`) || !names.has(`${storeName}::matrix-sdk-crypto`)) throw new Error("本机加密库已不存在，请关闭自动解锁并使用原恢复流程");
+}
+export async function verifyCryptoPassphrase(account: string, passphrase: string) {
+  const s = session();
+  if (s.account !== account) throw new Error("账号已切换，请重新解锁");
+  const storeName = await cryptoStoreName(account, s.deviceId);
+  await requireCryptoStore(storeName);
+  const handle = await s.sdk.StoreHandle.open(storeName, passphrase);
+  handle.free();
+  current(s);
+}
 
 async function sendOutgoing(s: Session, outgoing: Matrix.OutgoingRequest) {
   const body = JSON.parse(outgoing.body);
@@ -122,20 +145,26 @@ export async function syncCrypto() {
   return work;
 }
 
-export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" = false) {
+export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" = false, expected?: { generation: number; deviceId: string; isCurrent?: () => boolean }) {
   if (!passphrase.trim()) throw new Error("请输入本机加密库口令；它与登录密码和恢复材料分开保管");
   const saved = localStorage.getItem(metadataKey(account));
   if (!saved && !create) throw new Error("此账号在当前设备没有加密资料，请明确创建新设备，再由可信设备或恢复包授权");
   if (saved && create === true) throw new Error("本机已有设备身份，请解锁，不能覆盖或重置");
+  // Automatic unlock must never create a replacement SDK identity when its local store was removed.
+  if (expected) {
+    if (generation !== expected.generation || localCryptoDevice(account) !== expected.deviceId || expected.isCurrent?.() === false) throw new CryptoSessionChanged("账号或加密设备已变化，请重新解锁");
+    await requireCryptoStore(await cryptoStoreName(account, expected.deviceId));
+    if (generation !== expected.generation || localCryptoDevice(account) !== expected.deviceId || expected.isCurrent?.() === false) throw new CryptoSessionChanged("账号或加密设备已变化，请重新解锁");
+  }
   lockCrypto();
   const epoch = generation;
   const sdk = await import("@matrix-org/matrix-sdk-crypto-wasm");
   await sdk.initAsync();
   const metadata = saved && create !== "new-device" ? JSON.parse(saved) as { deviceId: string; cursor: string } : { deviceId: crypto.randomUUID(), cursor: "0" };
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([ownerOf(account), metadata.deviceId])));
-  const storeName = `llmn-crypto-${Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("")}`;
+  const storeName = await cryptoStoreName(account, metadata.deviceId);
+  if (epoch !== generation || expected?.isCurrent?.() === false) throw new CryptoSessionChanged("账号已切换，请重新解锁");
   const machine = await sdk.OlmMachine.initialize(new sdk.UserId(matrixUser(account)), new sdk.DeviceId(metadata.deviceId), storeName, passphrase);
-  if (epoch !== generation) { machine.close(); throw new Error("账号已切换，请重新解锁"); }
+  if (epoch !== generation || expected?.isCurrent?.() === false) { machine.close(); throw new CryptoSessionChanged("账号已切换，请重新解锁"); }
   const unlocked: Session = { sdk, machine, account, owner: ownerOf(account), deviceId: metadata.deviceId, cursor: metadata.cursor };
   active = unlocked;
   localStorage.setItem(metadataKey(account), JSON.stringify(metadata));
@@ -150,8 +179,11 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
     }
     // An existing encrypted store can be unlocked without promoting a new device.
   }
+  current(unlocked);
+  const status = await deviceStatus();
+  if (expected?.isCurrent?.() === false) { if (active === unlocked) lockCrypto(); throw new CryptoSessionChanged("自动解锁已取消"); }
   current(unlocked); changed();
-  return deviceStatus();
+  return status;
 }
 
 export async function deviceStatus() {

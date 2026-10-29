@@ -57,7 +57,7 @@ pnpm --dir client/web dev
 pnpm --dir client/desktop exec tauri dev
 ```
 
-在页面填写云端 HTTPS 服务器地址。原生网络层持有内存 Cookie，重启需重新登录；默认不读取 `config/llmn.toml` 或打开旧 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
+在页面填写云端 HTTPS 服务器地址。原生网络层默认仅保管内存 Cookie；Windows 显式选择保持登录后用当前用户 DPAPI 保存令牌，重启仍联网核对会话，非 Windows 原生端暂不支持。登录与 SDK 解锁独立，规则见[账号设计](design/accounts.md#登录会话与本机解锁)。默认不读取 `config/llmn.toml` 或打开旧 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
 
 Tauri 开发和构建入口会先准备独立 `llmn-agent` 可执行文件，再构建共用前端；生成文件不进 Git。桌面运行时从资源目录启动 Agent，界面本身不调用模型。验收本机配置、配对与托盘时，设置临时 `LLMN_DATA_DIR`，按服务器和真人账号隔离节点，避免使用日常资料。构建细节见[桌面说明](../client/desktop/README.md)。
 

@@ -15,6 +15,9 @@
 .auth-label-row, .auth-link-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .auth-page .auth-link { padding: 0; background: none; border: 0; color: var(--s-accent); font-size: 13px; cursor: pointer; line-height: 1.6; }
 .auth-password { display: flex; flex-direction: column; gap: 8px; }
+.auth-remember-option { display: grid; gap: 5px; }
+.auth-page .social-form label.auth-remember { flex-direction: row; align-items: flex-start; gap: 9px; font-weight: 400; color: var(--s-muted); line-height: 1.6; cursor: pointer; }
+.auth-page .social-form .auth-remember input { flex: 0 0 auto; width: 16px; height: 16px; padding: 0; margin: 3px 0 0; accent-color: var(--s-accent); }
 .auth-link:hover, .auth-back:hover { text-decoration: underline; text-underline-offset: 3px; }
 .auth-submit { justify-content: center; min-height: 44px; margin-top: 4px; border-radius: 9px; }
 .auth-footer { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 26px; color: var(--s-muted); font-size: 13px; }

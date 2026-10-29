@@ -21,6 +21,7 @@ interface AuthPageProps {
   canResume: boolean;
   onCorrectEmail(email: string): void;
   onResend(): void;
+  rememberSupported?: boolean;
 }
 
 const copy: Record<string, { title: string; description: string; action: string }> = {
@@ -71,6 +72,7 @@ export function AuthPage(props: AuthPageProps) {
             {mode !== "login" && <small id="password-hint">至少 10 个字符</small>}
           </div>}
           {["verify", "reset"].includes(mode) && <label>邮件验证码<input name="token" required defaultValue={params.get("token") || ""} autoComplete="one-time-code" /></label>}
+          {["login", "verify"].includes(mode) && <div className="auth-remember-option"><label className="auth-remember"><input name="rememberLogin" type="checkbox" disabled={busy || props.rememberSupported === false} /><span>在此设备保持登录 30 天</span></label>{props.rememberSupported === false && <small>此平台暂不支持保持登录。</small>}</div>}
           <button className="social-button primary auth-submit" disabled={busy || !connected}>{busy ? "请稍候…" : content.action}</button>
         </form>
         {mode === "verify" && props.canResume && <div className="auth-verification">

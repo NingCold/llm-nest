@@ -42,3 +42,7 @@
 }
 
 .crypto-devices .crypto-confirmation label.cloud-check { flex-direction: row; align-items: flex-start; }
+.crypto-auto-unlock p { font-size: 13px; }
+.crypto-auto-unlock .crypto-auto-form { margin-top: 18px; max-width: 360px; }
+.crypto-auto-unlock .crypto-auto-expiry { color: var(--s-text); }
+.crypto-auto-unlock input[type="password"] { width: 100%; min-width: 0; }

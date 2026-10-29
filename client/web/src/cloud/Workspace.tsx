@@ -96,6 +96,10 @@ interface Props extends ChatConnectionProps {
   onBottom(bottom: boolean): void;
   onProfile(account: Account): void;
   logout(): Promise<void>;
+  lock?(): void;
+  initialAccountSection?: string;
+  onAccountSectionChange?(section: string): void;
+  restoreScrollTop?: number;
   endSession(): void;
   onPreview(url?: string): void;
   dismissError(): void;
@@ -230,7 +234,7 @@ export function Workspace(p: Props) {
     [searchBusy, setSearchBusy] = useState(false),
     [searched, setSearched] = useState(false),
     [settings, setSettings] = useState("appearance"),
-    [accountSection, setAccountSection] = useState("profile"),
+    [accountSection, setAccountSection] = useState(p.initialAccountSection ?? "profile"),
     [profileEditing, setProfileEditing] = useState(false),
     [sessions, setSessions] = useState<
       { id: string; createdAt: string; expiresAt: string; current: boolean }[]
@@ -241,6 +245,8 @@ export function Workspace(p: Props) {
     timeline = useRef<HTMLDivElement>(null),
     stick = useRef(true),
     previewTrigger = useRef<HTMLElement | null>(null);
+  const restoredScroll = useRef(false);
+  useEffect(() => { p.onAccountSectionChange?.(accountSection); }, [accountSection]);
   const showPreview = (url: string | undefined, trigger: HTMLElement) => {
     previewTrigger.current = trigger;
     p.onPreview(url);
@@ -295,6 +301,13 @@ export function Workspace(p: Props) {
     stick.current = !located;
   }, [p.active, p.location?.messageId]);
   useEffect(() => {
+    if (!restoredScroll.current && p.restoreScrollTop !== undefined && p.page && timeline.current) {
+      timeline.current.scrollTop = p.restoreScrollTop;
+      stick.current = timeline.current.scrollHeight - timeline.current.scrollTop - timeline.current.clientHeight < 48;
+      p.onBottom(stick.current);
+      restoredScroll.current = true;
+      return;
+    }
     if (stick.current && timeline.current)
       timeline.current.scrollTop = timeline.current.scrollHeight;
   }, [p.page?.messages, p.tab]);
@@ -572,6 +585,7 @@ export function Workspace(p: Props) {
                   ))}
                 </section>
                 <section>
+                  {p.lock && <button className="social-button secondary" onClick={p.lock}>锁定 LLM Nest</button>}
                   <button
                     className="social-button secondary"
                     onClick={() => void p.act(p.logout)}
@@ -599,6 +613,7 @@ export function Workspace(p: Props) {
           navigate={navigate}
           onAccount={() => navigate("account")}
           onSettings={() => navigate("settings")}
+          onLock={p.lock}
           self={avatar(p.me)}
           name={p.me.name}
           unread={p.snapshot?.conversations.some(unread)}
@@ -1006,7 +1021,7 @@ export function Workspace(p: Props) {
                 </div>
               </section>
             ) : p.tab === "account" ? (
-              accountSection === "crypto" ? <CryptoDevices key={p.me.id} accountId={p.me.id} /> : accountSection === "ai" ? <AiManagement operatorId={p.me.id} conversations={p.snapshot?.conversations ?? []} cursor={p.snapshot?.cursor ?? ""} back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
+              accountSection === "crypto" ? <CryptoDevices key={p.me.id} accountId={p.me.id} onLock={p.lock} /> : accountSection === "ai" ? <AiManagement operatorId={p.me.id} conversations={p.snapshot?.conversations ?? []} cursor={p.snapshot?.cursor ?? ""} back={() => setAccountSection("profile")} openDirect={p.openDirect} refresh={p.refresh} /> : profile(p.me, true)
             ) : p.tab === "contacts" ? (
               selectedContact ? (
                 profile(selectedContact, false)

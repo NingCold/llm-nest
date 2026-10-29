@@ -199,9 +199,12 @@ pub async fn authenticate(s: &AppState, h: &HeaderMap) -> Result<Principal> {
         session_id: r.get("id"),
     })
 }
-fn cookie(s: &AppState, t: &str, max_age: u32) -> String {
+fn cookie(s: &AppState, t: &str, max_age: Option<u32>) -> String {
     format!(
-        "nest_session={t}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}{}",
+        "nest_session={t}; HttpOnly; SameSite=Lax; Path=/{}{}",
+        max_age
+            .map(|v| format!("; Max-Age={v}"))
+            .unwrap_or_default(),
         if s.public_url.starts_with("https://") {
             "; Secure"
         } else {
@@ -209,16 +212,20 @@ fn cookie(s: &AppState, t: &str, max_age: u32) -> String {
         }
     )
 }
-async fn session(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, id: Uuid) -> Result<String> {
+async fn session(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Uuid,
+    remember: bool,
+) -> Result<String> {
     let t = token();
-    sqlx::query("INSERT INTO sessions(id,account_id,token_hash,expires_at) VALUES($1,$2,$3,now()+interval '30 days')").bind(Uuid::new_v4()).bind(id).bind(hash(&t)).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO sessions(id,account_id,token_hash,expires_at) VALUES($1,$2,$3,now()+make_interval(secs => $4))").bind(Uuid::new_v4()).bind(id).bind(hash(&t)).bind(if remember { 2_592_000.0_f64 } else { 28_800.0_f64 }).execute(&mut **tx).await?;
     Ok(t)
 }
-fn logged(s: &AppState, a: Account, t: String) -> Result<Response> {
+fn logged(s: &AppState, a: Account, t: String, remember: bool) -> Result<Response> {
     let mut r = Json(serde_json::json!({"account":a})).into_response();
     r.headers_mut().insert(
         header::SET_COOKIE,
-        cookie(s, &t, 2592000)
+        cookie(s, &t, remember.then_some(2_592_000))
             .parse()
             .map_err(|_| AppError::internal())?,
     );
@@ -345,6 +352,8 @@ async fn resend_inner(s: &AppState, v: Resume, change: bool) -> Result<Json<serd
 #[derive(Deserialize)]
 struct Token {
     token: String,
+    #[serde(default, rename = "rememberLogin")]
+    remember_login: bool,
 }
 async fn verify(State(s): State<Arc<AppState>>, Json(v): Json<Token>) -> Result<Response> {
     let mut tx = s.pool.begin().await?;
@@ -369,14 +378,16 @@ async fn verify(State(s): State<Arc<AppState>>, Json(v): Json<Token>) -> Result<
         .bind(r.get::<Uuid, _>("id"))
         .execute(&mut *tx)
         .await?;
-    let t = session(&mut tx, id).await?;
+    let t = session(&mut tx, id, v.remember_login).await?;
     tx.commit().await?;
-    logged(&s, a, t)
+    logged(&s, a, t, v.remember_login)
 }
 #[derive(Deserialize)]
 struct Login {
     email: String,
     password: String,
+    #[serde(default, rename = "rememberLogin")]
+    remember_login: bool,
 }
 async fn login(State(s): State<Arc<AppState>>, Json(v): Json<Login>) -> Result<Response> {
     let e = email(&v.email)?;
@@ -409,10 +420,9 @@ async fn login(State(s): State<Arc<AppState>>, Json(v): Json<Login>) -> Result<R
     if Some(current) != checked_hash {
         return Err(AppError::unauthorized());
     }
-    let t = token();
-    sqlx::query("INSERT INTO sessions(id,account_id,token_hash,expires_at) VALUES($1,$2,$3,now()+interval '30 days')").bind(Uuid::new_v4()).bind(a.id).bind(hash(&t)).execute(&mut *tx).await?;
+    let t = session(&mut tx, a.id, v.remember_login).await?;
     tx.commit().await?;
-    logged(&s, a, t)
+    logged(&s, a, t, v.remember_login)
 }
 async fn logout(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Response> {
     let p = authenticate(&s, &h).await?;
@@ -423,7 +433,7 @@ async fn logout(State(s): State<Arc<AppState>>, h: HeaderMap) -> Result<Response
     let mut r = StatusCode::NO_CONTENT.into_response();
     r.headers_mut().insert(
         header::SET_COOKIE,
-        cookie(&s, "", 0)
+        cookie(&s, "", Some(0))
             .parse()
             .map_err(|_| AppError::internal())?,
     );
@@ -614,6 +624,100 @@ pub async fn revoke_invite(pool: &PgPool, code: &str) -> Result<()> {
 mod tests {
     use super::*;
     use sqlx::postgres::PgPoolOptions;
+    #[test]
+    fn remember_login_is_explicit_for_login_and_verification() {
+        let login: Login = serde_json::from_value(
+            serde_json::json!({"email":"user@example.test", "password":"test"}),
+        )
+        .unwrap();
+        assert!(!login.remember_login);
+        let verify: Token = serde_json::from_value(serde_json::json!({"token":"test"})).unwrap();
+        assert!(!verify.remember_login);
+        let verify: Token =
+            serde_json::from_value(serde_json::json!({"token":"test", "rememberLogin":true}))
+                .unwrap();
+        assert!(verify.remember_login);
+        assert!(serde_json::from_value::<Login>(serde_json::json!({"email":"user@example.test", "password":"test", "rememberLogin":"yes"})).is_err());
+    }
+    #[tokio::test]
+    async fn remembered_and_session_login_have_fixed_expiry_and_logout() {
+        let Some(f) = Fixture::new().await else {
+            return;
+        };
+        for remember in [false, true] {
+            let email = format!("remember-{remember}@example.test");
+            f.register(create_invite(&f.state.pool, 7).await.unwrap(), &email)
+                .await;
+            let response = verify(
+                State(f.state.clone()),
+                Json(Token {
+                    token: f.latest_token(&email).await,
+                    remember_login: remember,
+                }),
+            )
+            .await
+            .unwrap();
+            let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+            assert_eq!(cookie.contains("Max-Age=2592000"), remember);
+            assert!(!cookie.contains("Max-Age=28800"));
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::COOKIE,
+                cookie.split(';').next().unwrap().parse().unwrap(),
+            );
+            let principal = authenticate(&f.state, &headers).await.unwrap();
+            let lifetime: f64 = sqlx::query_scalar("SELECT extract(epoch FROM expires_at-created_at)::double precision FROM sessions WHERE id=$1").bind(principal.session_id).fetch_one(&f.state.pool).await.unwrap();
+            assert!((lifetime - if remember { 2_592_000.0 } else { 28_800.0 }).abs() < 1.0);
+            // Login follows the same choice, and does not revoke an existing session.
+            let logged = login(
+                State(f.state.clone()),
+                Json(Login {
+                    email,
+                    password: "valid-password-123".into(),
+                    remember_login: remember,
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                logged.headers()[header::SET_COOKIE]
+                    .to_str()
+                    .unwrap()
+                    .contains("Max-Age=2592000"),
+                remember
+            );
+            assert!(authenticate(&f.state, &headers).await.is_ok());
+            let logout = logout(State(f.state.clone()), headers.clone())
+                .await
+                .unwrap();
+            assert!(
+                logout.headers()[header::SET_COOKIE]
+                    .to_str()
+                    .unwrap()
+                    .contains("Max-Age=0")
+            );
+            assert!(authenticate(&f.state, &headers).await.is_err());
+            headers.insert(
+                header::COOKIE,
+                logged.headers()[header::SET_COOKIE]
+                    .to_str()
+                    .unwrap()
+                    .split(';')
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+            );
+            let principal = authenticate(&f.state, &headers).await.unwrap();
+            sqlx::query("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE id=$1")
+                .bind(principal.session_id)
+                .execute(&f.state.pool)
+                .await
+                .unwrap();
+            assert!(authenticate(&f.state, &headers).await.is_err());
+        }
+        f.finish().await;
+    }
     struct Fixture {
         state: Arc<AppState>,
         admin: PgPool,
@@ -763,14 +867,32 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            verify(State(f.state.clone()), Json(Token { token: old }))
-                .await
-                .is_err()
+            verify(
+                State(f.state.clone()),
+                Json(Token {
+                    token: old,
+                    remember_login: false
+                })
+            )
+            .await
+            .is_err()
         );
         let t = f.latest_token("right@example.test").await;
         let (a, b) = tokio::join!(
-            verify(State(f.state.clone()), Json(Token { token: t.clone() })),
-            verify(State(f.state.clone()), Json(Token { token: t }))
+            verify(
+                State(f.state.clone()),
+                Json(Token {
+                    token: t.clone(),
+                    remember_login: false
+                })
+            ),
+            verify(
+                State(f.state.clone()),
+                Json(Token {
+                    token: t,
+                    remember_login: false
+                })
+            )
         );
         assert_ne!(a.is_ok(), b.is_ok());
         assert_eq!(
@@ -812,9 +934,15 @@ mod tests {
         let invite = create_invite(&f.state.pool, 7).await.unwrap();
         f.register(invite, "user@example.test").await;
         let t = f.latest_token("user@example.test").await;
-        let response = verify(State(f.state.clone()), Json(Token { token: t }))
-            .await
-            .unwrap();
+        let response = verify(
+            State(f.state.clone()),
+            Json(Token {
+                token: t,
+                remember_login: false,
+            }),
+        )
+        .await
+        .unwrap();
         let cookie = response.headers()[header::SET_COOKIE]
             .to_str()
             .unwrap()
@@ -861,7 +989,8 @@ mod tests {
                 State(f.state.clone()),
                 Json(Login {
                     email: "user@example.test".into(),
-                    password: "valid-password-123".into()
+                    password: "valid-password-123".into(),
+                    remember_login: false
                 })
             )
             .await
@@ -872,7 +1001,8 @@ mod tests {
                 State(f.state.clone()),
                 Json(Login {
                     email: "user@example.test".into(),
-                    password: "new-password-456".into()
+                    password: "new-password-456".into(),
+                    remember_login: false
                 })
             )
             .await
@@ -890,9 +1020,15 @@ mod tests {
         let t = f.latest_token("user@example.test").await;
         revoke_invite(&f.state.pool, &invite).await.unwrap();
         assert!(
-            verify(State(f.state.clone()), Json(Token { token: t }))
-                .await
-                .is_err()
+            verify(
+                State(f.state.clone()),
+                Json(Token {
+                    token: t,
+                    remember_login: false
+                })
+            )
+            .await
+            .is_err()
         );
         let invite = create_invite(&f.state.pool, 7).await.unwrap();
         f.register(invite, "expired@example.test").await;
@@ -902,9 +1038,15 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            verify(State(f.state.clone()), Json(Token { token: t }))
-                .await
-                .is_err()
+            verify(
+                State(f.state.clone()),
+                Json(Token {
+                    token: t,
+                    remember_login: false
+                })
+            )
+            .await
+            .is_err()
         );
         f.finish().await;
     }
@@ -943,8 +1085,8 @@ mod tests {
                 .unwrap();
         }
         let mut tx = f.state.pool.begin().await.unwrap();
-        let first_token = session(&mut tx, first).await.unwrap();
-        let second_token = session(&mut tx, second).await.unwrap();
+        let first_token = session(&mut tx, first, false).await.unwrap();
+        let second_token = session(&mut tx, second, false).await.unwrap();
         tx.commit().await.unwrap();
         let headers = |t: String| {
             let mut h = HeaderMap::new();
@@ -1010,7 +1152,7 @@ mod tests {
             .unwrap();
         sqlx::query("INSERT INTO cloud_members(conversation,account_id) SELECT id,first_id FROM cloud_conversations UNION ALL SELECT id,second_id FROM cloud_conversations").execute(&f.state.pool).await.unwrap();
         let mut tx = f.state.pool.begin().await.unwrap();
-        let t = session(&mut tx, owner).await.unwrap();
+        let t = session(&mut tx, owner, false).await.unwrap();
         tx.commit().await.unwrap();
         let mut h = HeaderMap::new();
         h.insert(header::COOKIE, format!("nest_session={t}").parse().unwrap());

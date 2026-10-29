@@ -46,6 +46,16 @@ keysUpload、keysQuery、keysClaim、signatures、signingKeys 的 body 为标准
 
 可信设备授权也可通过经指纹确认的 Olm to-device 密文传送 SecretsBundle/历史钥；禁止明文的秘密请求。AI 首次节点身份及管理员设备相互核对后才能分享恢复资料。恢复设备查询历史发送者公钥后，由恢复的 user-signing 签名链重新认可原有联系人；查询不等于信任，陌生或替换的主密钥仍须重新核验。恢复或解锁失败必须显示原因，不尝试登录密码或明文回退。Web 使用独立本机解锁口令保护 SDK IndexedDB；节点私有目录保管 SDK 数据库和本机解锁材料。
 
+## 本机解锁与自动材料
+
+客户端独立本机口令用于打开原 SDK 密钥库，不尝试账号登录密码，不因解锁失败创建新身份。自动解锁默认关闭，开启前必须以原口令成功校验已打开的 SDK 库，并复核本机设备可信及恢复文件已确认。材料按服务器、真人账号及本机 SDK 设备隔离，绝对有效 30 天。登录会话的 `rememberLogin` 与该设置互相独立，认证到期规则见[账号设计](accounts.md#登录会话与本机解锁)。
+
+Windows 原生端通过当前用户 DPAPI 保护保存的口令，解锁时经专用 IPC 交给客户端打开 SDK，不放入普通配置 DTO 或日志。Web 使用 Web Crypto 产生不可导出的 AES-GCM 密钥，在 IndexedDB 保存密钥与封装口令，附加认证数据绑定材料范围及到期时间。不可导出不代表同一浏览器资料中的应用无法使用密钥；此方案不承诺抵御能使用该资料的人。非 Windows 原生端明确返回不支持，不提供明文降级路径。本批没有生物识别或 WebAuthn。
+
+`autoUnlockInfo(accountId)` 读取设置并清理已到期材料，`expiresAt` 为 Unix 毫秒；查询不发送 SDK 状态变更事件。`enableAutoUnlock` 校验原口令后保存，`disableAutoUnlock` 删除自动材料，`unlockManually` 成功后清除手动暂停。`pauseAutoUnlock` 在关闭 SDK 前保存暂停标记，刷新和重启不得自动绕过。到期检查及清理是应用行为，不宣称密钥具备密码学到期能力。
+
+退出清理自动材料并关闭 SDK，不删除 SDK 库；过期、撤销或失败不得重新建身份、降级明文或扩大设备信任。异步解锁结果需与当前会话、服务器、账号和设备仍一致，迟到结果不能解锁已退出或手动锁定的会话。锁定时卸载聊天 DOM、订阅及聊天状态，锁屏仅使用占位背景；保留账号和导航位置，独立 Agent 不受影响。
+
 ## 聊天启用
 
 `POST /chat/conversations/{id}/encryption` 携带 `{deviceId,requestId,expectedConversationRevision}`，不可逆启用现有窗口。私聊由成员开启，群聊由群主或群管理员开启。响应和窗口 DTO 包含 `encryption:{version:1,activationPosition}`。发送端先确保当前每个成员至少有一台已核验的设备，并准备恢复材料；缺少时指出需要完成核验的成员，不静默跳过。服务端检查当前成员、窗口版本、有效设备与 AI 节点能力。已有原文明确标为尚未迁移，不悄悄改写。启用后的消息、修改、AI delta/result、约定、同机补传与资料管理拒绝明文。

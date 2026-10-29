@@ -16,6 +16,7 @@ mod draft_close;
 mod local_agent;
 mod local_agent_tray;
 mod local_chat;
+mod secure_credentials;
 mod social_commands;
 mod social_subscription;
 mod window_frame;
@@ -188,7 +189,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             window_frame::setup(app);
-            app.manage(cloud::CloudState::new());
+            app.manage(cloud::CloudState::with_events(app.handle().clone()));
             app.manage(local_agent::LocalAgentState::new());
             local_agent_tray::setup(app)?;
             app.manage(BackendState {
@@ -230,6 +231,10 @@ pub fn run() {
             local_agent::local_agent_stop,
             local_agent::local_agent_models,
             cloud::cloud_set_server,
+            cloud::cloud_unlock_support,
+            cloud::cloud_unlock_save,
+            cloud::cloud_unlock_load,
+            cloud::cloud_unlock_remove,
             cloud::cloud_request,
             cloud::cloud_subscribe,
             cloud::cloud_unsubscribe,

@@ -6,7 +6,7 @@
 
 `cloud-server` 独立运行，不初始化旧 Runtime、AiClient 或 SocialStore。启动读取 PostgreSQL 连接串，完成迁移；邀请 CLI 执行完直接退出。服务模式再校验公开来源、附件与静态目录、邮件配置并监听 HTTP，生产通过反向代理提供 HTTPS。SIGINT 触发 HTTP 优雅关闭；数据库和附件由部署独立持久化。环境变量和容器入口见[云端服务](../../server/cloud/README.md)。
 
-CloudApp 是 Web/Tauri 默认入口。浏览器请求同源云端 API；桌面的 CloudState 原生网络层负责服务器选择、JSON、SSE 和附件传输，不通过 SocialFeature 执行业务。Cookie 仅在桌面进程内存，应用重启需要登录。云端服务器地址与草稿按客户端规则保存；`CLOUD_CA_CERT_FILE` 仅给授权测试站点增加 CA，不取消 TLS 验证。
+CloudApp 是 Web/Tauri 默认入口。浏览器请求同源云端 API；桌面的 CloudState 原生网络层负责服务器选择、JSON、SSE 和附件传输，不通过 SocialFeature 执行业务。Cookie 默认只在桌面进程内存，Windows 显式保持登录后以当前用户 DPAPI 保护令牌，重启先联网验证会话；非 Windows 原生端暂不支持。登录与本机 SDK 解锁分开，详见[账号设计](accounts.md#登录会话与本机解锁)。云端服务器地址与草稿按客户端规则保存；`CLOUD_CA_CERT_FILE` 仅给授权测试站点增加 CA，不取消 TLS 验证。
 
 桌面保留旧 Runtime 的延迟初始化容器，但默认云端页面不调用其初始化命令，因此不会打开旧 SQLite 或加载模型配置。关闭仍先等待草稿保存，释放页面订阅；没有已初始化的本地 Runtime 时不启动一个来收尾。云端服务不受客户端退出影响。独立本机 `llmn-agent` 可由 CLI 或桌面原生层配置、配对与启停。关闭窗口先保存草稿；存在本机运行或待配对工作时，首次提供继续后台、停止并退出和取消三个选项，后续关闭隐藏到托盘。
 

@@ -6,7 +6,7 @@
 
 聊天的 `sealedV1`、Matrix 公钥与设备信箱、恢复密文和 AI 资料 CAS 接口集中见[加密契约](crypto-contract.md)。启用后新消息必须携带密文封装，正文为空；流式、结果与同机补传不允许明文回退。旧未启用窗口沿用普通接口。群、附件、跨窗引用和约定复用同一加密格式；完整搜索和导出在授权客户端解密完成。旧历史由专用迁移入口分项转换，协议与冻结、恢复验读规则见加密契约；正式切换使用 `CLOUD_REQUIRE_ENCRYPTION` 拒绝明文写入。
 
-默认 CloudApp 使用 `cloud-server` 的 `/api`，与保留的本地 `/api/social` 是两套不同契约。所有聊天操作者取登录会话，不接受客户端 senderId/operatorId。浏览器使用同源 HttpOnly Cookie；桌面经原生网络层持有内存 Cookie。修改请求带 `X-LLMN-Client: 1`，服务器检查来源与跨站请求。JSON 业务错误为 `{code,message}`，常用状态为 400、401、403、404、409、500；入口解析错误沿用 HTTP 状态。
+默认 CloudApp 使用 `cloud-server` 的 `/api`，与保留的本地 `/api/social` 是两套不同契约。所有聊天操作者取登录会话，不接受客户端 senderId/operatorId。浏览器使用同源 HttpOnly Cookie；桌面经原生网络层保管 Cookie，默认只在内存，显式保持登录后可在 Windows 使用当前用户 DPAPI 持久保存，不交给网页脚本。修改请求带 `X-LLMN-Client: 1`，服务器检查来源与跨站请求。JSON 业务错误为 `{code,message}`，常用状态为 400、401、403、404、409、500；入口解析错误沿用 HTTP 状态。
 
 | 用途 | 方法与路径（省略 `/api`） |
 | --- | --- |
@@ -30,6 +30,20 @@
 | 群话题来源预览 | POST `/chat/conversations/{id}/reference-preview` |
 | 在线节点记忆与摘要 | POST `/chat/conversations/{id}/ai/{aiId}/consciousness` |
 | 持久变更提示 SSE | GET `/chat/events?after=…` |
+
+`POST /auth/login` 和 `POST /auth/verify` 的 JSON 均接受可选布尔 `rememberLogin`，缺省为 false。false 时服务端会话绝对有效 8 小时，Web 不设置持久 Cookie 的 Max-Age，桌面仅保管进程内会话；true 时服务端会话及持久 Cookie 绝对有效 30 天，普通请求和 `/me` 不滑动续期。Windows 原生仅在本次请求明确选择 true 且服务端返回有效持久会话时，才用当前用户 DPAPI 保存令牌；不能从旧服务的持久 Cookie 反推用户同意。非 Windows 原生端暂不支持保持登录。重启先联网验证保存的会话，未登录与过期不进入旧账号聊天。
+
+原生自动解锁另提供以下 IPC，不属于云端 HTTP 接口，且不由保持登录自动开启。`cloud_unlock_support` 返回当前平台是否支持；其他三个命令均复核当前已在线确认的真人身份：
+
+| 命令 | 页面参数与结果 |
+| --- | --- |
+| `cloud_unlock_save` | `{deviceId,secret,expectedServer,expectedAccountId}` → `{expiresAt}` |
+| `cloud_unlock_load` | `{deviceId,expectedServer,expectedAccountId}` → `{secret,expiresAt}` 或 null |
+| `cloud_unlock_remove` | `{deviceId,expectedServer,expectedAccountId}` → 成功无正文 |
+
+`deviceId` 必须是有效非空 UUID；`expectedServer` 和 `expectedAccountId` 只核对调用发出时的当前身份，不选择服务器、账号或存储目录，也不授予访问另一个账号的权限。不匹配时明确失败，不能把迟到请求保存到新会话下。口令仅通过专用解锁 IPC 交给本机客户端打开 SDK，不加入普通配置、云端 DTO 或日志。自动材料的可信设备、恢复确认及到期规则见[加密契约](crypto-contract.md#本机解锁与自动材料)。
+
+原生清理失效会话时发送 `cloud-auth-lost` 事件，载荷为 `{server,accountId,message}`，其中 accountId 与 message 可为 null，分别标识失效范围及清理错误；不包含 Cookie、token、口令或其他秘密。页面先核对当前服务器及账号，才关闭对应 SDK、结束聊天会话并显示清理错误，旧服务器或旧账号事件不能结束新会话。
 
 ID 是 UUID，revision、position、listRevision、readPosition、cursor 是十进制字符串。公开 Account 为 `{id,name,bio,kind,status}`，status 为 active/disabled。Conversation 为 `{id,kind,name,peer,members,revision,directBlocked,lastMessage,latestPosition,unreadCount,manualUnread,pinned,readPosition,listRevision}`；kind 为 direct/group，私聊 name 为当前对方名字，peer 为对方 Account、成员角色均为 member，群聊 peer 为 null。members 为 `[{account,role:owner|admin|member}]`，不使用虚拟账号代表群。消息返回稳定 id/conversationId/senderId、senderName、replyTo、mentions、aiResponses、text、createdAt/updatedAt、revision/position、committed、generating、interrupted、failed 或 withdrawn 状态，以及 `attachments[{index,kind,name,mime,byteLength}]`。index 是该云端消息的附件索引，不是旧本地 MessageBody 的 part index。
 
@@ -164,7 +178,7 @@ result 的 status 仅允许 completed/failed/interrupted/uncertain，正文最�
 
 桌面原生命令包括 `local_chat_prepare`、`local_chat_view`、`local_chat_send`、`local_chat_stop` 和 `local_chat_sync`，返回 `DirectView`。发送携带下文的固定消息标识、密文、附件及引用；原生层从当前登录会话选择真人及受限节点目录，不接受网页指定路径或操作者。`DirectView` 区分每条消息的 status/local/synced，并提供 running、syncState（pending/synced/conflict）、error 和 hasMore；本机顺序不冒充云端 position。网页每 500ms 刷新当前同机窗口。
 
-Agent 的 `run-managed` 在目录锁内创建受限 Unix socket 或拒绝远程客户端的 Windows 命名管道，`direct-endpoint.json` 中的认证 token 仅由原生层读取。IPC 提供 Status、Prepare、View、Send、PrepareReference、Attachment、Stop、Sync，所有窗口读写绑定授权真人；普通 `run` 不创建此通道。加密 Send 带稳定消息 ID、sealed、keyMessages、encryptedAttachments、replyTo、reference 和 expectedConversationRevision，沿用原请求重试。原生退出、401 或切服清除内存身份，在飞响应复核会话版本；桌面重启仍须重新在线登录。
+Agent 的 `run-managed` 在目录锁内创建受限 Unix socket 或拒绝远程客户端的 Windows 命名管道，`direct-endpoint.json` 中的认证 token 仅由原生层读取。IPC 提供 Status、Prepare、View、Send、PrepareReference、Attachment、Stop、Sync，所有窗口读写绑定授权真人；普通 `run` 不创建此通道。加密 Send 带稳定消息 ID、sealed、keyMessages、encryptedAttachments、replyTo、reference 和 expectedConversationRevision，沿用原请求重试。原生退出、401 或切服清除内存身份，在飞响应复核会话版本；Windows 保持登录后重启仍须联网核对保存的会话，不提供离线重新登录。
 
 `local_chat_prepare_reference` 和 `local_chat_attachment` 转发对应本机操作。`cloud_save_blob` 只把客户端解密后的字节保存到用户通过原生对话框选定的位置，取消和写入失败会返回界面；不把这些字节传回云端，也不启动旧 Runtime。
 

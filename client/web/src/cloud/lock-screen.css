@@ -1,0 +1,28 @@
+.lock-screen { position: relative; isolation: isolate; min-height: 100dvh; height: 100dvh; overflow-y: auto; display: flex; flex-direction: column; background: var(--s-bg); }
+.lock-screen-backdrop { position: absolute; z-index: -1; inset: 0; overflow: hidden; pointer-events: none; display: grid; grid-template-columns: 72px 250px 1fr; opacity: .65; filter: blur(18px); }
+.lock-backdrop-rail { background: var(--s-panel); border-right: 1px solid var(--s-line); }
+.lock-backdrop-list { background: linear-gradient(180deg, var(--s-paper), var(--s-panel)); border-right: 1px solid var(--s-line); }
+.lock-backdrop-main { background: radial-gradient(ellipse at 65% 25%, color-mix(in srgb, var(--s-accent) 8%, transparent), transparent 60%); }
+.lock-screen::before { position: absolute; z-index: -1; inset: 0; content: ""; background: color-mix(in srgb, var(--s-bg) 76%, transparent); backdrop-filter: blur(24px); }
+.lock-screen-header { flex: 0 0 auto; height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 12px 28px; }
+.lock-screen-brand { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; letter-spacing: -.3px; }
+.lock-screen.desktop-chrome .lock-screen-header { height: var(--desktop-header-height, 72px); min-height: var(--desktop-header-height, 72px); padding-right: var(--desktop-controls-width, 148px); }
+.lock-screen-body { flex: 1; display: grid; place-items: center; padding: 40px 24px 64px; }
+.lock-screen-card { width: min(100%, 390px); padding: 32px; border: 1px solid color-mix(in srgb, var(--s-line) 80%, transparent); border-radius: 20px; background: color-mix(in srgb, var(--s-paper) 84%, transparent); backdrop-filter: blur(24px); box-shadow: 0 12px 56px #00000006; text-align: center; }
+.lock-screen-icon { width: 52px; height: 52px; margin: 0 auto 22px; border: 1px solid var(--s-line); border-radius: 16px; display: grid; place-items: center; background: var(--s-panel); color: var(--s-muted); }
+.lock-screen .lock-screen-icon svg { width: 24px; height: 24px; }
+.lock-screen-card h1 { margin: 0; font-size: 24px; font-weight: 600; line-height: 1.4; letter-spacing: -.6px; }
+.lock-screen-account { margin: 8px 0 0; color: var(--s-text); overflow-wrap: anywhere; font-size: 14px; }
+.lock-screen-description { margin: 10px 0 26px; font-size: 13px; line-height: 1.7; color: var(--s-muted); }
+.lock-screen-form { gap: 9px; text-align: left; }
+.lock-screen-form label { font-size: 13px; color: var(--s-muted); }
+.lock-screen-form input { min-width: 0; height: 44px; border-radius: 9px; background: var(--s-paper); }
+.lock-screen-form .social-button { justify-content: center; min-height: 44px; margin-top: 7px; border-radius: 9px; }
+.lock-screen-error { text-align: left; overflow-wrap: anywhere; margin: 0 0 18px; padding: 10px 12px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--s-danger) 25%, var(--s-line)); color: var(--s-danger); font-size: 13px; }
+.lock-screen-progress { min-height: 110px; margin: 0; display: grid; place-items: center; color: var(--s-muted); font-size: 13px; }
+.lock-screen-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 22px; color: var(--s-muted); font-size: 12px; }
+.lock-screen-actions button { border: 0; padding: 4px 0; background: none; font: inherit; color: inherit; }
+.lock-screen-actions button:hover { color: var(--s-text); text-decoration: underline; text-underline-offset: 4px; }
+.lock-screen-footer { padding: 18px 24px 24px; text-align: center; color: var(--s-muted); font-size: 12px; }
+@media (max-width: 600px) { .lock-screen-header { padding-inline: 20px; } .lock-screen-body { padding: 24px 20px 40px; } .lock-screen-card { padding: 28px 22px; } .lock-screen-backdrop { grid-template-columns: 56px 90px 1fr; } }
+@media (prefers-reduced-motion: reduce) { .lock-screen *, .lock-screen *::before, .lock-screen *::after { animation: none !important; transition: none !important; } }

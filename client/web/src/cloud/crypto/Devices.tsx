@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { CUSTOM_WINDOW_CHROME } from "@/lib/desktop";
+import { CUSTOM_WINDOW_CHROME, IS_DESKTOP } from "@/lib/desktop";
 import { cryptoDevice, hasCryptoDevice, unlockCrypto, lockCrypto, deviceStatus, initializeIdentity, devices, trustDevice, authorizeDevice, acceptAuthorization, syncCrypto, createRecoveryFile, commitRecoveryFile, recoveryConfirmed, restoreRecoveryFile, type RecoveryFile } from "./engine";
 import { request } from "../api";
+import { autoUnlockInfo, enableAutoUnlock, disableAutoUnlock, unlockManually, pauseAutoUnlock } from "./auto-unlock";
 import "./devices.css";
 
-export function CryptoDevices({ accountId }: { accountId: string }) {
+export function CryptoDevices({ accountId, onLock }: { accountId: string; onLock?: () => void }) {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof deviceStatus>> | null>(null);
   const [newDevice, setNewDevice] = useState(false);
   const [error, setError] = useState("");
@@ -20,6 +21,15 @@ export function CryptoDevices({ accountId }: { accountId: string }) {
   const [recovery, setRecovery] = useState<RecoveryFile | null>(null);
   const [downloaded, setDownloaded] = useState(false);
   const [, setRevision] = useState(0);
+  const [autoInfo, setAutoInfo] = useState<Awaited<ReturnType<typeof autoUnlockInfo>> | null>(null);
+  const [autoError, setAutoError] = useState("");
+  const [autoBusy, setAutoBusy] = useState(false);
+  const autoAct = async (work: () => Promise<void>) => {
+    setAutoBusy(true); setAutoError("");
+    try { await work(); setAutoInfo(await autoUnlockInfo(accountId)); }
+    catch (e) { setAutoError(e instanceof Error ? e.message : String(e)); }
+    finally { setAutoBusy(false); }
+  };
   const act = async (work: () => Promise<unknown>) => {
     setBusy(true); setError("");
     try { await work(); if (cryptoDevice(accountId)) setStatus(await deviceStatus()); }
@@ -28,7 +38,11 @@ export function CryptoDevices({ accountId }: { accountId: string }) {
   };
   useEffect(() => {
     let alive = true;
-    const update = () => { setRevision(v => v + 1); if (cryptoDevice(accountId)) void deviceStatus().then(value => { if (alive) setStatus(value); }); else setStatus(null); };
+    const update = () => {
+      setRevision(v => v + 1);
+      if (cryptoDevice(accountId)) void deviceStatus().then(value => { if (alive) setStatus(value); }); else setStatus(null);
+      void autoUnlockInfo(accountId).then(value => { if (alive) { setAutoInfo(value); setAutoError(""); } }).catch(e => { if (alive) setAutoError(e instanceof Error ? e.message : String(e)); });
+    };
     update(); window.addEventListener("llmn-crypto-change", update);
     return () => { alive = false; window.removeEventListener("llmn-crypto-change", update); };
   }, [accountId]);
@@ -40,12 +54,12 @@ export function CryptoDevices({ accountId }: { accountId: string }) {
   const localDeviceCard = status && (<section className="crypto-card"><div className="crypto-card-heading"><h3>本机设备</h3><span className="crypto-status">{status.trusted ? "已授权" : "待授权"}</span></div><p className="crypto-device-id">设备 ID：{status.deviceId}</p>
       <details className="crypto-disclosure"><summary>查看完整设备指纹</summary><div className="crypto-fingerprints"><p>Ed25519</p><code>{status.fingerprint}</code><p>Curve25519</p><code>{status.curve}</code><p>账号主指纹</p><code>{status.master ?? "尚未建立"}</code></div></details>
       <div className="crypto-actions">
-      <button className="social-button secondary" disabled={busy} onClick={() => { lockCrypto(); setStatus(null); setListed([]); setRecovery(null); setCandidate(null); }}>锁定本机资料</button>
+      <button type="button" className="social-button secondary" disabled={busy || autoBusy} onClick={() => { if (onLock) { onLock(); return; } pauseAutoUnlock(accountId); lockCrypto(); setStatus(null); setListed([]); setRecovery(null); setCandidate(null); }}>锁定本机资料</button>
       <button className="social-button secondary" disabled={busy} onClick={() => void act(syncCrypto)}>检查授权与密钥更新</button></div></section>);
   return <section className="contact-view crypto-devices"><header className="contact-header" data-tauri-drag-region={CUSTOM_WINDOW_CHROME ? "deep" : undefined}><h2>可信设备与恢复</h2></header><div className="contact-scroll"><div className="profile-content crypto-devices-content">
     <div className="crypto-overview"><span className="crypto-eyebrow">{ready ? "加密已就绪" : status ? "继续设置" : known && !newDevice ? "本机资料已锁定" : "首次设置"}</span><h3>{ready ? "本机设备已获可信授权" : locked ? "解锁本机资料" : "准备可信设备"}</h3><p role="status">{next}</p>{!ready && !locked && <ol className="crypto-steps" aria-label="首次设置进度"><li data-complete={!!status}>创建本机设备</li><li data-complete={!!status?.master}>建立加密身份</li><li data-complete={saved}>保存恢复文件</li></ol>}</div>
     {error && <p role="alert" className="social-error">{error}</p>}
-    {!status ? <form className="cloud-form crypto-card crypto-current-step" onSubmit={e => { e.preventDefault(); const form = e.currentTarget; const passphrase = String(new FormData(form).get("passphrase")); void act(async () => { await unlockCrypto(accountId, passphrase, newDevice ? "new-device" : !known); form.reset(); setNewDevice(false); }); }}>
+    {!status ? <form className="cloud-form crypto-card crypto-current-step" onSubmit={e => { e.preventDefault(); const form = e.currentTarget; const passphrase = String(new FormData(form).get("passphrase")); void act(async () => { if (known && !newDevice) await unlockManually(accountId, passphrase); else await unlockCrypto(accountId, passphrase, newDevice ? "new-device" : true); form.reset(); setNewDevice(false); }); }}>
       <h3>{newDevice ? "建立另一独立设备" : known ? "解锁本机加密资料" : "创建本机设备"}</h3><label>独立本机解锁口令<input name="passphrase" type="password" autoComplete="off" required minLength={8} /></label>
       <p>口令只保护本机加密资料，不上传服务器。请使用至少 8 位的独立口令；登录密码不能恢复聊天密钥。</p>
       <button className="social-button primary" disabled={busy}>{known && !newDevice ? "解锁本机资料" : "确认创建独立设备"}</button>
@@ -60,6 +74,19 @@ export function CryptoDevices({ accountId }: { accountId: string }) {
       <details className="crypto-disclosure" open={!status.trusted || undefined}><summary>从恢复文件授权此设备</summary><label className="cloud-form">选择已保存的恢复文件<input type="file" accept="application/json,.json" disabled={busy} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void act(async () => { setRecovery(null); setCandidate(null); await restoreRecoveryFile(JSON.parse(await file.text())); }); }} /></label>
       </details></section>
       {!ready && localDeviceCard}
+      <section className="crypto-card crypto-auto-unlock" aria-labelledby="crypto-auto-unlock-heading"><div className="crypto-card-heading"><h3 id="crypto-auto-unlock-heading">在此设备自动解锁</h3><span className="crypto-status">{autoInfo?.enabled ? autoInfo.paused ? "已暂停" : "已开启" : "未开启"}</span></div>
+        <p>{IS_DESKTOP ? "在 Windows 上，本机口令由系统保护，开启后可在 30 天内自动解锁。仅在自己的设备上开启。" : "开启后，本机口令保存在当前浏览器中，可在 30 天内自动解锁。仅适合自己的设备，请勿在共用设备上开启。"}</p>
+        {autoError && <p className="social-error" role="alert">{autoError}</p>}
+        {!autoInfo ? !autoError && <p role="status">正在读取此设备的设置…</p> : !autoInfo.supported ? <p>此平台暂不支持自动解锁。</p> : autoInfo.enabled ? <>
+          {autoInfo.expiresAt && <p className="crypto-auto-expiry">到期时间：<time dateTime={new Date(autoInfo.expiresAt).toISOString()}>{new Date(autoInfo.expiresAt).toLocaleString("zh-CN")}</time></p>}
+          {autoInfo.paused && <p>已手动锁定。下次输入本机口令解锁后，恢复自动解锁。</p>}
+          <button type="button" className="social-button secondary" disabled={autoBusy || busy} onClick={() => void autoAct(() => disableAutoUnlock(accountId))}>关闭自动解锁</button>
+        </> : <form className="cloud-form crypto-auto-form" onSubmit={e => { e.preventDefault(); const form = e.currentTarget; const passphrase = String(new FormData(form).get("autoPassphrase")); void autoAct(async () => { await enableAutoUnlock(accountId, passphrase); form.reset(); }); }}>
+          {!ready && <p id="crypto-auto-requirement">设备获可信授权并确认保存恢复文件后，即可开启。</p>}
+          <label>确认本机解锁口令<input name="autoPassphrase" type="password" autoComplete="off" required disabled={!ready || autoBusy || busy} aria-describedby={!ready ? "crypto-auto-requirement" : undefined} /></label>
+          <button type="submit" className="social-button secondary" disabled={!ready || autoBusy || busy}>{autoBusy ? "正在开启…" : "确认开启 30 天"}</button>
+        </form>}
+      </section>
       <details className="crypto-card crypto-other-devices"><summary>核对与管理其他设备</summary><h3>查询可信设备</h3><p>通过独立渠道核对完整指纹，再授权；服务器提供的名字不能证明设备身份。</p>
       <form className="cloud-form" onSubmit={e => { e.preventDefault(); void act(async () => setListed(await devices(target))); }}><label>账号 ID<input value={target} onChange={e => { setTarget(e.target.value); setListed([]); setCandidate(null); }} required /></label><button className="social-button secondary" disabled={busy}>查询设备指纹</button></form>
       {listed.map(d => <article className="crypto-listed-device" key={d.deviceId}><strong>{d.name} · {d.trusted ? "已信任" : "待核对"}</strong><small>{d.deviceId}</small><details className="crypto-disclosure"><summary>查看设备指纹</summary><div className="crypto-fingerprints"><p>Ed25519</p><code>{d.fingerprint}</code><p>Curve25519</p><code>{d.curve}</code><p>账号主指纹</p><code>{d.master}</code></div></details><button className="text-button" disabled={busy || d.trusted} onClick={() => { setRecovery(null); setCandidate(d); setTrustChecked(false); setExpectedEd(""); setExpectedCurve(""); setExpectedMaster(""); }}>核对并授权</button>{d.own && d.deviceId !== status.deviceId && d.trusted && status.hasRecoverySecrets && <button className="text-button" disabled={busy} onClick={() => void act(() => authorizeDevice(d.deviceId))}>向此设备发送加密恢复授权</button>}{d.own && <button className="text-button" disabled={busy} onClick={() => void act(async () => { await request(`/crypto/devices/${d.deviceId}/revoke`, "POST", {}); if (d.deviceId === status.deviceId) { lockCrypto(); setStatus(null); } setListed([]); })}>撤销设备</button>}</article>)}

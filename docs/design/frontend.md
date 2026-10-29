@@ -14,7 +14,7 @@ Web 与 Tauri 默认共用云端真人与 AI 私聊、群聊界面。当前进�
 
 消息页支持文字、PNG/JPEG/WebP、普通文件、自己的消息编辑/撤回、未读与手动未读、置顶、正文搜索及原消息前后定位。图片预览与附件读取始终使用当前消息 revision；修订后丢弃旧加载结果，撤回不显示旧正文或附件。导出从服务端读取完整聊天窗口，附件可选；浏览器下载 Blob，桌面通过系统保存对话框写入原字节。
 
-Web 使用同源 fetch/EventSource；Tauri 使用 `cloud_request`、`cloud_subscribe`、`cloud_unsubscribe`、`cloud_save_download` 和 Channel 转发同一云端 API。原生层仅保存内存 Cookie，退出/重启后需重新登录；服务器地址保存在本机。切换账号或服务器会失效旧请求和订阅。测试 CA 仅通过启动环境 `CLOUD_CA_CERT_FILE` 指定，不关闭证书校验。
+Web 使用同源 fetch/EventSource；Tauri 使用 `cloud_request`、`cloud_subscribe`、`cloud_unsubscribe`、`cloud_save_download` 和 Channel 转发同一云端 API。原生层默认只保存内存 Cookie，Windows 可显式选择 30 天保持登录并由当前用户 DPAPI 保护令牌；重启仍联网核对会话，令牌不交给网页脚本。保持登录与本机自动解锁分别默认关闭，非 Windows 原生端暂不支持，规则见[账号设计](accounts.md#登录会话与本机解锁)。服务器地址保存在本机；切换账号或服务器会失效旧请求和订阅。测试 CA 仅通过启动环境 `CLOUD_CA_CERT_FILE` 指定，不关闭证书校验。
 
 桌面启动或点击连接时实际读取 `/me`：未登录的 401 表示服务已连通，可以继续登录；网络、证书及其他 HTTP 错误保持未连接并显示原因。地址交给原生层校验通过后，统一保存 origin 作为草稿命名空间。输入地址发生变化时停止使用原连接登录，连接过程中显示进度，不将“地址已保存”当成连接成功。
 

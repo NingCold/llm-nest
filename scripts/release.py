@@ -69,7 +69,7 @@ def collect(bundle_dir, output, platform, version, appimage=False):
     if any(output.iterdir()):
         raise ValueError(f"Output must be empty: {output}")
     for source in selected:
-        shutil.copy2(source, output / source.name)
+        shutil.copy2(source, output / source.name.replace(" ", "-"))
     (output / f"SHA256SUMS-{platform}.txt").write_text(checksums(output), encoding="utf-8")
     return selected
 

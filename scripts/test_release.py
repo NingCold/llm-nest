@@ -106,6 +106,15 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn(".deb", manifest)
             self.assertIn(".AppImage", manifest)
 
+    def test_display_name_spaces_do_not_break_download_checksums(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "bundle/deb").mkdir(parents=True)
+            (root / "bundle/deb/LLM Nest_1.2.3_amd64.deb").write_bytes(b"deb")
+            release.collect(root / "bundle", root / "out", "linux-x86_64", "1.2.3")
+            self.assertEqual((root / "out/LLM-Nest_1.2.3_amd64.deb").read_bytes(), b"deb")
+            self.assertIn("  LLM-Nest_1.2.3_amd64.deb", (root / "out/SHA256SUMS-linux-x86_64.txt").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

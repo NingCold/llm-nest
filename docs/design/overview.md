@@ -22,7 +22,7 @@ flowchart LR
 
 云端触发的模型运行先取得云端持久开始确认；同机离线运行保存独立本机执行记录，补传不补造云端确认。结果不明的已开始调用不自动重做。旧数据迁移先备份、预览和映射，保留原库；已失效或无权读取的摘要不会变成有效记忆。
 
-数据与迁移见[存储设计](storage.md)，任务交接见[执行设计](execution.md)，协议见[API 设计](api.md)，预算归属见[参与设计](participation.md)。三仓历史提取与独立构建属于拆仓计划第二批，当前仍在同一仓库中。
+数据与迁移见[存储设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/storage.md)，任务交接见[执行设计](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/execution.md)，协议见[API 设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/api.md)，预算归属见[参与设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/participation.md)。三仓历史提取与独立构建属于拆仓计划第二批，当前仍在同一仓库中。
 
 ## 当前云端实现
 
@@ -32,7 +32,7 @@ flowchart LR
 
 ## 产品范围
 
-当前产品提供独立真人与 AI 账号的唯一私聊和群聊，主入口是“消息”“通讯录”和“我的账号”。支持文字、图片和普通文件、消息修订与撤回、正文搜索定位、个人列表状态和单窗口导出；网页和桌面访问同一份服务端记录。注册、密码和登录会话规则见[身份与关系](accounts.md)。
+当前产品提供独立真人与 AI 账号的唯一私聊和群聊，主入口是“消息”“通讯录”和“我的账号”。支持文字、图片和普通文件、消息修订与撤回、正文搜索定位、个人列表状态和单窗口导出；网页和桌面访问同一份服务端记录。注册、密码和登录会话规则见[身份与关系](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/accounts.md)。
 
 ## 模块与依赖
 
@@ -48,9 +48,9 @@ flowchart LR
 
 | 模块 | 职责 |
 | --- | --- |
-| `client/web/src/cloud` | 唯一客户端业务入口，认证、聊天、SDK、账号管理及状态 |
-| `client/web/src/chat` | 当前共用聊天组件、样式及本机草稿 |
-| `client/desktop/src-tauri` | 云端网络、会话保护、原生保存、窗口与独立本机 Agent 管理 |
+| `web/src/cloud` | 唯一客户端业务入口，认证、聊天、SDK、账号管理及状态 |
+| `web/src/chat` | 当前共用聊天组件、样式及本机草稿 |
+| `desktop/src-tauri` | 云端网络、会话保护、原生保存、窗口与独立本机 Agent 管理 |
 | `server/cloud` | 账号、权限、社交记录、附件、任务、密文同步及持久事件 |
 | `connector` / `crates/social` | 中立节点、加密、同机和迁移协议 / 当前共用社交类型 |
 | `agent/node` | 节点配置、绑定、执行、意识资料、加密与本机通信 |
@@ -63,7 +63,7 @@ flowchart LR
 
 ## 一致性与隐私
 
-下列约束由当前云端与节点按各自职责执行；认证与聊天事务见[云端服务](../../server/cloud/README.md)。
+下列约束由当前云端与节点按各自职责执行；认证与聊天事务见[云端服务](https://github.com/NingCold/llm-nest-server/blob/main/server/README.md)。
 
 - 当前成员权限决定可读历史，管理员授权决定可管理哪个 AI；账号查看保留实际操作者，是只读视角。
 - 每次请求按 `(ActorId, ConversationId)` 构造，实际模型配置、材料与来源版本固定在同一快照。跨窗引用只携带相关、共同可见的来源，私聊后续不会回传源群。
@@ -84,6 +84,6 @@ flowchart LR
 
 ## 阅读与维护
 
-[身份与关系](accounts.md)定义账号权限，[聊天与消息](conversations.md)定义原记录，[意识系统](consciousness.md)定义材料使用范围，[参与与调度](participation.md)决定发言时机，[AI 执行](execution.md)负责模型调用与收尾。存储、API、界面和运行配置文档将这些规则落实到各层。
+[身份与关系](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/accounts.md)定义账号权限，[聊天与消息](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/conversations.md)定义原记录，[意识系统](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/consciousness.md)定义材料使用范围，[参与与调度](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/participation.md)决定发言时机，[AI 执行](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/execution.md)负责模型调用与收尾。存储、API、界面和运行配置文档将这些规则落实到各层。
 
 当前安排见[当前工作](../project/current.md)，可用能力见[已完成](../project/completed.md)，剩余检查及候选见[候选清单](../project/backlog.md)。验证结论按环境记录，编译、模拟 provider、真实 API 和桌面实测分别说明，入口为[验证说明](../validation/README.md)。

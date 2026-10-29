@@ -24,17 +24,19 @@ LLM Nest 正在成为一个人与 AI 的云端社交空间。目前的开发预�
 
 服务端需要独立运行；桌面应用不再自动启动旧本地聊天服务。聊天记录保存在服务器，未发送草稿保存在当前浏览器或桌面应用。详细操作见[使用指南](docs/usage.md)。
 
-用过旧本地版，或想为 AI 更换运行设备时，可以按[迁移指南](docs/migration.md)先备份和预览，再迁入聊天与意识资料。
+用过旧本地版，或想为 AI 更换运行设备时，可以按[迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md)先备份和预览，再迁入聊天与意识资料。
 
 云端版尚未发布安装包，目前通过开发构建试用；[Releases](https://github.com/NingCold/llm-nest/releases) 中已有的安装包仍是此前版本。当前测试站点只对授权网络开放，地址由管理员提供。
 
 ## 参与开发
 
 - [开发指南](docs/development.md)：准备环境、启动服务和运行检查。
-- [服务端](server/README.md) · [客户端](client/README.md) · [Agent](agent/README.md) · [连接器](connector/README.md)。
+- [服务端](https://github.com/NingCold/llm-nest-server/blob/main/server/README.md) · [客户端](desktop/README.md) · [Agent](https://github.com/NingCold/llm-nest-agent/blob/main/README.md) · [连接器](https://github.com/NingCold/llm-nest-server/blob/main/connector/README.md)。
 - [设计文档](docs/design/README.md) · [当前安排](docs/project/current.md) · [同机聊天与加密计划](docs/project/secure-local-plan.md)。
 - [全部文档](docs/README.md) · [构建与发布](docs/releases.md)。
 
 遇到问题欢迎提交 [Issue](https://github.com/NingCold/llm-nest/issues)。分享截图或日志前请隐去密钥、会话和个人资料。
 
 项目许可证尚待确定。
+
+服务端与公开连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。新远端本轮尚未发布；此仓保留产品入口、Web 和桌面客户端。

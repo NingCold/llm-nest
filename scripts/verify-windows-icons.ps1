@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $ArtifactPath) {
-    $tauriConfig = Get-Content -LiteralPath (Join-Path $projectRoot 'client/desktop/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+    $tauriConfig = Get-Content -LiteralPath (Join-Path $projectRoot 'desktop/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
     $version = $tauriConfig.version
     $productName = $tauriConfig.productName
     $ArtifactPath = @(
@@ -37,7 +37,7 @@ function Get-IconDigest([string]$Path) {
 
 try {
     $reference = Join-Path $scratch 'reference.ico'
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'client/desktop/src-tauri/icons/icon.ico') -Destination $reference
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'desktop/src-tauri/icons/icon.ico') -Destination $reference
     $copies += $reference
     $expected = Get-IconDigest $reference
     foreach ($path in $ArtifactPath) {

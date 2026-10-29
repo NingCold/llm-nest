@@ -10,7 +10,7 @@
 **/private
 **/outbox
 **/gen/schemas
-client/desktop/dist
-client/web/.social-runtime-dist
+desktop/dist
+web/.social-runtime-dist
 docs
 target

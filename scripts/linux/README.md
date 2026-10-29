@@ -8,9 +8,9 @@
 bash scripts/linux/build.sh
 ```
 
-脚本安装前端依赖，单独构建官方 Agent，通过 `agent/scripts/package-agent.py` 生成带固定版本、目标平台和 SHA-256 的产物清单，再准备桌面资源、运行测试并使用 Tauri CLI 生成 deb 和 AppImage。默认使用 Rust 主机目标；`LLMN_AGENT_TARGET` 可指定已准备工具链的 Linux 目标。Agent 产物保留在打印出的临时目录，供核验后按清单清理。脚本不会从旧宿主启动或运行已退役的本地服务验收。
+脚本只构建客户端。先显式设置 LLMN_AGENT_MANIFEST、LLMN_AGENT_VERSION、LLMN_AGENT_TARGET；本地固定产物另设 LLMN_AGENT_FILE。清单按 SHA-256 验证，缺少时失败，不编译 Agent。
 
-需要独立构建环境时，可使用本目录的 [Dockerfile](Dockerfile)，具体命令见[发布指南](../../docs/releases.md#本地-linux-打包)。拆仓后客户端改为接收独立 Agent 构建提供的固定产物；当前脚本中的 Agent 编译是显式步骤。
+需要独立构建环境时，可使用本目录的 [Dockerfile](Dockerfile)，具体命令见[发布指南](../../docs/releases.md#本地-linux-打包)。拆仓后客户端改为接收独立 Agent 构建提供的固定产物；脚本不读取其他仓源码。
 
 [smoke.py](smoke.py) 必须核对包内 Agent 的 `agent-artifact.json`、实际程序摘要和 `--version`，并检查桌面动态库依赖；`--gui` 仅在隔离 Xvfb 中检查程序持续启动，不代表前端 IPC、聊天、GNOME/Wayland 或安装升级验收。使用已安装的程序时，显式提供其 Agent 资源目录：
 

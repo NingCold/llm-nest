@@ -15,13 +15,13 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="0.1.0"\n')
-            names = ("client/desktop/src-tauri/tauri.conf.json",
-                     "client/desktop/package.json", "client/web/package.json")
+            names = ("desktop/src-tauri/tauri.conf.json",
+                     "desktop/package.json", "web/package.json")
             for name in names:
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"version": "0.1.0"}))
-            (root / "client/desktop/src-tauri/Cargo.toml").write_text('[package]\nversion="0.1.0"\n')
+            (root / "desktop/src-tauri/Cargo.toml").write_text('[package]\nversion="0.1.0"\n')
             self.assertEqual(release.validate(root, "v0.1.0"), "0.1.0")
             for tag in ("v0.2.0", "v0.1.0-extra", "main", "v0.1.0;echo bad"):
                 with self.assertRaises(ValueError):
@@ -34,12 +34,12 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="9.8.7"\n')
-            for name in ("client/desktop/src-tauri/tauri.conf.json",
-                         "client/desktop/package.json", "client/web/package.json"):
+            for name in ("desktop/src-tauri/tauri.conf.json",
+                         "desktop/package.json", "web/package.json"):
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"version": "1.2.3"}))
-            native = root / "client/desktop/src-tauri/Cargo.toml"
+            native = root / "desktop/src-tauri/Cargo.toml"
             native.write_text('[package]\nversion="1.2.3"\n')
             self.assertEqual(release.validate(root, "v1.2.3"), "1.2.3")
             native.write_text('[package]\nversion="9.8.7"\n')
@@ -53,13 +53,13 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="0.1.1-alpha.1"\n')
-            for name in ("client/desktop/src-tauri/tauri.conf.json",
-                         "client/desktop/package.json", "client/web/package.json"):
+            for name in ("desktop/src-tauri/tauri.conf.json",
+                         "desktop/package.json", "web/package.json"):
                 p = root / name
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"version": "0.1.1-alpha.1"}))
-            (root / "client/desktop/src-tauri/Cargo.toml").write_text('[package]\nversion="0.1.1-alpha.1"\n')
-            tauri_path = root / "client/desktop/src-tauri/tauri.conf.json"
+            (root / "desktop/src-tauri/Cargo.toml").write_text('[package]\nversion="0.1.1-alpha.1"\n')
+            tauri_path = root / "desktop/src-tauri/tauri.conf.json"
             with self.assertRaisesRegex(ValueError, "numeric"):
                 release.validate(root)
             for msi_version in ("0.1.0.1", "0.1.1.alpha.1", "0.1.1.65536"):

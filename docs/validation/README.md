@@ -13,11 +13,11 @@ python scripts/check-boundaries.py
 cargo fmt --all -- --check
 cargo test -p <受影响的包> --locked
 cargo clippy -p <受影响的包> --all-targets --locked
-pnpm --dir client/web typecheck
-pnpm --dir client/web test
+pnpm --dir web typecheck
+pnpm --dir web test
 python scripts/test_migrate_local.py
 python scripts/test_build_artifacts.py
-node --test client/desktop/scripts/prepare-agent.test.mjs
+node --test desktop/scripts/prepare-agent.test.mjs
 python scripts/test_release.py
 ```
 
@@ -88,9 +88,9 @@ cargo build -p llmn-crypto --example interop --locked
 # 设置 CLOUD_TEST_DATABASE_URL 后运行；脚本自行新建独立数据库。
 node scripts/crypto_acceptance.cjs
 cargo test -p cloud-server -p agent-node -p llmn-crypto -p connector --locked
-npm --prefix client/web test
-npm --prefix client/web run typecheck
-npm --prefix client/web run build
+npm --prefix web test
+npm --prefix web run typecheck
+npm --prefix web run build
 cargo check -p tauri-frontend --tests --locked
 ```
 
@@ -114,9 +114,9 @@ cargo test -p cloud-server --locked -- --test-threads=4
 cargo test -p agent-node -p connector --locked
 cargo test -p agent-node --test direct_lifecycle --locked
 cargo check -p tauri-frontend --lib --locked
-npm --prefix client/web test
-npm --prefix client/web run typecheck
-npm --prefix client/web run build
+npm --prefix web test
+npm --prefix web run typecheck
+npm --prefix web run build
 ```
 
 这批证明的是同机文字执行与补传流程，不代表端到端加密、完整离线登录、Linux 实机或安装验收已完成。具体范围见[执行计划](../project/secure-local-plan.md)。
@@ -133,7 +133,7 @@ npm --prefix client/web run build
 - `cloud_restore_acceptance.py` 将服务器配套备份恢复到独立临时数据库及附件目录，32 张表的 3,506 行和 16 个附件全部一致，其中两个为空文件。原数据库未被覆盖，临时数据库检查后删除，私有备份保留。
 - 应用服务重启后，历史保持一致，模拟节点重新在线，客户端从旧游标收到后续持久事件。测试结束停止本次节点并撤销绑定。
 
-迁移使用方法见[迁移指南](../migration.md)。当前仅支持 v13 旧库、单次不超过 128 MiB 的云端资料和新建旧 AI 的云端身份；复杂旧记忆依赖、旧头像引用及审计修订留在完整备份。尚无网页迁移向导，不将本轮结果当成真实日常库切换或桌面安装验收。
+迁移使用方法见[迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md)。当前仅支持 v13 旧库、单次不超过 128 MiB 的云端资料和新建旧 AI 的云端身份；复杂旧记忆依赖、旧头像引用及审计修订留在完整备份。尚无网页迁移向导，不将本轮结果当成真实日常库切换或桌面安装验收。
 
 ```bash
 python scripts/test_migrate_local.py
@@ -167,9 +167,9 @@ cargo test -p cloud-server --locked -- --test-threads=1
 cargo test -p agent-node -p connector --locked
 cargo test -p connector --example external_node --locked
 cargo test -p tauri-frontend --lib --locked
-pnpm --dir client/web typecheck
-pnpm --dir client/web test
-pnpm --dir client/web build
+pnpm --dir web typecheck
+pnpm --dir web test
+pnpm --dir web build
 python scripts/cloud_management_acceptance.py --binary "$LLMN_AGENT_BINARY" --accounts "$LLMN_TEST_ACCOUNTS" --ca "$LLMN_TEST_CA" --workdir "$LLMN_TEST_WORKDIR"
 ```
 
@@ -222,7 +222,7 @@ cargo test -p tauri-frontend --lib cloud::tests --locked
 python scripts/check-boundaries.py
 ```
 
-部署后的跨机器检查使用 `scripts/cloud_acceptance.py`，参数和准备方法见[云端部署说明](../../server/cloud/deploy/README.md)。脚本会创建专用测试账号并重启测试应用容器，输出文件包含测试登录资料，应保留在忽略目录。旧库样本检查只是迁移设计核对，不是正式数据导入工具。
+部署后的跨机器检查使用 `scripts/cloud_acceptance.py`，参数和准备方法见[云端部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。脚本会创建专用测试账号并重启测试应用容器，输出文件包含测试登录资料，应保留在忽略目录。旧库样本检查只是迁移设计核对，不是正式数据导入工具。
 
 ## 原有界面接入云端的 Web 验证
 
@@ -329,7 +329,7 @@ python scripts/cloud_consciousness_acceptance.py --binary "$LLMN_AGENT_BINARY" -
 - Edge 使用独立测试账号检查了已转换归档、原作者与转换者说明、未解锁时不显示正文、聊天详情中的完成状态。实际 844px 窄窗口发现并修复账号/设置导航被隐藏的问题，可信设备、AI 管理与返回消息入口已可达。此次网页观察没有代替实际用户的设备授权或恢复文件保管验收。
 - 最终检查修正普通群成员打开详情时误请求管理员转换状态的问题，已有迁移测试确认不再发起越权读取；同时按加密状态更新同机附件提示。相关前端检查通过后重新构建、部署和安装。
 
-加 `--serve-ui` 可在专项成功后保留隔离服务供界面检查；专用登录与恢复文件留在对应 `target/crypto-acceptance-*` 私有目录，创建该目录的 `stop` 文件即可结束。不要把这些测试文件用于日常账号。完整备份和部署步骤见[迁移说明](../migration.md#现有云端记录转为加密)。
+加 `--serve-ui` 可在专项成功后保留隔离服务供界面检查；专用登录与恢复文件留在对应 `target/crypto-acceptance-*` 私有目录，创建该目录的 `stop` 文件即可结束。不要把这些测试文件用于日常账号。完整备份和部署步骤见[迁移说明](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md#现有云端记录转为加密)。
 
 ### 本轮测试部署与本机安装
 
@@ -343,7 +343,7 @@ python scripts/cloud_consciousness_acceptance.py --binary "$LLMN_AGENT_BINARY" -
 
 2026-10-25，重排可信设备页面。35 组前端测试通过；最后的步骤顺序和日常解锁调整另经相关 UI 测试、类型检查及生产构建验证。覆盖下载与保存确认分开、恢复勾选不能授权设备、三个指纹必须逐项匹配，以及已有设备锁定时不显示首次设置进度。
 
-Edge 使用隔离假状态，实际检查浅色、深色、800px 和 390px 的就绪、恢复下载和锁定布局。复现排版预览可运行 `node client/web/tests/crypto-devices-ui.cjs <临时输出目录>` 并用静态服务打开生成页面；这些页面不读取用户密钥，按钮不发起真实业务操作。
+Edge 使用隔离假状态，实际检查浅色、深色、800px 和 390px 的就绪、恢复下载和锁定布局。复现排版预览可运行 `node web/tests/crypto-devices-ui.cjs <临时输出目录>` 并用静态服务打开生成页面；这些页面不读取用户密钥，按钮不发起真实业务操作。
 
 用户已在旧安装版完成真实账号设备与恢复设置；`alpha.5` 页面及安装更新的范围见 [Windows 记录](windows.md#可信设备页面与日常账号2026-10-25)。当时内网只替换前端，服务端业务未改动；部署健康和实际首页资产核对通过，强制加密关闭。此次页面改版与安装验证没有调用模型，也不计作实际 AI 加密聊天、离线接续或换设备验收；之后的日常 AI 试用及最终切换见下文。
 

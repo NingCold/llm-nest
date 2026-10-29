@@ -56,7 +56,7 @@ LLM Nest 将以云端社交服务为中心。真人在云端建立账号，从 W
 
 | 目录 | 当前实际内容 |
 | --- | --- |
-| `client/web`、`client/desktop` | 共用 React 界面与 Tauri 桌面壳 |
+| `web`、`desktop` | 共用 React 界面与 Tauri 桌面壳 |
 | `server/cloud` | 独立云端服务：认证、真人账号、私聊、PostgreSQL 与附件目录；不依赖本地 Runtime 或模型 |
 | `server/http`、`server/social` | HTTP/SSE 接口、社交操作与当前本地运行协调 |
 | `agent/core`、`agent/ai-client`、`agent/tools` | 已被聊天调用的上下文、生成预算、摘要提示词、模型协议与现有工具基础 |
@@ -165,7 +165,7 @@ AI 接入方式也已确认：管理员以自己的账号登录网页，为指�
 
 云端交付一个社交服务容器及其部署配置，通过 HTTPS 提供网页、社交 API 和节点连接。PostgreSQL、附件目录分别使用持久存储，邮件发送服务只供账号验证和密码找回使用。数据库与附件在同一次暂停写入的维护窗口备份，恢复时核对引用与文件完整性。
 
-Web 与桌面聊天统一使用 HTTPS JSON / SSE。Agent 主动建立 WSS 连接接收任务、取消和管理请求，原文与附件按 AI 授权经 HTTPS 读取。服务端不装载模型 Key 或调用模型，桌面 IPC 仅保留系统交互与本机 Agent 管理。首轮的握手、能力、重连、开始确认和结果提交规则见 [API 与事件](../design/api.md)。
+Web 与桌面聊天统一使用 HTTPS JSON / SSE。Agent 主动建立 WSS 连接接收任务、取消和管理请求，原文与附件按 AI 授权经 HTTPS 读取。服务端不装载模型 Key 或调用模型，桌面 IPC 仅保留系统交互与本机 Agent 管理。首轮的握手、能力、重连、开始确认和结果提交规则见 [API 与事件](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/api.md)。
 
 目标交付包括自带 Agent 可执行程序，桌面可协助运行同一程序；连接器单独作为可引用组件发布。外部 Agent 只需遵循公开协议，不依赖本项目的 Rust 运行时或意识存储。当前已拆出核心库与订阅协议，各产物在对应批次补齐独立启动、节点通信、升级与验证说明。
 
@@ -187,15 +187,15 @@ Web 与桌面聊天统一使用 HTTPS JSON / SSE。Agent 主动建立 WSS 连接
 
 | 问题 | 主要说明 |
 | --- | --- |
-| 真人登录、AI 身份、管理授权 | [身份与关系](../design/accounts.md) |
-| 群管理、共享原文、聊天行为 | [聊天与消息](../design/conversations.md) |
-| 本地意识资料、每个 AI 的摘要、来源失效 | [意识系统](../design/consciousness.md) |
-| 发言规则、云端次数与节点调用预算 | [参与与调度](../design/participation.md) |
-| 开始确认、流式结果、取消与恢复 | [AI 执行](../design/execution.md) |
-| 云端与节点实体、附件事务、备份和迁移 | [存储与迁移](../design/storage.md) |
-| 身份、操作字段、节点连接与在线管理 | [API 与事件](../design/api.md) |
+| 真人登录、AI 身份、管理授权 | [身份与关系](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/accounts.md) |
+| 群管理、共享原文、聊天行为 | [聊天与消息](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/conversations.md) |
+| 本地意识资料、每个 AI 的摘要、来源失效 | [意识系统](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/consciousness.md) |
+| 发言规则、云端次数与节点调用预算 | [参与与调度](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/participation.md) |
+| 开始确认、流式结果、取消与恢复 | [AI 执行](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/execution.md) |
+| 云端与节点实体、附件事务、备份和迁移 | [存储与迁移](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/storage.md) |
+| 身份、操作字段、节点连接与在线管理 | [API 与事件](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/api.md) |
 | 登录与管理状态、草稿隔离、后台运行 | [界面与桌面](../design/frontend.md) |
-| 独立宿主、配置快照与关闭 | [运行时与配置](../design/runtime.md) |
+| 独立宿主、配置快照与关闭 | [运行时与配置](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/runtime.md) |
 
 ## 实施顺序
 
@@ -236,7 +236,7 @@ Web 与桌面聊天统一使用 HTTPS JSON / SSE。Agent 主动建立 WSS 连接
 
 完成标准：两个独立真人在不同客户端互发消息和附件，重新登录后能继续查看；第三个账号无法读取该私聊、附件或搜索结果。Web 与桌面能使用同一账号看到同一历史，重复发送不会产生重复消息。
 
-本批实现放在 `server/cloud` 与 `client/web/src/cloud`，没有将本地 HTTP 宿主开放为云端服务。邀请细则见[账号设计](../design/accounts.md#邀请注册细则)。测试部署只绑定 Tailscale 地址，使用独立 PostgreSQL、附件目录、测试证书及私有邮件收件箱，不迁入日常数据。验证结果集中记录在[验证指南](../validation/README.md#云端真人聊天验证)。
+本批实现放在 `server/cloud` 与 `web/src/cloud`，没有将本地 HTTP 宿主开放为云端服务。邀请细则见[账号设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/accounts.md#邀请注册细则)。测试部署只绑定 Tailscale 地址，使用独立 PostgreSQL、附件目录、测试证书及私有邮件收件箱，不迁入日常数据。验证结果集中记录在[验证指南](../validation/README.md#云端真人聊天验证)。
 
 ### 第 2 步：接入一个 AI 节点
 
@@ -307,7 +307,7 @@ Web 与桌面聊天统一使用 HTTPS JSON / SSE。Agent 主动建立 WSS 连接
 
 完成标准：一份有实际聊天、附件和意识资料的测试数据分别迁入云端与目标节点，重复迁移不重复建账，来源关系可用，原数据仍可读取；更换节点时，AI 身份和意识资料能按选定方案接续。随后在获得授权的目标环境完成联网试用，实际迁移前保留完整备份。
 
-当前实现采用命令行工具和认证迁移接口：首批支持本地 v13 库、单次 128 MiB 社交资料；唯一真人映射到当前账号，每个旧 AI 显式新建云端身份，不与已有同名账号合并。旧头像引用、审计及修订历史保留在完整备份中。节点按当前单来源记忆模型接收资料，不能安全映射的复杂依赖明确列出并停用；不自动重新概括。旧共享摘要只分给仍有权读取的 AI，并标明导入来源。具体操作和边界集中维护在[迁移指南](../migration.md)。
+当前实现采用命令行工具和认证迁移接口：首批支持本地 v13 库、单次 128 MiB 社交资料；唯一真人映射到当前账号，每个旧 AI 显式新建云端身份，不与已有同名账号合并。旧头像引用、审计及修订历史保留在完整备份中。节点按当前单来源记忆模型接收资料，不能安全映射的复杂依赖明确列出并停用；不自动重新概括。旧共享摘要只分给仍有权读取的 AI，并标明导入来源。具体操作和边界集中维护在[迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md)。
 
 隔离试用检查真实 HTTPS 迁移、附件、两节点接续、遗忘后重试，以及 PostgreSQL 与附件的备份恢复；实际结果见[验证记录](../validation/README.md#数据迁移与联网试用验证)。日常库迁入和已安装客户端更新由下一轮具体试用安排，不自动执行。
 
@@ -323,8 +323,8 @@ Web 与桌面聊天统一使用 HTTPS JSON / SSE。Agent 主动建立 WSS 连接
 | `server/cloud`、`server/http` | 云端服务独立提供认证与社交接口；旧本地 HTTP 宿主只供回归和后续迁入参考，不作为联网入口 |
 | `agent/core`、`agent/ai-client` | 已承接纯上下文、预算与模型协议；继续补齐独立节点入口、意识存储和执行生命周期，服务端负责社交来源、权限与任务提交 |
 | `crates/runtime` | 拆清服务宿主和 Agent 宿主的资源，社交服务不再要求注入本地模型客户端 |
-| `client/web` | 继续共用 React，增加登录和节点管理，社交数据统一来自云端 |
-| `client/desktop` | 保留桌面窗口、保存对话框等系统能力，提供可选本机节点管理 |
+| `web` | 继续共用 React，增加登录和节点管理，社交数据统一来自云端 |
+| `desktop` | 保留桌面窗口、保存对话框等系统能力，提供可选本机节点管理 |
 
 各模块的目标责任已经明确，具体包名、接口文件和迁移文件随对应步骤落地，不先创建空框架。成熟的协议转换、消息事务、版本检查与界面组件继续复用；本地实现的绑定方式不限制新架构。新增校验集中在网络身份、权限、存储事务和模型协议边界，内部使用已经成立的类型和规则。
 

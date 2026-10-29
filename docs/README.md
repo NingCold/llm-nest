@@ -9,11 +9,11 @@
 | 想做什么 | 从哪里开始 |
 | --- | --- |
 | 注册登录、私聊、发送附件和保存聊天 | [使用指南](usage.md) |
-| 部署一个仅内网可用的测试服务 | [部署说明](../server/cloud/deploy/README.md) |
-| 创建 AI、配置本机或远程 Agent | [使用指南](usage.md#创建-ai-并连接-agent) · [节点说明](../agent/node/README.md)；底层与旧宿主配置见[配置参考](configuration.md) |
+| 部署一个仅内网可用的测试服务 | [部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md) |
+| 创建 AI、配置本机或远程 Agent | [使用指南](usage.md#创建-ai-并连接-agent) · [节点说明](https://github.com/NingCold/llm-nest-agent/blob/main/node/README.md)；底层与旧宿主配置见[配置参考](https://github.com/NingCold/llm-nest-agent/blob/main/docs/configuration.md) |
 | 从源码运行、修改界面或检查改动 | [开发指南](development.md) |
-| 带着旧聊天进入云端，或为 AI 更换运行设备 | [迁移指南](migration.md) |
-| 找到某项功能对应的代码 | [客户端](../client/README.md) · [服务端](../server/README.md) · [Agent](../agent/README.md) · [连接器](../connector/README.md) · [共用模块](../crates/README.md) |
+| 带着旧聊天进入云端，或为 AI 更换运行设备 | [迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md) |
+| 找到某项功能对应的代码 | [客户端](../desktop/README.md) · [服务端](https://github.com/NingCold/llm-nest-server/blob/main/server/README.md) · [Agent](https://github.com/NingCold/llm-nest-agent/blob/main/README.md) · [连接器](https://github.com/NingCold/llm-nest-server/blob/main/connector/README.md) · [共用模块](https://github.com/NingCold/llm-nest-server/tree/main/crates) |
 | 制作安装包、准备一个版本 | [构建与发布](releases.md) |
 | 理解账号、聊天和意识系统的设计 | [设计说明](design/README.md) |
 | 了解同机文字私聊、断网续聊和加密安排 | [同机聊天与加密执行计划](project/secure-local-plan.md)；设备、恢复和资料同步规则见[加密方案](design/encryption.md)，实际验证与部署状态见[当前安排](project/current.md) |

@@ -1,9 +1,0 @@
-# Example model service for Web and desktop development.
-# Save your configuration as config/llmn.toml.
-# The real file and config/.env are gitignored. Never commit an API key.
-# Desktop installers start with empty providers and offer a settings page.
-
-[providers.deepseek]
-api_key = { env = "DEEPSEEK_API_KEY" }
-# Protocol, URL and model defaults come from the built-in provider catalog.
-# See docs/configuration.md for custom gateways, Ollama and reasoning settings.

@@ -1,6 +1,6 @@
 # 开发指南
 
-[项目首页](../README.md) · [模型配置](configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
+[项目首页](../README.md) · [模型配置](https://github.com/NingCold/llm-nest-agent/blob/main/docs/configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
 
 默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面仅管理独立 Agent，旧本地宿主已移除；旧 SQLite 仍可通过独立迁移工具导入。
 
@@ -11,11 +11,11 @@ CI 与云端 Dockerfile 使用 Rust 1.99.1，前端使用 Node.js 24.18.0、pnpm
 先安装共用前端和桌面壳的依赖：
 
 ```bash
-pnpm --dir client/web install --frozen-lockfile
-pnpm --dir client/desktop install --frozen-lockfile
+pnpm --dir web install --frozen-lockfile
+pnpm --dir desktop install --frozen-lockfile
 ```
 
-两份 package.json 和锁文件独立维护。两种入口的 React 源码都在 `client/web`。
+两份 package.json 和锁文件独立维护。两种入口的 React 源码都在 `web`。
 
 ### Windows
 
@@ -35,19 +35,12 @@ Windows/Linux 使用共用内容内窗口控制。Linux 当前窗口布局仍需
 
 ## 从源码运行
 
-所有命令从仓库根目录执行。云端服务配置见 [server/cloud](../server/cloud/README.md)，容器定义见 [Compose](../server/cloud/deploy/compose.yaml)。先准备独立 PostgreSQL、附件目录和邮件发送环境，构建网页：
-
-```bash
-pnpm --dir client/web build
-cargo run -p cloud-server --locked
-```
-
-必须配置 `CLOUD_DATABASE_URL`、`CLOUD_PUBLIC_URL`、`CLOUD_ATTACHMENTS_DIR`，以及 SMTP 或私有测试收件箱 `CLOUD_MAIL_OUTBOX`。静态目录默认 `client/web/dist`，监听默认 `127.0.0.1:8787`。首次通过 `cargo run -p cloud-server --locked -- invite 7` 生成邀请，再在页面注册并验证邮箱。不要将连接串、邀请码、邮件链接或会话提交到仓库。
+所有命令从仓库根目录执行。先按[服务端说明](https://github.com/NingCold/llm-nest-server)准备独立服务，客户端仓不编译服务端。新服务端与 Agent 远端本轮尚未发布，链接为计划地址。本地第二批验证使用明确提交的测试镜像和固定产物。
 
 开发 Web 页面时另开终端：
 
 ```bash
-pnpm --dir client/web dev
+pnpm --dir web dev
 ```
 
 打开 `http://localhost:1420`，将后端 `CLOUD_PUBLIC_URL` 配为这个页面来源。Vite 的 `/api` 默认代理到 `http://127.0.0.1:8787`，可用 `LLMN_API` 指定其他开发后端。正式部署使用同源 HTTPS，不通过 Vite 提供公开服务。
@@ -55,34 +48,32 @@ pnpm --dir client/web dev
 桌面运行：
 
 ```bash
-pnpm --dir client/desktop exec tauri dev
+pnpm --dir desktop exec tauri dev
 ```
 
-在页面填写云端 HTTPS 服务器地址。原生网络层默认仅保管内存 Cookie；Windows 显式选择保持登录后用当前用户 DPAPI 保存令牌，重启仍联网核对会话，非 Windows 原生端暂不支持。登录与 SDK 解锁独立，规则见[账号设计](design/accounts.md#登录会话与本机解锁)。客户端不读取模型配置或节点 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
+在页面填写云端 HTTPS 服务器地址。原生网络层默认仅保管内存 Cookie；Windows 显式选择保持登录后用当前用户 DPAPI 保存令牌，重启仍联网核对会话，非 Windows 原生端暂不支持。登录与 SDK 解锁独立，规则见[账号设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/accounts.md#登录会话与本机解锁)。客户端不读取模型配置或节点 SQLite。授权测试使用私有 CA 时，启动前设置 `CLOUD_CA_CERT_FILE` 为测试 PEM 文件；不关闭 TLS 校验，不将测试证书与个人配置打包。
 
-Tauri 开发和构建入口会先准备独立 `llmn-agent` 可执行文件，再构建共用前端；生成文件不进 Git。桌面运行时从资源目录启动 Agent，界面本身不调用模型。验收本机配置、配对与托盘时，设置临时 `LLMN_DATA_DIR`，按服务器和真人账号隔离节点，避免使用日常资料。构建细节见[桌面说明](../client/desktop/README.md)。
+Tauri 开发和构建入口会先准备独立 `llmn-agent` 可执行文件，再构建共用前端；生成文件不进 Git。桌面运行时从资源目录启动 Agent，界面本身不调用模型。验收本机配置、配对与托盘时，设置临时 `LLMN_DATA_DIR`，按服务器和真人账号隔离节点，避免使用日常资料。构建细节见[桌面说明](../desktop/README.md)。
 
 ### 准备桌面 Agent 产物
 
-桌面构建不会编译 Agent 源码。先单独构建和打包；以下是当前单仓开发的 PowerShell 示例，输出目录必须未使用：
+桌面构建不会编译 Agent 源码。在 Agent 仓单独构建并打包后，显式提供实际产物：
 
 ```powershell
-cargo build -p agent-node --bin llmn-agent --locked
-python agent/scripts/package-agent.py --binary target/debug/llmn-agent.exe --output target/agent-dev-artifact --version 0.1.1-alpha.11 --target x86_64-pc-windows-msvc
-$env:LLMN_AGENT_VERSION = "0.1.1-alpha.11"
+$env:LLMN_AGENT_VERSION = "<产物清单中的固定版本>"
 $env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
-$env:LLMN_AGENT_MANIFEST = (Resolve-Path target/agent-dev-artifact/agent-manifest.json).Path
-$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-dev-artifact/llmn-agent-0.1.1-alpha.11-x86_64-pc-windows-msvc.exe).Path
-pnpm --dir client/desktop exec tauri dev
+$env:LLMN_AGENT_MANIFEST = "<已核验的本地清单绝对路径或固定 HTTPS URL>"
+# 本地离线验证另设 LLMN_AGENT_FILE 为清单对应程序绝对路径
+pnpm --dir desktop exec tauri dev
 ```
 
 Linux 使用对应目标三元组与无 `.exe` 的程序。版本必须匹配程序 `--version`。已有官方 HTTPS 产物时，将 `LLMN_AGENT_MANIFEST` 指向固定版本清单，省略 `LLMN_AGENT_FILE`，从清单的 HTTPS URL 获取程序并核对 SHA-256。缺少或不匹配时构建失败，不查找兄弟源码或自动改用其他版本。客户端与 Agent 可分别发版。
 
 ### 独立 Agent 与外部接入
 
-`agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点说明](../agent/node/README.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
+`agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点说明](https://github.com/NingCold/llm-nest-agent/blob/main/node/README.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
 
-外部程序可只依赖[连接器](../connector/README.md)。固定回答示例覆盖任务接收、回复、取消、撤权及不支持的管理请求，有独立的模拟 WSS 测试；不调用模型，也不代替持久恢复的自带 Agent。在线角色与模型管理由节点声明 `profileManagement` 能力，旧节点和示例不会被当成支持该能力。
+外部程序可只依赖[连接器](https://github.com/NingCold/llm-nest-server/blob/main/connector/README.md)。固定回答示例覆盖任务接收、回复、取消、撤权及不支持的管理请求，有独立的模拟 WSS 测试；不调用模型，也不代替持久恢复的自带 Agent。在线角色与模型管理由节点声明 `profileManagement` 能力，旧节点和示例不会被当成支持该能力。
 
 ## 检查改动
 
@@ -93,16 +84,15 @@ python scripts/check-boundaries.py
 cargo fmt --all -- --check
 cargo test -p <受影响的包> --locked
 cargo clippy -p <受影响的包> --all-targets --locked
-pnpm --dir client/web typecheck
-pnpm --dir client/web test
+pnpm --dir web typecheck
+pnpm --dir web test
 ```
 
 跨模块改动再运行 `cargo test --workspace --locked` 和 `cargo clippy --workspace --all-targets --locked`。产物、迁移与发布检查不需要真实模型：
 
 ```bash
 python scripts/test_build_artifacts.py
-node --test client/desktop/scripts/prepare-agent.test.mjs
-python scripts/test_migrate_local.py
+node --test desktop/scripts/prepare-agent.test.mjs
 python scripts/test_release.py
 ```
 
@@ -126,11 +116,10 @@ python scripts/clean-build-artifacts.py --apply
 为测试单独准备 PostgreSQL，并设置 `CLOUD_TEST_DATABASE_URL` 后执行：
 
 ```bash
-cargo test -p cloud-server --locked -- --nocapture
-node client/web/tests/cloud-api.cjs
+node web/tests/cloud-api.cjs
 ```
 
-数据库测试逐例使用隔离 schema，覆盖认证、私聊与群聊、节点执行、意识来源、接话约定、账号管理、附件和持久事件。共享调度测试按 `--test-threads=1` 顺序运行；没有设置连接串时数据库用例会跳过，不能以此报告完整通过。当前实际结果见[验证记录](validation/README.md)，桌面原生转发可用 `cargo test -p tauri-frontend --lib cloud::tests` 检查。
+服务端 PostgreSQL 与跨仓组合验收由服务端仓维护；本仓只运行客户端检查。
 
 远端测试服务当前只通过 Tailscale HTTPS 8443 开放，使用测试 CA 和私有 outbox；不在文档记录真实地址、证书私钥、路径或凭据。浏览器与桌面端到端和部署验收范围见[验证指南](validation/README.md)。
 
@@ -138,14 +127,14 @@ node client/web/tests/cloud-api.cjs
 
 修改边界和必须保持的行为见 [AGENTS.md](../AGENTS.md)，模块职责见[设计文档](design/README.md)。共享 DTO 或事件变化需要同步 HTTP 和 Tauri 两条链路。
 
-构建会生成 `client/web/dist`、`client/desktop/dist` 以及桌面 `gen/schemas` 下的权限 schema/manifest，Git 已忽略这些文件。桌面权限修改落在 `capabilities/*.json`。
+构建会生成 `web/dist`、`desktop/dist` 以及桌面 `gen/schemas` 下的权限 schema/manifest，Git 已忽略这些文件。桌面权限修改落在 `capabilities/*.json`。
 
 图标唯一编辑源为 `assets/branding/app-icon.svg`，更新后生成派生尺寸：
 
 ```bash
-pnpm --dir client/desktop icons
+pnpm --dir desktop icons
 ```
 
-客户端发版同步 Web/桌面 package.json、Tauri 配置和桌面 Cargo.toml 的显式 `package.version`，不跟随根工作区的服务端/Agent 版本；用 `python scripts/release.py validate` 校对，详见[发布指南](releases.md)。
+客户端发版同步 Web/桌面 package.json、Tauri 配置和桌面 Cargo.toml 的显式 `package.version`，不要求与服务端/Agent 同版；用 `python scripts/release.py validate` 校对，详见[发布指南](releases.md)。
 
 提交说明写清问题、结果和验证范围。检查没有混入个人配置、聊天数据、密钥或临时产物。项目许可证尚待确定。

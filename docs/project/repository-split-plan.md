@@ -35,7 +35,7 @@ flowchart LR
 
 | 设计时的路径 | 拆分后的归属 | 要处理的内容 |
 | --- | --- | --- |
-| `client/web`、`client/desktop` | 客户端 `web/`、`desktop/` | 保留共用 UI、草稿、网络转发、原生保存、SDK 与登录材料；去掉旧宿主接口 |
+| `web`、`desktop` | 客户端 `web/`、`desktop/` | 保留共用 UI、草稿、网络转发、原生保存、SDK 与登录材料；去掉旧宿主接口 |
 | `assets/branding`、图标生成及桌面打包脚本 | 客户端 | SVG 仍只有一份编辑源；其他仓如需图标，使用带版本的派生文件 |
 | `server/cloud` | 服务端 `server/` | 包括 PostgreSQL 迁移和部署配置；附件持久目录不变 |
 | `connector` | 服务端 `connector/` | 独立包，包含节点、密文封装、同机通信和迁移契约 |
@@ -46,7 +46,7 @@ flowchart LR
 | `crates/runtime`、旧 `crates/storage`、`server/social`、`server/http` | 解除依赖后退役 | 留下迁移实际需要的读取能力和测试材料，不将整套旧宿主搬进新仓 |
 | `agent/tools` 及旧 worker 入口 | 随旧宿主退役 | 当前云端聊天没有使用它；不因拆仓新增工具功能 |
 
-第一批已将 `client/web/src/social` 中仍在使用的组件、样式、图片/文件处理及草稿移到 `client/web/src/chat`。旧本地状态、页面与接口已移除，草稿数据库名和按服务器/账号隔离的保存方式沿用。有效的输入、附件和草稿测试已改为验证当前页面；旧库 v1–v13 SQL 原样保存在 `server/cloud/tests/fixtures/local-v13`，继续验证 v13 导入。
+第一批已将 `web/src/social` 中仍在使用的组件、样式、图片/文件处理及草稿移到 `web/src/chat`。旧本地状态、页面与接口已移除，草稿数据库名和按服务器/账号隔离的保存方式沿用。有效的输入、附件和草稿测试已改为验证当前页面；旧库 v1–v13 SQL 原样保存在 `server/cloud/tests/fixtures/local-v13`，继续验证 v13 导入。
 
 每仓拥有自己的 `Cargo.toml`、锁文件、构建脚本、CI、README 和 AGENTS。客户端根 README 继续介绍产品和使用入口，并链接另外两仓；服务端 README 说明部署，Agent README 说明运行与接入。
 
@@ -59,7 +59,7 @@ flowchart LR
 1. **移除桌面旧 Runtime 和旧 IPC。** 保留当前云端、本机直连、文件保存和窗口功能。目录解析改为客户端内部的小模块，沿用原数据路径；不能因删掉 `storage` 就让程序找不到已有资料。
 2. **模型目录由 Agent 提供。** 桌面通过随包的 `llmn-agent catalog` 取得带版本的目录，候选配置由 Agent 的 `check` 命令校验。运行模型和最终配置校验归 Agent；客户端不再包含供应商适配器，也不直接读节点数据库。
 3. **桌面使用固定 Agent 产物。** `prepare-agent.mjs` 不再在仓根执行 `cargo build -p agent-node`，改为读取版本清单、取得对应平台产物并核对 SHA-256。开发时可显式指定本地已构建的产物，不隐式访问兄弟仓源码。
-4. **服务端使用固定 Web 产物。** 云端 Dockerfile 不再复制整个工作区和现场生成的 `client/web/dist`；改为构建本仓服务，接收指定版本及摘要的 Web 包。
+4. **服务端使用固定 Web 产物。** 云端 Dockerfile 不再复制整个工作区和现场生成的 `web/dist`；改为构建本仓服务，接收指定版本及摘要的 Web 包。
 5. **检查真实依赖。** 三仓构建均不要求 `../另一个仓库` 存在；连接器及协议包不把服务器实现带进客户端或 Agent。现有边界检查补上桌面及构建脚本的限制。
 
 同机直连已经使用 `CloudState`、`LocalAgentState` 和连接器协议，不需要为了保留它继续链接旧 Runtime。桌面负责启动、停止及展示；节点负责配置应用、执行和持久化。维持当前目录锁、实例标识、关闭退到后台、托盘停止及重连补传行为。

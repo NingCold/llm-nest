@@ -9,7 +9,7 @@ const svg = readFileSync(source, "utf8")
 const mark = svg.match(/  <g id="mark"[\s\S]*?<\/g>/)?.[0]
 if (!mark) throw new Error("The canonical icon must contain a mark group")
 
-const publicDir = join(root, "client/web/public")
+const publicDir = join(root, "web/public")
 mkdirSync(join(publicDir, "brand"), { recursive: true })
 // The UI uses a closer crop and transparent background. Dark mode inverts
 // only this silhouette; the desktop/favicons always retain their white tile.
@@ -21,11 +21,11 @@ copyFileSync(source, join(publicDir, "icon.svg"))
 const output = join(root, "target/icon-assets")
 mkdirSync(output, { recursive: true })
 execFileSync(process.execPath, [
-  join(root, "client/desktop/node_modules/@tauri-apps/cli/tauri.js"),
+  join(root, "desktop/node_modules/@tauri-apps/cli/tauri.js"),
   "icon", source, "--output", output,
-], { cwd: join(root, "client/desktop"), stdio: "inherit" })
+], { cwd: join(root, "desktop"), stdio: "inherit" })
 
-const iconsDir = join(root, "client/desktop/src-tauri/icons")
+const iconsDir = join(root, "desktop/src-tauri/icons")
 mkdirSync(iconsDir, { recursive: true })
 for (const name of ["32x32.png", "128x128.png", "128x128@2x.png", "icon.ico", "icon.icns"]) {
   copyFileSync(join(output, name), join(iconsDir, name))

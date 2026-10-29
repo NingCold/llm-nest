@@ -49,7 +49,7 @@ def main():
     parser.add_argument("--installed-nsis", type=Path, required=True)
     parser.add_argument("--msi-extracted", type=Path, required=True)
     parser.add_argument("--agent-directory", type=Path,
-        default=Path(__file__).resolve().parents[1] / "client/desktop/src-tauri/resources",
+        default=Path(__file__).resolve().parents[1] / "desktop/src-tauri/resources",
         help="Prepared build Agent and agent-artifact.json directory")
     args = parser.parse_args()
     agent_record = verify_agent(args.agent_directory.resolve(strict=True))

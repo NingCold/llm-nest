@@ -50,10 +50,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf
       - name: Frontend
         run: |
-          pnpm --dir client/web install --frozen-lockfile
-          pnpm --dir client/desktop install --frozen-lockfile
-          pnpm --dir client/web typecheck
-          pnpm --dir client/web test
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+          pnpm --dir web typecheck
+          pnpm --dir web test
       - name: Rust checks
         run: |
           python scripts/check-boundaries.py
@@ -65,37 +65,4 @@ jobs:
           python scripts/release.py validate
           python scripts/test_release.py
           python scripts/test_build_artifacts.py
-          node --test client/desktop/scripts/prepare-agent.test.mjs
-
-  cloud:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RUSTUP_TOOLCHAIN: 1.99.1
-      CARGO_TERM_COLOR: always
-      CLOUD_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/llmn_test
-    services:
-      postgres:
-        image: postgres:17-bookworm
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: llmn_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d llmn_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Install Rust and PostgreSQL client dependencies
-        run: |
-          rustup toolchain install 1.99.1 --profile minimal
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libssl-dev pkg-config
-      - name: Cloud PostgreSQL integration tests
-        run: cargo test -p cloud-server --locked -- --nocapture
+          node --test desktop/scripts/prepare-agent.test.mjs

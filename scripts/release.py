@@ -15,19 +15,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def validate(root=ROOT, tag=""):
-    version = json.loads((root / "client/desktop/package.json").read_text(encoding="utf-8"))["version"]
-    for name in ("client/desktop/src-tauri/tauri.conf.json",
-                 "client/desktop/package.json", "client/web/package.json"):
+    version = json.loads((root / "desktop/package.json").read_text(encoding="utf-8"))["version"]
+    for name in ("desktop/src-tauri/tauri.conf.json",
+                 "desktop/package.json", "web/package.json"):
         actual = json.loads((root / name).read_text(encoding="utf-8"))["version"]
         if actual != version:
             raise ValueError(f"{name}: version {actual!r} does not match client {version!r}")
-    native_name = "client/desktop/src-tauri/Cargo.toml"
+    native_name = "desktop/src-tauri/Cargo.toml"
     native_version = tomllib.loads((root / native_name).read_text(encoding="utf-8"))["package"]["version"]
     if native_version != version:
         raise ValueError(f"{native_name}: explicit package.version {native_version!r} does not match client {version!r}")
     if tag and (not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", tag) or tag != f"v{version}"):
         raise ValueError(f"Tag {tag!r} must match v{version}")
-    tauri = json.loads((root / "client/desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+    tauri = json.loads((root / "desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
     msi = tauri.get("bundle", {}).get("windows", {}).get("wix", {}).get("version")
     if "-" in version and not msi:
         raise ValueError("Pre-release builds require a numeric bundle.windows.wix.version for MSI")

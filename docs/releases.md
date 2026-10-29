@@ -2,7 +2,7 @@
 
 [开发指南](development.md) · [验证指南](validation/README.md) · [全部文档](README.md)
 
-本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](../server/cloud/deploy/README.md)。
+本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。
 
 当前源码版本为 `0.1.1-alpha.11`，本机 Windows 和内网网页已更新，包含紧凑登录页与退出检查提速。服务端 Rust 沿用已部署的 `alpha.10` 二进制。NSIS 已实际覆盖安装，MSI 完成构建及包检查；最小桌面窗口的登录显示、服务器设置、关闭和重开已实测。日常账号重启后的登录、解锁与历史验读仍待试用。验证结果见[验证指南](validation/README.md)和 [Windows 记录](validation/windows.md#登录页退出与存储整理2026-10-29)。
 
@@ -23,10 +23,10 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 
 | 文件 | 字段 |
 | --- | --- |
-| `client/desktop/src-tauri/Cargo.toml` | 显式 `package.version`，不继承根工作区 |
-| `client/desktop/src-tauri/tauri.conf.json` | `version` |
-| `client/desktop/package.json` | `version` |
-| `client/web/package.json` | `version` |
+| `desktop/src-tauri/Cargo.toml` | 显式 `package.version`，不继承根工作区 |
+| `desktop/src-tauri/tauri.conf.json` | `version` |
+| `desktop/package.json` | `version` |
+| `web/package.json` | `version` |
 
 每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.11`；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
@@ -51,7 +51,7 @@ git push origin v0.1.1-alpha.11
 ## GitHub 工作流
 
 - [ci.yml](../.github/workflows/ci.yml)：检查 PR、main 提交和手动运行，覆盖 Windows/Linux 的 Rust、前端和离线链路。
-- [release.yml](../.github/workflows/release.yml)：手动运行时生成 Actions artifacts；推送 `v*` 标签时，两个平台构建并检查成功后创建草稿 Release，附带安装包和 SHA-256 清单。
+- [release.yml](../.github/workflows/release.yml)：手动运行生成 Actions artifacts，可显式输入已存在且匹配源码版本的 release_tag 创建草稿；必须输入实际已发布 Agent 的固定 HTTPS 清单和版本；本轮尚无正式 Agent 发布，不伪造默认清单，附带安装包和 SHA-256 清单。
 
 首次使用可在 **Actions → Build installers → Run workflow** 选择分支，下载 `installers-windows-x86_64` 和 `installers-linux-x86_64` 验证。工作流使用临时 `GITHUB_TOKEN`，无需模型 API Key 或个人访问令牌。
 
@@ -65,13 +65,11 @@ git push origin v0.1.1-alpha.11
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-cargo build -p agent-node --bin llmn-agent --release --target x86_64-pc-windows-msvc --locked
-python agent/scripts/package-agent.py --binary target/x86_64-pc-windows-msvc/release/llmn-agent.exe --output target/agent-release-artifact --version 0.1.1-alpha.11 --target x86_64-pc-windows-msvc
 $env:LLMN_AGENT_VERSION = "0.1.1-alpha.11"
 $env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
 $env:LLMN_AGENT_MANIFEST = (Resolve-Path target/agent-release-artifact/agent-manifest.json).Path
 $env:LLMN_AGENT_FILE = (Resolve-Path target/agent-release-artifact/llmn-agent-0.1.1-alpha.11-x86_64-pc-windows-msvc.exe).Path
-Push-Location client/desktop
+Push-Location desktop
 ./node_modules/.bin/tauri.cmd build --target x86_64-pc-windows-msvc --bundles nsis msi --ci --config src-tauri/tauri.windows.conf.json -- --locked
 Pop-Location
 ./scripts/verify-windows-icons.ps1
@@ -80,7 +78,7 @@ Pop-Location
 
 产物位于 `target/x86_64-pc-windows-msvc/release/bundle`。Tauri CLI 会构建并嵌入生产前端，裸 `cargo build --release` 不能代替这一步。
 
-对外显示名为 **LLM Nest**，内部二进制、历史安装目录和注册项继续使用 `LLM-Nest`，用户数据仍在 `~/.llmn`。模板来源和升级约束见[模板说明](../client/desktop/src-tauri/packaging/windows/README.md)，包检查和安装验收见 [Windows 验证](validation/windows.md)。
+对外显示名为 **LLM Nest**，内部二进制、历史安装目录和注册项继续使用 `LLM-Nest`，用户数据仍在 `~/.llmn`。模板来源和升级约束见[模板说明](../desktop/src-tauri/packaging/windows/README.md)，包检查和安装验收见 [Windows 验证](validation/windows.md)。
 
 ## 本地 Linux 打包
 
@@ -116,13 +114,13 @@ docker run --rm --user "$(id -u):$(id -g)" \
 先构建客户端 Web，再打包指定版本；服务端只接受版本和 SHA-256 匹配的产物：
 
 ```bash
-pnpm --dir client/web build
-python scripts/package-web.py --dist client/web/dist --version 0.1.1-alpha.11 --output /新的web产物目录
+pnpm --dir web build
+python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.11 --output /新的web产物目录
 python scripts/prepare-cloud-context.py --web-artifact /新的web产物目录/llmn-web-0.1.1-alpha.11.tar.gz --web-manifest /新的web产物目录/web-manifest.json --web-version 0.1.1-alpha.11 --output /新的cloud构建目录
 docker build -t llmn-cloud:<服务端版本> /新的cloud构建目录
 ```
 
-上下文创建使用已跟踪的云端、连接器和领域类型文件，生成独立小工作区并用 `cargo update --workspace --offline` 收敛现有锁文件，核对依赖版本保持固定；需要本机已有对应 Cargo 索引缓存。Docker 不复制客户端、Agent 或旧 Runtime，也不隐式读取 `client/web/dist`。Compose 指定 `CLOUD_BUILD_CONTEXT`，详见[部署说明](../server/cloud/deploy/README.md)。Web、Agent 的打包目录使用新目录，保留上一组可回退产物。正式 Agent 下载必须使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
+上下文创建使用已跟踪的云端、连接器和领域类型文件，生成独立小工作区并用 `cargo update --workspace --offline` 收敛现有锁文件，核对依赖版本保持固定；需要本机已有对应 Cargo 索引缓存。Docker 不复制客户端、Agent 或旧 Runtime，也不隐式读取 `web/dist`。Compose 指定 `CLOUD_BUILD_CONTEXT`，详见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。Web、Agent 的打包目录使用新目录，保留上一组可回退产物。正式 Agent 下载必须使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
 
 当前单仓发布工作流显式构建 Agent 后再交给客户端消费；Web 包和清单随 Linux 产物上传。此流程尚不等于已经拆出新仓或部署新版本。部署时记录实际服务端、Web、Agent 与连接器版本/提交、摘要及协议组合。
 

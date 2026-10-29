@@ -1,50 +1,6 @@
-# AGENTS.md — LLM-Nest
+# AGENTS.md — LLM Nest 客户端
 
-本文件面向修改仓库的开发者和编码代理，记录当前架构、必须维持的行为和验证方式。用户入门见 [README](README.md)，环境搭建见 [开发指南](docs/development.md)，平台验证见 [验证指南](docs/validation/README.md)。
-
-## 项目定位与当前范围
-
-同机聊天与加密的统一执行顺序见[同机聊天与加密执行计划](docs/project/secure-local-plan.md)，设计规则见[加密方案](docs/design/encryption.md)。用户已授权先实现桌面同机文字私聊与断网接续，当前第一批已实现并通过自动验证，Windows 日常安装版已实测同机文字私聊、断云接续与重连补传，并在联网安装重启后读回历史；模型互联网连接保留，全网断开、本地模型、断网或中断运行后的重启恢复和 Linux 实机未在这些验证中覆盖。日常账号另已通过已有恢复文件在独立 Edge 客户端恢复，设备 ID 改变、账号主指纹保持，原聊天与已发布角色资料可读。沿用现有登录会话、账号和唯一私聊，先在节点保存，重连后核对当前绑定、权限、来源和窗口状态再同步，不能再次排模型任务或伪造云端开始确认。第一批不含加密；第二批已实现新私聊显式启用 sealedV1，采用官方 Matrix Olm/Megolm SDK 并强制设备与账号 master 双签。启用后的新文字、流式及结果必须密文，失败不得回退明文；旧未启用窗口的历史保留原存储方式，是否允许新明文由部署策略决定，旧历史不自动转换。
-
-第二批提供设备授权、恢复密文、角色/模型/记忆/每 AI 摘要的分范围密文资源 CAS、离线待同步、当前绑定 applied 与来源墓碑。同机采用同一封装，Olm 密钥投递已通过真实 Windows IPC 验证；实际联调见进度文档，不等于桌面或生产验收。第三批扩展群聊、群历史的定向 Olm 分享、密文附件、跨窗引用、约定正文及客户端完整搜索导出；同机支持密文附件和预取群来源。启用和发送核对窗口版本，附件解密信息只在签名内层，历史分享重放复核当前成员与设备，节点按 AI/窗口独立保存状态。第四批提供历史转换清单、冻结与原请求重试、实际迁移者签名、独立恢复全量验读，保留原作者/ID/修订/读态/来源，完成后 historyComplete 禁止旧位置明文。节点资料显式预览后按 CAS 转为密文，遗忘墓碑优先；未同步材料或角色版本不得假称可交接。CLOUD_REQUIRE_ENCRYPTION 控制正式拒明文切换，当前内网部署已开启；旧测试原文按原权限保留读取，开关不会转换存量或删除旧明文备份。日常资料与部署状态见进度文档。默认聊天草稿是本机明文，不属于 SDK 密钥库。协议集中见[加密契约](docs/design/crypto-contract.md)。局域网直连列入待办，不并入第一批。断网节点不能即时获知云端撤销，旧绑定或失效来源的记录不能覆盖云端，也不自动扩成完整离线社交。
-
-本轮第四批 Tailscale 内网日常恢复收尾已完成，桌面云端、同机和保留的 Edge 均逐条读回十条原消息，原身份及调用次数保持。修复后真实客户端重启验读尚未执行，SDK 独立重开回归不能代替；公开发布前独立审查及其他平台缺口仍保留，不称为生产或全面安全验收。
-
-产品目标为云端社交服务、独立真人/AI 账号和用户托管的 Agent。[云端社交与 Agent 接入计划](docs/project/cloud-plan.md)第 0 步设计确认已完成，仓库已按 client/server/agent/connector 拆分。第 1 步已实现独立云端真人服务和默认云端客户端；第 2 步已实现云端 AI、节点配对与 WSS、独立 Agent、私聊流式回复及持久恢复，已完成本机 Agent 与云端 Web 闭环验证。第 3 步已实现群聊、显式 @/回复、多 AI 串行任务、屏蔽与启停、节点记忆和各 AI 的窗口摘要、群话题接续与来源失效，以及有限自动接话、连续输入合并、暂停/结束、一次性约定、免打扰与额度。第 4 步已实现 AI 公开资料和管理员、节点角色/模型在线管理、只读账号查看，以及桌面本机 Agent 配置、配对、启停和托盘。第 5 步已实现旧库备份预览、云端社交资料导入和按 AI 的节点资料迁移，并完成隔离联网与备份恢复验收；日常资料切换及实际安装状态见进度文档。
-
-当前仍在一个仓库中维护客户端、服务端、自带 Agent 和连接器，前三者独立运行，连接器可独立引用。下一轮按[拆仓计划](docs/project/repository-split-plan.md)拆为客户端、服务端和 Agent 三仓；原仓保留为客户端主仓，连接器暂归服务端仓作为独立包。云端 PostgreSQL 保存社交记录，附件使用独立持久目录；自带 Agent 的 SQLite 保存角色、模型参数、记忆和每个 AI 自己的窗口摘要。模型 Key 与节点凭据只在节点保管，不进迁移包；外部 Agent 自选内部实现。
-
-首轮真人邀请注册，后续再开放；采用邮箱 + 密码登录，含邮箱验证与找回密码。AI 使用管理员授权的专用可撤销节点凭据，无需邮箱密码；该 AI 所有管理员可管理节点，只有初始管理员可增删管理员。群采用群主、群管理员、普通成员三级，AI 管理权不自动授予群管理权。具体目标见[账号设计](docs/design/accounts.md#已确认的云端账号方向)和[群管理设计](docs/design/conversations.md#已确认的云端群管理方向)。
-
-官网与桌面均可创建同一种云端 AI 账号，桌面可选择自带 Agent 在本机运行；管理入口统一为“我的账号 → 我管理的 AI”，创建和只读查看 AI 都保留管理员实际登录身份。首轮一个 AI 同时只有一个有效运行节点，一个节点可运行多个 AI；管理员手动更换节点后旧节点失去该 AI 的执行与发言资格。账号与云端聊天历史沿用，角色设定、记忆与摘要需迁移。
-
-关闭桌面窗口默认让本机 Agent 继续后台运行，首次关闭说明并提供停止选项，托盘可随时停止；远程节点不受影响，本机休眠或关机则本机 AI 离线。未启用加密的管理路径经平台转发在线请求，节点保存后才成功，离线不排队修改内部配置；转发正文不写云端存储或日志，模型 Key 只在节点本地填写。
-
-节点 v4 通过可选 capabilities 中的 `profileManagement` 声明角色/模型管理能力。云端在派发和返回时复核管理员、绑定及能力；节点按 requestId 持久去重，回执只保存指纹，重放返回当前档案。保存前严格校验完整模型选择及参数，新配置只用于新运行。网页待确认命令只留内存，跨页面手动重试保持原 requestId；旧响应不得清除后来的待确认命令。只读账号路由检查实际真人管理权及目标 AI 当前成员身份，不改变登录身份、已读、订阅或提供代发。
-
-桌面管理独立 Agent 子进程，不用延迟 Runtime 代替。节点目录按服务器哈希和真人 ID 隔离在 `desktop-agents`，测试使用临时 `LLMN_DATA_DIR`；模型 Key 只在本机受限配置中保存或引用环境变量，注入子进程环境，不放参数、读取 IPC 或云端 DTO。控制使用目录锁和实例 UUID，不依赖任意 PID 终止；配对到期新码持续更新，取消必须覆盖整个配对子进程生命周期。关闭退到后台或取消时发 `desktop-close-retained`，解除页面草稿关闭锁。安装资源只含构建出的 Agent，不含任何用户节点目录。
-
-云端路径维护发言任务与次数，节点维护调用、并发和 token 预算；云端任务调用模型前取得持久开始确认。同机直连按独立本机执行记录保存，补传不补造云端确认；两条路径均不自动重做已开始而结果不明的调用。同机刷新遇到当前云端 queued/running 时仅等待 conversation_busy，原请求与记录不变，后续自动刷新；暂停、uncertain、权限或来源变化仍为真正冲突，不能自动放行。首轮单机容器部署，客户端 HTTPS/SSE，节点主动 WSS 连接；迁移先备份预览、保留旧库，原文迁云端、意识资料迁节点。细节见[已确认约定](docs/project/cloud-plan.md#已确认的运行与迁移约定)与模块设计。这些是目标约束，不代表现有程序已完成改造。
-
-迁移边界为 `scripts/migrate_local.py` 与 `connector::migration`：只读备份旧 v13 库，将唯一真人映射到认证真人，为旧 AI 新建账号，不按同名合并。云端回执只存指纹与映射，归档/legacy 窗口只读，消息保留 importOrigin；已读按旧完成集合映射，不能用旧 sequence 推导。导入先暂停所有窗口，不恢复队列、约定或自动摘要。节点包不含模型 Key、provider 地址、凭据、任务、预算或来源游标；导入复核当前来源和权限，提升档案/材料版本，同包重试不覆盖编辑或恢复遗忘。旧多来源及派生依赖记忆无法完整表达时清正文并标 stale，完整原资料留在备份。已部署的 `0008_migration.sql` 通过 `.gitattributes` 保留精确字节，不修改或归一化换行。
-
-当前默认入口是 `client/web/src/cloud`，沿用原有前端的消息/通讯录布局、侧栏和视觉样式，云端账号、聊天和草稿由 CloudApp 管理。登录后复用 `social` 的界面组件不意味着启动本地 Runtime 或开放本地 AI 功能。Web 与 Tauri 都连接 `server/cloud` 的 HTTPS JSON/SSE。服务独立使用 PostgreSQL 和附件目录，不加载本地 Runtime、SQLite 或模型配置。桌面 IPC 转发云端请求并保留原生保存、窗口和草稿关闭交互，默认页面不启动保留的延迟 Runtime。桌面二进制仍为 `LLM-Nest`，内部 Tauri Cargo 包名为 `tauri-frontend`。
-
-首轮邀请由维护者生成，可撤销、默认七天有效且只能注册一次；注册保留三十分钟，验证邮箱后原子创建账号并消耗邀请。密码使用 Argon2，服务端令牌仅存哈希，真人身份来自 HttpOnly 会话 Cookie。网页变更请求检查 `X-LLMN-Client` 与来源。保持登录默认关闭，未勾选时 Web 使用会话 Cookie、服务端最多 8 小时，桌面凭据只在原生内存；显式勾选后绝对有效 30 天，Web 使用持久 Cookie，Windows 以当前用户 DPAPI 保护令牌，非 Windows 原生端暂不支持，不得退回明文。未登录启动的 `/me` 401 只表示尚无会话，不能因无当前账号的失效事件取消服务器连接；登录后的失效仍按服务器与账号范围清理。保持登录能力检测独立于网络连接，重连与 StrictMode 不得丢失检测结果。测试服务仅在 Tailscale 内网使用，测试 CA 明确信任、私有 outbox 不公开；不关闭 TLS 验证，不提交具体服务器连接资料。
-
-云端联系人为有向关系，双方唯一私聊；每次读取、搜索、下载和导出检查当前认证账号。消息、个人读态、命令摘要回执与持久事件同事务；回执不存正文或附件原字节，重放返回当前权威消息，撤回不能被旧回执复活。附件按生成的消息 UUID 与索引存放，读写时复核 revision；SSE 按账号从持久事件补齐，客户端成功刷新后推进游标。草稿按服务器、账号、窗口隔离，发送结果未确认时只允许手动重试同一请求。详细云端契约见 [API](docs/design/api.md) 与 [存储](docs/design/storage.md)。
-
-当前云端群以真实成员表授权，群主/管理员/成员权限不因 AI 管理权扩大。消息保存 senderName/replyTo/mentions 和多 AI 响应状态；显式提及/回复任务按持久顺序串行同群。节点 v4 使用真实 conversation/members，开始回传 conversationRevision，trigger 区分 message 与 contact；消息触发与回复原文及图片均为必要材料。上下文读取触发位置以内原文及本窗更早队列的已完成 AI 输出（其触发位置不晚于当前触发），不混入后来无关真人消息；contact 读取该窗口当前历史及自己的授权内容，不伪造真人消息。开始后逐条复核冻结 sources，不重选最近历史。成员变化取消整群未完成任务，屏蔽只限制双方私聊，停用只取消该 AI；屏蔽/停用保留有效中断片段，停用期间真人私聊仍保存但不排任务，恢复均不补发。正常队列等待不调用模型；仅明确未开始的 409 conversation_busy/task_not_ready 可原子撤销本次节点意图与预留，已开始与未知网络失败沿用原恢复规则。
-
-云端接话规则与一次性约定由 PostgreSQL 持久调度。群主/管理员管理全群规则，成员在授权开启后创建/取消自己的约定；AI 管理权不扩大群权限。私聊普通输入默认合并 800ms、最多 20 条，所有 inputIds 必须读入；新真人输入替换排队的消息自动接话，不取消独立约定。同窗口至多一个 running，只有延后的 contact 可让后续就绪任务先行。自动与约定共用云端窗口/Bout/UTC 日次数，开始后不返还；节点按 AI/窗口/UTC 日维护独立自动 token 账本，并保留整体预算，社交并发 4、摘要并发 1。明确点名绕过自动额度但不能绕过暂停和节点整体预算。结束保留未来 pending 约定；暂停恢复、关闭授权、屏蔽、退群、停用与过期不补发。服务重启执行中联系标 uncertain，只有已保存的原结果可在权限仍有效时重交，不重开模型。
-
-显式记忆与摘要按稳定 AI/窗口保存在节点 SQLite；加密范围另保存云端密文资源与版本，不上传正文。以下在线转发规则描述未启用加密的路径：在线意识操作保持实际真人身份：记忆要求真人和目标 AI 同为当前窗口成员，摘要另需 AI 管理权；正文只在内存转发，不写云端存储或日志，离线不排队。requestId 用于节点写入去重，relayId 区分每次连接上的派发；读操作不存回执，写回执只存指纹，不留旧记忆正文。
-
-节点重连先按稳定 AI 来源游标补齐失效，再组装上下文；开始和提交只复核实际使用的来源与节点材料版本，不用全局游标否定无关窗口。来源修改/撤回使相关资料清空正文并标 stale；失去群访问权使该 AI 的群资料失效，普通成员加入/改名/角色变化只中断旧版本工作，保留有效已存资料。每 AI 窗口摘要默认关闭、独立显式模型与预算、保留最近 12 条、每段最多 32 条；调用前持久保存云端确认，重启不重做。群接续引用 1–8 条共同群原文，沿用唯一私聊，只保存 ID/版本，退群重入不恢复旧引用。模型生成中的控制帧先被 select 接收，再完整处理管理命令，不能将已消费命令的异步保存过程放在可取消的 select 分支。
-
-旧 Runtime、SocialFeature、SocialStore、本地 HTTP/IPC 宿主与工具 worker 已退役，默认及唯一产品入口为云端客户端。当前共用界面与草稿位于 `client/web/src/chat`。旧 v13 数据的备份和导入由 `scripts/migrate_local.py` 维护，13 份原 SQL 作为迁移夹具保存在 `server/cloud/tests/fixtures/local-v13`；不删除用户旧库，不为兼容恢复旧运行路径。
-
-当前能力见 [已完成](docs/project/completed.md)，任务顺序见 [当前安排](docs/project/current.md)，剩余范围见 [待办与候选](docs/project/backlog.md)。云端测试使用独立 PostgreSQL 与测试邮件；本地模型回归继续使用临时数据和模拟 provider。本文维护修改约束，不重复维护各批测试数量。
+本仓维护 `web/` 共用聊天界面和 `desktop/` Tauri 客户端。产品说明见 README，使用见 docs/usage.md，总进度见 docs/project。服务端与连接器由 https://github.com/NingCold/llm-nest-server 维护，Agent 由 https://github.com/NingCold/llm-nest-agent 维护；本轮新远端尚未发布，链接是计划地址。
 
 ## 工作前先确认
 
@@ -75,118 +31,19 @@
 - 多台机器接续工作前，确认工作区状态并同步 `main`；保留未提交修改，不能用强制覆盖解决分歧。
 - 汇报时分别说明本地提交、远端推送与合并的实际状态；用户要求提交不等于要求推送、创建 PR 或发布版本。
 
-## 代码地图与边界
+## 客户端边界和不变量
 
-| 路径 | 责任 |
-| --- | --- |
-| `client/web/src/cloud` | 唯一账号、聊天、加密与 AI 管理入口 |
-| `client/web/src/chat` | 共用聊天组件、样式、附件和草稿存储 |
-| `client/desktop/src-tauri` | 云端请求、原生文件/窗口、凭据、本机 Agent 启停及托盘 |
-| `server/cloud` | PostgreSQL 社交服务、权限、任务、附件与密文同步 |
-| `connector` | 节点 HTTPS/WSS、密文封装、同机通信、管理目录与迁移契约 |
-| `agent/node` | 独立 Agent、配置、SQLite、执行、加密、同步与预算 |
-| `agent/core` | 纯上下文、生成预算与摘要提示词 |
-| `agent/ai-client` | 模型目录、协议路由、请求与流式适配 |
-| `agent/crypto` | Agent 使用的 Matrix SDK 封装 |
-| `crates/common` / `crates/social` | 模型内部类型 / 当前执行和迁移实际使用的中立社交类型 |
-| `scripts` / `docs` | 构建、验证、迁移、清理与说明 |
+- 根 Cargo workspace 只含 desktop/src-tauri；连接器使用固定 Git 提交，不引用兄弟仓源码。桌面消费显式版本、平台和 SHA-256 的 Agent 产物，不编译 Agent，不读取节点 SQLite。目录由 Agent catalog 提供，配置由 Agent check 校验。
+- Web 与桌面共用 CloudApp；不得恢复旧本地 Runtime。客户端只实现界面、HTTPS/SSE、原生 IPC、窗口、文件保存和本机 Agent 生命周期。
+- 保留 identifier com.llmnest.tauri、LLM-Nest 二进制、安装识别和 ~/.llmn 及 LLMN_DATA_DIR；保持 desktop-agents 按服务器及真人隔离、目录锁及实例 UUID、后台和托盘行为。
+- 保持草稿 IndexedDB 名 llm-nest-social-drafts、按服务器/账号/窗口隔离，完整命令先落盘再发送；未知结果只手动重试同一请求。关闭先等待草稿确认，失败保持窗口；后台/取消发 desktop-close-retained。
+- 加密使用官方 Matrix SDK，sealedV1 启用后失败不能退明文。登录会话与 SDK 解锁分开，自动解锁默认关闭；可信设备和恢复文件确认及手动口令成功后才允许开启。Windows DPAPI；Web 不可导出 AES 包装；不得因保持登录建立新设备信任。
+- 锁屏先保存草稿，关闭 SDK，卸载聊天 DOM、订阅和状态；保留导航和账号，独立 Agent 继续运行。暂停跨刷新重启，迟到解锁必须复核会话、服务器、账号和设备。退出清理自动材料，不删 SDK 库。默认草稿是本机明文。
+- 保持当前消息权限、读位置、搜索、密文附件和历史转换语义；协议变动同步 Web/Tauri 链路。模型 Key 不进入参数、IPC 读取、DTO 或日志。
+- assets/branding/app-icon.svg 是图标唯一编辑源。Windows/Linux 自绘窗口保持拖动排除交互元素、透明启动与当前边框约定；平台历史不代表新版本实机验收。
 
-桌面不链接服务用例、旧存储宿主或模型执行代码；模型目录通过随附 Agent 的无配置 `catalog` 命令读取，候选节点配置经 Agent `check` 校验后才保存。目录命令不读取凭据、创建节点或调用模型。`connector::management` 是目录响应的唯一契约，版本不支持时明确报错，不静默回退内置副本。
+## 验证与交付
 
-桌面管理独立子进程，不直接访问节点 SQLite。关闭仍先等待草稿保存，再按用户选择退到后台或停止节点。原 `~/.llmn`、凭据和 Agent 子目录保持，客户端不再加载或创建旧宿主 `llmn.toml`、执行其旧目录自动迁移。
+运行 pnpm --dir web typecheck、pnpm --dir web test、cargo fmt --all -- --check、cargo test -p tauri-frontend --locked、cargo clippy -p tauri-frontend --all-targets --locked，以及 scripts/check-boundaries.py、scripts/test_release.py、scripts/test_build_artifacts.py 和 desktop/scripts/prepare-agent.test.mjs。桌面构建使用 Tauri CLI；不以裸 cargo release 代替安装包验收。正式 Agent 发布前 CI/打包必须显式提供实际产物清单，不能伪造 URL、版本或摘要。
 
-连接器不依赖存储、模型或 GUI；Agent 核心不读存储或配置；云端不依赖 Agent、SQLite、模型或客户端。运行 `python scripts/check-boundaries.py` 检查实际依赖。桌面准备脚本只读取指定版本、平台及 SHA-256 的 Agent 产物，服务端只接收指定 Web 包；不得在产物消费脚本中偷偷编译另一部分源码。
-
-新架构优先：历史数据兼容只在迁移边界处理，不恢复旧宿主或复制业务规则。当前源码仍同仓；实际拆 Git 历史与新仓创建属于[拆仓计划](docs/project/repository-split-plan.md)后续批次。
-
-## 必须维持的行为
-
-### 模型、配置与凭据
-
-- 模型选择、provider、协议和 reasoning effort 在 Agent 的配置边界严格校验，不静默换模型、丢图或退回模拟回答。`ai-client` 统一处理供应商协议和 SSE，不让客户端按品牌拼接请求。
-- 模型 Key 仅在节点保管或引用环境变量，不出现在 CLI 参数、目录响应、云端 DTO、日志和迁移包。桌面仅向执行子进程注入所需凭据，读取目录不注入 Key。
-- 模型、温度和输出额度属于 AI 的管理员配置，使用相同配置快照执行；修改仅影响新运行，不改身份、关系和历史。协议/模型容量和必要输入不足时明确报错，不悄悄裁剪必要材料。
-- 图片能力按精确 provider/model 与已有声明确定 supported/unsupported/unknown；未知可尝试，明确不支持不调用 provider，不根据模型名猜测。声明不能代替实际识图验收。
-- OpenAI 兼容推理字段优先非空 `reasoning_content`，否则 `reasoning`，不重复拼接。
-
-### 会话与恢复
-
-- 登录会话与 SDK 解锁分开；自动解锁默认关闭，原口令手动成功、设备可信且恢复文件已确认后才可开启 30 天。Windows 用当前用户 DPAPI，Web 用 IndexedDB 不可导出的 AES 密钥及封装口令，非 Windows 原生端暂不支持。Web 同一浏览器资料可使用该密钥，不承诺抵御本机资料持有人；本机到期由应用检查，不称为密码学失效。不得由保持登录或自动解锁给新设备建立信任，本批不含生物识别/WebAuthn。
-- 手动锁定先等待草稿保存，暂停自动解锁并关闭 SDK，真正卸载聊天 DOM、订阅与聊天状态；只保留账号及导航位置，独立 Agent 继续运行，恢复入口独立可达。暂停跨刷新和重启，成功手动解锁后恢复；退出清理自动材料但不删除 SDK 库。异步解锁必须复核当前会话、服务器、账号及设备，迟到结果不能绕过退出或锁定。
-- 本机 SDK 密钥投递使用官方 MSC4186 sync 接口保留未知 OTK/fallback 状态；没有云端计数不能当成 0，也不能推进云端游标。真实云端 sync 明确返回库存 0 时仍须正常补库，不以关闭补库或忽略真实计数掩盖本机重复上传。
-- 持久状态先成功落盘，再替换内存或显示已保存；失败上抛。节点目录按 OS 锁互斥，控制命令核对实例，不靠任意 PID 终止。
-- 权限、消息修订、来源失效、节点绑定及材料版本在开始与提交边界复核。已开始但结果未知的模型调用不自动重做，重启保留有效片段并显式报告中断或不确定。
-- 当前不开放通用工具执行。角色设定不能授予 Shell/文件权限，移除旧 worker 不代表已提供替代工具系统。
-
-### 联系人屏蔽
-
-- ContactEntry.blocked 与 listed 独立，共用条目版本；实际操作者只能改自己的条目。任一方向屏蔽限制双方私聊新消息，不隐藏历史、不改变共同群的完整历史及正常发言，也不停用 AI 账号。
-- 屏蔽事务同时结束私聊当前交谈、取消运行/排队和双方尚未完成的约定（包括共同群中本人创建的约定）；不影响其他账号约定。发送、执行开始/提交以及约定创建/到期复核屏蔽。解除只响应新消息，不重放；Relationship 版本防止屏蔽前快照迟到启动。
-- 记忆、摘要、原文、已读与置顶保留；HTTP/IPC 共用用例及 contact_changed，界面保留草稿并按后端 directBlocked 禁止发送。移除/重新添加、管理员恢复账号、恢复接话都不能清除屏蔽。
-
-### 消息列表与搜索
-
-- 列表状态按实际操作者与窗口保存，不改变 Conversation/context/participation 版本，不向模型注入已读状态。读取位置使用终态消息的 delivery position，不能用消息 sequence 代替，避免较早开始、较晚完成的 AI 回复漏计。自己的消息、生成中和已撤回消息不计未读；中断片段计一次。v12 升级与显式导入的已有历史默认已读。
-- 已读/手动未读/置顶共用版本化命令、事务事件和回执。只确认服务端返回且属于该窗口的位置，读位置单调；自动确认来自同事务读取的最新页，前台聚焦且滚动在底部才提交。搜索定位、翻历史、后台窗口和管理员只读查看不自动改已读。
-- 正文搜索覆盖当前成员有权访问的全部已保存正文，中文和符号按字面子串、ASCII 英文不区分大小写，按 delivery position 倒序分页；不查 generating/withdrawn、思考或角色内部设定。直接读当前原文，修订/撤回立即生效。定位重查权限并读取目标前后记录，迟到结果不能覆盖新查询或重新显示失效来源。
-
-### GUI 与平台
-
-- React 源码只有 `client/web` 一套。Tauri 构建输出到忽略的 `client/desktop/dist`，Web 输出 `client/web/dist`；两者均忽略，不提交派生 bundle。
-- Web 与 Tauri 默认共用 CloudApp；legacy/demo/social-preview 查询参数不切换产品。云端草稿复用 IndexedDB `llm-nest-social-drafts`，按服务器、实际真人账号与窗口保存文字、图片/文件 Blob 及不可变的待确认发送快照；先保存完整命令再发送，恢复后只允许手动重试同一内容与 ID，不自动发送。附件不写入 localStorage，恢复或写入失败需显示错误，不能用空草稿覆盖；事务版本阻止多页面互相覆盖。订阅游标在对应状态应用成功后推进。共用草稿保留原数据库名称和旧 localStorage 迁入逻辑；没有独立的旧本地产品入口。
-- 云端订阅属于调用 WebView，页面重载/销毁释放订阅，不取消独立 AI 运行。主窗口关闭先向已注册页面请求草稿保存确认，等待附件读取和 IndexedDB 写入；确认匹配当前 page/request 后再处理本机 Agent。草稿失败或超时保持窗口可用，退到后台/取消时发送 `desktop-close-retained` 解除页面关闭锁。
-- `client/desktop/src-tauri/gen/schemas` 是 Tauri 自动生成的权限 schema/manifest，按平台重建并由 Git 忽略，不手改或强制提交。实际权限源文件在 `capabilities`，与 `tauri*.conf.json` 一样继续跟踪；不要将整个 `gen` 目录一概忽略。
-- `IS_DESKTOP` 表示 Tauri 运行环境；`CUSTOM_WINDOW_CHROME` 控制 Windows/Linux 的内容内窗口按钮与拖动区域。不要把二者混同，Linux 仍使用桌面 IPC。
-- 自绘窗口控制独立于聊天后端初始化；初始化/历史/设置失败有提示和重试。社交保存与 AI 执行可用性分开。
-- HTTP Headers 使用 Headers.set，避免大小写重复头导致值变成 `1, 1`。修改事件名、字段命名或 DTO 时同步 Web/Tauri 两条链路。
-- 当前云端入口提供消息、通讯录和我的账号，认证链接使用 `#/register|verify|reset`；保留的本地设置路由为 `#/settings/models|appearance|config|about`，不是云端已开放页面。详见 [界面说明](docs/design/frontend.md)，切换时保留当前草稿。
-- Windows 的窗口参数位于 `tauri.windows.conf.json`；公共配置关闭系统标题栏，Windows/Linux 共用内容内控制，社交页不再预留独立标题栏。Tauri 合并配置中的窗口数组会整体替换，调整公共尺寸时检查平台文件。Linux 新窗口布局尚待 GNOME 实机复验，历史系统装饰验收不能证明当前布局。
-- Tauri 公共与 Windows 窗口配置均关闭原生文件拖放拦截（dragDropEnabled=false），由共用 Web File 接收图片拖放，不增加任意路径读取 IPC。
-- 无标题栏界面在侧栏空白与页面头部使用 Tauri 原生拖动区域；`deep` 区域排除交互元素，搜索容器显式禁用。空页面只拖动自身空白，聊天/账号正文保留选字；不要用覆盖内容的拖动层扩大命中范围。双击最大化不能替代连续拖动验收。
-- Windows 保留 `shadow=false`、透明 WebView 合成表面；启动阶段为空白透明 HTML，露出原生 Acrylic，初始化成功或失败后显示不透明界面。其他平台不声称具有 Windows 原生玻璃效果。`Window.setBackgroundColor` 同步原生底色，不能换成会覆盖 WebView 透明背景的 WebviewWindow 同名 API。
-- 普通 Windows 11 窗口由 DWM 绘制圆角/边框；上下占满当前显示器 rcWork（容差 2 物理像素）且未最大化/全屏时，绘制 1 物理像素矩形内描边并关闭原生描边。
-- 不恢复 tao 阴影边距，不使用透明外边距、SetWindowRgn、自建阴影窗口或 CSS 裁切整个应用。窗口状态变化发事件，revision 防止迟到事件覆盖新状态。
-- Windows 10 不支持 DWM 属性时回退细边框；DWM 返回成功不等同于所有机器视觉验收通过。
-- 产品 identifier `com.llmnest.tauri`、安装路径和用户数据位置不得随意更改。默认资料目录仍为 `~/.llmn`，`LLMN_DATA_DIR` 覆盖保持；`LLMN_CONFIG` 仅保留路径提示，云端客户端不加载旧宿主配置。图标变更保持 build.rs 对 icons 的依赖，核对安装器与 EXE 资源。
-- 设置中的路径来自后端启动时冻结的实际路径。打开目录 IPC 只接受 config/data 枚举，不接受任意文件路径或可执行程序；Web 不提供打开服务器文件夹的接口。
-- Windows 安装器显示名与内部标识分离：保留 `packaging/windows` 模板里的旧安装目录和注册项，MSI upgradeCode 固定为 `0dc13402-ce85-5dcb-ba1a-1f629fecd8b8`。模板基于 Tauri CLI 2.11.4，升级 CLI 时对照上游合并；打包后执行 `scripts/verify-windows-branding.ps1`。不要全局替换二进制名或历史安装标识。
-
-## 如何验证改动
-
-先跑受影响模块和相关链路，再按改动范围扩大。不要把编译、模拟 API、真实厂商 API 和桌面安装验收混为一谈。
-
-```bash
-cargo fmt --all -- --check
-cargo test -p <受影响的包> --locked
-cargo clippy -p <受影响的包> --all-targets --locked
-
-pnpm --dir client/web typecheck
-pnpm --dir client/web test
-
-python scripts/check-boundaries.py
-python scripts/test_migrate_local.py
-python scripts/test_build_artifacts.py
-```
-
-- 全量跨平台检查：`cargo test --workspace --locked`。Linux 需要先安装 GTK/WebKitGTK/OpenSSL 开发依赖，见开发指南。
-- 云端测试设置独立 `CLOUD_TEST_DATABASE_URL` 后执行 `cargo test -p cloud-server --locked`；无变量的跳过不计为数据库通过。部署联调用 `scripts/cloud_acceptance.py`，真实地址、测试登录资料与证书保存在忽略目录，具体结果见验证指南。
-- Windows 发布使用 MSVC，不能把 GNU 本地构建当作发布包。桌面必须通过 Tauri CLI 构建，确保嵌入前端；裸 cargo release 可能仍访问开发地址。
-- 旧本地宿主验收脚本已退役。当前链路使用 cloud/agent 验收脚本；v13 迁移使用 `python scripts/test_migrate_local.py` 和独立云端迁移验收，SQL 夹具保留精确内容。
-- 旧 Harness 的真实 API 脚本已退役；新付费验收须另获明确授权，不放入默认 CI，不得从个人配置生成 CI 密钥或发布资源。
-- Windows 图标检查用 `scripts/verify-windows-icons.ps1`。安装退出码 0 不足以证明覆盖正确，核对安装 EXE 和包内容。
-- Linux 构建脚本、容器和发布流程见 `scripts/linux`、`.github/workflows` 与 [发布指南](docs/releases.md)。
-
-## 新增功能的落点
-
-- **协议**：更新 Protocol、build_provider 和对应 convert/SSE；添加协议 fixture，覆盖错误、终止和工具调用。新增 provider 品牌但协议相同时优先改目录/配置。
-- **社交用例**：云端业务在 `server/cloud`，纯上下文与生成策略在 `agent/core`，节点行为在 `agent/node`，通信契约在 `connector`。不以跨层本地调用代替节点协议。
-- **工具**：先明确权限、副作用、超时和进程边界，再注册能力。不得把“支持工具调用”写成“支持任意安全插件”。
-- **GUI 字段**：从云端或节点契约开始，同步客户端类型、失败提示和恢复行为；只修改负责该行为的模块。
-- **文档**：根 README 介绍应用、主要能力和开始方法；详细操作放 `docs/usage.md`，各模块 README 介绍用途、运行方式和阅读入口。使用自然、简洁的表达，少用术语，不写开发日志、架构规则或防御性清单。当前设计放 `docs/design`，已完成/当前安排/待办与候选分别维护在 `docs/project`，检查方法与平台结果放 `docs/validation`，打包专项放 `docs/packaging`；AGENTS 维护修改约束。每批工作完成后更新相关说明与进度，不默认新建批次报告或再开一份 TODO。过时过程记录从目录移除，Git 保留历史；保留的验收结论注明日期与适用版本，不改写成新版本已通过。直接修订当前规则，合并重复内容。文件名使用简短英文小写连字符，README 除外，不再用日期或阶段编号命名常规文档。最终汇报说明本批结果、当前阶段、剩余范围和下一步。
-
-## 发布与证据
-
-- 当前经过用户确认的 Windows 窗口基线是 `91f9a9b`，包含高速缩放、圆角和上下贴边细边框；2026-09-13 用户确认边框验收通过。
-- Linux 的编译/打包结果和 GUI 验收必须分别记录，见 [Linux 验证状态](docs/validation/linux.md)。
-- 发布应校验 Cargo/Tauri 版本与 tag 一致，产物包含校验和。默认流程生成草稿 Release，由维护者检查后公开。
-- 不提交私有配置、测试目录或个人远程主机地址。源码发布前需要明确项目许可证；不要代替维护者虚构许可证、签名或支持承诺。
+前端代码在 web/src/cloud 和 web/src/chat；桌面原生代码在 desktop/src-tauri。修改只落在实际负责模块，维持既有生命周期，不增加重复校验、静默回退或假设性框架。文档直接修订当前说明，平台验证保留日期与版本，最终报告区分本地提交、推送和安装。

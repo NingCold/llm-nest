@@ -101,7 +101,7 @@ python scripts/clean-build-artifacts.py
 python scripts/clean-build-artifacts.py --apply
 ```
 
-脚本只删除 `target` 下默认及常见 Windows、Linux、macOS 目标的 `incremental` 增量缓存，未知或自定义目标目录保留。依赖、构建缓存、可执行文件、安装包和工作资料都保留，避免每次全量重编；下次受影响的 Rust 编译会重新生成增量缓存。有 Cargo/rustc 正在运行，或候选包含链接、junction 时，脚本停止。自身验证使用独立临时目录：`python scripts/test_clean_build_artifacts.py`。
+脚本只删除 `target` 下默认及常见 Windows、Linux、macOS 目标的 `incremental` 增量缓存，未知或自定义目标目录保留。先只读列出完整的文件和目录清单，再逐文件删除；目录由深到浅确认空后逐个删除，不使用递归删除命令或 API。依赖、构建缓存、可执行文件、安装包和工作资料都保留，避免每次全量重编；下次受影响的 Rust 编译会重新生成增量缓存。有 Cargo/rustc 正在运行，或候选包含链接、junction 时，脚本停止。自身验证使用独立临时目录：`python scripts/test_clean_build_artifacts.py`。
 
 清理是每批工作的收尾步骤，不挂在并行构建钩子上。工具策略拒绝时保留预览，交由用户执行，不能写成已经清理。安装包保留当前和上一可回退版，不在多个工作目录重复复制；账号、聊天、密钥和恢复备份按内容核对，不按日期自动删除。
 

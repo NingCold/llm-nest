@@ -8,7 +8,6 @@ import io
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -29,6 +28,8 @@ class CleanupError(RuntimeError):
 class Candidate:
     path: Path
     size: int
+    files: tuple[Path, ...]
+    directories: tuple[Path, ...]
 
 
 def reject_link(path: Path) -> None:
@@ -61,18 +62,26 @@ def ensure_idle() -> None:
         raise CleanupError("Build processes are active: " + ", ".join(processes))
 
 
-def checked_size(path: Path) -> int:
-    """Check the entire candidate before allowing any deletion."""
+def inspect_candidate(path: Path) -> Candidate:
+    """Read and validate a fixed absolute inventory before any deletion."""
     reject_link(path)
     size = 0
+    file_paths = []
+    directory_paths = [path]
     for root, dirs, files in os.walk(path, followlinks=False, onerror=raise_walk_error):
         for name in dirs:
-            reject_link(Path(root) / name)
+            entry = Path(root) / name
+            reject_link(entry)
+            directory_paths.append(entry)
         for name in files:
             entry = Path(root) / name
             reject_link(entry)
             size += entry.stat().st_size
-    return size
+            file_paths.append(entry)
+    return Candidate(
+        path, size, tuple(sorted(file_paths)),
+        tuple(sorted(directory_paths, key=lambda entry: (-len(entry.parts), str(entry)))),
+    )
 
 
 def raise_walk_error(error: OSError) -> None:
@@ -106,7 +115,7 @@ def plan_cleanup(repository: Path, target: Path | None = None) -> list[Candidate
         reject_link(incremental)
         if not incremental.is_dir():
             raise CleanupError(f"Expected an incremental directory: {incremental}")
-        candidates.append(Candidate(incremental, checked_size(incremental)))
+        candidates.append(inspect_candidate(incremental))
     return sorted(candidates, key=lambda candidate: str(candidate.path))
 
 
@@ -115,6 +124,10 @@ def cleanup(repository: Path, apply: bool = False) -> list[Candidate]:
     candidates = plan_cleanup(repository)
     for candidate in candidates:
         print(f"{'REMOVE' if apply else 'PREVIEW'} {candidate.path} ({candidate.size:,} bytes)")
+        for path in candidate.files:
+            print(f"  FILE {path}")
+        for path in candidate.directories:
+            print(f"  DIRECTORY {path}")
     print(f"Total: {sum(candidate.size for candidate in candidates):,} bytes")
     if apply:
         # Recheck the whole plan before the first mutation, then each target.
@@ -123,8 +136,14 @@ def cleanup(repository: Path, apply: bool = False) -> list[Candidate]:
             raise CleanupError("Incremental caches changed after preview; run again when idle")
         for candidate in candidates:
             ensure_idle()
-            checked_size(candidate.path)
-            shutil.rmtree(candidate.path)
+            if inspect_candidate(candidate.path) != candidate:
+                raise CleanupError("Incremental cache changed after preview; run again when idle")
+            for path in candidate.files:
+                path.unlink()
+            for path in candidate.directories:
+                if any(path.iterdir()):
+                    raise CleanupError(f"Directory is not empty: {path}")
+                path.rmdir()
             if candidate.path.exists() or candidate.path.is_symlink():
                 raise CleanupError(f"Removal verification failed: {candidate.path}")
         print(f"Removed and verified {len(candidates)} incremental cache directories.")

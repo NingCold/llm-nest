@@ -19,6 +19,7 @@
 | 了解同机文字私聊、断网续聊和加密安排 | [同机聊天与加密执行计划](project/secure-local-plan.md)；设备、恢复和资料同步规则见[加密方案](design/encryption.md)，实际验证与部署状态见[当前安排](project/current.md) |
 | 了解已做完什么、现在做什么、以后可能做什么 | [已完成](project/completed.md) · [当前安排](project/current.md) · [待办与候选](project/backlog.md) |
 | 查看云端社交、独立 AI 账号与 Agent 接入的分步安排 | [云端社交与 Agent 接入计划](project/cloud-plan.md) |
+| 查看下一轮客户端、服务端与 Agent 的三仓安排 | [拆仓计划](project/repository-split-plan.md) |
 | 检查功能，了解 Windows 和 Linux 的验证情况 | [验证指南](validation/README.md) |
 
 参与代码修改时，也请阅读 [AGENTS.md](../AGENTS.md) 中的项目约定。

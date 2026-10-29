@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript'), React = require('react');
 const jsx = require('react/jsx-runtime');
 const transpile = path => ts.transpileModule(fs.readFileSync(require.resolve(path), 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-const sessionCode = transpile('../src/cloud/App.tsx'), lockCode = transpile('../src/cloud/LockScreen.tsx');
+const sessionCode = transpile('../src/cloud/App.tsx'), lockCode = transpile('../src/cloud/LockScreen.tsx'), apiCode = transpile('../src/cloud/api.ts');
 // A small hook/lifecycle renderer exercises actual AccountSession and LockScreen
 // branches, effects, handlers and child unmounting without adding a browser dependency.
 function renderer() {
@@ -48,6 +48,13 @@ function deferred() { let resolve, reject; const promise = new Promise((yes, no)
 function harness(options = {}) {
   const r = renderer(), events = new EventTarget(), state = { active: options.active ?? false, known: options.known ?? true, paused: false, autoCalls: 0, manualCalls: [], mounts: 0, unmounts: 0, subscriptions: 0, apiCalls: 0 };
   const pending = deferred(), exports = {}, lock = {}, nativeListeners = new Set();
+  const native = payload => { for (const callback of nativeListeners) callback({ payload }); };
+  const invoke = async (name, args) => {
+    if (name === 'cloud_unlock_support') { state.supportCalls = (state.supportCalls ?? 0) + 1; return options.support ?? true; }
+    if (name === 'cloud_set_server') return;
+    if (name === 'cloud_request') { state.nativeRequests = (state.nativeRequests ?? 0) + 1; return options.nativeRequest(args, state, native); }
+    throw new Error(`Unexpected native command: ${name}`);
+  };
   const engine = {
     cryptoDevice: () => state.active ? 'existing-device' : undefined,
     hasCryptoDevice: () => state.known,
@@ -68,11 +75,18 @@ function harness(options = {}) {
   }
   function CryptoDevices() { return jsx.jsxs('section', { 'data-recovery': true, children: ['RECOVERY SETUP ONLY', jsx.jsx('button', { onClick: () => { state.active = true; state.known = true; events.dispatchEvent(new Event('llmn-crypto-change')); }, children: 'complete recovery' })] }); }
   class HttpError extends Error {}
-  const api = { server: 'https://gate.invalid', HttpError, request: async path => { state.apiCalls++; return state.respond ? state.respond(path) : { id: 'human', name: 'Human' }; }, connectServer: async () => ({ id: 'human', name: 'Human' }), invalidate() { state.invalidations = (state.invalidations ?? 0) + 1; } };
-  vm.runInNewContext(sessionCode, { exports, Event, window: events, location: { hash: '' }, require: name => name === 'react' ? r.hooks : name === 'lucide-react' ? { ArrowLeft: icon } : name === '@/lib/desktop' ? { CUSTOM_WINDOW_CHROME: false, IS_DESKTOP: !!options.desktop } : name === '@/hooks/useDesktopReady' ? { useDesktopReady() {} } : name === '@/components/StartupSurface' ? { StartupSurface: () => jsx.jsx('main', { children: 'STARTUP' }) } : name === './LockScreen' ? lock : name === './AuthPage' ? { AuthPage: props => jsx.jsx('main', { 'data-auth': true, 'data-error': props.error, children: 'LOGIN' + props.error }) } : name === './ChatApp' ? { default: ChatApp } : name === './crypto/Devices' ? { CryptoDevices } : name === './crypto/engine' ? engine : name === './crypto/auto-unlock' ? automatic : name === './api' ? api : name === '@tauri-apps/api/core' ? { invoke: async () => true } : name === '@tauri-apps/api/event' ? { listen: async (name, callback) => { assert.equal(name, 'cloud-auth-lost'); nativeListeners.add(callback); return () => nativeListeners.delete(callback); } } : name.endsWith('.css') ? {} : require(name) });
+  let api = { server: 'https://gate.invalid', HttpError, request: async path => { state.apiCalls++; return state.respond ? state.respond(path) : { id: 'human', name: 'Human' }; }, connectServer: async () => ({ id: 'human', name: 'Human' }), invalidate() { state.invalidations = (state.invalidations ?? 0) + 1; } };
+  if (options.realApi) {
+    api = {};
+    vm.runInNewContext(apiCode, { exports:api, Event, URL, window:events, localStorage:{getItem:()=> 'https://gate.invalid',setItem(){}}, require:name=>name==='@/lib/desktop'?{IS_DESKTOP:true}:name==='@tauri-apps/api/core'?{invoke,Channel:class {}}:require(name) });
+    const invalidate = api.invalidate;
+    api.invalidate = () => { state.invalidations = (state.invalidations ?? 0) + 1; invalidate(); };
+  }
+  function AuthPage(props) { state.authProps = props; return jsx.jsx('main', { 'data-auth': true, 'data-error': props.error, children: 'LOGIN' + props.error }); }
+  vm.runInNewContext(sessionCode, { exports, Event, window: events, location: { hash: '' }, FormData:class {constructor(form){this.fields=form.fields;}entries(){return Object.entries(this.fields);}get(key){return this.fields[key];}}, require: name => name === 'react' ? r.hooks : name === 'lucide-react' ? { ArrowLeft: icon } : name === '@/lib/desktop' ? { CUSTOM_WINDOW_CHROME: false, IS_DESKTOP: !!options.desktop } : name === '@/hooks/useDesktopReady' ? { useDesktopReady() {} } : name === '@/components/StartupSurface' ? { StartupSurface: () => jsx.jsx('main', { children: 'STARTUP' }) } : name === './LockScreen' ? lock : name === './AuthPage' ? { AuthPage } : name === './ChatApp' ? { default: ChatApp } : name === './crypto/Devices' ? { CryptoDevices } : name === './crypto/engine' ? engine : name === './crypto/auto-unlock' ? automatic : name === './api' ? api : name === '@tauri-apps/api/core' ? { invoke } : name === '@tauri-apps/api/event' ? { listen: async (name, callback) => { assert.equal(name, 'cloud-auth-lost'); nativeListeners.add(callback); return () => nativeListeners.delete(callback); } } : name.endsWith('.css') ? {} : require(name) });
   let logouts = 0;
   r.mount(options.cloud ? exports.default : exports.AccountSession, options.cloud ? {} : { account: { id: 'human', name: 'Human' }, onLogout: async () => { logouts++; }, onEndSession() {} }, options.strict);
-  return { r, state, pending, native(payload) { for (const callback of nativeListeners) callback({ payload }); }, get logouts() { return logouts; } };
+  return { r, state, pending, native, get logouts() { return logouts; } };
 }
 async function manual(h, value) {
   const input = nodes(h.r.tree).find(node => node.type === 'input' && node.props.type === 'password');
@@ -127,6 +141,39 @@ async function manual(h, value) {
   assert.match(text(failed.r.tree), /auto material expired/); assert.equal(failed.state.mounts, 0); failed.r.unmount();
   const startup = harness({ cloud: true, strict: true }); await startup.r.flush();
   assert.equal(startup.state.apiCalls, 1, 'StrictMode initial authentication is not submitted twice'); startup.r.unmount();
+  const signedOut = harness({ cloud:true,desktop:true,strict:true,realApi:true,nativeRequest:async(args,state,emit)=>{
+    assert.ok(['/api/me','/api/auth/login'].includes(args.path));
+    emit({server:'https://gate.invalid',accountId:null,message:null});
+    return {status:401,body:JSON.stringify({code:'unauthorized',message:'unauthorized'})};
+  }});
+  await signedOut.r.flush();
+  assert.equal(signedOut.state.authProps.connected,true,'an unsigned /me 401 still confirms the server connection');
+  assert.equal(signedOut.state.authProps.error,'','native auth-lost before the expected 401 does not invalidate the in-flight connection');
+  assert.equal(signedOut.state.invalidations??0,0);
+  assert.equal(signedOut.state.nativeRequests,1,'StrictMode shares the initial connection');
+  assert.equal(signedOut.state.supportCalls,1,'StrictMode shares capability detection');
+  assert.equal(signedOut.state.authProps.rememberSupported,true,'the live StrictMode effect receives the capability result');
+  signedOut.state.authProps.onSubmit({fields:{email:'human@example.invalid',password:'wrong-password',rememberLogin:'on'}});await signedOut.r.flush();
+  assert.match(signedOut.state.authProps.error,/邮箱或密码不正确/,'login 401 retains the useful credential error');
+  assert.doesNotMatch(signedOut.state.authProps.error,/账号已切换/);
+  assert.equal(signedOut.state.invalidations??0,0);
+  signedOut.native({server:'https://gate.invalid',accountId:'expired-owner',message:'无法清理本机保存的认证资料'});await signedOut.r.flush();
+  assert.match(signedOut.state.authProps.error,/无法清理本机保存的认证资料/,'unsigned cleanup failures remain visible without ending a nonexistent session');
+  assert.equal(signedOut.state.invalidations??0,0);signedOut.r.unmount();
+  const capability = deferred();
+  const retry = harness({cloud:true,desktop:true,strict:true,realApi:true,support:capability.promise,nativeRequest:async(args,state,emit)=>{
+    if(state.nativeRequests===1)throw new Error('network unavailable');
+    emit({server:'https://gate.invalid',accountId:null,message:null});
+    return {status:401,body:'{}'};
+  }});
+  await retry.r.flush();
+  assert.equal(retry.state.authProps.connected,false);assert.match(retry.state.authProps.error,/network unavailable/);
+  capability.resolve(true);await retry.r.flush();
+  assert.equal(retry.state.authProps.rememberSupported,true,'capability detection survives a failed connection and StrictMode cleanup');
+  retry.state.authProps.onConnect();await retry.r.flush();
+  assert.equal(retry.state.authProps.connected,true);assert.equal(retry.state.authProps.rememberSupported,true);
+  assert.equal(retry.state.authProps.error,'');assert.equal(retry.state.nativeRequests,2);assert.equal(retry.state.supportCalls,1);
+  retry.r.unmount();
   const native = harness({ cloud: true, desktop: true, strict: true, active: true }); await native.r.flush();
   assert.match(text(native.r.tree), /DECRYPTED/);
   native.native({ server: 'https://other.invalid', accountId: 'human', message: 'other server expired' });

@@ -73,7 +73,8 @@ export default function CloudApp() {
   const [mode, setMode] = useState(location.hash.startsWith("#/verify") ? "verify" : location.hash.startsWith("#/reset") ? "reset" : location.hash.startsWith("#/register") ? "register" : "login");
   const [resume, setResume] = useState<{ registrationId: string; resumeToken: string } | null>(null);
   const account = useRef(me); account.current = me;
-  const startup = useRef<Promise<{ account: Account | null; supported: boolean }> | null>(null);
+  const startup = useRef<Promise<Account | null> | null>(null);
+  const support = useRef<Promise<boolean> | null>(null);
   const endSession = () => {
     const id = account.current?.id;
     account.current = null;
@@ -90,20 +91,24 @@ export default function CloudApp() {
     window.addEventListener("cloud-unauthorized", unauthorized);
     window.addEventListener("cloud-crypto-lock", lockCrypto);
     const nativeAuth = IS_DESKTOP ? listen<{ server: string; accountId: string | null; message: string | null }>("cloud-auth-lost", event => {
-      if (!alive || event.payload.server !== server || (event.payload.accountId && event.payload.accountId !== account.current?.id)) return;
-      endSession();
+      const current = account.current;
+      if (!alive || event.payload.server !== server || (current && event.payload.accountId && event.payload.accountId !== current.id)) return;
+      if (current) endSession();
       if (event.payload.message) setError(event.payload.message);
     }) : undefined;
     void nativeAuth?.catch(e => { if (alive) setError(message(e)); });
+    support.current ??= IS_DESKTOP ? invoke<boolean>("cloud_unlock_support") : Promise.resolve(true);
+    void support.current.then(value => { if (alive) setRememberSupported(value); })
+      .catch(e => { if (alive) setError(message(e)); });
     setConnecting(IS_DESKTOP && !!server);
     startup.current ??= (async () => {
-      if (IS_DESKTOP) return { supported: await invoke<boolean>("cloud_unlock_support"), account: server ? await connectServer<Account>(server) : null };
-      try { return { supported: true, account: await request<Account>("/me") }; }
-      catch (e) { if (e instanceof HttpError && e.status === 401) return { supported: true, account: null }; throw e; }
+      if (IS_DESKTOP) return server ? connectServer<Account>(server) : null;
+      try { return await request<Account>("/me"); }
+      catch (e) { if (e instanceof HttpError && e.status === 401) return null; throw e; }
     })();
     void startup.current.then(value => {
       if (!alive) return;
-      setRememberSupported(value.supported); setMe(value.account); setConnected(!IS_DESKTOP || !!server);
+      setMe(value); setConnected(!IS_DESKTOP || !!server);
     }).catch(e => { if (alive) setError(message(e)); })
       .finally(() => { if (alive) { setConnecting(false); setReady(true); } });
     return () => {

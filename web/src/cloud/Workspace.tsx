@@ -1076,8 +1076,8 @@ export function Workspace(p: Props) {
                     </IconButton>
                   </header>
                   {p.snapshot?.requireEncryption && !conversation.encryption && !conversation.readOnly && <div className="cloud-chat-status" role="status"><span>开启端到端加密后即可发送</span><button className="text-button" onClick={() => setDetails(true)}>设置加密</button></div>}
-                  {p.localSelected && (!p.localChat || p.localChat.syncState !== "synced" || p.localChat.error || p.localChat.hasMore) && <div className={`cloud-chat-status${p.localChat?.syncState === "conflict" ? " has-conflict" : ""}`} role="status">
-                    <span>{!p.localChat ? "本机连接中断 · 发送仍使用本机" : p.localChat.syncState === "conflict" ? "云端同步冲突 · 本机记录已保留" : p.localChat.syncState !== "synced" ? "本机记录待同步云端" : p.localChat.error ? "本机连接需要处理" : "仅显示本机缓存历史"}</span>
+                  {p.localSelected && (p.localUnavailable || !p.localChat || p.localChat.syncState !== "synced" || p.localChat.error || p.localChat.hasMore) && <div className={`cloud-chat-status${p.localChat?.syncState === "conflict" ? " has-conflict" : ""}`} role="status">
+                    <span>{p.localUnavailable || !p.localChat ? "本机 Agent 未连接 · 发送仍使用本机" : p.localChat.syncState === "conflict" ? "云端同步冲突 · 本机记录已保留" : p.localChat.syncState !== "synced" ? "本机记录待同步云端" : p.localChat.error ? "本机连接需要处理" : "仅显示本机缓存历史"}</span>
                     <button className="text-button" onClick={() => setDetails(true)}>查看详情</button>
                   </div>}
                   {located && (
@@ -1114,7 +1114,8 @@ export function Workspace(p: Props) {
                         加载更早的消息
                       </button>
                     )}
-                    {!p.page ? (
+                    {p.historyError && <div className="social-error" role="alert"><span>{p.historyError}</span><button className="text-button" onClick={() => void p.act(() => p.history())}>重试读取聊天记录</button></div>}
+                    {!p.page && p.historyError ? null : !p.page ? (
                       <div className="list-empty">正在读取聊天记录…</div>
                     ) : !p.page.messages.length ? (
                       <div className="conversation-start">

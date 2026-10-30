@@ -368,7 +368,12 @@ html = render({ ...encryptedProps, localChat: { ...localChat, syncState: "confli
 assert.match(html, /云端同步冲突 · 本机记录已保留/);
 assert.match(html, /查看详情/);
 html = render({ ...encryptedProps, localChat: undefined });
-assert.match(html, /本机连接中断 · 发送仍使用本机/);
+assert.match(html, /本机 Agent 未连接 · 发送仍使用本机/);
+html = render({ ...encryptedProps, localChat: undefined, localUnavailable: true, page: null, historyError: '云端暂不可用' });
+assert.equal((html.match(/本机 Agent 未连接 · 发送仍使用本机/g) || []).length, 1, 'offline history uses one concise connection banner');
+assert.doesNotMatch(html, /当前显示云端已同步记录|正在读取聊天记录/);
+assert.match(html, /云端暂不可用/);
+assert.match(html, /重试读取聊天记录/);
 html = render({ snapshot: { ...p.snapshot, requireEncryption: true } });
 assert.match(html, /开启端到端加密后即可发送/);
 assert.match(html, /设置加密/);

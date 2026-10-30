@@ -20,6 +20,8 @@ flowchart LR
 
 云端负责账号、关系、消息、社交权限、发言任务与同步；Agent 负责意识资料、模型调用、调用预算和凭据。加密聊天和 AI 资料由授权端加解密，云端保存密文；未启用的窗口继续沿用明文路径，旧历史不自动转换。加密资料可离线修改后同步，界面区分保存与节点应用；未加密管理仍在线转发。桌面可通过私有本机通道与同机 Agent 聊天，恢复联网后核对权限并同步已有结果。具体边界见[同机与加密计划](../project/secure-local-plan.md)。
 
+聊天记录的读取不依赖对方或其 Agent 在线。同机发送开启后，本机 Agent 停止也能读取云端已同步的记录；尚未同步的记录仍需节点恢复。读取来源不改变发送选择。
+
 云端触发的模型运行先取得云端持久开始确认；同机离线运行保存独立本机执行记录，补传不补造云端确认。结果不明的已开始调用不自动重做。旧数据迁移先备份、预览和映射，保留原库；已失效或无权读取的摘要不会变成有效记忆。
 
 数据与迁移见[存储设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/storage.md)，任务交接见[执行设计](https://github.com/NingCold/llm-nest-agent/blob/main/docs/design/execution.md)，协议见[API 设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/api.md)，预算归属见[参与设计](https://github.com/NingCold/llm-nest-server/blob/main/docs/design/participation.md)。三仓历史提取与独立构建属于拆仓计划第二批，当前仍在同一仓库中。

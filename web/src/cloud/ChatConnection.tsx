@@ -7,6 +7,8 @@ export interface ChatConnectionProps {
   enableEncryption?: () => Promise<void>;
   localChat?: LocalView;
   localSelected?: boolean;
+  localUnavailable?: boolean;
+  historyError?: string;
   prepareLocal?: () => Promise<void>;
   syncLocal?: () => Promise<void>;
   stopLocal?: () => Promise<void>;
@@ -53,6 +55,7 @@ export function ChatConnectionDetails(p: ChatConnectionProps & {
       <h3>同机私聊</h3>
       {p.localSelected ? <>
         <p role="status">{localConnectionLabel(p.localChat)}{p.localChat?.running ? " · 本机正在回复" : ""}</p>
+        {p.localUnavailable && <p role="status">Agent 离线时可读取云端已同步记录。未同步记录需 Agent 恢复后读取；已加载的本机消息仍保留。</p>}
         <p>发送使用本机 Agent，不会自动改发云端。断开云端后仍可在本机保存，重连核对权限和来源后再同步。</p>
         {!p.localChat ? <button className="social-button secondary" onClick={() => void p.act(p.reconnect)}>重新连接本机</button> : <>
           <p>{conversation.encryption ? "支持文字、图片、文件、回复及已预取的群话题来源。" : "未加密的同机私聊暂不支持附件；可先开启端到端加密。"}{p.localChat.hasMore && "当前仅显示节点已缓存的历史。"}</p>

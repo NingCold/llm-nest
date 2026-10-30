@@ -84,23 +84,49 @@ export default function ChatApp(props: ChatAppProps) {
     bottom = useRef(props.location.scrollTop === undefined);
   recordRef.current = record;
   const [localChats, setLocalChats] = useState<Record<string, LocalView>>({});
+  const [localUnavailable, setLocalUnavailable] = useState<Record<string, boolean>>({});
+  const [historyError, setHistoryError] = useState("");
+  const unavailableRef = useRef(localUnavailable);
+  unavailableRef.current = localUnavailable;
+  const markLocalUnavailable = (id: string, unavailable: boolean) => {
+    unavailableRef.current = { ...unavailableRef.current, [id]: unavailable };
+    setLocalUnavailable(unavailableRef.current);
+  };
+  const localPages = useRef<Record<string, Page>>({});
+  // A recovered local page supersedes cloud reads started before that recovery.
+  const localPageRevision = useRef(0);
   const localRef = useRef(localChats);
   localRef.current = localChats;
   const localRouteKey = (id: string) => `llmn-local-chat-route:${JSON.stringify([ownerRef.current, id])}`;
   const savedLocal = (id: string) => IS_DESKTOP && window.localStorage?.getItem(localRouteKey(id)) === "local";
-  const acceptLocal = (data: LocalView, expectedEpoch = epoch.current) => {
+  const acceptLocal = async (data: LocalView, expectedEpoch = epoch.current, expectedView = view.current, onlyAtBottom = false) => {
     if (expectedEpoch !== epoch.current || ownerRef.current !== `${server}/${data.human.id}`) return;
     localRef.current = { ...localRef.current, [data.conversation.id]: data };
     setLocalChats(localRef.current);
-    if (activeRef.current === data.conversation.id) {
-      const page = localPage(data);
-      if (page.messages.some(m => m.sealed) || snapshotRef.current?.conversations.some(c => c.id === data.conversation.id && c.encryption)) void receiveLocalKeys(data.ai.id, data.keyMessages ?? []).then(() => projectPage(page, snapshotRef.current?.conversations.find(c => c.id === data.conversation.id))).then(value => { if (expectedEpoch === epoch.current && activeRef.current === data.conversation.id) setPage(value); }).catch(report);
-      else setPage(page);
+    if (activeRef.current === data.conversation.id && expectedView === view.current && (!onlyAtBottom || bottom.current)) {
+      const raw = localPage(data);
+      const conversation = snapshotRef.current?.conversations.find(c => c.id === data.conversation.id);
+      let projected = raw;
+      if (raw.messages.some(m => m.sealed) || conversation?.encryption) {
+        await receiveLocalKeys(data.ai.id, data.keyMessages ?? []);
+        projected = await projectPage(raw, conversation);
+      }
+      if (expectedEpoch === epoch.current && expectedView === view.current && activeRef.current === data.conversation.id && (!onlyAtBottom || bottom.current)) {
+        localPageRevision.current++;
+        localPages.current[data.conversation.id] = projected;
+        markLocalUnavailable(data.conversation.id, false);
+        setHistoryError("");
+        setPage(projected);
+      }
     }
   };
-  const loadLocal = async (id: string) => {
-    const e = epoch.current;
-    acceptLocal(await localView(id), e);
+  const loadLocal = async (id: string, onlyAtBottom = false) => {
+    const e = epoch.current, v = view.current, revision = localPageRevision.current;
+    let data: LocalView;
+    try { data = await localView(id); }
+    catch { if (e === epoch.current && v === view.current && revision === localPageRevision.current) markLocalUnavailable(id, true); return false; }
+    await acceptLocal(data, e, v, onlyAtBottom);
+    return true;
   };
   pageRef.current = page;
   snapshotRef.current = snapshot;
@@ -153,33 +179,50 @@ export default function ChatApp(props: ChatAppProps) {
     const conversation = snapshotRef.current?.conversations.find(c => c.id === id);
     return data.messages?.some(m => m.sealed) || conversation?.encryption ? projectPage(data, conversation) : data;
   };
-  const history = async (id: string, older = false) => {
-    if (localRef.current[id] || savedLocal(id)) { await loadLocal(id); return; }
-    const e = epoch.current,
-      v = view.current;
-    const data = await requestPage(
-      `/chat/conversations/${id}/messages${older && page?.messages.length ? `?before=${page.messages[0].position}` : ""}`,
-    );
-    if (e === epoch.current && v === view.current && id === activeRef.current)
-      setPage((old) =>
-        older && old
-          ? { ...data, messages: [...data.messages, ...old.messages] }
-          : data,
-      );
+  const retainUnsynced = (data: Page, previous: Page | null): Page => {
+    const ids = new Set(data.messages.map(m => m.id));
+    return { ...data, messages: [...data.messages, ...(previous?.messages.filter(m => m.local && !m.local.synced && !ids.has(m.id)) ?? [])] };
   };
-  const syncHistory = async () => {
+  const history = async (id: string, older = false, cloudOnly = false) => {
+    if (older) bottom.current = false;
+    const e = epoch.current, v = view.current, revision = localPageRevision.current;
+    const current = () => e === epoch.current && v === view.current && id === activeRef.current && revision === localPageRevision.current;
+    if (!older && !cloudOnly && (localRef.current[id] || savedLocal(id))) {
+      try { if (await loadLocal(id)) return; }
+      catch (error) { if (current()) setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`); return; }
+      if (!current()) return;
+    }
+    try {
+      const previous = pageRef.current;
+      const first = previous?.messages.find(m => !m.local || m.local.synced);
+      const data = await requestPage(`/chat/conversations/${id}/messages${older && first ? `?before=${first.position}` : ""}`);
+      if (current()) {
+        setHistoryError("");
+        setPage(old => retainUnsynced(retainUnsynced(older && old ? { ...data, messages: [...data.messages, ...old.messages] } : data, old), localPages.current[id] ?? null));
+      }
+    } catch (error) {
+      if (current()) setHistoryError(`聊天记录读取失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const syncHistoryRead = async () => {
     const id = activeRef.current,
       old = pageRef.current,
       e = epoch.current,
-      v = view.current;
-    if (localRef.current[id] || savedLocal(id)) { await loadLocal(id); return; }
-    if (!id || !old) return;
-    if (!old.messages.length) {
-      await history(id);
+      v = view.current,
+      revision = localPageRevision.current;
+    if ((localRef.current[id] || savedLocal(id)) && !unavailableRef.current[id] && bottom.current) {
+      if (await loadLocal(id, true)) return;
+      if (e !== epoch.current || v !== view.current) return;
+    }
+    if (!id) return;
+    if (!old) { await history(id, false, true); return; }
+    const syncedMessages = old.messages.filter(m => !m.local || m.local.synced);
+    if (!syncedMessages.length) {
+      await history(id, false, true);
       return;
     }
-    const first = BigInt(old.messages[0].position),
-      last = BigInt(old.messages[old.messages.length - 1].position);
+    const first = BigInt(syncedMessages[0].position),
+      last = BigInt(syncedMessages[syncedMessages.length - 1].position);
     let before = bottom.current ? "" : String(last + 1n),
       messages: Message[] = [],
       latestPosition = old.latestPosition,
@@ -199,12 +242,19 @@ export default function ChatApp(props: ChatAppProps) {
         break;
       before = data.messages[0].position;
     } while (true);
-    if (e === epoch.current && v === view.current && id === activeRef.current)
-      setPage({
+    if (e === epoch.current && v === view.current && id === activeRef.current && revision === localPageRevision.current) {
+      setHistoryError("");
+      setPage(previous => retainUnsynced({
         messages: messages.filter((m) => BigInt(m.position) >= first),
         latestPosition,
         hasMore,
-      });
+      }, previous));
+    }
+  };
+  const syncHistory = async () => {
+    const e = epoch.current, v = view.current, revision = localPageRevision.current;
+    try { await syncHistoryRead(); }
+    catch (error) { if (e === epoch.current && v === view.current && revision === localPageRevision.current) setHistoryError(`聊天记录读取失败：${error instanceof Error ? error.message : String(error)}`); }
   };
   useEffect(() => {
     if (!me) return;
@@ -227,7 +277,22 @@ export default function ChatApp(props: ChatAppProps) {
     const timer = setInterval(() => {
       if (polling) return;
       polling = true;
-      void localView(active).then(data => { if (!cancelled) acceptLocal(data, e); }).catch(error => { if (!cancelled && e === epoch.current) report(error); }).finally(() => { polling = false; });
+      const v = view.current, revision = localPageRevision.current;
+      void (async () => {
+        let data: LocalView;
+        try { data = await localView(active); }
+        catch {
+          if (!cancelled && e === epoch.current && v === view.current && revision === localPageRevision.current && !unavailableRef.current[active]) {
+            markLocalUnavailable(active, true);
+            void history(active, false, true);
+          }
+          return;
+        }
+        if (!cancelled && bottom.current) {
+          try { await acceptLocal(data, e, v, true); }
+          catch (error) { if (e === epoch.current && v === view.current) setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`); }
+        }
+      })().finally(() => { polling = false; });
     }, 500);
     return () => { cancelled = true; clearInterval(timer); };
   }, [me?.id, active, !!localChats[active], savedLocal(active)]);
@@ -248,6 +313,7 @@ export default function ChatApp(props: ChatAppProps) {
   useEffect(() => {
     view.current++;
     setPage(null);
+    setHistoryError("");
     setEditing(null);
     setDraftReady(false);
     setRecord(blank());
@@ -261,7 +327,7 @@ export default function ChatApp(props: ChatAppProps) {
       setDraftReady(true);
       if (loaded[active]?.pending?.route === "local") {
         window.localStorage?.setItem(localRouteKey(active), "local");
-        await loadLocal(active);
+        await history(active);
         return;
       }
       const target = located.current;
@@ -450,7 +516,11 @@ export default function ChatApp(props: ChatAppProps) {
             if (!pending.sealed && (pending.images?.length || pending.files?.length)) throw new HttpError(422, "同机附件需要先启用端到端加密");
             const data = await sendLocal(id, pending.requestId, pending.sealed ? "" : pending.text, pending.sealed, pending.messageId, pending.keyMessages, { encryptedAttachments: pending.encryptedAttachments, replyTo: pending.replyTo, reference: pending.reference?.selection, expectedConversationRevision: pending.expectedConversationRevision });
             if (e !== epoch.current) return;
-            acceptLocal(data, e);
+            try { await acceptLocal(data, e, v); }
+            catch (error) {
+              if (e === epoch.current && v === view.current && activeRef.current === id)
+                setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`);
+            }
           } else await request(`/chat/conversations/${id}/messages`, "POST", {
             requestId: pending.requestId,
             ...(pending.sealed ? { messageId: pending.messageId, sealed: pending.sealed, text: "", encryptedAttachments: pending.encryptedAttachments, expectedConversationRevision: pending.expectedConversationRevision } : { text: pending.text }),
@@ -478,7 +548,7 @@ export default function ChatApp(props: ChatAppProps) {
         if (v === view.current && activeRef.current === id)
           await save({ draft: emptyDraft<DraftReference>(), pending: null });
         else await db.save(owner, id, { draft: emptyDraft<DraftReference>(), pending: null });
-        await history(id);
+        if (pending.route !== "local") await history(id);
         if (!localRef.current[id]) await refresh();
       } finally {
         setBusy(false);
@@ -724,6 +794,8 @@ export default function ChatApp(props: ChatAppProps) {
       refresh={refresh}
       enableEncryption={async () => { const target = snapshotRef.current?.conversations.find(c => c.id === active); if (target) { await enableEncryption(target, me!.id); await refresh(); } }}
       localChat={localChats[active]}
+      localUnavailable={!!localUnavailable[active]}
+      historyError={historyError}
       cryptoUnlocked={!!cryptoDevice(me.id)}
       localSelected={!!localChats[active] || savedLocal(active)}
       prepareLocal={IS_DESKTOP ? async () => {
@@ -734,10 +806,10 @@ export default function ChatApp(props: ChatAppProps) {
         const data = await prepareLocal(active, target.peer.id);
         if (e !== epoch.current) return;
         window.localStorage.setItem(key, "local");
-        acceptLocal(data, e);
+        await acceptLocal(data, e);
       } : undefined}
-      syncLocal={async () => { const e = epoch.current; acceptLocal(await syncLocal(active), e); }}
-      stopLocal={async () => { const e = epoch.current; acceptLocal(await stopLocal(active), e); }}
+      syncLocal={async () => { const e = epoch.current; await acceptLocal(await syncLocal(active), e); }}
+      stopLocal={async () => { const e = epoch.current; await acceptLocal(await stopLocal(active), e); }}
       closeLocal={async () => {
         if (recordRef.current.pending || localRef.current[active]?.running || localRef.current[active]?.syncState !== "synced")
           throw new Error("请先完成本机回复并同步云端，再返回云端发送");

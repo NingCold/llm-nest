@@ -22,7 +22,7 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "react") return hooks;
       if (name === "./api") return api;
       if (name === "./local-api") return {
-        sendLocal: async (id, requestId, text, sealed, messageId, keyMessages, options) => { calls.push({ local: true, id, requestId, text, sealed, messageId, keyMessages, options }); throw new Error("local acknowledgement lost"); },
+        sendLocal: async (id, requestId, text, sealed, messageId, keyMessages, options) => { calls.push({ local: true, id, requestId, text, sealed, messageId, keyMessages, options }); if (api.sendLocalRespond) return api.sendLocalRespond(); throw new Error("local acknowledgement lost"); },
         syncLocal: async () => api.localRespond(),
         localPage: data => ({ messages: data.messages, hasMore: false, latestPosition: "0" }),
       };
@@ -30,9 +30,9 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "./Consciousness") return { clearConsciousnessCommands() {} };
       if (name === "./AiConfiguration") return { clearAiConfigurationCommands() {} };
       if (name === "./Participation") return { clearParticipationCommands() {} };
-      if (name === "./crypto/engine") return { lockCrypto() {}, cryptoDevice: () => undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+      if (name === "./crypto/engine") return { receiveLocalKeys: async () => { if (api.receiveLocalKeys) await api.receiveLocalKeys(); }, lockCrypto() {}, cryptoDevice: () => undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
       if (name === "./crypto/attachments") return { prepareAttachments: (images = [], files = []) => ({ descriptors: [...images, ...files].map((a, index) => ({ index, kind: "file", mime: a.mime, byteLength: 1, mediaEncryptionInfo: "sdk-secret" })), encryptedAttachments: [...images, ...files].map((a, index) => ({ index, data: "cipher-only" })) }) };
-      if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => p, projectSnapshot: async s => s };
+      if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => api.projectPage ? api.projectPage(p) : p, projectSnapshot: async s => s };
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
       if (name === "@tauri-apps/api/core") return { invoke: async () => {} };
@@ -184,6 +184,17 @@ async function suspendDraftCases() {
   delete conversation.encryption;
   const frozenLocal = { ...localPending, encryptedAttachments: [{ index: 0, data: "frozen-cipher" }], expectedConversationRevision: "7", replyTo: "earlier", messageId: "encrypted-local", sealed: { version: 1, ciphertext: "megolm" }, keyMessages: [{ event_type: "m.room.encrypted", txn_id: "original-olm", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
   const ipc = harness({ draft: { ...frozenLocal, text: "later" }, pending: frozenLocal }, true);
+  for (const failure of ['receiveLocalKeys','projectPage']) {
+    const confirmed = harness({ draft: { ...frozenLocal, text: 'already sent' }, pending: frozenLocal }, true);
+    confirmed.api.sendLocalRespond = async () => ({ human: me, ai: { id: 'ai-a' }, conversation: { id: 'group' }, messages: [{ id: 'confirmed', position: '11', attachments: [], sealed: frozenLocal.sealed }] });
+    confirmed.api[failure] = async () => { throw new Error(`${failure} failed`); };
+    await confirmed.render().send();
+    assert.equal(confirmed.render().record.pending, null, 'confirmed native send clears pending even when local decryption fails');
+    assert.equal(confirmed.saves.at(-1).next.pending, null, 'confirmed result is persisted');
+    assert.equal(confirmed.render().record.draft.text, '');
+    assert.match(confirmed.render().historyError, /本机聊天记录解密失败/);
+    assert.equal(confirmed.calls.filter(c => c.local).length, 1);
+  }
   await ipc.render().send();
   await ipc.render().send();
   assert.deepEqual(ipc.calls[0], ipc.calls[1], "lost IPC ack retries frozen Megolm and Olm key package together");

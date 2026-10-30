@@ -11,19 +11,40 @@
 ```bash
 python scripts/check-boundaries.py
 cargo fmt --all -- --check
-cargo test -p <受影响的包> --locked
-cargo clippy -p <受影响的包> --all-targets --locked
+cargo test -p tauri-frontend --locked
+cargo clippy -p tauri-frontend --all-targets --locked
 pnpm --dir web typecheck
 pnpm --dir web test
-python scripts/test_migrate_local.py
 python scripts/test_build_artifacts.py
-node --test desktop/scripts/prepare-agent.test.mjs
+node --test desktop/scripts/prepare-agent.test.mjs scripts/web-notices.test.cjs
 python scripts/test_release.py
 ```
 
 全量 Rust 检查用 `cargo test --workspace --locked`。Linux 先安装开发依赖，Windows 发布使用 MSVC；桌面须经 Tauri CLI 构建以嵌入生产前端，详见[发布指南](../releases.md)。上述是可执行入口，不表示每次文档更新都重新运行。
 
-迁移测试使用保留的 v13 SQL 夹具，产物测试检查固定版本、摘要和最小服务端上下文。云端和节点联调使用下文专用脚本。编译不证明安装通过，模拟模型不证明真实模型能力，自动输入中文不证明真实输入法候选正常。
+客户端产物测试检查固定版本、摘要和随包许可材料。v13 迁移与最小服务端上下文测试由[服务端仓](https://github.com/NingCold/llm-nest-server)维护，节点检查由[Agent 仓](https://github.com/NingCold/llm-nest-agent)维护；下文的旧批次脚本名称按当时路径保留。编译不证明安装通过，模拟模型不证明真实模型能力，自动输入中文不证明真实输入法候选正常。
+
+## 拆仓第三批验证
+
+2026-10-29 至 2026-10-30，三仓公开源码、Apache-2.0 许可、独立 CI、固定发布产物和试用切换完成。
+
+| 部分 | 发布源码 | 自动验证 |
+| --- | --- | --- |
+| 客户端 `alpha.13` | `fa21a93f` | [Windows/Linux 检查](https://github.com/NingCold/llm-nest/actions/runs/40898303733)、[安装包构建](https://github.com/NingCold/llm-nest/actions/runs/40898304195)通过；后续产物命名修正的 [main 检查](https://github.com/NingCold/llm-nest/actions/runs/40901817241)通过 |
+| Agent `alpha.13` | `a78f729b` | Windows/Linux 检查及[固定产物构建](https://github.com/NingCold/llm-nest-agent/actions/runs/40889208608)通过；构建工作流的路径修复单独记录，未移动源码标签 |
+| 服务端 `alpha.12` | `df7655e6` | [含 PostgreSQL 的检查](https://github.com/NingCold/llm-nest-server/actions/runs/40907487073)、[镜像构建](https://github.com/NingCold/llm-nest-server/actions/runs/40907531098)通过 |
+
+全部发布文件按 GitHub 摘要和包内校验清单核对，Web/原生/Agent 第三方声明及项目 LICENSE、NOTICE 随包提供。Matrix WASM 内部 Rust 依赖、前端依赖和字体许可一并核对；这不代替专业法律或安全审查。
+
+Windows NSIS 已实际从 `alpha.11` 更新为 `alpha.13`，79 个应用及持久 WebView 文件在首次启动前保持一致，安装后的 Agent 版本与原始文件摘要符合发布清单。经现有内网证书入口启动后显示“已连接”，当前停在登录页。MSI 仅完成构建及包检查。Linux deb/AppImage 均通过运行库与内嵌 Agent 校验、Xvfb 隔离启动；这不覆盖 GNOME 人工操作。
+
+服务端在 Debian 13 分别使用全新临时库，以及从既有备份实际还原的独立库验收。两种情况下，邀请注册与验证、登出再登录、唯一私聊、匿名和无关账号隔离、Web/许可证资源、强制拒绝新明文且不落库均通过。旧库副本启动前后 15 张关键表的指纹一致；临时容器、测试库和运行文件已按清单清理。
+
+首次切换识别出 9 份历史 SQL 的换行曾被 Git 规范化，新镜像拒绝启动后已回退。随后从已部署原件恢复全部迁移文件字节，逐份对照数据库的 SQLx 校验值，加入校验清单及换行转换回归；SQL 内容未变。最终服务端 `alpha.12` 切换成功，原 15 张关键表和已开始调用数保持，16 个附件已一致备份，强制加密仍开启。从 Windows 使用原测试 CA 访问 HTTPS 健康检查通过。旧镜像及资料备份保留，本轮真实模型调用为 0。
+
+应用与 HTTPS 入口均使用独立部署目录，原代理镜像、TLS 挂载和仅内网开放的端口保持。已清理本轮失败镜像及归档；本机本轮共整理约 2.42 GB 可再生产物，当前和上一安装包、回退镜像与资料备份保留。
+
+最终[兼容组合](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/compatibility.json)记录公开产物、确切提交、摘要和安装范围。服务端 `alpha.11` 失败草稿已撤下，旧 Git 标签未移动；客户端旧失败标签也保留。日常账号重启解锁后的历史验读、干净 Windows、GNOME 人工验收及独立安全审查仍未补齐。
 
 ## 拆仓第二批验证
 
@@ -37,9 +58,9 @@ python scripts/test_release.py
 
 组合验收发现 Windows 调试版 Agent 的 SDK 接收链超过默认主线程栈。最终只为 `llmn-agent` 的 MSVC 程序设置 2 MiB 栈保留空间，实读 PE 为 reserve=2097152、commit=4096；扩大范围的实验改动已撤回。成功密钥查询、上传与 sync 后继续读取资料的真实 SDK 重启回归通过。保留空间与初始提交量的区别见 [Microsoft /STACK 说明](https://learn.microsoft.com/en-us/cpp/build/reference/stack-stack-allocations?view=msvc-170)。
 
-本轮未创建 GitHub 仓、推送、打标签、公开产物、安装客户端或更新内网服务，也未使用真实模型 API、操作日常账号。Linux、干净 Windows、真实客户端重启验读与独立安全审查仍待验。CI/容器工具链固定为 1.99.1，本轮本机结果不替代这些环境的实际验证。
+第二批当时未创建 GitHub 仓、推送、打标签、公开产物、安装客户端或更新内网服务，也未使用真实模型 API、操作日常账号；后续公开仓检查见上面的第三批记录。Linux、干净 Windows、真实客户端重启验读与独立安全审查仍待验。CI/容器工具链固定为 1.99.1，本轮本机结果不替代这些环境的实际验证。
 
-收尾已将客户端正常快进回原仓，Agent 保留原模型目录修改为未提交状态；原仓的远端配置未改动。构建完成后逐项清理约 12.7 GiB Rust 增量缓存及约 485 MiB 已被替代的前端/Agent 产物，保留依赖缓存、最终产物、验证记录和完整 Git 备份。
+收尾已将客户端正常快进回原仓，Agent 当时接收原模型目录修改并保持未提交；第二批未改原仓远端配置。构建完成后逐项清理约 12.7 GiB Rust 增量缓存及约 485 MiB 已被替代的前端/Agent 产物，保留依赖缓存、最终产物、验证记录和完整 Git 备份。
 
 ## 拆仓第一批验证
 

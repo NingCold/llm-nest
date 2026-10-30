@@ -4,7 +4,7 @@
 
 本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。
 
-当前源码版本为 `0.1.1-alpha.11`，本机 Windows 和内网网页已更新，包含紧凑登录页与退出检查提速。服务端 Rust 沿用已部署的 `alpha.10` 二进制。NSIS 已实际覆盖安装，MSI 完成构建及包检查；最小桌面窗口的登录显示、服务器设置、关闭和重开已实测。日常账号重启后的登录、解锁与历史验读仍待试用。验证结果见[验证指南](validation/README.md)和 [Windows 记录](validation/windows.md#登录页退出与存储整理2026-10-29)。
+客户端 [0.1.1-alpha.13](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13) 已公开为 Alpha 预发布，桌面固定附带 Agent `alpha.13`。Windows NSIS 已在本机覆盖安装；MSI 已构建和检查，尚未实际安装。Linux deb 与 AppImage 均通过隔离启动及资源校验。日常账号重启后的解锁验读、干净 Windows 和 GNOME 人工验收仍待补齐，见[验证指南](validation/README.md)。
 
 ## 安装包范围
 
@@ -28,22 +28,22 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 | `desktop/package.json` | `version` |
 | `web/package.json` | `version` |
 
-每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.11`；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
+每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.13`；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
-MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.11`。前三段与应用基础版本一致，第四段是安装器构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
+MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.13`。前三段与应用基础版本一致，第四段与 `alpha.N` 中的 N 一致，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
 
 客户端、服务端和 Agent 分别维护版本，不再要求三个产品同版。修改相应 Cargo 包版本时同步锁文件。客户端版本与发布标签检查：
 
 ```bash
-python scripts/release.py validate --tag v0.1.1-alpha.11
+python scripts/release.py validate --tag v0.1.1-alpha.13
 python scripts/test_release.py
 ```
 
 示例标签替换为实际版本。确认代码、检查和安装包验收完成后，再在待发布提交上打标签并推送：
 
 ```bash
-git tag -a v0.1.1-alpha.11 -m "LLM Nest 0.1.1-alpha.11"
-git push origin v0.1.1-alpha.11
+git tag -a v0.1.1-alpha.13 -m "LLM Nest 0.1.1-alpha.13"
+git push origin v0.1.1-alpha.13
 ```
 
 修改版本、构建安装包、推送标签和公开 Release 是分别执行的操作。已公开版本需要修复时，发布新版本，保留旧标签和资产。
@@ -65,10 +65,10 @@ git push origin v0.1.1-alpha.11
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-$env:LLMN_AGENT_VERSION = "0.1.1-alpha.11"
+$env:LLMN_AGENT_VERSION = "0.1.1-alpha.13"
 $env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
 $env:LLMN_AGENT_MANIFEST = (Resolve-Path target/agent-release-artifact/agent-manifest.json).Path
-$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-release-artifact/llmn-agent-0.1.1-alpha.11-x86_64-pc-windows-msvc.exe).Path
+$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-release-artifact/llmn-agent-0.1.1-alpha.13-x86_64-pc-windows-msvc.exe).Path
 $env:LLMN_AGENT_NOTICES_FILE = "<清单 notices.file 对应文本的绝对路径>"
 $env:CARGO_ABOUT = "<已校验的 cargo-about 0.9.3 可执行文件绝对路径>"
 Push-Location desktop
@@ -129,7 +129,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 ```bash
 pnpm --dir web build
-python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.11 --output /新的web产物目录
+python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.13 --output /新的web产物目录
 ```
 
 将 Web 包及 web-manifest.json 交给独立服务端仓，按[服务端部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)创建构建上下文和镜像。客户端仓不包含服务端准备脚本。保留上一组可回退产物；正式 Agent 下载使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。

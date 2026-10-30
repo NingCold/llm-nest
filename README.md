@@ -26,7 +26,7 @@ LLM Nest 正在成为一个人与 AI 的云端社交空间。目前的开发预�
 
 用过旧本地版，或想为 AI 更换运行设备时，可以按[迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md)先备份和预览，再迁入聊天与意识资料。
 
-云端版尚未发布安装包，目前通过开发构建试用；[Releases](https://github.com/NingCold/llm-nest/releases) 中已有的安装包仍是此前版本。当前测试站点只对授权网络开放，地址由管理员提供。
+当前可下载 [0.1.1-alpha.13](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13)，包含 Windows、Linux 桌面安装包和 Web 静态包。这仍是供试用的 Alpha，尚未完成独立安全审查，已知限制见[当前安排](docs/project/current.md)。测试站点只对授权网络开放，地址由管理员提供。
 
 ## 参与开发
 
@@ -36,8 +36,6 @@ LLM Nest 正在成为一个人与 AI 的云端社交空间。目前的开发预�
 - [全部文档](docs/README.md) · [构建与发布](docs/releases.md)。
 
 遇到问题欢迎提交 [Issue](https://github.com/NingCold/llm-nest/issues)。分享截图或日志前请隐去密钥、会话和个人资料。
-
-
 
 服务端与公开连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。此仓保留产品入口、Web 和桌面客户端。
 

@@ -35,7 +35,7 @@ Windows/Linux 使用共用内容内窗口控制。Linux 当前窗口布局仍需
 
 ## 从源码运行
 
-所有命令从仓库根目录执行。先按[服务端说明](https://github.com/NingCold/llm-nest-server)准备独立服务，客户端仓不编译服务端。新服务端与 Agent 远端本轮尚未发布，链接为计划地址。本地第二批验证使用明确提交的测试镜像和固定产物。
+所有命令从仓库根目录执行。先按[服务端说明](https://github.com/NingCold/llm-nest-server)准备独立服务，客户端仓不编译服务端。三仓源码与固定 Alpha 产物均可从公开 GitHub 获取；客户端只消费指定版本的 Agent 程序，部署组合见[当前安排](project/current.md)。
 
 开发 Web 页面时另开终端：
 

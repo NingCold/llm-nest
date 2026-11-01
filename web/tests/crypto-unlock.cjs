@@ -23,7 +23,15 @@ function fixture({ saved = true, trusted = true } = {}) {
   if (saved) storage.set(key('a'), JSON.stringify({ deviceId: 'local-device', cursor: '0' }));
   const machine = { close() { state.closed++; }, async updateTrackedUsers() {}, async getIdentity() { return { masterKey: '{"keys":{"master":"master"}}', isVerified: () => state.trusted, trustsOurOwnDevice: async () => state.trusted }; }, async crossSigningStatus() { return {}; }, identityKeys: { ed25519: { toBase64: () => 'ed' }, curve25519: { toBase64: () => 'curve' } }, async outgoingRequests() { return state.outgoing ?? []; }, async markRequestAsSent(id) { if (state.markError) throw state.markError; state.outgoing = state.outgoing.filter(request => request.id !== id); }, async receiveSyncChanges() { state.receives++; if (state.queryOnChange && state.syncResponse.device_lists.changed.length) state.outgoing = [{ id: 'query', type: 1, body: '{}' }]; return []; }, async backupRoomKeys() { return state.backup?.promise; } };
   class Id { constructor(value) { this.value = value; } }
-  const sdk = { RequestType: { ToDevice: 3, KeysBackup: 6 }, initAsync: async () => {}, UserId: Id, DeviceId: Id, DeviceLists: Id, DecryptionSettings: Id, TrustRequirement: { CrossSigned: 1 }, OlmMachine: { initialize: async (_, __, ___, pass) => { if (pass !== 'correct') throw new Error('wrong passphrase'); return machine; } } };
+  const sdk = { RequestType: { ToDevice: 3, KeysBackup: 6 }, initAsync: async () => {}, UserId: Id, DeviceId: Id, DeviceLists: Id, DecryptionSettings: Id, TrustRequirement: { CrossSigned: 1 },
+    StoreHandle: { open: async (_, pass, logger) => {
+      if (pass !== 'correct') throw new Error('wrong passphrase');
+      logger.debug('IndexedDbCryptoStore: Opening meta-store private-store-name');
+      logger.debug('IndexedDbCryptoStore: decrypting store cipher');
+      logger.debug('IndexedDbCryptoStore: opening main store', { secret: 'never recorded' });
+      if (state.openGate) await state.openGate.promise;
+      return { free() { state.freed = (state.freed ?? 0) + 1; } };
+    } }, OlmMachine: { initFromStore: async () => { state.initialized = (state.initialized ?? 0) + 1; if (state.machineError) throw state.machineError; return machine; } } };
   const exports = {};
   vm.runInNewContext(source + '\nexports.flushForTest = () => flush(active);', { exports, Error, performance, crypto: webcrypto, TextEncoder, Event, CustomEvent: class extends Event { constructor(name, options) { super(name); this.detail = options.detail; } }, window: { dispatchEvent: event => { events.push(event); target.dispatchEvent(event); }, addEventListener: (...args) => target.addEventListener(...args), removeEventListener: (...args) => target.removeEventListener(...args) }, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, require: name => name === '../api' ? api : name === '@matrix-org/matrix-sdk-crypto-wasm' ? sdk : {} });
   const finish = () => gate.resolve({ next_batch: 'done', to_device: { events: [] }, device_lists: { changed: [], left: [] }, device_one_time_keys_count: {}, device_unused_fallback_key_types: [] });
@@ -43,7 +51,7 @@ function subscribeWarnings(h, reports) {
   assert.ok(start >= 0 && end > start);
   const code = ts.transpileModule(app.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   let cleanup;
-  vm.runInNewContext(code, { useEffect: fn => { cleanup = fn(); }, me: { id: 'a' }, consumeCryptoWarning: h.exports.consumeCryptoWarning, cryptoDevice: h.exports.cryptoDevice, window: h.target, setInterval: () => 1, clearInterval() {}, report: error => reports.push(error.message), Error });
+  vm.runInNewContext(code, { useEffect: fn => { cleanup = fn(); }, me: { id: 'a' }, epoch: { current: 0 }, consumeCryptoWarning: h.exports.consumeCryptoWarning, cryptoDevice: h.exports.cryptoDevice, window: h.target, setInterval: () => 1, clearInterval() {}, report: error => reports.push(error.message), Error });
   return cleanup;
 }
 (async () => {
@@ -55,7 +63,9 @@ function subscribeWarnings(h, reports) {
   assert.equal(trusted.state.receives, 0, 'unlock returns while full sync remains deferred');
   trusted.finish(); await tick();
   assert.equal(trusted.state.receives, 1);
-  assert.deepEqual(trusted.measurements.map(m => m.name.split('.').pop()).sort(), ['backgroundSync', 'deviceRegister', 'deviceStatus', 'sdkImport', 'sdkInit', 'storeOpen', 'trackedUsers', 'unlockReady'].sort());
+  assert.deepEqual(trusted.measurements.map(m => m.name.split('.').pop()).sort(), ['backgroundSync', 'deviceRegister', 'deviceStatus', 'sdkImport', 'sdkInit', 'storeOpen', 'storePrepare', 'storeMetadataRead', 'storeMetadata', 'storeCipher', 'storeDatabase', 'machineLoad', 'trackedUsers', 'unlockReady'].sort());
+  assert.equal(JSON.stringify(trusted.measurements).includes('private-store-name'), false);
+  assert.equal(trusted.state.freed, 1, 'the temporary store handle is released after the machine takes ownership');
   for (const measure of trusted.measurements) { assert.deepEqual(Object.keys(measure).sort(), ['end', 'name', 'start']); assert.ok(measure.end >= measure.start); }
   assert.equal(JSON.parse(trusted.storage.get(trusted.key('a'))).cursor, 'done');
   for (const status of [401, 403]) {
@@ -74,6 +84,15 @@ function subscribeWarnings(h, reports) {
   const wrong = fixture();
   await assert.rejects(wrong.exports.unlockCrypto('a', 'wrong'), /wrong passphrase/);
   assert.equal(wrong.exports.cryptoDevice('a'), undefined); assert.equal(wrong.calls.length, 0);
+  const machineFailure = fixture(); machineFailure.state.machineError = new Error('cannot restore machine');
+  await assert.rejects(machineFailure.exports.unlockCrypto('a', 'correct'), /cannot restore machine/);
+  assert.equal(machineFailure.state.freed, 1); assert.equal(machineFailure.exports.cryptoDevice('a'), undefined);
+  const openingStore = fixture(); openingStore.state.openGate = deferred();
+  const opening = openingStore.exports.unlockCrypto('a', 'correct');
+  while (!openingStore.measurements.some(m => m.name.endsWith('storeCipher'))) await tick();
+  openingStore.exports.lockCrypto(); openingStore.state.openGate.resolve();
+  await assert.rejects(opening, openingStore.exports.CryptoSessionChanged);
+  assert.equal(openingStore.state.freed, 1); assert.equal(openingStore.state.initialized, undefined, 'lock during store opening cannot create a machine');
   const failure = fixture(); await fastUnlock(failure);
   failure.gate.reject(new Error('background unavailable')); await tick();
   assert.equal(failure.events.find(event => event.type === 'llmn-crypto-warning')?.detail, 'background unavailable');

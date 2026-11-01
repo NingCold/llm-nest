@@ -56,6 +56,7 @@ function harness(options = {}) {
     throw new Error(`Unexpected native command: ${name}`);
   };
   const engine = {
+    prewarmCrypto: () => { state.prewarms = (state.prewarms ?? 0) + 1; return () => { state.prewarmCleanups = (state.prewarmCleanups ?? 0) + 1; }; },
     cryptoDevice: () => state.active ? 'existing-device' : undefined,
     hasCryptoDevice: () => state.known,
     lockCrypto: () => { state.active = false; events.dispatchEvent(new Event('llmn-crypto-change')); },
@@ -100,6 +101,7 @@ async function manual(h, value) {
   assert.match(text(h.r.tree), /正在解锁/);
   assert.equal(nodes(h.r.tree).some(node => node.type === 'form'), false, 'manual form never flashes while automatic unlock is pending');
   assert.equal(h.state.mounts, 0, 'chat and subscriptions never initialize in the locked branch');
+  assert.equal(h.state.prewarms, 2, 'StrictMode lock effects can prepare without waiting for automatic unlock');
   assert.equal(text(h.r.tree).includes('DECRYPTED'), false);
   h.pending.resolve(false); await h.r.flush();
   assert.ok(nodes(h.r.tree).some(node => node.type === 'form'));
@@ -109,9 +111,11 @@ async function manual(h, value) {
   assert.equal(nodes(h.r.tree).find(node => node.type === 'input').props.value, '', 'submitted passphrase leaves the controlled field');
   await manual(h, 'correct-local-pass');
   assert.equal(h.state.mounts, 1); assert.equal(h.state.subscriptions, 1);
+  assert.equal(h.state.prewarmCleanups, 2, 'entering chat cancels late prewarm timing without retaining database connections');
   button(h.r.tree, 'navigate group').props.onClick(); await h.r.flush();
   button(h.r.tree, 'lock chat').props.onClick(); await h.r.flush();
   assert.equal(h.state.paused, true);
+  assert.equal(h.state.prewarms, 3, 'manual lock prepares the next unlock without reopening the SDK identity');
   assert.equal(h.state.unmounts, 1); assert.equal(h.state.subscriptions, 0, 'locking actually unmounts chat subscriptions');
   assert.equal(text(h.r.tree).includes('DECRYPTED'), false, 'decrypted tree is removed, rather than visually overlaid');
   assert.ok(nodes(h.r.tree).some(node => node.type === 'form'));

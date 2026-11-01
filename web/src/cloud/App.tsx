@@ -9,7 +9,7 @@ import { AuthPage } from "./AuthPage";
 import { LockScreen } from "./LockScreen";
 import ChatApp, { type ChatLocation } from "./ChatApp";
 import { CryptoDevices } from "./crypto/Devices";
-import { cryptoDevice, hasCryptoDevice, lockCrypto } from "./crypto/engine";
+import { cryptoDevice, hasCryptoDevice, lockCrypto, prewarmCrypto } from "./crypto/engine";
 import { forgetAutoUnlock, pauseAutoUnlock, tryAutoUnlock, unlockManually } from "./crypto/auto-unlock";
 import { request, HttpError, connectServer, server, invalidate } from "./api";
 import type { Account } from "./types";
@@ -29,6 +29,10 @@ export function AccountSession({ account, onLogout, onEndSession }: {
   const [, changed] = useState(0);
   const automatic = useRef<Promise<boolean> | null>(null);
   const position = useRef<ChatLocation>({ active: "", tab: "messages", accountSection: "profile" });
+  const unlocked = !!cryptoDevice(account.id);
+  useEffect(() => {
+    if (!unlocked) return prewarmCrypto(account.id);
+  }, [account.id, unlocked]);
   useEffect(() => {
     let alive = true;
     const update = () => changed(n => n + 1);

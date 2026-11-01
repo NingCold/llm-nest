@@ -66,7 +66,10 @@ export default function ChatApp(props: ChatAppProps) {
     [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string>();
   const epoch = useRef(0),
-    refreshSeq = useRef(0),
+    refreshing = useRef<{ epoch: number; queued: boolean; promise: Promise<string> } | undefined>(undefined),
+    retrySnapshot = useRef(false),
+    retryHistory = useRef(false),
+    readingHistory = useRef<{ epoch: number; view: number; revision: number; queued?: () => Promise<void>; promise: Promise<void> } | undefined>(undefined),
     searchSeq = useRef(0),
     view = useRef(0),
     writes = useRef<Promise<void>>(Promise.resolve()),
@@ -148,30 +151,45 @@ export default function ChatApp(props: ChatAppProps) {
     }
   };
   useEffect(() => () => {
-    epoch.current++; view.current++; searchSeq.current++; refreshSeq.current++;
+    epoch.current++; view.current++; searchSeq.current++;
     clearConsciousnessCommands(); clearAiConfigurationCommands(); clearParticipationCommands();
   }, []);
   useEffect(() => { props.rememberLocation({ active, tab }); }, [active, tab]);
   const refresh = async () => {
-    const e = epoch.current,
-      sequence = ++refreshSeq.current;
-    const raw = await request<Snapshot>("/chat/init");
-    const data = await projectSnapshot(raw);
-    if (e === epoch.current && sequence === refreshSeq.current) {
-      setSnapshot(data);
-      snapshotRef.current = data;
-      setMe(data.self);
-      const selected = activeRef.current;
-      if (selected && !data.conversations.some(c => c.id === selected)) {
-        activeRef.current = "";
-        view.current++;
-        setActive("");
-        setPage(null);
-        setResults([]);
-        setMessageLocation(null);
-      }
+    const e = epoch.current;
+    if (refreshing.current?.epoch === e) {
+      refreshing.current.queued = true;
+      return refreshing.current.promise;
     }
-    return data.cursor;
+    const work = { epoch: e, queued: false, promise: Promise.resolve("") };
+    work.promise = (async () => {
+      let cursor: string;
+      do {
+        work.queued = false;
+        const raw = await request<Snapshot>("/chat/init");
+        const data = await projectSnapshot(raw);
+        cursor = data.cursor;
+        if (e !== epoch.current) break;
+        retrySnapshot.current = false;
+        // Publish this result before handling notifications received during its fetch.
+        setSnapshot(data);
+        snapshotRef.current = data;
+        setMe(data.self);
+        const selected = activeRef.current;
+        if (selected && !data.conversations.some(c => c.id === selected)) {
+          activeRef.current = "";
+          view.current++;
+          setActive("");
+          setPage(null);
+          setResults([]);
+          setMessageLocation(null);
+        }
+      } while (work.queued);
+      return cursor;
+    })().catch(error => { if (e === epoch.current) retrySnapshot.current = true; throw error; })
+      .finally(() => { if (refreshing.current === work) refreshing.current = undefined; });
+    refreshing.current = work;
+    return work.promise;
   };
   const requestPage = async (path: string) => {
     const data = await request<Page>(path);
@@ -183,13 +201,13 @@ export default function ChatApp(props: ChatAppProps) {
     const ids = new Set(data.messages.map(m => m.id));
     return { ...data, messages: [...data.messages, ...(previous?.messages.filter(m => m.local && !m.local.synced && !ids.has(m.id)) ?? [])] };
   };
-  const history = async (id: string, older = false, cloudOnly = false) => {
+  const readHistory = async (id: string, older = false, cloudOnly = false) => {
     if (older) bottom.current = false;
     const e = epoch.current, v = view.current, revision = localPageRevision.current;
     const current = () => e === epoch.current && v === view.current && id === activeRef.current && revision === localPageRevision.current;
     if (!older && !cloudOnly && (localRef.current[id] || savedLocal(id))) {
       try { if (await loadLocal(id)) return; }
-      catch (error) { if (current()) setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`); return; }
+      catch (error) { if (current()) { retryHistory.current = true; setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`); } return; }
       if (!current()) return;
     }
     try {
@@ -201,7 +219,7 @@ export default function ChatApp(props: ChatAppProps) {
         setPage(old => retainUnsynced(retainUnsynced(older && old ? { ...data, messages: [...data.messages, ...old.messages] } : data, old), localPages.current[id] ?? null));
       }
     } catch (error) {
-      if (current()) setHistoryError(`聊天记录读取失败：${error instanceof Error ? error.message : String(error)}`);
+      if (current()) { if (!older) retryHistory.current = true; setHistoryError(`聊天记录读取失败：${error instanceof Error ? error.message : String(error)}`); }
     }
   };
   const syncHistoryRead = async () => {
@@ -215,10 +233,10 @@ export default function ChatApp(props: ChatAppProps) {
       if (e !== epoch.current || v !== view.current) return;
     }
     if (!id) return;
-    if (!old) { await history(id, false, true); return; }
+    if (!old) { await readHistory(id, false, true); return; }
     const syncedMessages = old.messages.filter(m => !m.local || m.local.synced);
     if (!syncedMessages.length) {
-      await history(id, false, true);
+      await readHistory(id, false, true);
       return;
     }
     const first = BigInt(syncedMessages[0].position),
@@ -251,20 +269,47 @@ export default function ChatApp(props: ChatAppProps) {
       }, previous));
     }
   };
-  const syncHistory = async () => {
+  const queueHistory = async (read: () => Promise<void>) => {
     const e = epoch.current, v = view.current, revision = localPageRevision.current;
-    try { await syncHistoryRead(); }
-    catch (error) { if (e === epoch.current && v === view.current && revision === localPageRevision.current) setHistoryError(`聊天记录读取失败：${error instanceof Error ? error.message : String(error)}`); }
+    const previous = readingHistory.current;
+    if (previous?.epoch === e && previous.view === v && previous.revision === revision) {
+      previous.queued = read;
+      return previous.promise;
+    }
+    const work = { epoch: e, view: v, revision, queued: undefined as (() => Promise<void>) | undefined, promise: Promise.resolve() };
+    work.promise = (async () => {
+      let next: (() => Promise<void>) | undefined = read;
+      while (next && e === epoch.current && v === view.current && revision === localPageRevision.current) {
+        work.queued = undefined;
+        retryHistory.current = false;
+        try { await next(); }
+        catch (error) { if (e === epoch.current && v === view.current && revision === localPageRevision.current) { retryHistory.current = true; setHistoryError(`聊天记录读取失败：${error instanceof Error ? error.message : String(error)}`); } }
+        next = work.queued;
+      }
+    })().finally(() => { if (readingHistory.current === work) readingHistory.current = undefined; });
+    readingHistory.current = work;
+    return work.promise;
   };
+  const history = (id: string, older = false, cloudOnly = false) => older ? readHistory(id, true, cloudOnly) : queueHistory(() => readHistory(id, false, cloudOnly));
+  const syncHistory = () => queueHistory(syncHistoryRead);
   useEffect(() => {
     if (!me) return;
     const update = () => {
       if (!cryptoDevice(me.id)) {
         return;
       }
+      retryHistory.current = true;
       void run(async () => { await refresh(); await syncHistory(); });
     };
-    const timer = setInterval(() => { if (cryptoDevice(me.id)) void synchronizeResources(me.id).catch(report); }, 3000);
+    const e = epoch.current;
+    const timer = setInterval(() => {
+      if (cryptoDevice(me.id)) void (async () => {
+        await synchronizeResources(me.id);
+        if (e !== epoch.current) return;
+        if (retrySnapshot.current && !refreshing.current) await refresh();
+        if (retryHistory.current && !readingHistory.current) await syncHistory();
+      })().catch(report);
+    }, 3000);
     const warning = (event: Event) => {
       consumeCryptoWarning(me.id);
       report(new Error((event as CustomEvent<string>).detail));
@@ -307,6 +352,7 @@ export default function ChatApp(props: ChatAppProps) {
     const stop = subscribe(
       snapshot?.cursor || "0",
       async () => {
+        retryHistory.current = true;
         const cursor = await refresh();
         await syncHistory();
         return cursor;
@@ -317,6 +363,7 @@ export default function ChatApp(props: ChatAppProps) {
   }, [me?.id]);
   useEffect(() => {
     view.current++;
+    retryHistory.current = false;
     setPage(null);
     setHistoryError("");
     setEditing(null);

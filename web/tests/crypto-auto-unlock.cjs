@@ -189,7 +189,7 @@ async function sdkVerification() {
   await assert.rejects(exports.unlockCrypto(account, passphrase, false, { generation: exports.cryptoGeneration(), deviceId: missing }), /变化/);
   exports.lockCrypto();
   let current = true, finish, entered = false, closed = 0;
-  selectedSdk = { ...sdk, OlmMachine: { initialize: async () => { entered = true; await new Promise(resolve => { finish = resolve; }); return { close() { closed++; } }; } } };
+  selectedSdk = { ...sdk, OlmMachine: { initFromStore: async () => { entered = true; await new Promise(resolve => { finish = resolve; }); return { close() { closed++; } }; } } };
   const opening = exports.unlockCrypto(account, passphrase, false, { generation: exports.cryptoGeneration(), deviceId, isCurrent: () => current });
   while (!entered) await new Promise(resolve => setImmediate(resolve));
   current = false; finish();
@@ -198,7 +198,7 @@ async function sdkVerification() {
   assert.equal(exports.cryptoDevice(account), undefined);
   let initialized = 0, sdkReady, sdkEntered = false;
   current = true;
-  selectedSdk = { ...sdk, initAsync: async () => { sdkEntered = true; await new Promise(resolve => { sdkReady = resolve; }); }, OlmMachine: { initialize: async () => { initialized++; throw new Error('must not initialize a stale scope'); } } };
+  selectedSdk = { ...sdk, initAsync: async () => { sdkEntered = true; await new Promise(resolve => { sdkReady = resolve; }); }, OlmMachine: { initFromStore: async () => { initialized++; throw new Error('must not initialize a stale scope'); } } };
   const loadingSdk = exports.unlockCrypto(account, passphrase, false, { generation: exports.cryptoGeneration(), deviceId, isCurrent: () => current });
   while (!sdkEntered) await new Promise(resolve => setImmediate(resolve));
   current = false; sdkReady();

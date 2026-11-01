@@ -3,21 +3,22 @@ class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); t
 const me = { id: "me", name: "自己", kind: "human", status: "active" };
 const conversation = { id: "group", kind: "group", revision: "7", directBlocked: false };
 const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
-function harness(record, desktop = false, storage = new Map()) {
+function harness(record, desktop = false, storage = new Map(), account = me) {
   const states = [], refs = [], calls = [], saves = [], effects = [], listeners = {};
+  const browserListeners = {}, timers = [], mountEffects = [];
   const repository = { records: {} }, lifecycle = { locks: 0, logouts: 0, imageReads: 0, fileReads: 0 };
   let si = 0, ri = 0, ei = 0, cleanup;
   // Seed an authenticated, open conversation and a recovered draft. Effects stay off:
   // these cases exercise explicit sends, without any automatic network work.
-  Object.assign(states, { 2: me, 5: { self: me, contacts: [], conversations: [conversation], cursor: "1" }, 6: "group", 12: record, 13: true });
+  Object.assign(states, { 2: account, 5: { self: account, contacts: [], conversations: [conversation], cursor: "1" }, 6: "group", 12: record, 13: true });
   const hooks = { ...React,
     useState(initial) { const i = si++; if (!(i in states)) states[i] = typeof initial === "function" ? initial() : initial; return [states[i], value => { states[i] = typeof value === "function" ? value(states[i]) : value; }]; },
-    useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (ei++ === 0 && !cleanup) cleanup = fn(); if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
+    useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (ei++ === 0 && !cleanup) cleanup = fn(); mountEffects.push(fn); if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
   };
   const api = { server: "https://example.test", encryptions: 0, invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/ChatApp.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
-    exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, document: { querySelector: () => ({ scrollTop: 123 }) }, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener() {}, removeEventListener() {} },
+    setInterval(fn) { timers.push(fn); return fn; }, clearInterval() {}, exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, document: { querySelector: () => ({ scrollTop: 123 }) }, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener(name, fn) { browserListeners[name] = fn; }, removeEventListener(name) { delete browserListeners[name]; } },
     require(name) {
       if (name === "react") return hooks;
       if (name === "./api") return api;
@@ -30,7 +31,8 @@ function harness(record, desktop = false, storage = new Map()) {
       if (name === "./Consciousness") return { clearConsciousnessCommands() {} };
       if (name === "./AiConfiguration") return { clearAiConfigurationCommands() {} };
       if (name === "./Participation") return { clearParticipationCommands() {} };
-      if (name === "./crypto/engine") return { receiveLocalKeys: async () => { if (api.receiveLocalKeys) await api.receiveLocalKeys(); }, lockCrypto() {}, cryptoDevice: () => undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+      if (name === "./crypto/engine") return { receiveLocalKeys: async () => { if (api.receiveLocalKeys) await api.receiveLocalKeys(); }, lockCrypto() {}, consumeCryptoWarning() {}, cryptoDevice: () => api.unlocked ? 'device' : undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
+      if (name === "./crypto/resources") return { synchronizeResources: async () => { api.emptySyncs = (api.emptySyncs || 0) + 1; } };
       if (name === "./crypto/attachments") return { prepareAttachments: (images = [], files = []) => ({ descriptors: [...images, ...files].map((a, index) => ({ index, kind: "file", mime: a.mime, byteLength: 1, mediaEncryptionInfo: "sdk-secret" })), encryptedAttachments: [...images, ...files].map((a, index) => ({ index, data: "cipher-only" })) }) };
       if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => api.projectPage ? api.projectPage(p) : p, projectSnapshot: async s => s };
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
@@ -45,10 +47,121 @@ function harness(record, desktop = false, storage = new Map()) {
       return require(name);
     },
   });
-  return { calls, saves, api, repository, lifecycle, effects, listeners, render() { si = ri = ei = 0; return exports.default({account:me, location:{active:"group",tab:"messages",accountSection:"profile"}, rememberLocation(){}, onLock(){lifecycle.locks++;}, onLogout(){lifecycle.logouts++;}, onEndSession(){ cleanup(); }}).props; } };
+  return { calls, saves, api, repository, lifecycle, effects, listeners, render() { si = ri = ei = 0; return exports.default({account, location:{active:"group",tab:"messages",accountSection:"profile"}, rememberLocation(){}, onLock(){lifecycle.locks++;}, onLogout(){lifecycle.logouts++;}, onEndSession(){ cleanup(); }}).props; }, browserListeners, timers, mountEffects, unmount() { cleanup(); } };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+async function refreshCases() {
+  const h = harness({ draft, pending: null }), requests = [];
+  let concurrent = 0, maximum = 0, notify;
+  h.api.respond = path => {
+    assert.equal(path, '/chat/init');
+    concurrent++; maximum = Math.max(maximum, concurrent);
+    const next = deferred(); requests.push(next);
+    return next.promise.finally(() => concurrent--);
+  };
+  h.api.subscribe = (_cursor, change) => { notify = change; return () => {}; };
+  const first = h.render();
+  const snapshot = cursor => ({ self: me, contacts: [], conversations: [conversation], cursor });
+  // Run the real startup effect, leaving the simulated SSE connection unopened.
+  h.mountEffects.find(effect => String(effect).includes('api_1.subscribe'))();
+  assert.equal(requests.length, 1, 'initial loading does not wait for SSE to connect');
+  const overlapping = [notify(), first.refresh(), first.refresh()];
+  assert.equal(requests.length, 1, 'overlapping notifications do not start parallel snapshot requests');
+  requests[0].resolve(snapshot('first')); await tick();
+  assert.equal(h.render().snapshot.cursor, 'first', 'the first valid snapshot appears while the follow-up is pending');
+  assert.equal(requests.length, 2, 'overlapping triggers request one follow-up');
+  requests[1].resolve(snapshot('latest')); await Promise.all(overlapping); await tick();
+  assert.equal(requests.length, 2); assert.equal(maximum, 1);
+  assert.equal(h.render().snapshot.cursor, 'latest');
+
+  const failed = h.render().refresh();
+  const rejection = assert.rejects(failed, /offline/);
+  requests[2].reject(new Error('offline')); await rejection;
+  assert.equal(h.render().snapshot.cursor, 'latest', 'failed refresh preserves visible data');
+  const retried = h.render().refresh(); requests[3].resolve(snapshot('retried')); await retried;
+  assert.equal(h.render().snapshot.cursor, 'retried', 'a failed refresh releases the queue for retry');
+
+  const late = h.render().refresh(), queued = h.render().refresh();
+  h.unmount();
+  const replacement = harness({ draft, pending: null }, false, new Map(), { ...me, id: 'other-account' }); replacement.render();
+  requests[4].resolve(snapshot('old-account')); await Promise.all([late, queued]);
+  assert.equal(requests.length, 5, 'unmount discards the queued follow-up');
+  assert.equal(h.render().snapshot.cursor, 'retried', 'late work cannot publish after the session unmounts');
+  assert.equal(replacement.render().snapshot.cursor, '1', 'a replacement session is untouched by the old request');
+  assert.equal(replacement.render().me.id, 'other-account');
+  console.log('PASS: immediate snapshot loading, serial coalesced refresh, first result visibility, retry and session isolation');
+}
+async function refreshRetryCases() {
+  const h = harness({ draft, pending: null });
+  let snapshots = 0, histories = 0;
+  h.api.unlocked = true;
+  h.api.respond = async path => {
+    if (path === '/chat/init') {
+      if (++snapshots === 1) throw new Error('snapshot offline');
+      return { self: me, contacts: [], conversations: [conversation], cursor: 'advanced' };
+    }
+    if (path.includes('/messages')) {
+      if (++histories === 1) throw new Error('history offline');
+      return { messages: [], hasMore: false, latestPosition: '0' };
+    }
+    throw new Error(path);
+  };
+  h.render();
+  h.mountEffects.find(effect => String(effect).includes('llmn-crypto-change'))();
+  h.browserListeners['llmn-crypto-change'](); await tick();
+  assert.match(h.render().error, /snapshot offline/);
+  h.timers[0](); await tick();
+  assert.equal(snapshots, 2, 'an empty crypto sync still retries the failed snapshot');
+  assert.equal(histories, 1, 'history notification survives the preceding snapshot failure');
+  assert.match(h.render().historyError, /history offline/);
+  h.timers[0](); await tick();
+  assert.equal(snapshots, 2, 'successful snapshot is not read again when only history failed');
+  assert.equal(histories, 2, 'the next empty crypto sync retries the failed history');
+  assert.equal(h.render().historyError, '');
+  h.timers[0](); h.timers[0](); await tick();
+  assert.equal(snapshots, 2); assert.equal(histories, 2, 'stable idle sync does not poll snapshot or history');
+  assert.equal(h.api.emptySyncs, 4);
+
+  const requests = []; let concurrent = 0, maximum = 0;
+  h.api.respond = path => {
+    if (path === '/chat/init') return Promise.resolve({ self: me, contacts: [], conversations: [conversation], cursor: 'new' });
+    concurrent++; maximum = Math.max(maximum, concurrent);
+    const next = deferred(); requests.push(next); return next.promise.finally(() => concurrent--);
+  };
+  const initial = h.render().history();
+  h.browserListeners['llmn-crypto-change'](); await tick();
+  assert.equal(requests.length, 1, 'a notification cannot duplicate an in-flight initial history request');
+  requests[0].resolve({ messages: [], hasMore: false, latestPosition: '1' }); await tick();
+  assert.equal(requests.length, 2, 'a notification during history fetch is followed by one latest read');
+  requests[1].resolve({ messages: [], hasMore: false, latestPosition: '2' }); await initial; await tick();
+  assert.equal(maximum, 1); assert.equal(h.render().page.latestPosition, '2');
+  const late = h.render().history(), queued = h.render().history();
+  h.unmount();
+  requests[2].resolve({ messages: [], hasMore: false, latestPosition: 'old-session' }); await Promise.all([late, queued]);
+  assert.equal(requests.length, 3, 'session unmount drops queued history work');
+  assert.equal(h.render().page.latestPosition, '2', 'late history cannot replace the prior visible page');
+  h.timers[0](); await tick(); assert.equal(requests.length, 3, 'an old timer cannot retry reads after unmount');
+
+  const sse = harness({ draft, pending: null }); let notify, initReads = 0, pageReads = 0;
+  sse.api.unlocked = true;
+  sse.api.subscribe = (_cursor, change) => { notify = change; return () => {}; };
+  sse.api.respond = async path => {
+    if (path === '/chat/init') {
+      if (++initReads === 2) throw new Error('SSE refresh offline');
+      return { self: me, contacts: [], conversations: [conversation], cursor: String(initReads) };
+    }
+    pageReads++; return { messages: [], hasMore: false, latestPosition: '0' };
+  };
+  sse.render();
+  sse.mountEffects.find(effect => String(effect).includes('llmn-crypto-change'))();
+  sse.mountEffects.find(effect => String(effect).includes('api_1.subscribe'))(); await tick();
+  await assert.rejects(notify(), /SSE refresh offline/);
+  sse.timers[0](); await tick();
+  assert.equal(initReads, 3); assert.equal(pageReads, 1, 'failed SSE refresh retains both reads until an empty-sync retry');
+  sse.timers[0](); await tick(); assert.equal(initReads, 3); assert.equal(pageReads, 1);
+  console.log('PASS: failed snapshot/history retry on empty crypto sync, stable idle and serial history notifications');
+}
 async function suspendDraftCases() {
   const frozen = { text: 'unconfirmed send', requestId: 'original-request', mentions: [], replyTo: null };
   const waiting = harness({ draft, pending: frozen }), write = deferred();
@@ -232,5 +345,7 @@ async function suspendDraftCases() {
   desktop.render().text('托盘重新打开后继续输入'); await new Promise(resolve => setImmediate(resolve));
   assert.equal(desktop.saves.at(-1).next.draft.text, '托盘重新打开后继续输入'); cleanup();
   await suspendDraftCases();
+  await refreshCases();
+  await refreshRetryCases();
   console.log("PASS: cloud structured sends persist before dispatch, unlock only first explicit rejections and preserve uncertain/recovered command snapshots");
 })().catch(error => { console.error(error); process.exitCode = 1; });

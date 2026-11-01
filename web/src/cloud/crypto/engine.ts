@@ -4,7 +4,7 @@ import { canonicalJson } from "./canonical";
 import { verifyEnvelope, unsignedEnvelope, type SignedEnvelope } from "./envelope";
 
 type Sdk = typeof Matrix;
-type Session = { sdk: Sdk; machine: Matrix.OlmMachine; account: string; owner: string; deviceId: string; cursor: string; deviceListsVersion?: string; pendingWarning?: string; flushing?: Promise<void>; authorization?: { secrets: unknown; roomKeys: unknown; senderDevice: string } };
+type Session = { sdk: Sdk; machine: Matrix.OlmMachine; account: string; owner: string; deviceId: string; cursor: string; deviceListsVersion?: string; pendingWarning?: string; pendingChange?: boolean; flushing?: Promise<void>; authorization?: { secrets: unknown; roomKeys: unknown; senderDevice: string } };
 let active: Session | undefined;
 let generation = 0;
 let timingAttempt = 0;
@@ -49,6 +49,51 @@ async function cryptoStoreName(account: string, deviceId: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([ownerOf(account), deviceId])));
   return `llmn-crypto-${Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("")}`;
 }
+export function prewarmCrypto(account: string): () => void {
+  if (!hasCryptoDevice(account)) return () => {};
+  let cancelled = false, connection: IDBDatabase | undefined;
+  const owner = ownerOf(account);
+  const clock = typeof performance === "undefined" ? undefined : performance;
+  const started = clock?.now() ?? 0;
+  const names = ["sdkReady", "indexedDbReady", "holdReady", "failed"] as const;
+  for (const name of names) clock?.clearMeasures(`llmn.crypto.prewarm.${name}`);
+  const current = () => !cancelled && ownerOf(account) === owner;
+  const measured = (name: typeof names[number], start: number) => {
+    if (current()) clock?.measure(`llmn.crypto.prewarm.${name}`, { start, end: clock.now() });
+  };
+  const warmSdk = async () => {
+    const sdk = await import("@matrix-org/matrix-sdk-crypto-wasm");
+    await sdk.initAsync();
+    measured("sdkReady", started);
+  };
+  const warmIndexedDb = async () => {
+    const deviceId = localCryptoDevice(account);
+    if (!deviceId) return;
+    const name = `${await cryptoStoreName(account, deviceId)}::matrix-sdk-crypto-meta`;
+    if (!current()) return;
+    const existing = await indexedDB.databases();
+    measured("indexedDbReady", started);
+    if (!current() || !existing.some(db => db.name === name)) return;
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      // A deletion between enumeration and open must not recreate an SDK store.
+      request.onupgradeneeded = () => request.transaction!.abort();
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        if (!current()) { db.close(); resolve(); return; }
+        // Keep the browser's backing store alive without reading cipher or key records.
+        connection = db;
+        db.onversionchange = () => { db.close(); if (connection === db) connection = undefined; };
+        measured("holdReady", started);
+        resolve();
+      };
+    });
+  };
+  // Speculative preparation never changes lock state; real unlock keeps its own error path.
+  void Promise.all([warmSdk(), warmIndexedDb()]).catch(() => measured("failed", started));
+  return () => { cancelled = true; connection?.close(); connection = undefined; };
+}
 async function requireCryptoStore(storeName: string) {
   const names = new Set((await indexedDB.databases()).map(db => db.name));
   if (!names.has(`${storeName}::matrix-sdk-crypto-meta`) || !names.has(`${storeName}::matrix-sdk-crypto`)) throw new Error("本机加密库已不存在，请关闭自动解锁并使用原恢复流程");
@@ -76,6 +121,8 @@ async function sendOutgoing(s: Session, outgoing: Matrix.OutgoingRequest) {
   const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id ?? crypto.randomUUID(), kind: kinds[outgoing.type], body });
   current(s);
   if (outgoing.id) await s.machine.markRequestAsSent(outgoing.id, outgoing.type, JSON.stringify(response));
+  current(s);
+  if (outgoing.type !== s.sdk.RequestType.KeysBackup) s.pendingChange = true;
 }
 async function flushInner(s: Session) {
   const queueKey = `llmn-crypto-outgoing:${s.owner}`;
@@ -95,6 +142,7 @@ async function flushInner(s: Session) {
     current(s);
     if (outgoing.type !== undefined) await s.machine.markRequestAsSent(outgoing.id, outgoing.type, JSON.stringify(response));
     current(s);
+    s.pendingChange = true;
     queued = (JSON.parse(localStorage.getItem(queueKey) ?? "[]") as typeof queued).filter(item => item.id !== outgoing.id);
     localStorage.setItem(queueKey, JSON.stringify(queued));
   }
@@ -133,6 +181,7 @@ export async function syncCrypto() {
     current(s);
     await flush(s);
     current(s);
+    if (sync.to_device.events.length || sync.device_lists.changed.length || sync.device_lists.left.length) s.pendingChange = true;
     const events = await s.machine.receiveSyncChanges(JSON.stringify(sync.to_device.events), new s.sdk.DeviceLists(sync.device_lists.changed.map(id => new s.sdk.UserId(id)), sync.device_lists.left.map(id => new s.sdk.UserId(id))), new Map(Object.entries(sync.device_one_time_keys_count)), new Set(sync.device_unused_fallback_key_types), new s.sdk.DecryptionSettings(s.sdk.TrustRequirement.CrossSigned));
     current(s);
     for (const processed of events) {
@@ -163,7 +212,7 @@ export async function syncCrypto() {
     localStorage.setItem(metadataKey(s.account), JSON.stringify({ deviceId: s.deviceId, cursor: sync.next_batch, deviceListsVersion: sync.llmn_device_lists_version }));
     s.cursor = sync.next_batch;
     s.deviceListsVersion = sync.llmn_device_lists_version;
-    changed();
+    if (s.pendingChange) { s.pendingChange = false; changed(); }
   })().finally(() => { if (syncing === work) syncing = undefined; });
   syncing = work;
   return work;
@@ -172,7 +221,7 @@ export async function syncCrypto() {
 export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" = false, expected?: { generation: number; deviceId: string; isCurrent?: () => boolean }) {
   const attempt = ++timingAttempt;
   const clock = typeof performance === "undefined" ? undefined : performance;
-  const timingNames = ["sdkImport", "sdkInit", "storeOpen", "deviceRegister", "trackedUsers", "deviceStatus", "unlockReady", "backgroundSync"] as const;
+  const timingNames = ["sdkImport", "sdkInit", "storeOpen", "storePrepare", "storeMetadataRead", "storeMetadata", "storeCipher", "storeDatabase", "machineLoad", "deviceRegister", "trackedUsers", "deviceStatus", "unlockReady", "backgroundSync"] as const;
   for (const name of timingNames) clock?.clearMeasures(`llmn.crypto.unlock.${name}`);
   const started = clock?.now() ?? 0;
   if (!passphrase.trim()) throw new Error("请输入本机加密库口令；它与登录密码和恢复材料分开保管");
@@ -200,9 +249,36 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
   const storeName = await cryptoStoreName(account, metadata.deviceId);
   if (epoch !== generation || expected?.isCurrent?.() === false) throw new CryptoSessionChanged("账号已切换，请重新解锁");
   step = clock?.now() ?? 0;
-  const machine = await sdk.OlmMachine.initialize(new sdk.UserId(matrixUser(account)), new sdk.DeviceId(metadata.deviceId), storeName, passphrase);
+  const storeStart = step;
+  let metadataStart: number | undefined, cipherStart: number | undefined, databaseStart: number | undefined;
+  // Only fixed stage names and durations survive; SDK log arguments are never retained.
+  const storeLogger = {
+    debug(...args: unknown[]) {
+      if (args.some(value => typeof value === "string" && value.includes("IndexedDbCryptoStore: Opening meta-store"))) {
+        elapsed("storePrepare", storeStart); metadataStart = clock?.now() ?? 0;
+      }
+      if (args.some(value => typeof value === "string" && value.includes("IndexedDbCryptoStore: decrypting store cipher"))) {
+        if (metadataStart !== undefined) elapsed("storeMetadataRead", metadataStart);
+        elapsed("storeMetadata", storeStart); cipherStart = clock?.now() ?? 0;
+      }
+      if (args.some(value => typeof value === "string" && value.includes("IndexedDbCryptoStore: opening main store"))) {
+        if (cipherStart !== undefined) elapsed("storeCipher", cipherStart);
+        databaseStart = clock?.now() ?? 0;
+      }
+    },
+    info() {}, warn() {}, error() {},
+  };
+  const handle = await sdk.StoreHandle.open(storeName, passphrase, storeLogger);
+  let machine: Matrix.OlmMachine;
+  try {
+    elapsed("storeOpen", storeStart);
+    if (databaseStart !== undefined) elapsed("storeDatabase", databaseStart);
+    if (epoch !== generation || expected?.isCurrent?.() === false) throw new CryptoSessionChanged("账号已切换，请重新解锁");
+    step = clock?.now() ?? 0;
+    machine = await sdk.OlmMachine.initFromStore(new sdk.UserId(matrixUser(account)), new sdk.DeviceId(metadata.deviceId), handle);
+    elapsed("machineLoad", step);
+  } finally { handle.free(); }
   if (epoch !== generation || expected?.isCurrent?.() === false) { machine.close(); throw new CryptoSessionChanged("账号已切换，请重新解锁"); }
-  elapsed("storeOpen", step);
   const unlocked: Session = { sdk, machine, account, owner: ownerOf(account), deviceId: metadata.deviceId, cursor: metadata.cursor, deviceListsVersion: metadata.deviceListsVersion };
   const measuredSync = async () => { const start = clock?.now() ?? 0; await syncCrypto(); elapsed("backgroundSync", start); };
   active = unlocked;
@@ -264,7 +340,7 @@ export async function initializeIdentity() {
   await syncCrypto();
   await sendOutgoing(s, new s.sdk.KeysQueryRequest(crypto.randomUUID(), JSON.stringify({ device_keys: { [matrixUser(s.account)]: [] } })));
   if (await s.machine.getIdentity(new s.sdk.UserId(matrixUser(s.account)))) {
-    if ((await s.machine.crossSigningStatus()).hasMaster) return deviceStatus();
+    if ((await s.machine.crossSigningStatus()).hasMaster) { current(s); changed(); return deviceStatus(); }
     throw new Error("账号已经有加密身份，请使用恢复包或现有可信设备授权；不能重置身份");
   }
   const bootstrap = await s.machine.bootstrapCrossSigning(false);
@@ -273,6 +349,7 @@ export async function initializeIdentity() {
   queueRequest(s, { id: bootstrap.uploadSignaturesRequest.id ?? crypto.randomUUID(), type: bootstrap.uploadSignaturesRequest.id ? bootstrap.uploadSignaturesRequest.type : undefined, kind: "signatures", body: JSON.parse(bootstrap.uploadSignaturesRequest.body) });
   await flush(s);
   await syncCrypto();
+  current(s); changed();
   return deviceStatus();
 }
 
@@ -283,6 +360,7 @@ export async function devices(account: string) {
   await sendOutgoing(s, new s.sdk.KeysQueryRequest(crypto.randomUUID(), JSON.stringify({ device_keys: { [user]: [] } })));
   const devices = await s.machine.getUserDevices(new s.sdk.UserId(user));
   const identity = await s.machine.getIdentity(new s.sdk.UserId(user));
+  current(s); changed();
   return devices.devices().map(d => ({ deviceId: d.deviceId.toString(), name: d.displayName ?? "设备", fingerprint: d.ed25519Key?.toBase64() ?? "", curve: d.curve25519Key?.toBase64() ?? "", master: identity ? masterFingerprint(identity.masterKey) : "", trusted: d.isVerified() && d.isCrossSignedByOwner() && !!identity?.isVerified(), own: account === s.account }));
 }
 export async function trustDevice(account: string, deviceId: string, fingerprint: string, curve: string, master: string) {
@@ -395,6 +473,7 @@ export async function importRecoverySecrets(secrets: unknown, roomKeys: unknown)
   const device = await s.machine.getDevice(new s.sdk.UserId(matrixUser(s.account)), new s.sdk.DeviceId(s.deviceId));
   if (device) await sendOutgoing(s, await device.verify());
   await syncCrypto();
+  current(s); changed();
   return deviceStatus();
 }
 export async function authorizeDevice(deviceId: string) {

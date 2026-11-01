@@ -4,9 +4,10 @@ import { canonicalJson } from "./canonical";
 import { verifyEnvelope, unsignedEnvelope, type SignedEnvelope } from "./envelope";
 
 type Sdk = typeof Matrix;
-type Session = { sdk: Sdk; machine: Matrix.OlmMachine; account: string; owner: string; deviceId: string; cursor: string; pendingWarning?: string; flushing?: Promise<void>; authorization?: { secrets: unknown; roomKeys: unknown; senderDevice: string } };
+type Session = { sdk: Sdk; machine: Matrix.OlmMachine; account: string; owner: string; deviceId: string; cursor: string; deviceListsVersion?: string; pendingWarning?: string; flushing?: Promise<void>; authorization?: { secrets: unknown; roomKeys: unknown; senderDevice: string } };
 let active: Session | undefined;
 let generation = 0;
+let timingAttempt = 0;
 let syncing: Promise<void> | undefined;
 let preparedRecovery: { owner: string; version: string; expectedVersion: string | null; ciphertext: string } | undefined;
 const ownerOf = (account: string) => JSON.stringify([server, account]);
@@ -97,10 +98,17 @@ async function flushInner(s: Session) {
     queued = (JSON.parse(localStorage.getItem(queueKey) ?? "[]") as typeof queued).filter(item => item.id !== outgoing.id);
     localStorage.setItem(queueKey, JSON.stringify(queued));
   }
-  for (const outgoing of await s.machine.outgoingRequests()) await sendOutgoing(s, outgoing);
+  // SDK acknowledgements can produce a subsequent key query; drain it before confirming sync.
+  while (true) {
+    current(s);
+    const outgoing = await s.machine.outgoingRequests();
+    if (!outgoing.length) break;
+    for (const request of outgoing) await sendOutgoing(s, request);
+  }
 }
-function flush(s: Session) {
-  if (s.flushing) return s.flushing;
+async function flush(s: Session) {
+  while (s.flushing) await s.flushing;
+  current(s);
   const work = flushInner(s).finally(() => { if (s.flushing === work) s.flushing = undefined; });
   s.flushing = work;
   return work;
@@ -118,7 +126,7 @@ export async function syncCrypto() {
   if (syncing) return syncing;
   const s = session();
   const work = (async () => {
-    const sync = await request<{ next_batch: string; to_device: { events: unknown[] }; device_lists: { changed: string[]; left: string[] }; device_one_time_keys_count: Record<string, number>; device_unused_fallback_key_types: string[] }>(`/crypto/sync?deviceId=${encodeURIComponent(s.deviceId)}&after=${encodeURIComponent(s.cursor)}`).catch(error => {
+    const sync = await request<{ next_batch: string; to_device: { events: unknown[] }; device_lists: { changed: string[]; left: string[] }; device_one_time_keys_count: Record<string, number>; device_unused_fallback_key_types: string[]; llmn_device_lists_version?: string }>(`/crypto/sync?deviceId=${encodeURIComponent(s.deviceId)}&after=${encodeURIComponent(s.cursor)}${s.deviceListsVersion === undefined ? "" : `&deviceListsVersion=${encodeURIComponent(s.deviceListsVersion)}`}`).catch(error => {
       if (error instanceof HttpError && [401, 403].includes(error.status) && active === s) lockCrypto();
       throw error;
     });
@@ -146,14 +154,15 @@ export async function syncCrypto() {
       }
     }
     current(s);
-    s.cursor = sync.next_batch;
-    localStorage.setItem(metadataKey(s.account), JSON.stringify({ deviceId: s.deviceId, cursor: s.cursor }));
     await flush(s);
     current(s);
     const backup = await s.machine.backupRoomKeys();
     current(s);
     if (backup) await sendOutgoing(s, backup);
     current(s);
+    localStorage.setItem(metadataKey(s.account), JSON.stringify({ deviceId: s.deviceId, cursor: sync.next_batch, deviceListsVersion: sync.llmn_device_lists_version }));
+    s.cursor = sync.next_batch;
+    s.deviceListsVersion = sync.llmn_device_lists_version;
     changed();
   })().finally(() => { if (syncing === work) syncing = undefined; });
   syncing = work;
@@ -161,6 +170,11 @@ export async function syncCrypto() {
 }
 
 export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" = false, expected?: { generation: number; deviceId: string; isCurrent?: () => boolean }) {
+  const attempt = ++timingAttempt;
+  const clock = typeof performance === "undefined" ? undefined : performance;
+  const timingNames = ["sdkImport", "sdkInit", "storeOpen", "deviceRegister", "trackedUsers", "deviceStatus", "unlockReady", "backgroundSync"] as const;
+  for (const name of timingNames) clock?.clearMeasures(`llmn.crypto.unlock.${name}`);
+  const started = clock?.now() ?? 0;
   if (!passphrase.trim()) throw new Error("请输入本机加密库口令；它与登录密码和恢复材料分开保管");
   const saved = localStorage.getItem(metadataKey(account));
   if (!saved && !create) throw new Error("此账号在当前设备没有加密资料，请明确创建新设备，再由可信设备或恢复包授权");
@@ -173,36 +187,53 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
   }
   lockCrypto();
   const epoch = generation;
+  const elapsed = (name: typeof timingNames[number], start: number) => {
+    if (clock && generation === epoch && attempt === timingAttempt) clock.measure(`llmn.crypto.unlock.${name}`, { start, end: clock.now() });
+  };
+  let step = clock?.now() ?? 0;
   const sdk = await import("@matrix-org/matrix-sdk-crypto-wasm");
+  elapsed("sdkImport", step);
+  step = clock?.now() ?? 0;
   await sdk.initAsync();
-  const metadata = saved && create !== "new-device" ? JSON.parse(saved) as { deviceId: string; cursor: string } : { deviceId: crypto.randomUUID(), cursor: "0" };
+  elapsed("sdkInit", step);
+  const metadata = saved && create !== "new-device" ? JSON.parse(saved) as { deviceId: string; cursor: string; deviceListsVersion?: string } : { deviceId: crypto.randomUUID(), cursor: "0" };
   const storeName = await cryptoStoreName(account, metadata.deviceId);
   if (epoch !== generation || expected?.isCurrent?.() === false) throw new CryptoSessionChanged("账号已切换，请重新解锁");
+  step = clock?.now() ?? 0;
   const machine = await sdk.OlmMachine.initialize(new sdk.UserId(matrixUser(account)), new sdk.DeviceId(metadata.deviceId), storeName, passphrase);
   if (epoch !== generation || expected?.isCurrent?.() === false) { machine.close(); throw new CryptoSessionChanged("账号已切换，请重新解锁"); }
-  const unlocked: Session = { sdk, machine, account, owner: ownerOf(account), deviceId: metadata.deviceId, cursor: metadata.cursor };
+  elapsed("storeOpen", step);
+  const unlocked: Session = { sdk, machine, account, owner: ownerOf(account), deviceId: metadata.deviceId, cursor: metadata.cursor, deviceListsVersion: metadata.deviceListsVersion };
+  const measuredSync = async () => { const start = clock?.now() ?? 0; await syncCrypto(); elapsed("backgroundSync", start); };
   active = unlocked;
   localStorage.setItem(metadataKey(account), JSON.stringify(metadata));
   try {
+    step = clock?.now() ?? 0;
     await request("/crypto/devices", "POST", { deviceId: metadata.deviceId, name: "LLM Nest 客户端" });
     current(unlocked);
+    elapsed("deviceRegister", step);
+    step = clock?.now() ?? 0;
     await machine.updateTrackedUsers([new sdk.UserId(matrixUser(account))]);
     current(unlocked);
+    elapsed("trackedUsers", step);
+    step = clock?.now() ?? 0;
     const localStatus = await deviceStatus();
+    elapsed("deviceStatus", step);
     current(unlocked);
     if (expected?.isCurrent?.() === false) throw new CryptoSessionChanged("自动解锁已取消");
     // A persisted trusted identity is usable after the server permission check.
     // Inbox, key queries and backup delivery can continue without holding the lock screen.
     if (saved && create !== "new-device" && localStatus.trusted) {
-      void syncCrypto().catch(error => {
+      void measuredSync().catch(error => {
         if (error instanceof CryptoSessionChanged || active !== unlocked || unlocked.owner !== ownerOf(account)) return;
         unlocked.pendingWarning = error instanceof Error ? error.message : String(error);
         window.dispatchEvent(new CustomEvent("llmn-crypto-warning", { detail: unlocked.pendingWarning }));
       });
       changed();
+      elapsed("unlockReady", started);
       return localStatus;
     }
-    await syncCrypto();
+    await measuredSync();
   } catch (error) {
     if (!(error instanceof ConnectionError) || !saved || create === "new-device") {
       if (active === unlocked) lockCrypto();
@@ -214,6 +245,7 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
   const status = await deviceStatus();
   if (expected?.isCurrent?.() === false) { if (active === unlocked) lockCrypto(); throw new CryptoSessionChanged("自动解锁已取消"); }
   current(unlocked); changed();
+  elapsed("unlockReady", started);
   return status;
 }
 

@@ -7,6 +7,26 @@ const sdk = require('@matrix-org/matrix-sdk-crypto-wasm');
 require('fake-indexeddb/auto');
 (async () => {
   await sdk.initAsync();
+  const directoryProbe = await sdk.OlmMachine.initialize(new sdk.UserId('@directory-probe:llmn'), new sdk.DeviceId('directory-probe'));
+  const tracked = new sdk.UserId('@directory-contact:llmn');
+  await directoryProbe.updateTrackedUsers([tracked]);
+  await directoryProbe.receiveSyncChanges('[]', new sdk.DeviceLists([], []), new Map(), new Set());
+  const queries = async () => (await directoryProbe.outgoingRequests()).filter(request => request.type === sdk.RequestType.KeysQuery);
+  const acknowledgeQuery = query => directoryProbe.markRequestAsSent(query.id, query.type, JSON.stringify({ device_keys: Object.fromEntries(Object.keys(JSON.parse(query.body).device_keys).map(user => [user, {}])), failures: {} }));
+  // The own-user query may be generated only after the tracked-user request completes.
+  while (true) {
+    const pending = await queries();
+    if (!pending.length) break;
+    for (const query of pending) await acknowledgeQuery(query);
+  }
+  await directoryProbe.receiveSyncChanges('[]', new sdk.DeviceLists([], []), new Map(), new Set());
+  assert.equal((await queries()).length, 0, 'stable directory sync preserves clean SDK device cache');
+  await directoryProbe.receiveSyncChanges('[]', new sdk.DeviceLists([new sdk.UserId('@directory-contact:llmn')], []), new Map(), new Set());
+  const changedQueries = await queries();
+  assert.equal(changedQueries.length, 1, 'changed directory dirties SDK cache and requests keys');
+  for (const query of changedQueries) await acknowledgeQuery(query);
+  assert.equal((await queries()).length, 0);
+  directoryProbe.close();
   const account = '00000000-0000-4000-8000-000000000001';
   const cid = '00000000-0000-4000-8000-000000000002';
   assert.equal(new sdk.RoomId(`!${cid}:llmn`).toString(), `!${cid}:llmn`);

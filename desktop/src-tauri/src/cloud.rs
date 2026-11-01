@@ -179,6 +179,38 @@ impl CloudState {
     pub(crate) fn session_generation(&self) -> u64 {
         self.shared.lock().unwrap().generation
     }
+    pub(crate) async fn verify_local_ai(
+        &self,
+        ai: &str,
+        node: &str,
+        generation: u64,
+    ) -> Result<(), String> {
+        let ctx = self.context("/api/ai", false)?;
+        if ctx.generation != generation {
+            return Err("登录身份已变化，请重试".into());
+        }
+        let response = request(&ctx, Method::GET)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(connection_error)?;
+        self.reject_session(&ctx, response.status())?;
+        if !response.status().is_success() {
+            return Err("无法核对 AI 管理权，请重新登录后重试".into());
+        }
+        let ais: Vec<serde_json::Value> =
+            response.json().await.map_err(|_| "AI 管理列表响应无效")?;
+        if self.session_generation() != generation {
+            return Err("登录身份已变化，请重试".into());
+        }
+        if !ais
+            .iter()
+            .any(|v| v["account"]["id"] == ai && v["node"]["id"] == node)
+        {
+            return Err("此 AI 已不再由当前账号管理或已绑定其他节点".into());
+        }
+        Ok(())
+    }
     pub(crate) async fn direct_grant(
         &self,
         conversation: &str,

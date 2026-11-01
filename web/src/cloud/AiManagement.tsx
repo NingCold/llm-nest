@@ -127,7 +127,7 @@ export function AiManagement({ back, openDirect, refresh, operatorId, conversati
               <p>这里填写所有人都能看到的资料。创建后，你将成为它的初始管理员。</p>
               <label>名字<input name="name" required maxLength={80} disabled={busy} autoFocus /></label>
               <label>公开简介<textarea name="bio" maxLength={2000} disabled={busy} placeholder="简单介绍一下它" /></label>
-              {IS_DESKTOP && <label className="cloud-check"><input name="local" type="checkbox" disabled={busy} />创建后在这台电脑上运行</label>}
+              {IS_DESKTOP && <label className="cloud-check"><input name="local" type="checkbox" defaultChecked disabled={busy} />创建后在这台电脑上运行</label>}
               {error && <p className="social-error" role="alert">{error}</p>}
               <button className="social-button primary" disabled={busy}>{busy ? "正在创建…" : "创建账号"}</button>
             </form>
@@ -156,7 +156,7 @@ export function AiManagement({ back, openDirect, refresh, operatorId, conversati
           ) : null}
         </DialogContent>
       </Dialog>
-      <Dialog open={!!localAi} onOpenChange={open => { if (!open) setLocalAi(null); }}><DialogContent className="social-dialog cloud-local-agent-dialog" aria-describedby={undefined}><DialogTitle>在这台电脑上运行</DialogTitle>{localAi && <LocalAgentPanel key={localAi.account.id} ai={localAi} changed={async () => { await load(); await refresh(); }} />}</DialogContent></Dialog>
+      <Dialog open={!!localAi} onOpenChange={open => { if (!open) setLocalAi(null); }}><DialogContent className="social-dialog cloud-local-agent-dialog" aria-describedby={undefined}><DialogTitle>在这台电脑上运行</DialogTitle>{localAi && <LocalAgentPanel key={`${operatorId}:${localAi.account.id}`} ai={localAi} operatorId={operatorId} openChat={async () => { await openDirect(localAi.account); if (alive.current) setLocalAi(null); }} changed={async () => { await load(); await refresh(); }} />}</DialogContent></Dialog>
     </section>
   );
 }

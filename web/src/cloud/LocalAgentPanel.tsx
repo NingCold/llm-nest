@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LocalAiEncryption } from "./LocalAiEncryption";
 import { request } from "./api";
 import type { ManagedAi } from "./types";
 
@@ -7,7 +8,7 @@ interface LocalConfiguration {
   nodeName: string; provider: string; model: string;
   protocol?: string | null; baseUrl?: string | null; persona?: string | null;
   temperature?: number | null; maxTokens?: number | null; reasoningEffort?: string | null;
-  apiKeyEnv?: string | null; hasSavedKey: boolean;
+  apiKeyEnv?: string | null; hasSavedKey: boolean; dailyCalls?: number; dailyTokens?: number;
 }
 interface LocalStatus {
   configured: boolean; running: boolean; nodeId: string | null;
@@ -25,7 +26,7 @@ function LocalSetup({ configuration, catalog, busy, save }: { configuration: Loc
   const [key, setKey] = useState("");
   return <form className="cloud-form cloud-ai-form" onSubmit={async e => {
     e.preventDefault(); const fields = new FormData(e.currentTarget);
-    const options = { nodeName: String(fields.get("nodeLabel")).trim(), provider: providerId, model: modelId, ...(configuration && providerId === configuration.provider ? { persona: configuration.persona, temperature: configuration.temperature, maxTokens: configuration.maxTokens, ...(modelId === configuration.model ? { reasoningEffort: configuration.reasoningEffort } : {}) } : {}), protocol: String(fields.get("protocol") ?? ""), baseUrl: String(fields.get("baseUrl") ?? "").trim(), ...(secretKind === "key" ? { apiKey: key } : secretKind === "env" ? { apiKeyEnv: String(fields.get("apiKeyEnv")).trim() } : {}) };
+    const options = { dailyCalls: configuration?.dailyCalls ?? 48, dailyTokens: configuration?.dailyTokens ?? 1048576, nodeName: String(fields.get("nodeLabel")).trim(), provider: providerId, model: modelId, ...(configuration && providerId === configuration.provider ? { persona: configuration.persona, temperature: configuration.temperature, maxTokens: configuration.maxTokens, ...(modelId === configuration.model ? { reasoningEffort: configuration.reasoningEffort } : {}) } : {}), protocol: String(fields.get("protocol") ?? ""), baseUrl: String(fields.get("baseUrl") ?? "").trim(), ...(secretKind === "key" ? { apiKey: key } : secretKind === "env" ? { apiKeyEnv: String(fields.get("apiKeyEnv")).trim() } : {}) };
     if (await save(options)) setKey("");
   }}>
     <fieldset disabled={busy} className="social-form-fields">
@@ -45,7 +46,7 @@ function LocalSetup({ configuration, catalog, busy, save }: { configuration: Loc
   </form>;
 }
 
-export function LocalAgentPanel({ ai, changed }: { ai: ManagedAi; changed(): Promise<unknown> }) {
+export function LocalAgentPanel({ ai, operatorId, changed, openChat }: { ai: ManagedAi; operatorId: string; changed(): Promise<unknown>; openChat(): Promise<unknown> }) {
   const [status, setStatus] = useState<LocalStatus | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [editing, setEditing] = useState(false);
@@ -79,7 +80,7 @@ export function LocalAgentPanel({ ai, changed }: { ai: ManagedAi; changed(): Pro
     try {
       const result = await invoke<LocalStatus>(commandName, args);
       if (alive.current) { setStatus(result); if (commandName === "local_agent_setup") setEditing(false); }
-      await changed(); return true;
+      if (alive.current) await changed(); return alive.current;
     } catch (e) { if (alive.current) setError(String(e)); return false; }
     finally { if (alive.current) setBusy(false); }
   };
@@ -95,9 +96,11 @@ export function LocalAgentPanel({ ai, changed }: { ai: ManagedAi; changed(): Pro
       {status.running && <><p>关闭窗口后，Agent 可以继续在后台回复。电脑休眠、关机或停止 Agent 后，本机 AI 会离线。</p><button className="social-button secondary" disabled={busy} onClick={() => void act("local_agent_stop")}>停止本机 Agent</button><p>停止会影响这个账号在本机节点运行的所有 AI；其他设备上的节点继续运行。</p></>}
       {!status.running && !status.pairing && <>
         {(!status.configured || editing) && catalog && <LocalSetup key={status.configuration?.provider ?? "new"} configuration={status.configuration} catalog={catalog} busy={busy} save={value => act("local_agent_setup", { options: value })} />}
-        {status.configured && !editing && <div className="cloud-actions"><button className="social-button secondary" disabled={busy} onClick={() => setEditing(true)}>修改本机配置与密钥</button><button className="social-button secondary" disabled={busy} onClick={() => void act("local_agent_pair")}>{boundHere ? "重新配对这个 AI" : "准备连接这个 AI"}</button>{status.aiIds.length > 0 && <button className="social-button primary" disabled={busy} onClick={() => void act("local_agent_start")}>启动本机 Agent</button>}</div>}
+        {status.configured && !editing && <div className="cloud-actions"><button className="social-button secondary" disabled={busy} onClick={() => setEditing(true)}>修改本机配置与密钥</button><button className="social-button secondary" disabled={busy} onClick={() => void act("local_agent_pair")}>{boundHere ? "重新配对这个 AI" : "准备连接这个 AI"}</button></div>}
         {editing && <button className="text-button" disabled={busy} onClick={() => setEditing(false)}>取消修改</button>}
       </>}
+      {!status.running && status.configured && <details className="cloud-local-advanced"><summary>每日调用额度</summary><p>当前额度：{status.configuration?.dailyCalls ?? 48} 次 / {status.configuration?.dailyTokens ?? 1048576} token。这个账号在本机的所有 AI 共享，按 UTC 日计算；修改额度不会重置当天已用量。token 按本轮输入估算与输出上限预留，并非供应商账单；结果未知的调用不返还。</p><form className="cloud-form" onSubmit={e => { e.preventDefault(); const fields = new FormData(e.currentTarget); void act("local_agent_budget", { dailyCalls: Number(fields.get("dailyCalls")), dailyTokens: Number(fields.get("dailyTokens")) }); }}><label>每日最多调用次数<input type="number" name="dailyCalls" min={1} required defaultValue={status.configuration?.dailyCalls ?? 48} /></label><label>每日 token 额度<input type="number" name="dailyTokens" min={1} required defaultValue={status.configuration?.dailyTokens ?? 1048576} /></label><button className="social-button secondary" disabled={busy}>保存每日额度</button></form></details>}
+      {boundHere && status.configuration && !status.pairing && <LocalAiEncryption operatorId={operatorId} aiId={ai.account.id} bindingVersion={ai.bindingVersion} running={status.running} configuration={status.configuration} start={() => act("local_agent_start")} openChat={openChat} />}
       {status.pairing && <div className="cloud-local-pairing"><p>本机节点已准备好，请授权它以 {ai.account.name} 的身份运行。</p>{ai.node && ai.node.id !== status.nodeId && <p>授权后，旧节点将失去这个 AI 的执行资格。更换节点不会自动迁移它的角色和意识资料。</p>}<p>配对码 <strong>{status.pairing.userCode}</strong> · {new Date(status.pairing.expiresAt).toLocaleTimeString()} 到期</p>
         {ai.node?.capabilities.includes("sealedV1") && ai.node.id !== status.nodeId && ai.node.handoverState !== "ready" && <><p>请先在“我管理的 AI”完成旧节点换机准备。旧节点不可达时，才明确接受未同步资料可能丢失并强制切换。</p><label className="cloud-check"><input type="checkbox" checked={forceHandover} disabled={busy} onChange={e => setForceHandover(e.target.checked)} />旧节点不可达，明确强制切换并接受未同步资料可能丢失</label></>}
         <button className="social-button primary" disabled={busy} onClick={async () => {

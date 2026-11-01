@@ -52,7 +52,7 @@ function fixture(relative, name, props, seeds={}, theme='light', desktop=false) 
       if (resolved) {
         const basename = path.basename(resolved);
         if (basename==='api' || basename==='local-api') return {request:blocked,download:blocked,server:'https://offline.invalid',HttpError:class extends Error{}};
-        if (resolved.includes(path.sep+'crypto'+path.sep) && !['Devices','ResourcePanel','HistoryMigrationPanel'].includes(basename)) return new Proxy({cryptoDevice:()=> 'fixture-device',hasCryptoDevice:()=>true,recoveryConfirmed:()=>true,resourceStatus:()=> '已保存 · 节点已应用'}, {get:(obj,key)=>obj[key] || blocked});
+        if (resolved.includes(path.sep+'crypto'+path.sep) && !['Devices','ResourcePanel','HistoryMigrationPanel'].includes(basename)) return new Proxy({cryptoDevice:()=> 'fixture-device',hasCryptoDevice:()=>true,recoveryConfirmed:()=>true,resourceStatus:r=>r.applied?.status==='applied'?'已保存 · 节点已应用':'已保存 · 等待节点应用'}, {get:(obj,key)=>obj[key] || blocked});
         const candidate = ['.tsx','.ts',''].map(ext=>resolved+ext).find(p=>fs.existsSync(p)&&fs.statSync(p).isFile());
         if (!candidate) throw new Error(`Cannot resolve ${spec} from ${key}`);
         return load(candidate);
@@ -74,6 +74,20 @@ function workspace(tab, seeds, theme, desktop, overrides={}) {
 }
 const status = {deviceId:longId,trusted:true,master:'master-'+longId,fingerprint:'ed25519-'+longId,curve:'curve25519-'+longId,hasRecoverySecrets:true};
 const localStatus = {configured:false,running:false,nodeId:null,configuration:null,pairing:null,aiIds:[],error:null};
+const localConfiguration = { nodeName:'书房电脑 · 我的 Agent',provider:'example',model:'example-model-with-a-long-provider-model-identifier-for-layout',persona:'温和、清晰地帮助用户整理思路。保留重要细节，在信息不足时先询问。',hasSavedKey:true,dailyCalls:48,dailyTokens:1048576,maxTokens:2048 };
+const aiCrypto = {deviceId:'ai-device-'+longId,fingerprint:'Ed25519LongIndependentFingerprint0123456789AbCdEfGhIjKlMnOpQrStUvWxYz',curve:'Curve25519LongIndependentFingerprint0123456789AbCdEfGhIjKlMnOpQrStUvWxYz',master:'MasterLongIndependentFingerprint0123456789AbCdEfGhIjKlMnOpQrStUvWxYz',identityReady:true,recoverySaved:true,peerTrusted:false,ready:false};
+function localAiStage(stage,theme,desktop) {
+  const running=stage==='waiting';
+  const mutual=['profile-edit','waiting'].includes(stage);
+  const cryptoState=stage==='identity'?{...aiCrypto,identityReady:false,recoverySaved:false,deviceId:null,fingerprint:null,curve:null,master:null}:{...aiCrypto,peerTrusted:mutual};
+  const profileData={revision:'1',persona:localConfiguration.persona,selection:{provider:localConfiguration.provider,model:localConfiguration.model},max_tokens:2048};
+  const seeds={
+    'cloud/LocalAgentPanel.tsx':[{...localStatus,configured:true,running,nodeId:ai.node.id,configuration:localConfiguration,aiIds:[ai.account.id]},localCatalog],
+    'cloud/LocalAiEncryption.tsx':[cryptoState,mutual,stage!=='identity',false,{saved:stage==='waiting',applied:false},false,'','',status],
+    'cloud/crypto/ResourcePanel.tsx':stage==='profile-edit'?[[],[],{},{data:profileData},'',false,false,true]:[[{resource:{id:'profile-fixture',revision:'1',tombstone:null,applied:null},data:profileData}],[],{},null,'',false,false,true],
+  };
+  return fixture('cloud/LocalAgentPanel.tsx','LocalAgentPanel',{ai,operatorId:me.id,changed:noop,openChat:noop},seeds,theme,desktop);
+}
 const localCatalog = {providers:[{id:'example',name:'示例模型服务',models:[{id:'example-model',name:'示例模型',contextWindow:65536,reasoningEfforts:[]}]}]};
 const model = {providerId:'example',modelId:'example-model',name:'示例模型',reasoningEfforts:['low','medium','high'],imageInput:'unknown'};
 const summarySettings = {revision:'1',enabled:true,binding:{providerId:model.providerId,modelId:model.modelId,reasoningEffort:'medium',maxTokens:1024}};
@@ -104,7 +118,11 @@ const pages = {
   'ai-create':(theme,desktop)=>fixture('cloud/AiManagement.tsx','AiManagement',{operatorId:me.id,conversations:[group],cursor:'1',back:noop,refresh:noop},{'cloud/AiManagement.tsx':[[ai], '',false,'',null,{kind:'create'}]},theme,desktop),
   'group-create':(theme,desktop)=>fixture('cloud/Groups.tsx','CreateGroup',{contacts:[me,ai.account],me:me.id,act:blocked,busy:false,error:'',refresh:noop,select:noop,close:noop},{},theme,desktop),
   'group-manage':(theme,desktop)=>fixture('cloud/Groups.tsx','GroupDetails',{conversation:group,me:me.id,act:blocked,busy:false,refresh:noop,leave:noop},{},theme,desktop),
-  'local-agent':(theme,desktop)=>fixture('cloud/LocalAgentPanel.tsx','LocalAgentPanel',{ai,changed:noop},{'cloud/LocalAgentPanel.tsx':[localStatus,localCatalog]},theme,desktop),
+  'local-agent':(theme,desktop)=>fixture('cloud/LocalAgentPanel.tsx','LocalAgentPanel',{ai,operatorId:me.id,changed:noop,openChat:noop},{'cloud/LocalAgentPanel.tsx':[localStatus,localCatalog]},theme,desktop),
+  'local-ai-identity':(theme,desktop)=>localAiStage('identity',theme,desktop),
+  'local-ai-trust':(theme,desktop)=>localAiStage('trust',theme,desktop),
+  'local-ai-profile-edit':(theme,desktop)=>localAiStage('profile-edit',theme,desktop),
+  'local-ai-waiting':(theme,desktop)=>localAiStage('waiting',theme,desktop),
   'devices':(theme,desktop)=>workspace('account',{...workspaceSeed(null,'crypto'),'cloud/crypto/Devices.tsx':[status,false,'',false,me.id,[],null,false,false,'','','',null,false,0]},theme,desktop),
   'recovery':(theme,desktop)=>fixture('cloud/crypto/Devices.tsx','CryptoDevices',{accountId:me.id},{'cloud/crypto/Devices.tsx':[status,false,'',false,me.id,[],null,false,false,'','','',{format:'fixture'},true,0]},theme,desktop),
   'device-trust':(theme,desktop)=>fixture('cloud/crypto/Devices.tsx','CryptoDevices',{accountId:me.id},{'cloud/crypto/Devices.tsx':[status,false,'',false,me.id,[],{deviceId:'other-'+longId,name:'另一台设备',fingerprint:'ed-'+longId,curve:'curve-'+longId,master:'master-'+longId},false,false,'','','',null,false,0]},theme,desktop),
@@ -125,7 +143,7 @@ for (const [name, overrides, seeds] of [
 const assets = path.resolve(__dirname,'../dist/assets');
 assert.ok(fs.existsSync(assets),'Run pnpm build before generating previews');
 const base = fs.readdirSync(assets).filter(n=>n.startsWith('index-')&&n.endsWith('.css')).map(n=>fs.readFileSync(path.join(assets,n),'utf8')).join('\n');
-const css = base+['chat/social.css','cloud/cloud.css','cloud/auth.css','cloud/crypto/devices.css','cloud/chat-layout.css'].filter(p=>fs.existsSync(path.join(root,p))).map(p=>fs.readFileSync(path.join(root,p),'utf8')).join('\n');
+const css = base+['chat/social.css','cloud/cloud.css','cloud/auth.css','cloud/crypto/devices.css','cloud/chat-layout.css','cloud/local-ai-setup.css'].filter(p=>fs.existsSync(path.join(root,p))).map(p=>fs.readFileSync(path.join(root,p),'utf8')).join('\n');
 fs.mkdirSync(out,{recursive:true});
 fs.cpSync(path.resolve(__dirname,'../public/brand'),path.join(out,'brand'),{recursive:true});
 const links=[];
@@ -137,6 +155,10 @@ for (const theme of ['light','dark']) for (const desktop of [false,true]) for (c
     assert.ok(!markup.includes('cloud-image-dialog'),`${name}: fixture must not accidentally open the image preview`);
   }
   if (name==='encrypted-summary') assert.match(markup,/<label class="cloud-check"><input[^>]+type="checkbox"/,'summary toggle must use the shared checkbox row');
+  if(name==='local-ai-identity') { assert.match(markup,/准备首次加密身份/); assert.ok(!markup.includes('我确认 AI 恢复文件已妥善保存')); }
+  if(name==='local-ai-trust') { assert.match(markup,/核对当前真人设备指纹/); assert.match(markup,/核对本机 AI 独立指纹/); assert.match(markup,/<input type="checkbox" checked=""\/>我确认 AI 恢复文件已妥善保存/); assert.match(markup,/确认双方信任/); }
+  if(name==='local-ai-profile-edit') { assert.match(markup,/保存加密设定/); assert.match(markup,/example-model-with-a-long-provider-model-identifier-for-layout/); }
+  if(name==='local-ai-waiting') { assert.match(markup,/Agent 已启动/); assert.ok(!markup.includes('进入私聊，开启加密聊天')); }
   const full = ['account','account-edit','contact','settings','ai-list','devices'].includes(name) || name.startsWith('auth-') || name.startsWith('chat');
   const modal = ['ai-create','group-create'].includes(name);
   if (!full) markup=modal ? markup : `<main class="social-shell cloud-workspace ${desktop?'desktop-chrome':''}"><div class="fixture-content">${markup}</div></main>`;

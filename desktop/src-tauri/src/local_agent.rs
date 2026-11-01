@@ -1,5 +1,7 @@
 //! Native ownership of independent Agents; renderer never chooses a path or identity.
+mod crypto;
 use crate::cloud::CloudState;
+pub use crypto::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -52,6 +54,10 @@ pub struct LocalAgentState {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SetupOptions {
     node_name: String,
+    #[serde(default = "default_daily_calls")]
+    daily_calls: u64,
+    #[serde(default = "default_daily_tokens")]
+    daily_tokens: u64,
     provider: String,
     model: String,
     protocol: Option<String>,
@@ -379,7 +385,7 @@ fn safe_config(m: &Manifest) -> Result<Value, String> {
         .as_str()
         .ok_or("本机模型凭据引用损坏")?;
     Ok(
-        json!({"nodeName":m.config["node_name"],"provider":provider,"model":p["selection"]["model"],"protocol":route["protocol"],"baseUrl":route["base_url"],"persona":p["persona"],"temperature":p["temperature"],"maxTokens":p["max_tokens"],"reasoningEffort":p["selection"]["reasoning_effort"],"apiKeyEnv":if m.secrets.contains_key(key){None}else{Some(key)},"hasSavedKey":m.secrets.contains_key(key)}),
+        json!({"nodeName":m.config["node_name"],"dailyCalls":m.config["daily_calls"],"dailyTokens":m.config["daily_tokens"],"provider":provider,"model":p["selection"]["model"],"protocol":route["protocol"],"baseUrl":route["base_url"],"persona":p["persona"],"temperature":p["temperature"],"maxTokens":p["max_tokens"],"reasoningEffort":p["selection"]["reasoning_effort"],"apiKeyEnv":if m.secrets.contains_key(key){None}else{Some(key)},"hasSavedKey":m.secrets.contains_key(key)}),
     )
 }
 async fn status(
@@ -414,6 +420,47 @@ pub async fn local_agent_status(
     let (_, p) = state.current(&cloud).await?;
     status(&app, &state, &p).await
 }
+fn default_daily_calls() -> u64 {
+    48
+}
+fn default_daily_tokens() -> u64 {
+    1_048_576
+}
+fn set_budget(m: &mut Manifest, calls: u64, tokens: u64) -> Result<(), String> {
+    if calls == 0 || tokens == 0 || calls > 9_007_199_254_740_991 || tokens > 9_007_199_254_740_991
+    {
+        return Err("每日额度须为 JSON 安全范围内的正整数".into());
+    }
+    m.config["daily_calls"] = json!(calls);
+    m.config["daily_tokens"] = json!(tokens);
+    Ok(())
+}
+#[tauri::command]
+pub async fn local_agent_budget(
+    app: tauri::AppHandle,
+    cloud: tauri::State<'_, CloudState>,
+    state: tauri::State<'_, LocalAgentState>,
+    daily_calls: u64,
+    daily_tokens: u64,
+) -> Result<Value, String> {
+    let _op = state.operation.lock().await;
+    let generation = cloud.authorized_local_session()?.2;
+    let (owner, p) = state.current(&cloud).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    crypto::ensure_stopped(&state, &p)?;
+    let mut m = manifest(&p)?.ok_or("请先配置本机 Agent")?;
+    set_budget(&mut m, daily_calls, daily_tokens)?;
+    let staging = tempfile::tempdir_in(p.parent().unwrap()).map_err(io_error)?;
+    let candidate = staging.path().join("node");
+    init(&app, &candidate).await?;
+    materialize(&candidate, &m)?;
+    output(&app, "check", &candidate, None).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    atomic_json(&p.join("desktop-config.json"), &m)?;
+    let result = status(&app, &state, &p).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    Ok(result)
+}
 fn build_manifest(
     old: Option<Manifest>,
     o: SetupOptions,
@@ -429,6 +476,7 @@ fn build_manifest(
         return Err("Key 与环境变量只能选择一种".into());
     }
     let mut m=old.unwrap_or_else(||Manifest{config:json!({"server":owner.server,"node_id":Uuid::new_v4(),"daily_calls":48,"daily_tokens":1048576,"providers":{}}),secrets:BTreeMap::new()});
+    set_budget(&mut m, o.daily_calls, o.daily_tokens)?;
     let previous_provider = m.config["profile"]["selection"]["provider"]
         .as_str()
         .map(str::to_owned);
@@ -531,7 +579,9 @@ pub async fn local_agent_setup(
     options: SetupOptions,
 ) -> Result<Value, String> {
     let _op = state.operation.lock().await;
+    let generation = cloud.authorized_local_session()?.2;
     let (owner, p) = state.current(&cloud).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
     if p.exists()
         && (live(&app, &p).await?["running"] == true
             || state
@@ -549,13 +599,17 @@ pub async fn local_agent_setup(
     let candidate = staging.path().join("node");
     init(&app, &candidate).await?;
     materialize(&candidate, &m)?;
-    output(&app, "check", &candidate, Some(&m)).await?;
+    output(&app, "check", &candidate, None).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
     if !p.exists() {
         init(&app, &p).await?;
     }
+    crypto::ensure_session(&cloud, &owner, generation)?;
     state.remember(&owner)?;
     atomic_json(&p.join("desktop-config.json"), &m)?;
-    status(&app, &state, &p).await
+    let result = status(&app, &state, &p).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    Ok(result)
 }
 #[tauri::command]
 pub async fn local_agent_pair(
@@ -786,6 +840,25 @@ mod tests {
     }
     fn options() -> SetupOptions {
         serde_json::from_value(json!({"nodeName":"本机节点","provider":"deepseek","model":"deepseek-chat","apiKey":"test-key-private-only"})).unwrap()
+    }
+    #[test]
+    fn budget_changes_preserve_provider_credentials_and_ai_configuration() {
+        let mut m = build_manifest(None, options(), &owner()).unwrap();
+        m.config["ai_settings"] = json!({"bound-ai":{"enabled":true}});
+        let providers = m.config["providers"].clone();
+        let profile = m.config["profile"].clone();
+        let secrets = m.secrets.clone();
+        set_budget(&mut m, 90, 2_000_000).unwrap();
+        assert_eq!(m.config["daily_calls"], 90);
+        assert_eq!(m.config["daily_tokens"], 2_000_000);
+        assert_eq!(m.config["providers"], providers);
+        assert_eq!(m.config["profile"], profile);
+        assert_eq!(m.secrets, secrets);
+        assert_eq!(m.config["ai_settings"]["bound-ai"]["enabled"], true);
+        assert_eq!(safe_config(&m).unwrap()["dailyCalls"], 90);
+        assert!(set_budget(&mut m, 0, 1).is_err());
+        assert!(set_budget(&mut m, 1, 9_007_199_254_740_992).is_err());
+        assert_eq!(m.config["daily_calls"], 90);
     }
     #[tokio::test]
     async fn close_probe_ignores_stopped_configs_and_stale_descriptors_without_creating_locks() {

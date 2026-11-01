@@ -4,7 +4,7 @@ import { request, server, HttpError } from "../api";
 import { loadResources, decryptResource, pendingResources, saveResource, synchronizeResources, discardResourceIntent, resourceStatus, type Resource, type ResourceKind } from "./resources";
 import type { Conversation, SourceRevision } from "../types";
 
-export function EncryptedResourcePanel({ operatorId, aiId, kind, conversation, source }: { operatorId: string; aiId: string; kind: ResourceKind; conversation?: Conversation; source?: SourceRevision }) {
+export function EncryptedResourcePanel({ operatorId, aiId, kind, conversation, source, initialProfile, onProfileStatus, bindingVersion }: { bindingVersion?: string; initialProfile?: Record<string, any>; onProfileStatus?(status: { saved: boolean; applied: boolean }): void; operatorId: string; aiId: string; kind: ResourceKind; conversation?: Conversation; source?: SourceRevision }) {
   const cid = kind === "profile" ? null : conversation!.id;
   const [items, setItems] = useState<{ resource: Resource; data: Record<string, any> | null }[]>([]);
   const [pending, setPending] = useState<Awaited<ReturnType<typeof pendingResources>>>([]);
@@ -16,18 +16,19 @@ export function EncryptedResourcePanel({ operatorId, aiId, kind, conversation, s
   const [reviewed, setReviewed] = useState(false);
   const sequence = useRef(0);
   const load = async () => {
-    const ticket = ++sequence.current; setBusy(true); setError("");
+    const ticket = ++sequence.current; onProfileStatus?.({ saved: false, applied: false }); setBusy(true); setError("");
     try {
       const result = await loadResources(operatorId, aiId, kind, cid);
       const decoded = await Promise.all(result.items.map(async resource => ({ resource, data: await decryptResource<Record<string, any>>(resource) })));
       const commands = (await pendingResources(operatorId)).filter(p => p.body.aiId === aiId && p.body.kind === kind && p.body.conversationId === cid);
       const localEdits = Object.fromEntries(await Promise.all(commands.map(async command => [command.id, await decryptResource<Record<string, any>>({ id: command.id, ...command.body, revision: (BigInt(command.body.expectedRevision) + 1n).toString(), applied: null })])));
       if (ticket !== sequence.current) return;
+      onProfileStatus?.({ saved: !editing && !result.offline && result.items.some(r => !r.tombstone) && !commands.length, applied: !editing && !result.offline && !commands.length && result.items.some(r => !r.tombstone && r.applied?.status === "applied" && r.applied.revision === r.revision && (!bindingVersion || r.applied.bindingVersion === bindingVersion)) });
       setItems(decoded); setPending(commands); setPendingEdits(localEdits); setOffline(result.offline); setReviewed(!result.offline);
     } catch (e) { if (ticket === sequence.current) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (ticket === sequence.current) setBusy(false); }
   };
-  useEffect(() => { void load(); const timer = setInterval(() => { if (!editing) void load(); }, 10000); return () => { sequence.current++; clearInterval(timer); }; }, [operatorId, aiId, kind, cid, !!editing]);
+  useEffect(() => { void load(); const timer = setInterval(() => { if (!editing) void load(); }, 10000); return () => { sequence.current++; clearInterval(timer); }; }, [operatorId, aiId, kind, cid, !!editing, bindingVersion]);
   const act = async (work: () => Promise<unknown>) => { setBusy(true); setError(""); try { await work(); await load(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   const users = async () => {
     const key = `llmn-crypto-participants:${JSON.stringify([server, operatorId, aiId, cid, kind])}`;
@@ -58,7 +59,7 @@ export function EncryptedResourcePanel({ operatorId, aiId, kind, conversation, s
     {pending.map(command => <div className="cloud-unknown-command" role="status" key={command.id}><p>{command.conflict ? `需要处理冲突：${command.conflict}` : "已保存在此设备，云端保存结果待同步或确认。"}</p><p>本机保存的编辑（基于版本 {command.body.expectedRevision}）：</p><textarea aria-label="本机待同步编辑" readOnly value={describe(pendingEdits[command.id] ?? null)} /><button className="text-button" onClick={() => void navigator.clipboard.writeText(describe(pendingEdits[command.id] ?? null))}>复制本机编辑</button><p>下方同时显示当前确认版本；冲突不会覆盖你的编辑。</p><button className="text-button" disabled={busy || !!command.conflict} onClick={() => void act(() => synchronizeResources(operatorId))}>重试原保存</button><button className="text-button" disabled={busy || !reviewed} onClick={() => { if (window.confirm("已核对下方云端当前资料，确认放弃这份本机保存意图？已被云端接受的版本不会被撤销。")) void act(() => discardResourceIntent(operatorId, command.id)); }}>已核对当前版本，放弃本机意图</button></div>)}
     {items.map(({ resource, data }) => <article className="memory-card" key={resource.id}><small>v{resource.revision} · {resourceStatus(resource)}</small>{resource.tombstone ? <><p>{resource.tombstone === "forgotten" ? "记忆已停用" : "来源已失效"}</p>{kind === "summarySettings" && resource.tombstone === "stale" && <button className="text-button" disabled={busy || pending.some(p => p.id === resource.id)} onClick={() => setEditing({ resource, data: null })}>重新设置摘要</button>}</> : <>{kind === "profile" ? <><p>{data?.persona}</p><small>{data?.selection?.provider} / {data?.selection?.model}</small></> : kind === "summarySettings" ? <p>{data?.enabled ? "摘要已开启" : "摘要已关闭"} · {data?.binding?.modelId}</p> : <p className="memory-text">{kind === "summary" ? data?.item?.text : data?.text}</p>}{kind !== "summary" && <button className="text-button" disabled={busy || pending.some(p => p.id === resource.id)} onClick={() => setEditing({ resource, data })}>编辑当前版本</button>}{kind === "memory" && <button className="text-button" disabled={busy || pending.some(p => p.id === resource.id)} onClick={() => { if (window.confirm("停用这条记忆？云端确认后会限制相关任务，离线节点须重连后清理。")) void act(async () => { const audience = await users(); await saveResource(operatorId, { id: resource.id, aiId, conversationId: cid, kind, expectedRevision: resource.revision, expectedAudienceRevision: audience.revision, users: audience.accounts, tombstone: "forgotten", sources: resource.sources }, null); }); }}>遗忘</button>}</>}</article>)}
     {!items.length && !busy && <p>{offline ? "本机没有已缓存的资料。" : "当前没有已发布的密文资料。已有节点资料须在可信授权后由节点加密发布，不从旧明文接口补读。"}</p>}
-    {kind !== "summary" && (!singleton || !items.length) && <button className="social-button secondary" disabled={busy || !!pending.length} onClick={() => setEditing({ data: null })}>{singleton ? "明确创建新设定" : "添加记忆"}</button>}
+    {kind !== "summary" && (!singleton || !items.length) && <button className="social-button secondary" disabled={busy || !!pending.length} onClick={() => setEditing({ data: kind === "profile" ? initialProfile ?? null : null })}>{kind === "profile" && initialProfile ? "设置角色与模型" : singleton ? "明确创建新设定" : "添加记忆"}</button>}
     {editing && <form className="cloud-form" key={editing.resource?.revision ?? "new"} onSubmit={e => { e.preventDefault(); const form = e.currentTarget; void act(() => submit(form)); }}><fieldset className="social-form-fields" disabled={busy}>
       {kind === "memory" ? <><label>类别<select name="memoryKind" defaultValue={editing.data?.kind ?? "fact"}>{Object.entries({ preference: "偏好", fact: "事实", shared_experience: "共同经历", open_topic: "未完话题" }).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>记忆正文<textarea name="text" defaultValue={editing.data?.text ?? ""} required maxLength={4000} /></label>{source && <p>来源 {source.messageId} · v{source.revision}</p>}</> : <>
         {kind === "profile" ? <label>角色设定<textarea name="persona" defaultValue={editing.data?.persona ?? ""} maxLength={20000} /></label> : <label className="cloud-check"><input name="enabled" type="checkbox" defaultChecked={!!editing.data?.enabled} />开启自动摘要</label>}
@@ -68,7 +69,7 @@ export function EncryptedResourcePanel({ operatorId, aiId, kind, conversation, s
         {kind === "profile" && <label>每日自动联系 token<input name="autoTokens" type="number" min={1024} max={4000000} defaultValue={editing.data?.auto_daily_tokens ?? ""} /></label>}
         <p>这里不接收模型 Key 或 provider 地址；节点不支持新配置时显示“无法应用”，不会自动换模型。</p>
       </>}
-      <button className="social-button primary" type="submit">保存密文意图</button><button type="button" className="text-button" onClick={() => setEditing(null)}>取消未保存输入</button>
+      <button className="social-button primary" type="submit">{kind === "profile" ? "保存加密设定" : "保存密文意图"}</button><button type="button" className="text-button" onClick={() => setEditing(null)}>取消未保存输入</button>
     </fieldset></form>}
   </section>;
 }

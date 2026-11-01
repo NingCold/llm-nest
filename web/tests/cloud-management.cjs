@@ -14,7 +14,7 @@ function harness(file = "AiConfiguration") {
   const api = { server: "https://fixture.invalid", HttpError, async request(path, method, body) { calls.push(structuredClone({ path, method, body })); return api.respond(path, method, body); }, respond: async () => view };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, `../src/cloud/${file}.tsx`), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText + (file === "LocalAgentPanel" ? "\nexports.LocalSetup = LocalSetup;" : ""), {
-    exports, crypto: { randomUUID }, FormData: class { constructor(form) { this.fields = form; } get(name) { return this.fields[name]; } }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name === "./crypto/ResourcePanel") return { EncryptedResourcePanel: "encrypted-resources" }; if (name === "@tauri-apps/api/core") return { invoke() { throw Error("unexpected native call"); } }; return require(name); },
+    exports, crypto: { randomUUID }, FormData: class { constructor(form) { this.fields = form; } get(name) { return this.fields[name]; } }, require(name) { if (name === "react") return hooks; if (name === "./api") return api; if (name === "./LocalAiEncryption") return { LocalAiEncryption: "local-ai-encryption" }; if (name === "./crypto/ResourcePanel") return { EncryptedResourcePanel: "encrypted-resources" }; if (name === "@tauri-apps/api/core") return { invoke() { throw Error("unexpected native call"); } }; return require(name); },
   });
   return { exports, api, calls, remount() { slots.forEach(slot => slot?.cleanup?.()); slots.length = 0; }, render(fn, ...props) { index = 0; return fn(...props); }, async effects() { while (effects.length) effects.shift()(); await tick(); } };
 }
@@ -69,10 +69,10 @@ function elements(node, test, result = []) { if (node && typeof node === "object
   newSave.resolve(view); await savingNew;
 
   const local = harness("LocalAgentPanel"), saved = [];
-  const props = { configuration: { nodeName: "fixture", provider: "fixture", model: "small", protocol: "openai", baseUrl: "https://model.invalid", persona: "preserve", hasSavedKey: true }, catalog: { providers: [{ id: "fixture", name: "Fixture", models: [{ id: "small", name: "small" }] }] }, busy: false, save: async value => { saved.push(value); return true; } };
+  const props = { configuration: { dailyCalls: 17, dailyTokens: 123456, nodeName: "fixture", provider: "fixture", model: "small", protocol: "openai", baseUrl: "https://model.invalid", persona: "preserve", hasSavedKey: true }, catalog: { providers: [{ id: "fixture", name: "Fixture", models: [{ id: "small", name: "small" }] }] }, busy: false, save: async value => { saved.push(value); return true; } };
   let tree = local.render(local.exports.LocalSetup, props);
   await tree.props.onSubmit({ preventDefault() {}, currentTarget: { nodeLabel: "fixture", baseUrl: props.configuration.baseUrl, protocol: "openai" } });
-  assert.equal(saved[0].nodeName, "fixture"); assert.equal(saved[0].baseUrl, props.configuration.baseUrl); assert.equal(saved[0].persona, "preserve"); assert.equal(saved[0].apiKey, undefined);
+  assert.equal(saved[0].dailyCalls, 17); assert.equal(saved[0].dailyTokens, 123456); assert.equal(saved[0].nodeName, "fixture"); assert.equal(saved[0].baseUrl, props.configuration.baseUrl); assert.equal(saved[0].persona, "preserve"); assert.equal(saved[0].apiKey, undefined);
   elements(tree, n => n.type === "select" && n.props.value === "keep")[0].props.onChange({ target: { value: "key" } });
   tree = local.render(local.exports.LocalSetup, props);
   elements(tree, n => n.type === "input" && n.props.type === "password")[0].props.onChange({ target: { value: "local-fixture-secret" } });

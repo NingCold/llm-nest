@@ -1,0 +1,13 @@
+.cloud-local-agent-dialog { max-height: 90dvh; overflow-y: auto; min-width: 0; }
+.cloud-local-agent { min-width: 0; }
+.cloud-local-agent .account-id { overflow-wrap: anywhere; word-break: break-word; }
+.cloud-local-agent .cloud-actions { flex-wrap: wrap; }
+.cloud-local-agent input, .cloud-local-agent select, .cloud-local-agent textarea { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.cloud-local-agent ol { padding-left: 1.4rem; line-height: 1.8; }
+.cloud-local-agent details { margin-block: .8rem; }
+
+.cloud-local-agent .cloud-ai-section { min-width: 0; }
+.cloud-local-agent .cloud-ai-section p, .cloud-local-agent .cloud-ai-section small { overflow-wrap: anywhere; }
+.cloud-local-agent details[open] { padding: .75rem; border: 1px solid var(--border); border-radius: .6rem; }
+.cloud-local-agent details[open] .account-id { font-size: .78rem; line-height: 1.7; margin-block: .45rem; }
+.cloud-local-agent .social-button { white-space: normal; max-width: 100%; }

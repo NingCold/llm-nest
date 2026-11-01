@@ -23,7 +23,7 @@ import { localView, prepareLocal, prepareLocalReference, sendLocal, syncLocal, s
 import { prepareAttachments } from "./crypto/attachments";
 import { completeHistory } from "./crypto/history";
 import { encryptMessage, projectPage, projectSnapshot, enableEncryption } from "./crypto/content";
-import { cryptoDevice, localKeyMessages, receiveLocalKeys } from "./crypto/engine";
+import { consumeCryptoWarning, cryptoDevice, localKeyMessages, receiveLocalKeys } from "./crypto/engine";
 import { synchronizeResources } from "./crypto/resources";
 import { mutateEncrypted } from "./crypto/mutations";
 const db = new DraftDatabase<DraftReference>();
@@ -265,9 +265,14 @@ export default function ChatApp(props: ChatAppProps) {
       void run(async () => { await refresh(); await syncHistory(); });
     };
     const timer = setInterval(() => { if (cryptoDevice(me.id)) void synchronizeResources(me.id).catch(report); }, 3000);
-    const warning = (event: Event) => report(new Error((event as CustomEvent<string>).detail));
+    const warning = (event: Event) => {
+      consumeCryptoWarning(me.id);
+      report(new Error((event as CustomEvent<string>).detail));
+    };
     window.addEventListener("llmn-crypto-change", update);
     window.addEventListener("llmn-crypto-warning", warning);
+    const pendingWarning = consumeCryptoWarning(me.id);
+    if (pendingWarning) report(new Error(pendingWarning));
     return () => { clearInterval(timer); window.removeEventListener("llmn-crypto-change", update); window.removeEventListener("llmn-crypto-warning", warning); };
   }, [me?.id]);
   useEffect(() => {

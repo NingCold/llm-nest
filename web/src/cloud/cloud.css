@@ -161,6 +161,9 @@
   color: var(--s-muted);
   margin: 8px 0;
 }
+.cloud-unlock-timings { margin-top: 20px; }
+.cloud-unlock-timings > summary { cursor: pointer; }
+.cloud-unlock-timings > .cloud-form { margin-top: 12px; }
 .cloud-workspace .cloud-theme-options {
   display: flex;
   flex-wrap: wrap;

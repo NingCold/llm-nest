@@ -12,7 +12,7 @@
 
 服务端改用单调递增的设备目录版本。设备目录未变化时不再反复标记已跟踪账号变化；变更后再变回也产生新版本。客户端将确认的版本用于下次同步，只有接收同步、串行排空 SDK 后续查询并成功备份后，才一起保存游标和版本。请求或 SDK 确认失败均不推进。新设备不复用旧确认，旧服务端缺少版本时沿用原流程；现有 Agent 无需更新。
 
-当前 `alpha.20` 代码的 Web 28 组测试及类型检查、Rust 32 项（另 3 项忽略）、fmt 和 clippy 通过；clippy 保留既有 `too_many_arguments` 警告。边界检查、release 6 项、build-artifact 1 项和 prepare-agent 2 项通过。完整加密集成与 migration-only 历史迁移回归均基于 `alpha.20` fixture、Web `alpha.20`、官方 SDK 及 Agent `alpha.14` 通过，真实 API 调用为 0。回归覆盖并行检查仍等待双方完成、撤销与离线、错误口令、后台错误、锁定与跨账号迟到响应，以及首列表计时在快照刷新与卸载时的隔离。
+`alpha.21` 只增加按需读取解锁耗时的界面和独立合成测试工具，不修改解锁或信任逻辑。当前前端 29 组测试及类型检查、Rust 最终 32 项（另 3 项忽略）、fmt 和 clippy 通过；clippy 保留既有 `too_many_arguments` 警告。边界检查、release 6 项、build-artifact 1 项和 prepare-agent 2 项通过。完整加密集成与 migration-only 历史迁移回归只在 `alpha.20` fixture、Web `alpha.20`、官方 SDK 及 Agent `alpha.14` 上重跑通过，真实 API 调用为 0，不记为 `alpha.21` 再次执行。已有回归覆盖并行检查仍等待双方完成、撤销与离线、错误口令、后台错误、锁定与跨账号迟到响应，以及首列表计时在快照刷新与卸载时的隔离。
 
 此前 `alpha.17` 完整加密与历史迁移专项使用真实前端产物、官方 SDK 和模拟模型通过，真实模型调用为 0；服务端此前 79 项通过。目录版本、查询与 SDK 确认失败重试、新设备、旧服务端兼容及后续预热均有自动回归。这些历史结果不代替当前版本全量集成或真实桌面耗时验收。
 
@@ -20,18 +20,18 @@
 
 实际 SDK 计数：两个隔离客户端各完成 3 轮稳定同步，共 6 次同步的公钥查询为 0；新增设备后各查询一次，随后共 6 轮又为 0。这证明重复查询已消除，不是日常桌面解锁耗时的实测结果。
 
-真实 WebView 基线与保留空连接对照集中在[Windows 记录](windows.md#解锁与设备目录同步优化2026-11-01)，不将旧版临时对照的耗时当作 `alpha.20` 实测。Windows NSIS 与内网 Web `alpha.20` 已更新，服务端保持 `alpha.13`；日常资料、随包 Agent 与服务器数据核对通过，新完整备份独立恢复成功，真实模型新增调用为 0。已保持原登录进入锁屏并请用户实际解锁测量，尚待新版耗时结果；MSI 已构建未实装，具体安装、预热和清理记录见 Windows。
+真实 WebView 记录与保留空连接对照集中在[Windows 记录](windows.md#解锁与设备目录同步优化2026-11-01)。Windows NSIS `alpha.21` 已安装，随包 Agent `alpha.14`，内网仍为服务端 `alpha.13` / Web `alpha.20`；备份、安装前后资料与 Agent 摘要核对通过，MSI 已构建未实装。用户关闭 DevTools 后正常解锁，反馈比上次快、约 2 秒；应用内读取的 engine 开始至首列表 RAF 为 1410.9ms，并非精确按键到屏幕呈现时间。此前 `alpha.20` 约 4.15 秒在 DevTools 打开时测得，不能直接作为正常版本提速对照。安装、详细分段、合成对照和清理结果见 Windows；公开版本不变，本轮未推送。
 
 锁屏准备 SDK 并保留当前已有元数据库的空连接，不建立事务、不创建库、不读取密钥或解密资料；连接直到解锁完成后、页面卸载或数据库请求升级时释放。预热失败只记录匿名计时，不改变锁态。锁定仍卸载聊天 DOM、订阅和状态；本轮未推送或公开发布。
 
 SDK 使用官方 `StoreHandle.open` 后 `initFromStore`。`alpha.16` 的旧 `storeOpen` 包含完整 `OlmMachine.initialize`，`alpha.17` 起只包含开库，不能同名直接比较。已有 `storeMetadata`、`storeCipher`（口令派生与 cipher unwrap）、`storeDatabase`、`machineLoad`；`alpha.18` 再将开库前准备与元数据读取拆为 `storePrepare`、`storeMetadataRead`。PBKDF 仍为 SDK 默认 200000 次，未修改。Node fake IndexedDB 合成库不能代表日常 WebView 性能，实际基线见 Windows 记录。
 
-真实 WebView 可在开发者工具读取最近一次匿名分段计时：
+正常速度测试须在关闭开发者工具时完成。[V8 官方说明](https://v8.dev/docs/wasm-compilation-pipeline#debugging)指出，开启 DevTools 会把 WebAssembly 切回调试编译层。优先在 **设置 → 关于 → 解锁耗时** 读取内存数据；该入口按需读取固定白名单，不上传或持久保存。需要开发者工具时，应在解锁完成后才打开并读取已经保存的 measure，不要开着它再解锁或把两种条件混作速度对照：
 
 ```js
 performance.getEntriesByType("measure")
   .filter(x => x.name.startsWith("llmn.crypto.unlock.") || x.name.startsWith("llmn.chat.startup."))
-  .map(({ name, duration }) => ({ name, ms: Math.round(duration) }))
+  .map(({ name, startTime, duration }) => ({ name, start: Math.round(startTime), ms: Math.round(duration) }))
 ```
 
 解锁固定阶段包括 SDK 导入、初始化、打开密钥库及上述细分、机器加载、设备检查、跟踪账号、本机状态、解锁就绪及后台同步；新增 `statusIdentity`、`statusCrossSigning`、`statusOwnDeviceTrust` 区分身份、交叉签名和本机设备信任。`deviceRegister` 与本地检查并行，不能将两者耗时相加当作关键路径。
@@ -39,6 +39,19 @@ performance.getEntriesByType("measure")
 聊天首列表另以 `llmn.chat.startup.` 记录 `initRequest`、`snapshotProjection`、`firstSnapshotReady`、`firstSnapshotCommit` 和 `firstSnapshotFrame`。前两项分别为首个有效快照请求和解密投影耗时，后三项从该聊天挂载起计时；commit 是 effect 观察已提交 DOM 的时点，RAF 只是随后一次绘制机会，均不是屏幕实际呈现时间或截图时间。它们不从口令提交起算，不可直接当作用户总等待时间。
 
 所有指标只含固定名称和数值时间，不包含账号、设备 ID、服务器、口令、密钥、密文或正文，不写入日志或持久存储。每次解锁或聊天挂载清除对应上一轮，锁定后的迟到结果不再记录；首列表只记录首次有效快照。用户感知耗时应另核对口令提交至锁屏消失、列表 DOM 及随后 frame，不能以 SDK 就绪或 RAF 代替实际可见性验证。
+
+### 用隔离 WebView 检查 SDK 耗时
+
+`scripts/sdk-open-benchmark.cjs` 提供只在本机监听的测试页面和结果收集器，`sdk_open_benchmark` example 使用单独的浏览器资料目录，不启动产品账号、云端连接或 Agent。页面只加载固定的官方 SDK 18.9.0，所有身份和口令均为合成测试数据。
+
+Windows 先执行 `cargo +stable-x86_64-pc-windows-msvc build -p tauri-frontend --example sdk_open_benchmark --locked`。建立一个临时工作目录，然后运行 `node scripts/sdk-open-benchmark.cjs 1437 <结果文件绝对路径>`。收集器保持运行，另启 `target/debug/examples/sdk_open_benchmark.exe <专用资料目录绝对路径> <测试URL>`；资料目录末级必须叫 `synthetic-profile`。
+
+- 首次 URL 为 `http://127.0.0.1:1437/?mode=seed`，建立并核验合成可信设备。
+- 程序完全退出后，以同一目录和端口运行 `?mode=measure`，记录新进程首次开库和本进程随后三次重开。
+- 需要验证较大设备内部资料时，先运行一次 `?mode=grow`。它模拟 100 批公钥被领取后的正常补货，保留相应合成私钥，不修改 SDK 或存储格式；完成后再测量。
+- 调试干扰对照使用 `?mode=measure&manual=1&devtools=1`，并给 EXE 增加第三个参数 `devtools`。等待工具显示后，点击测试窗口的 **开始合成测量**。正常组应关闭 DevTools，且没有并行编译。
+
+每轮自动写入固定数值结果后退出；先确认 host 及其 WebView 子进程退出再测下一组。只有 `success` 和全部 `valid` 均为真才能使用该组。首次与第二次信任检查分别记录，可区分重复还原资料与缓存读取。独立 testhost 的 `TaskDialogIndirect` 错误已通过 example 专属 Common Controls v6 manifest 修复，正式应用未受影响，不需要替换系统 DLL。较大合成 Account 已复现 DevTools 对口令派生、机器加载和首次信任检查的明显干扰，详细范围见 Windows；未查询日常私钥数量，不用合成数量推断日常账号。合成测试不能代替日常账号的完整解锁验收。
 
 ## 常用检查命令
 

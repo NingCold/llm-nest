@@ -57,6 +57,7 @@ import { downloadAttachment } from "./crypto/attachments";
 import { exportHistory } from "./crypto/history";
 import { HistoryMigrationPanel } from "./crypto/HistoryMigrationPanel";
 import { CryptoDevices } from "./crypto/Devices";
+import { UnlockTimings } from "./UnlockTimings";
 
 interface Props extends ChatConnectionProps {
   me: Account;
@@ -1015,6 +1016,7 @@ export function Workspace(p: Props) {
                         <h1>LLM Nest</h1>
                         <p>让联系自然发生。</p>
                         <p>网页与桌面共用云端账号和聊天记录。</p>
+                        <UnlockTimings />
                       </section>
                     )}
                   </div>

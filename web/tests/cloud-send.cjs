@@ -3,7 +3,7 @@ class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); t
 const me = { id: "me", name: "自己", kind: "human", status: "active" };
 const conversation = { id: "group", kind: "group", revision: "7", directBlocked: false };
 const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
-function harness(record, desktop = false, storage = new Map(), account = me) {
+function harness(record, desktop = false, storage = new Map(), account = me, timing) {
   const states = [], refs = [], calls = [], saves = [], effects = [], listeners = {};
   const browserListeners = {}, timers = [], mountEffects = [];
   const repository = { records: {} }, lifecycle = { locks: 0, logouts: 0, imageReads: 0, fileReads: 0 };
@@ -18,6 +18,7 @@ function harness(record, desktop = false, storage = new Map(), account = me) {
   const api = { server: "https://example.test", encryptions: 0, invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/ChatApp.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
+    performance: timing, requestAnimationFrame: timing ? fn => { api.frame = fn; return 1; } : undefined, cancelAnimationFrame() { api.frame = undefined; },
     setInterval(fn) { timers.push(fn); return fn; }, clearInterval() {}, exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, document: { querySelector: () => ({ scrollTop: 123 }) }, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener(name, fn) { browserListeners[name] = fn; }, removeEventListener(name) { delete browserListeners[name]; } },
     require(name) {
       if (name === "react") return hooks;
@@ -51,6 +52,47 @@ function harness(record, desktop = false, storage = new Map(), account = me) {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+async function startupTimingCases() {
+  let clock = 0;
+  const entries = [], cleared = [];
+  const timing = { now: () => ++clock, clearMeasures: name => cleared.push(name), measure: (name, options) => entries.push({ name, ...options }) };
+  const h = harness({ draft, pending: null }, false, new Map(), me, timing);
+  const first = h.render();
+  assert.equal(cleared.length, 5, 'a mount clears only its fixed startup measurements');
+  const pending = deferred(); h.api.respond = () => pending.promise;
+  const reading = first.refresh();
+  assert.equal(entries.length, 0, 'unfinished snapshots do not publish timing results');
+  pending.resolve({ self: me, contacts: [], conversations: [conversation], cursor: 'first' }); await reading;
+  assert.deepEqual(entries.map(e => e.name), ['initRequest', 'snapshotProjection', 'firstSnapshotReady'].map(s => `llmn.chat.startup.${s}`));
+  h.render();
+  const snapshotEffect = () => h.mountEffects.findLast(effect => String(effect).includes('firstSnapshotCommit'))();
+  assert.equal(snapshotEffect(), undefined, 'snapshot changes do not install a frame-cancelling cleanup');
+  assert.equal(entries.at(-1).name, 'llmn.chat.startup.firstSnapshotCommit');
+  const firstFrame = h.api.frame;
+  await h.render().refresh(); h.render(); snapshotEffect();
+  assert.equal(h.api.frame, firstFrame, 'a second snapshot before RAF preserves the first scheduled frame');
+  h.api.frame(); assert.equal(entries.at(-1).name, 'llmn.chat.startup.firstSnapshotFrame');
+  await h.render().refresh(); assert.equal(entries.length, 5, 'later refreshes do not repeat startup measurements');
+  assert.ok(entries.every(e => Object.keys(e).sort().join() === 'end,name,start' && e.end >= e.start), 'measurements contain only fixed names and numeric bounds');
+  h.unmount(); h.api.frame(); assert.equal(entries.length, 5, 'a late animation callback cannot publish after unmount');
+  const late = harness({ draft, pending: null }, false, new Map(), me, timing);
+  const delayed = deferred(); late.api.respond = () => delayed.promise;
+  const waiting = late.render().refresh(), count = entries.length;
+  late.unmount(); delayed.resolve({ self: me, conversations: [], cursor: 'late' }); await waiting;
+  assert.equal(entries.length, count, 'unmounted requests cannot publish timing results');
+  const retry = harness({ draft, pending: null }, false, new Map(), me, timing);
+  const retryView = retry.render();
+  retry.api.respond = async () => { throw new Error('offline'); };
+  await assert.rejects(retryView.refresh(), /offline/);
+  assert.equal(entries.length, count, 'failed initial requests publish no startup timings');
+  retry.api.respond = async () => ({ self: me, contacts: [], conversations: [conversation], cursor: 'retry' });
+  await retryView.refresh(); assert.equal(entries.length, count + 3, 'the first successful retry is measured');
+  retry.render(); retry.mountEffects.findLast(effect => String(effect).includes('firstSnapshotCommit'))();
+  const cancelledFrame = retry.api.frame, beforeUnmount = entries.length;
+  retry.unmount();
+  assert.equal(retry.api.frame, undefined, 'component unmount cancels the pending animation frame');
+  cancelledFrame(); assert.equal(entries.length, beforeUnmount, 'even an already dispatched frame cannot publish after unmount');
+}
 async function refreshCases() {
   const h = harness({ draft, pending: null }), requests = [];
   let concurrent = 0, maximum = 0, notify;
@@ -346,6 +388,7 @@ async function suspendDraftCases() {
   assert.equal(desktop.saves.at(-1).next.draft.text, '托盘重新打开后继续输入'); cleanup();
   await suspendDraftCases();
   await refreshCases();
+  await startupTimingCases();
   await refreshRetryCases();
   console.log("PASS: cloud structured sends persist before dispatch, unlock only first explicit rejections and preserve uncertain/recovered command snapshots");
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -221,7 +221,7 @@ export async function syncCrypto() {
 export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" = false, expected?: { generation: number; deviceId: string; isCurrent?: () => boolean }) {
   const attempt = ++timingAttempt;
   const clock = typeof performance === "undefined" ? undefined : performance;
-  const timingNames = ["sdkImport", "sdkInit", "storeOpen", "storePrepare", "storeMetadataRead", "storeMetadata", "storeCipher", "storeDatabase", "machineLoad", "deviceRegister", "trackedUsers", "deviceStatus", "unlockReady", "backgroundSync"] as const;
+  const timingNames = ["sdkImport", "sdkInit", "storeOpen", "storePrepare", "storeMetadataRead", "storeMetadata", "storeCipher", "storeDatabase", "machineLoad", "deviceRegister", "trackedUsers", "deviceStatus", "statusIdentity", "statusCrossSigning", "statusOwnDeviceTrust", "unlockReady", "backgroundSync"] as const;
   for (const name of timingNames) clock?.clearMeasures(`llmn.crypto.unlock.${name}`);
   const started = clock?.now() ?? 0;
   if (!passphrase.trim()) throw new Error("请输入本机加密库口令；它与登录密码和恢复材料分开保管");
@@ -283,19 +283,32 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
   const measuredSync = async () => { const start = clock?.now() ?? 0; await syncCrypto(); elapsed("backgroundSync", start); };
   active = unlocked;
   localStorage.setItem(metadataKey(account), JSON.stringify(metadata));
+  let offlineStatus: Awaited<ReturnType<typeof deviceStatus>> | undefined;
   try {
-    step = clock?.now() ?? 0;
-    await request("/crypto/devices", "POST", { deviceId: metadata.deviceId, name: "LLM Nest 客户端" });
+    const [registration, local] = await Promise.allSettled([
+      (async () => {
+        const start = clock?.now() ?? 0;
+        await request("/crypto/devices", "POST", { deviceId: metadata.deviceId, name: "LLM Nest 客户端" });
+        current(unlocked);
+        elapsed("deviceRegister", start);
+      })(),
+      (async () => {
+        let start = clock?.now() ?? 0;
+        await machine.updateTrackedUsers([new sdk.UserId(matrixUser(account))]);
+        current(unlocked);
+        elapsed("trackedUsers", start);
+        start = clock?.now() ?? 0;
+        const status = await deviceStatus(elapsed);
+        elapsed("deviceStatus", start);
+        return status;
+      })(),
+    ]);
     current(unlocked);
-    elapsed("deviceRegister", step);
-    step = clock?.now() ?? 0;
-    await machine.updateTrackedUsers([new sdk.UserId(matrixUser(account))]);
-    current(unlocked);
-    elapsed("trackedUsers", step);
-    step = clock?.now() ?? 0;
-    const localStatus = await deviceStatus();
-    elapsed("deviceStatus", step);
-    current(unlocked);
+    // Permission failures take precedence even when the local read also failed.
+    if (registration.status === "rejected" && !(registration.reason instanceof ConnectionError)) throw registration.reason;
+    if (local.status === "rejected") { lockCrypto(); throw local.reason; }
+    const localStatus = local.value;
+    if (registration.status === "rejected") { offlineStatus = localStatus; throw registration.reason; }
     if (expected?.isCurrent?.() === false) throw new CryptoSessionChanged("自动解锁已取消");
     // A persisted trusted identity is usable after the server permission check.
     // Inbox, key queries and backup delivery can continue without holding the lock screen.
@@ -311,28 +324,34 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
     }
     await measuredSync();
   } catch (error) {
-    if (!(error instanceof ConnectionError) || !saved || create === "new-device") {
+    if (active !== unlocked || !(error instanceof ConnectionError) || !saved || create === "new-device") {
       if (active === unlocked) lockCrypto();
       throw error;
     }
     // An existing encrypted store can be unlocked without promoting a new device.
   }
   current(unlocked);
-  const status = await deviceStatus();
+  const status = offlineStatus ?? await deviceStatus();
   if (expected?.isCurrent?.() === false) { if (active === unlocked) lockCrypto(); throw new CryptoSessionChanged("自动解锁已取消"); }
   current(unlocked); changed();
   elapsed("unlockReady", started);
   return status;
 }
 
-export async function deviceStatus() {
+export async function deviceStatus(measure?: (name: "statusIdentity" | "statusCrossSigning" | "statusOwnDeviceTrust", start: number) => void) {
   const s = session();
+  let start = typeof performance === "undefined" ? 0 : performance.now();
   const identity = await s.machine.getIdentity(new s.sdk.UserId(matrixUser(s.account)));
   current(s);
+  measure?.("statusIdentity", start);
+  start = typeof performance === "undefined" ? 0 : performance.now();
   const cross = await s.machine.crossSigningStatus();
   current(s);
+  measure?.("statusCrossSigning", start);
+  start = typeof performance === "undefined" ? 0 : performance.now();
   const ownsDevice = identity && "trustsOurOwnDevice" in identity ? await identity.trustsOurOwnDevice() : false;
   current(s);
+  measure?.("statusOwnDeviceTrust", start);
   return { deviceId: s.deviceId, fingerprint: s.machine.identityKeys.ed25519.toBase64(), curve: s.machine.identityKeys.curve25519.toBase64(), master: identity ? masterFingerprint(identity.masterKey) : null, trusted: !!identity?.isVerified() && ownsDevice, hasRecoverySecrets: cross.hasMaster && cross.hasSelfSigning && cross.hasUserSigning, authorizationAvailable: !!s.authorization };
 }
 export async function initializeIdentity() {

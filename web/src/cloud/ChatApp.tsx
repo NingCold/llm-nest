@@ -28,6 +28,7 @@ import { synchronizeResources } from "./crypto/resources";
 import { mutateEncrypted } from "./crypto/mutations";
 const db = new DraftDatabase<DraftReference>();
 const blank = (): DraftRecord => ({ draft: emptyDraft<DraftReference>(), pending: null });
+const startupStages = ["initRequest", "snapshotProjection", "firstSnapshotReady", "firstSnapshotCommit", "firstSnapshotFrame"] as const;
 export interface ChatLocation { active: string; tab: string; accountSection: string; scrollTop?: number }
 interface ChatAppProps {
   account: Account;
@@ -85,6 +86,12 @@ export default function ChatApp(props: ChatAppProps) {
     dirty = useRef(false),
     acknowledging = useRef(false),
     bottom = useRef(props.location.scrollTop === undefined);
+  const startup = useRef<{ epoch: number; start: number; ready: boolean; committed: boolean; frame?: number } | null>(null);
+  const startupMeasure = (stage: typeof startupStages[number], start: number, end?: number) => {
+    if (typeof performance !== "undefined") {
+      performance.measure(`llmn.chat.startup.${stage}`, { start, end: end ?? performance.now() });
+    }
+  };
   recordRef.current = record;
   const [localChats, setLocalChats] = useState<Record<string, LocalView>>({});
   const [localUnavailable, setLocalUnavailable] = useState<Record<string, boolean>>({});
@@ -150,10 +157,31 @@ export default function ChatApp(props: ChatAppProps) {
       }
     }
   };
-  useEffect(() => () => {
-    epoch.current++; view.current++; searchSeq.current++;
-    clearConsciousnessCommands(); clearAiConfigurationCommands(); clearParticipationCommands();
+  useEffect(() => {
+    if (typeof performance !== "undefined") {
+      for (const stage of startupStages) performance.clearMeasures(`llmn.chat.startup.${stage}`);
+      startup.current = { epoch: epoch.current, start: performance.now(), ready: false, committed: false };
+    }
+    return () => {
+      if (startup.current?.frame !== undefined) cancelAnimationFrame(startup.current.frame);
+      startup.current = null;
+      epoch.current++; view.current++; searchSeq.current++;
+      clearConsciousnessCommands(); clearAiConfigurationCommands(); clearParticipationCommands();
+    };
   }, []);
+  useEffect(() => {
+    const sample = startup.current;
+    if (!snapshot || !sample?.ready || sample.committed || sample.epoch !== epoch.current) return;
+    sample.committed = true;
+    // This effect observes the committed snapshot DOM; it is not React's exact commit timestamp.
+    startupMeasure("firstSnapshotCommit", sample.start);
+    if (typeof requestAnimationFrame !== "function") return;
+    // A rendering opportunity after React's commit, not a screen presentation timestamp.
+    sample.frame = requestAnimationFrame(() => {
+      sample.frame = undefined;
+      if (startup.current === sample && sample.epoch === epoch.current) startupMeasure("firstSnapshotFrame", sample.start);
+    });
+  }, [snapshot]);
   useEffect(() => { props.rememberLocation({ active, tab }); }, [active, tab]);
   const refresh = async () => {
     const e = epoch.current;
@@ -166,10 +194,20 @@ export default function ChatApp(props: ChatAppProps) {
       let cursor: string;
       do {
         work.queued = false;
+        const sample = startup.current;
+        const measuring = !!sample && !sample.ready && sample.epoch === e;
+        const requestStart = measuring ? performance.now() : 0;
         const raw = await request<Snapshot>("/chat/init");
+        const projectionStart = measuring ? performance.now() : 0;
         const data = await projectSnapshot(raw);
         cursor = data.cursor;
         if (e !== epoch.current) break;
+        if (measuring) {
+          startupMeasure("initRequest", requestStart, projectionStart);
+          startupMeasure("snapshotProjection", projectionStart);
+          startupMeasure("firstSnapshotReady", sample.start);
+          sample.ready = true;
+        }
         retrySnapshot.current = false;
         // Publish this result before handling notifications received during its fetch.
         setSnapshot(data);

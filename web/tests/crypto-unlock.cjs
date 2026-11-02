@@ -14,14 +14,14 @@ function fixture({ saved = true, trusted = true } = {}) {
   const state = { trusted, registrationError: undefined, wrong: false, receives: 0, closed: 0 };
   const api = { server: 'https://unlock.invalid', HttpError, ConnectionError, request: async path => {
     calls.push(path);
-    if (path === '/crypto/devices') { registered.resolve(); if (state.registrationError) throw state.registrationError; return {}; }
+    if (path === '/crypto/devices') { registered.resolve(); if (state.registrationGate) await state.registrationGate.promise; if (state.registrationError) throw state.registrationError; return {}; }
     if (path.startsWith('/crypto/sync?')) return state.syncResponse ?? gate.promise;
     if (path === '/crypto/requests') { if (state.flushGate) await state.flushGate.promise; if (state.flushError) throw state.flushError; state.sent++; return {}; }
     throw new Error('unexpected request ' + path);
   } };
   const key = account => `llmn-crypto-device:${JSON.stringify([api.server, account])}`;
   if (saved) storage.set(key('a'), JSON.stringify({ deviceId: 'local-device', cursor: '0' }));
-  const machine = { close() { state.closed++; }, async updateTrackedUsers() {}, async getIdentity() { return { masterKey: '{"keys":{"master":"master"}}', isVerified: () => state.trusted, trustsOurOwnDevice: async () => state.trusted }; }, async crossSigningStatus() { return {}; }, identityKeys: { ed25519: { toBase64: () => 'ed' }, curve25519: { toBase64: () => 'curve' } }, async outgoingRequests() { return state.outgoing ?? []; }, async markRequestAsSent(id) { if (state.markError) throw state.markError; state.outgoing = state.outgoing.filter(request => request.id !== id); }, async receiveSyncChanges() { state.receives++; if (state.queryOnChange && state.syncResponse.device_lists.changed.length) state.outgoing = [{ id: 'query', type: 1, body: '{}' }]; return []; }, async backupRoomKeys() { return state.backup?.promise; } };
+  const machine = { close() { state.closed++; }, async updateTrackedUsers() {}, async getIdentity() { state.identities = (state.identities ?? 0) + 1; if (state.identityGate) await state.identityGate.promise; if (state.identityError) throw state.identityError; return { masterKey: '{"keys":{"master":"master"}}', isVerified: () => state.trusted, trustsOurOwnDevice: async () => state.trusted }; }, async crossSigningStatus() { return {}; }, identityKeys: { ed25519: { toBase64: () => 'ed' }, curve25519: { toBase64: () => 'curve' } }, async outgoingRequests() { return state.outgoing ?? []; }, async markRequestAsSent(id) { if (state.markError) throw state.markError; state.outgoing = state.outgoing.filter(request => request.id !== id); }, async receiveSyncChanges() { state.receives++; if (state.queryOnChange && state.syncResponse.device_lists.changed.length) state.outgoing = [{ id: 'query', type: 1, body: '{}' }]; return []; }, async backupRoomKeys() { return state.backup?.promise; } };
   class Id { constructor(value) { this.value = value; } }
   const sdk = { RequestType: { ToDevice: 3, KeysBackup: 6 }, initAsync: async () => {}, UserId: Id, DeviceId: Id, DeviceLists: Id, DecryptionSettings: Id, TrustRequirement: { CrossSigned: 1 },
     StoreHandle: { open: async (_, pass, logger) => {
@@ -63,11 +63,58 @@ function subscribeWarnings(h, reports) {
   assert.equal(trusted.state.receives, 0, 'unlock returns while full sync remains deferred');
   trusted.finish(); await tick();
   assert.equal(trusted.state.receives, 1);
-  assert.deepEqual(trusted.measurements.map(m => m.name.split('.').pop()).sort(), ['backgroundSync', 'deviceRegister', 'deviceStatus', 'sdkImport', 'sdkInit', 'storeOpen', 'storePrepare', 'storeMetadataRead', 'storeMetadata', 'storeCipher', 'storeDatabase', 'machineLoad', 'trackedUsers', 'unlockReady'].sort());
+  assert.deepEqual(trusted.measurements.map(m => m.name.split('.').pop()).sort(), ['backgroundSync', 'deviceRegister', 'deviceStatus', 'statusIdentity', 'statusCrossSigning', 'statusOwnDeviceTrust', 'sdkImport', 'sdkInit', 'storeOpen', 'storePrepare', 'storeMetadataRead', 'storeMetadata', 'storeCipher', 'storeDatabase', 'machineLoad', 'trackedUsers', 'unlockReady'].sort());
   assert.equal(JSON.stringify(trusted.measurements).includes('private-store-name'), false);
   assert.equal(trusted.state.freed, 1, 'the temporary store handle is released after the machine takes ownership');
   for (const measure of trusted.measurements) { assert.deepEqual(Object.keys(measure).sort(), ['end', 'name', 'start']); assert.ok(measure.end >= measure.start); }
   assert.equal(JSON.parse(trusted.storage.get(trusted.key('a'))).cursor, 'done');
+  for (const first of ['registration', 'identity']) {
+    const h = fixture(); h.state.registrationGate = deferred(); h.state.identityGate = deferred();
+    const opening = h.exports.unlockCrypto('a', 'correct');
+    await h.registered.promise; await tick();
+    assert.equal(h.state.identities, 1, 'local status starts while registration remains pending');
+    const initialEvents = h.events.length;
+    h.state[first + 'Gate'].resolve(); await tick();
+    assert.equal(h.events.length, initialEvents, 'one completed branch cannot publish readiness');
+    assert.equal(h.calls.length, 1, 'one completed branch cannot start sync');
+    h.state[(first === 'registration' ? 'identity' : 'registration') + 'Gate'].resolve();
+    assert.equal((await opening).trusted, true); h.finish(); await tick();
+  }
+  const switched = fixture();
+  const oldRegistration = switched.state.registrationGate = deferred();
+  const oldIdentity = switched.state.identityGate = deferred();
+  const oldOpening = switched.exports.unlockCrypto('a', 'correct');
+  const oldRejected = assert.rejects(oldOpening, switched.exports.CryptoSessionChanged);
+  await switched.registered.promise; await tick(); switched.exports.lockCrypto();
+  switched.state.registrationGate = undefined; switched.state.identityGate = undefined;
+  switched.state.registrationError = new ConnectionError('offline');
+  switched.storage.set(switched.key('b'), JSON.stringify({ deviceId: 'device-b', cursor: '0' }));
+  await switched.exports.unlockCrypto('b', 'correct');
+  const switchedEvents = switched.events.length, switchedMeasurements = switched.measurements.length;
+  oldRegistration.resolve(); oldIdentity.resolve(); await oldRejected;
+  assert.equal(switched.exports.cryptoDevice('b'), 'device-b', 'late branches preserve the next account session');
+  assert.equal(switched.events.length, switchedEvents); assert.equal(switched.measurements.length, switchedMeasurements);
+  for (const status of [401, 403]) {
+    const h = fixture(); h.state.registrationError = new HttpError(status); h.state.identityError = new Error('local failed');
+    await assert.rejects(h.exports.unlockCrypto('a', 'correct'), error => error.status === status);
+    assert.equal(h.state.closed, 1, 'permission rejection closes the machine even when local status also failed');
+  }
+  for (const error of [new Error('local failed'), new ConnectionError('local failed')]) {
+    const h = fixture(); h.state.identityError = error;
+    await assert.rejects(h.exports.unlockCrypto('a', 'correct'), /local failed/);
+    assert.equal(h.state.closed, 1); assert.equal(h.calls.length, 1);
+  }
+  for (const first of ['registration', 'identity']) {
+    const h = fixture(); h.state.registrationGate = deferred(); h.state.identityGate = deferred();
+    const opening = h.exports.unlockCrypto('a', 'correct');
+    const rejected = assert.rejects(opening, h.exports.CryptoSessionChanged);
+    await h.registered.promise; await tick(); h.exports.lockCrypto();
+    const eventCount = h.events.length;
+    h.state[first + 'Gate'].resolve(); await tick();
+    h.state[(first === 'registration' ? 'identity' : 'registration') + 'Gate'].resolve();
+    await rejected;
+    assert.equal(h.events.length, eventCount); assert.equal(h.calls.length, 1); assert.equal(h.state.closed, 1);
+  }
   for (const status of [401, 403]) {
     const h = fixture(); h.state.registrationError = new HttpError(status);
     await assert.rejects(h.exports.unlockCrypto('a', 'correct'), error => error.status === status);
@@ -114,6 +161,7 @@ function subscribeWarnings(h, reports) {
   assert.equal(discarded.exports.consumeCryptoWarning('b'), undefined, 'queued warning never leaks into next account');
   const offline = fixture(); offline.state.registrationError = new ConnectionError('offline');
   assert.equal((await offline.exports.unlockCrypto('a', 'correct')).trusted, true);
+  assert.equal(offline.state.identities, 1, 'offline registration reuses the completed local status');
   for (const switchAccount of [false, true]) {
     const h = fixture(); await fastUnlock(h); h.exports.lockCrypto();
     if (switchAccount) { h.state.registrationError = new ConnectionError('offline'); h.storage.set(h.key('b'), JSON.stringify({ deviceId: 'device-b', cursor: '0' })); await h.exports.unlockCrypto('b', 'correct'); }

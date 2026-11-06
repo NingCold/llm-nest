@@ -45,13 +45,25 @@ adb -s $serial logcat -T 1 -s LLMNHandset:I
 python tools/run_interop.py --assisted-handset --fixture $qa --serial $serial
 ```
 
-跟随提示在手机上完成三步：
+出现 `WAIT_LAUNCH_QA` 后，在手机上打开 QA 客户端（`com.llmnest.android.debug`）。测试会在这个前台窗口登录临时账号；随后跟随提示完成三步：
 
 1. **输入：** 在聊天输入框用手机键盘打出「你好」，点发送。对端必须恰好读到一次。若仅验证了输入连接的组合文本，记录为输入连接通过，不能算作中文输入法通过。
 2. **保存：** 第一次在系统文件选择器点返回；第二次选本机「下载」，用提示中的唯一文件名保存。确认写入成功后才点「我已安全保存」。
 3. **锁定：** 按 Home，看到 `BACKGROUND_LOCK_VERIFIED` 后从最近任务回到 QA 客户端，点「解锁加密设备」。测试会用临时口令解锁，核对回到原会话、草稿恢复且没有误发。
 
+要单独复查「历史刷新时打字不被打断」，保留已安装的两个 QA 包，执行以下命令后在手机上打开 QA 客户端。此项不需要服务器或账号：
+
+```powershell
+adb -s $serial shell am instrument --user $profileId -w -e class com.llmnest.android.ChatComposerRefreshTest com.llmnest.android.debug.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 结束后只清理本次新装的两个 QA 包和本次保存的唯一文件；按上节步骤停止并清理 fixture。执行普通 `:app:assembleDebug` 后，APK 输出才恢复为供用户安装的普通包。
+
+## 2026-11-06 · Android 0.1.0-dev.3：刷新不断开正在输入的文字
+
+在同一台 vivo V2359A 上，用同一份 `ChatComposerRefreshTest` 对比两个版本。dev.2 第一次刷新会话历史就断开了正在编辑的输入框；dev.3 连续三次刷新，输入框始终挂在原窗口，未丢焦。测试分别保留了尚未提交的拼音组合、正向选区和反向选区，也验证了发送待确认时禁止编辑、发送确认后清空、锁定后移除输入框。
+
+使用新的临时账号，在 dev.3 重跑了下节的真机收发、系统文件选择器和后台解锁流程，全部通过。普通 APK（versionCode 3）在该机覆盖安装 dev.2 后，正常打开到登录页。
 
 ## 2026-11-06 · Android 0.1.0-dev.2
 
@@ -61,4 +73,10 @@ python tools/run_interop.py --assisted-handset --fixture $qa --serial $serial
 - **加密与恢复：** 两个独立设备身份互核指纹。原生输入框发送后，服务端收到的正文字段为空、内容为 Matrix 密文，对端能读出原文。篡改密文和替换成明文均被拒绝。为 B 建立另一设备身份后，使用恢复文件读回旧消息；错误口令不能解锁。B 随后的加密回复经 SSE 出现在 A 的原生聊天页。
 - **恢复文件保存：** `DeviceRecoveryUiTest` 拦截系统选择器 Intent，分别返回取消和选定测试文件。取消不确认；成功写入后核对文件格式、服务器和账号，仍须在原生对话框中明确确认才生效。本项验证了应用对选择结果的处理，未手动操作系统文件选择器。
 
-普通调试 APK 已在同一模拟器从预览版（versionCode 1）覆盖安装到开发版（versionCode 2），应用 ID 不变，冷启动成功。13 项 JVM 单元测试通过，Lint 无错误。上述检查未使用真实模型。日常手机的系统证书安装、中文输入法、系统文件选择器，以及不同厂商的后台行为，仍需真机验证。
+普通调试 APK 已在同一模拟器从预览版（versionCode 1）覆盖安装到开发版（versionCode 2），应用 ID 不变，冷启动成功。13 项 JVM 单元测试通过，Lint 无错误。上述检查未使用真实模型。
+
+同日，在 vivo V2359A（Android 16 / API 36、WebView 156.0.8078.47）安装普通版并打开到登录页。独立 QA 包用临时账号完成了以下真机检查：
+
+- 系统文件选择器取消后，恢复状态仍未确认；第二次将 JSON 写到本机「下载」，点「我已安全保存」后，服务端才登记加密恢复材料。
+- 在带有未发送草稿的私聊按 Home，聊天与订阅卸载，密钥库锁定。回到应用必须用本机口令解锁，之后回到同一私聊，草稿未丢失、未误发。
+- Gboard 中文九键在输入框弹出；通过 Android 输入连接组合、提交「你好」，对端恰好收到一次。未用真人选词验证，也没有安装系统证书。

@@ -70,6 +70,13 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
     private var composer: EditText? = null
     private var composerWatcher: TextWatcher? = null
     private var history: ScrollView? = null
+    private var chatHeader: LinearLayout? = null
+    private var chatBody: LinearLayout? = null
+    private var chatStatus: LinearLayout? = null
+    private var chatComposerRow: LinearLayout? = null
+    private var chatSend: Button? = null
+    private var composerAllowed = false
+    private var chatRenderRevision = 0L
     private var loginFeedback: LinearLayout? = null
     private var loginButton: Button? = null
     private val conversationScroll = mutableMapOf<String, Int>()
@@ -228,27 +235,35 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         val oldScroll = if (sameChat) history?.scrollY else conversationScroll[id]
         val atBottom = !sameChat || isAtLatest()
         val previousHeight = if (sameChat) history?.getChildAt(0)?.height ?: 0 else 0
-        val oldComposer = if (sameChat) composer else null
-        val previousDraft = draft
-        val selection = if (sameChat) composer?.selectionStart ?: previousDraft.length else previousDraft.length
-        val hadFocus = sameChat && composer?.hasFocus() == true
         val nextFirstId = messages.optJSONObject(0)?.optString("id").orEmpty()
         val prepended = sameChat && firstMessageId.isNotEmpty() && nextFirstId != firstMessageId
         firstMessageId = nextFirstId
-        begin(key)
+        if (!sameChat) {
+            begin(key)
+            chatHeader = column().also { root.addView(it) }
+            history = scrollBody()
+            chatBody = column(16).apply { setPadding(dp(16), dp(4), dp(16), dp(16)) }.also { history!!.addView(it) }
+            val footer = column(12).apply { setPadding(dp(12), dp(8), dp(12), dp(10)); setBackgroundColor(color(R.color.navigation_surface)) }
+            chatStatus = column().also { footer.addView(it) }
+            root.addView(footer)
+        }
+        // Ordinary snapshots/history updates must not detach the editor from its window: doing so
+        // ends the IME input connection even when the same EditText is subsequently reattached.
+        val top = chatHeader!!
+        top.removeAllViews()
         val encrypted = conversation.has("encryption") && !conversation.isNull("encryption")
         val readOnly = conversation.optBoolean("readOnly")
         val blocked = conversation.optBoolean("directBlocked")
-        header(conversationName(conversation), "返回", "刷新", { actions.refresh() }, busy)
+        header(conversationName(conversation), "返回", "刷新", { actions.refresh() }, busy, top)
         val security = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), 0, dp(12), dp(6)) }
         security.addView(text(if (readOnly) "已归档 · 只读记录" else if (encrypted) "端到端加密" else if (conversation.optString("kind") == "group") "群聊" else "私聊", 13, secondary = true), weight())
         if (canSendEncrypted && !readOnly && !blocked && (encrypted || !requireEncryption)) security.addView(button("核对设备") { actions.crypto() })
         if (!encrypted && !readOnly && !blocked && !requireEncryption) security.addView(button("开启加密") { actions.enableEncryption() }.apply { isEnabled = !busy && pending == null })
-        root.addView(security)
-        if (error != null) root.addView(notice(error, true, "重试") { actions.refresh() })
-        val scroll = scrollBody().also { history = it }
-        val body = column(16).apply { setPadding(dp(16), dp(4), dp(16), dp(16)) }
-        scroll.addView(body)
+        top.addView(security)
+        if (error != null) top.addView(notice(error, true, "重试") { actions.refresh() })
+        val scroll = history!!
+        val body = chatBody!!
+        body.removeAllViews()
         if (hasMore) body.addView(button(if (busy) "正在加载…" else "加载更早消息") { actions.loadOlder() }.apply { isEnabled = !busy }, full())
         if (messages.length() == 0) body.addView(empty(if (busy) "正在加载聊天" else "还没有消息", if (busy) "正在读取服务器上的记录。" else "发送第一条消息，开始对话。", R.drawable.ic_message))
         var day = ""
@@ -261,8 +276,8 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
             }
             body.addView(messageView(message, selfId, encrypted, messages))
         }
-        val footer = column(12).apply { setPadding(dp(12), dp(8), dp(12), dp(10)); setBackgroundColor(color(R.color.navigation_surface)) }
-        root.addView(footer)
+        val footer = chatStatus!!
+        footer.removeAllViews()
         if (draftSaveError != null) footer.addView(notice(draftSaveError, true, "重试保存草稿") { actions.retryDraftSave() })
         when {
             readOnly -> footer.addView(text("这是旧版导入的只读聊天。你仍可查看历史记录。", 14, secondary = true))
@@ -296,33 +311,52 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
             }
         }
         if (!readOnly) {
-            val allowed = !blocked && (!encrypted || canSendEncrypted) && (!requireEncryption || encrypted) && pending == null && !busy && draftSaveError == null
-            val composeRow = row().apply { gravity = Gravity.BOTTOM }
-            (oldComposer?.parent as? ViewGroup)?.removeView(oldComposer)
-            val input = (oldComposer ?: field("写消息…", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES)).apply {
-                composerWatcher?.let { removeTextChangedListener(it) }
-                isSingleLine = false; minLines = 1; maxLines = 5
-                if (text.toString() != previousDraft) setText(previousDraft)
-                setSelection(selection.coerceIn(0, text.length)); isEnabled = pending == null && !busy
-                imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
-                setPadding(dp(14), dp(12), dp(14), dp(12))
+            composerAllowed = !blocked && (!encrypted || canSendEncrypted) && (!requireEncryption || encrypted) && pending == null && !busy && draftSaveError == null
+            if (composer == null) {
+                val composeRow = row().apply { gravity = Gravity.BOTTOM }
+                val input = field("写消息…", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES).apply {
+                    isSingleLine = false; minLines = 1; maxLines = 5
+                    setText(draft); setSelection(text.length)
+                    imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                }
+                composer = input
+                composeRow.addView(input, weight().apply { rightMargin = dp(8) })
+                val send = button("发送", primary = true) { actions.send(input.text.toString()) }
+                chatSend = send
+                composeRow.addView(send)
+                composerWatcher = object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { send.isEnabled = composerAllowed && !s.isNullOrBlank(); actions.draftChanged(s.toString()) }
+                    override fun afterTextChanged(s: Editable?) {}
+                }.also { input.addTextChangedListener(it) }
+                chatComposerRow = composeRow
+                (footer.parent as LinearLayout).addView(composeRow)
             }
-            composer = input
-            composeRow.addView(input, weight().apply { rightMargin = dp(8) })
-            val send = button("发送", primary = true) { actions.send(input.text.toString()) }.apply { isEnabled = allowed && input.text.isNotBlank() }
-            composeRow.addView(send)
-            composerWatcher = object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { send.isEnabled = allowed && !s.isNullOrBlank(); actions.draftChanged(s.toString()) }
-                override fun afterTextChanged(s: Editable?) {}
-            }.also { input.addTextChangedListener(it) }
-            footer.addView(composeRow)
-            if (hadFocus && input.isEnabled) input.requestFocus()
+            val input = composer!!
+            if (input.text.toString() != draft) {
+                // Acknowledgement/explicit draft replacement is authoritative. Equal text needs no
+                // setter calls: retain the Editable, range selection and the IME's composing spans.
+                val start = input.selectionStart.coerceAtLeast(0)
+                val end = input.selectionEnd.coerceAtLeast(0)
+                composerWatcher?.let { input.removeTextChangedListener(it) }
+                input.setText(draft)
+                input.setSelection(start.coerceAtMost(draft.length), end.coerceAtMost(draft.length))
+                composerWatcher?.let { input.addTextChangedListener(it) }
+            }
+            val editable = pending == null && !busy
+            if (input.isEnabled != editable) input.isEnabled = editable
+            chatSend!!.isEnabled = composerAllowed && input.text.isNotBlank()
+        } else {
+            composerWatcher?.let { watcher -> composer?.removeTextChangedListener(watcher) }
+            (chatComposerRow?.parent as? ViewGroup)?.removeView(chatComposerRow)
+            composer = null; composerWatcher = null; chatComposerRow = null; chatSend = null
         }
+        val renderRevision = ++chatRenderRevision
         scroll.post {
-            if (history !== scroll) return@post
+            if (history !== scroll || renderRevision != chatRenderRevision) return@post
             when {
-                oldScroll == null || atBottom -> scroll.fullScroll(View.FOCUS_DOWN)
+                oldScroll == null || atBottom -> scroll.scrollTo(0, (body.height - scroll.height).coerceAtLeast(0))
                 prepended -> scroll.scrollTo(0, oldScroll + body.height - previousHeight)
                 else -> scroll.scrollTo(0, oldScroll)
             }
@@ -425,14 +459,15 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
             conversationScroll.clear(); savedListScroll.clear(); searchQuery = ""; firstMessageId = ""
         }
         root.removeAllViews(); currentPage = page; history = null; listScroll = null; composer = null; searchInput = null
+        chatHeader = null; chatBody = null; chatStatus = null; chatComposerRow = null; chatSend = null; composerAllowed = false
         root.requestApplyInsets()
     }
-    private fun header(title: String, back: String?, action: String?, onAction: () -> Unit, busy: Boolean = false) {
+    private fun header(title: String, back: String?, action: String?, onAction: () -> Unit, busy: Boolean = false, parent: LinearLayout = root) {
         val header = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(8), dp(8), dp(4)); minimumHeight = dp(64) }
         if (back != null) header.addView(button("‹") { actions.back() }.apply { contentDescription = back; textSize = 32f; minWidth = dp(48); minimumWidth = dp(48); setPadding(0, 0, 0, 0) })
         header.addView(text(title, if (back == null) 29 else 21, bold = true, heading = true).apply { maxLines = 2; setPadding(if (back == null) dp(8) else 0, 0, dp(6), 0) }, weight())
         if (action != null) header.addView(button(if (busy) "刷新中…" else action) { onAction() }.apply { isEnabled = !busy })
-        root.addView(header)
+        parent.addView(header)
     }
     private fun navigation(contacts: Boolean): View = row().apply {
         setPadding(dp(12), dp(8), dp(12), dp(10)); setBackgroundColor(color(R.color.navigation_surface))

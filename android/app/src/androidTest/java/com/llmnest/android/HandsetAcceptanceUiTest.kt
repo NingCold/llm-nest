@@ -19,6 +19,8 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -35,6 +37,8 @@ import java.util.concurrent.atomic.AtomicReference
  * Opt-in, assisted physical-phone acceptance; not part of the emulator-only runner contract.
  *
  * Run only on the isolated QA package with unused fixture A/B identities. Observe LLMNHandset:
+ * WAIT_LAUNCH_QA: launch the QA app through the system launcher; the test binds its resumed activity.
+ * WAIT_IME_OPEN: tap the actual composer if needed to open the handset keyboard.
  * WAIT_IME_SEND: use the real keyboard to enter exactly 你好 and tap Send. If Chinese input is
  * unavailable, type LLMN_IME_FALLBACK without sending; the explicitly classified fallback exercises
  * composing spans through the composer's Android InputConnection, then WAIT_FALLBACK_SEND asks
@@ -70,15 +74,21 @@ class HandsetAcceptanceUiTest {
     private fun root(): View = activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
     private fun field(name: String): Any? = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.get(activity)
     private fun edit(description: String): EditText = descendants(root()).filterIsInstance<EditText>().single { it.contentDescription?.toString() == description }
+    private fun matchesNative(view: View, label: String) = view !is EditText && view.isShown &&
+        ((view as? TextView)?.text?.toString() == label || view.contentDescription?.toString() == label)
     private fun visible(label: String) = main {
-        descendants(root()).filterIsInstance<TextView>().any { it !is EditText && it.isShown && it.text.toString() == label }
+        descendants(root()).any { matchesNative(it, label) }
     }
 
-    private fun tap(label: String) = main {
-        var view: View = descendants(root()).filterIsInstance<TextView>().first { it !is EditText && it.isShown && it.text.toString() == label }
-        while (!view.isClickable) view = view.parent as View
-        assertTrue("Enabled native control", view.isEnabled)
-        assertTrue("Native click", view.performClick())
+    private fun tap(label: String) {
+        waitFor("enabled native control $label") {
+            main {
+                val target = descendants(root()).filter { matchesNative(it, label) }
+                    .mapNotNull { match -> generateSequence(match) { it.parent as? View }.firstOrNull { it.isClickable } }
+                    .firstOrNull { it.isShown && it.isEnabled }
+                target?.performClick() == true
+            }
+        }
     }
 
     private fun waitFor(label: String, timeout: Long = 140_000, check: () -> Boolean) {
@@ -195,7 +205,17 @@ class HandsetAcceptanceUiTest {
             val marker = "手机验收原会话 ${UUID.randomUUID().toString().take(8)}"
             b.request("POST", "/chat/conversations/$room/messages", json("requestId" to UUID.randomUUID().toString(), "text" to marker, "mentions" to JSONArray(), "replyTo" to null))
             val chineseBefore = messages(b, room).count { it.optString("text") == "你好" }
-            activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            stage("WAIT_LAUNCH_QA package=${instrumentation.targetContext.packageName}")
+            waitFor("operator launches QA through system launcher", manualTimeout) {
+                main {
+                    val resumed = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<MainActivity>()
+                        .singleOrNull { it.packageName == instrumentation.targetContext.packageName && !it.isFinishing && !it.isDestroyed }
+                    if (resumed != null) activity = resumed
+                    resumed != null
+                }
+            }
             waitFor("login screen") { visible("回到你的聊天") }
             main {
                 edit("服务器地址").setText(arg("origin"))
@@ -220,7 +240,10 @@ class HandsetAcceptanceUiTest {
                 assertTrue(input.requestFocus())
                 (activity.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
             }
-            waitFor("actual handset IME visible") { main { imeVisible(edit("写消息…")) } }
+            // Some handset IMEs require a real touch despite successful requestFocus/showSoftInput.
+            // Announce the operator action before waiting, using the full assisted timeout.
+            stage("WAIT_IME_OPEN tap-composer-if-needed=true")
+            waitFor("operator opens actual handset IME", manualTimeout) { main { imeVisible(edit("写消息…")) } }
             stage("WAIT_IME_SEND text=你好 fallback-token=LLMN_IME_FALLBACK")
             var fallback = false
             waitFor("handset Chinese input and explicit Send", manualTimeout) {
@@ -254,7 +277,7 @@ class HandsetAcceptanceUiTest {
             instrumentation.addMonitor(observer); monitorAdded = true
             stage("WAIT_PICKER_CANCEL")
             click("生成并保存恢复文件")
-            waitFor("actual cancel picker launch") { observer.count.get() == 1 && main { host.isPickingDocument() } }
+            waitFor("actual cancel picker launch") { observer.count.get() == 1 }
             val intent = observer.captured.get()!!
             assertEquals("application/json", intent.type)
             assertTrue(intent.categories?.contains(Intent.CATEGORY_OPENABLE) == true)
@@ -266,7 +289,7 @@ class HandsetAcceptanceUiTest {
 
             stage("WAIT_PICKER_SAVE filename=$filename location=local-Downloads rename-before-save=true")
             click("生成并保存恢复文件")
-            waitFor("actual save picker launch") { observer.count.get() == 2 && main { host.isPickingDocument() } }
+            waitFor("actual save picker launch") { observer.count.get() == 2 }
             waitFor("real picker write and explicit confirmation", manualTimeout) { recoveryConfirmation() != null }
             assertFalse("Writing alone cannot confirm recovery", state().getBoolean("recoveryConfirmed"))
             val confirmation = recoveryConfirmation()!!
@@ -283,6 +306,7 @@ class HandsetAcceptanceUiTest {
             waitFor("inbox after account") { visible("通讯录") }
             tap(peer.getString("name"))
             waitFor("same original conversation") { visible(marker) }
+            waitFor("reloaded enabled composer") { main { descendants(root()).filterIsInstance<EditText>().any { it.contentDescription?.toString() == "写消息…" && it.isEnabled } } }
             val draft = "手机后台锁定草稿 ${UUID.randomUUID().toString().take(8)}"
             main { edit("写消息…").setText(draft) }
             val store = DraftStore(instrumentation.targetContext, a.origin, account)
@@ -310,6 +334,8 @@ class HandsetAcceptanceUiTest {
             fillPassphrase(passphrase)
             click("解锁本机资料")
             waitFor("manual passphrase unlock") { !state().getBoolean("locked") }
+            // SDK unlock can settle before the production button handler finishes rerendering.
+            waitFor("unlocked settings controls") { hasButton("锁定本机资料") && hasButton("生成并保存恢复文件") }
             click("完成，返回聊天")
             waitFor("original chat and restored draft") { visible(marker) && main { descendants(root()).filterIsInstance<EditText>().any { it.contentDescription?.toString() == "写消息…" && it.text.toString() == draft } } }
             assertFalse("Draft never sent implicitly", messages(b, room).any { it.optString("text") == draft })

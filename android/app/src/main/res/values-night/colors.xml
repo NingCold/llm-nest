@@ -1,4 +1,10 @@
 <resources>
+    <color name="chat_paper">#171D20</color>
+    <color name="chat_ink">#E8EDEB</color>
+    <color name="chat_muted">#A6B2B5</color>
+    <color name="chat_rule">#394145</color>
+    <color name="chat_reply">#2A4050</color>
+    <color name="chat_action">#B6D7EB</color>
     <color name="surface">#101820</color>
     <color name="navigation_surface">#19242F</color>
     <color name="text_primary">#E8EEF6</color>

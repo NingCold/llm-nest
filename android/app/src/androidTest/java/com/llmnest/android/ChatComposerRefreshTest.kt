@@ -1,6 +1,7 @@
 package com.llmnest.android
 
 import android.app.Activity
+import android.content.Intent
 import android.text.Editable
 import android.view.View
 import android.view.ViewGroup
@@ -42,11 +43,13 @@ class ChatComposerRefreshTest {
     }
 
     @Test fun historyRefreshKeepsAttachedComposingEditor() {
-        assumeTrue("Run this assisted test explicitly on the QA package",
+        val autoLaunch = InstrumentationRegistry.getArguments().getString("autoLaunch") == "true"
+        if (!autoLaunch) assumeTrue("Run this assisted test explicitly on the QA package",
             instrumentation.targetContext.packageName == "com.llmnest.android.debug" &&
                 InstrumentationRegistry.getArguments().getString("class")?.substringBefore('#') == javaClass.name)
         android.util.Log.i("LLMNComposer", "WAIT_LAUNCH_QA package=${instrumentation.targetContext.packageName}")
-        var resumed: Activity? = null
+        var resumed: Activity? = if (autoLaunch) instrumentation.startActivitySync(
+            android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) else null
         val launchDeadline = System.currentTimeMillis() + 60_000
         while (resumed == null && System.currentTimeMillis() < launchDeadline) {
             resumed = main {
@@ -184,6 +187,7 @@ class ChatComposerRefreshTest {
             main {
                 content.removeView(ui.root)
                 previous.forEach { (view, visibility) -> view.visibility = visibility }
+                if (autoLaunch) activity.finish()
             }
         }
     }

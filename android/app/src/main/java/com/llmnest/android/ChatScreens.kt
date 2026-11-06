@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.text.Editable
 import android.text.InputType
@@ -18,6 +20,8 @@ import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -70,7 +74,7 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
     private var composer: EditText? = null
     private var composerWatcher: TextWatcher? = null
     private var history: ScrollView? = null
-    private var chatHeader: LinearLayout? = null
+    private var chatHeader: ConversationBar? = null
     private var chatBody: LinearLayout? = null
     private var chatStatus: LinearLayout? = null
     private var chatComposerRow: LinearLayout? = null
@@ -240,46 +244,52 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         firstMessageId = nextFirstId
         if (!sameChat) {
             begin(key)
-            chatHeader = column().also { root.addView(it) }
+            chatHeader = ConversationBar().also { root.addView(it) }
             history = scrollBody()
-            chatBody = column(16).apply { setPadding(dp(16), dp(4), dp(16), dp(16)) }.also { history!!.addView(it) }
-            val footer = column(12).apply { setPadding(dp(12), dp(8), dp(12), dp(10)); setBackgroundColor(color(R.color.navigation_surface)) }
+            chatBody = column().apply { setPadding(dp(20), dp(4), dp(20), dp(18)) }.also { history!!.addView(it) }
+            rule(root)
+            val footer = column().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
             chatStatus = column().also { footer.addView(it) }
             root.addView(footer)
         }
         // Ordinary snapshots/history updates must not detach the editor from its window: doing so
         // ends the IME input connection even when the same EditText is subsequently reattached.
-        val top = chatHeader!!
-        top.removeAllViews()
         val encrypted = conversation.has("encryption") && !conversation.isNull("encryption")
         val readOnly = conversation.optBoolean("readOnly")
         val blocked = conversation.optBoolean("directBlocked")
-        header(conversationName(conversation), "返回", "刷新", { actions.refresh() }, busy, top)
-        val security = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), 0, dp(12), dp(6)) }
-        security.addView(text(if (readOnly) "已归档 · 只读记录" else if (encrypted) "端到端加密" else if (conversation.optString("kind") == "group") "群聊" else "私聊", 13, secondary = true), weight())
-        if (canSendEncrypted && !readOnly && !blocked && (encrypted || !requireEncryption)) security.addView(button("核对设备") { actions.crypto() })
-        if (!encrypted && !readOnly && !blocked && !requireEncryption) security.addView(button("开启加密") { actions.enableEncryption() }.apply { isEnabled = !busy && pending == null })
-        top.addView(security)
-        if (error != null) top.addView(notice(error, true, "重试") { actions.refresh() })
+        val kind = when {
+            readOnly -> "已归档"
+            conversation.optString("kind") == "group" -> "群聊"
+            conversation.optJSONObject("peer")?.optString("kind") == "ai" -> "AI 私聊"
+            else -> "私聊"
+        }
+        chatHeader!!.bind(conversationName(conversation), kind, encrypted, busy, error,
+            verify = !readOnly && !blocked && (encrypted || canSendEncrypted && !requireEncryption),
+            enable = !encrypted && !readOnly && !blocked && !requireEncryption, pending = pending != null)
         val scroll = history!!
         val body = chatBody!!
         body.removeAllViews()
         if (hasMore) body.addView(button(if (busy) "正在加载…" else "加载更早消息") { actions.loadOlder() }.apply { isEnabled = !busy }, full())
         if (messages.length() == 0) body.addView(empty(if (busy) "正在加载聊天" else "还没有消息", if (busy) "正在读取服务器上的记录。" else "发送第一条消息，开始对话。", R.drawable.ic_message))
         val messageIndex = (0 until messages.length()).associate { messages.getJSONObject(it).let { row -> row.getString("id") to row } }
-        var day = ""
+        var previousTime: ZonedDateTime? = null
+        var previousSender = ""
         for (i in 0 until messages.length()) {
             val message = messages.getJSONObject(i)
-            val date = formatDate(message.optString("createdAt"))
-            if (date != day && date.isNotBlank()) {
-                day = date
-                body.addView(text(date, 12, secondary = true).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(14)) })
-            }
-            body.addView(messageView(message, selfId, encrypted, messageIndex))
+            val time = localTime(message.optString("createdAt"))
+            val prior = previousTime
+            val sameDay = time != null && prior != null && time.toLocalDate() == prior.toLocalDate()
+            if (time != null && !sameDay) body.addView(dayDivider(time))
+            val sender = message.optString("senderId")
+            val continued = sameDay && sender.isNotBlank() && sender == previousSender &&
+                time!!.toEpochSecond() - prior!!.toEpochSecond() in 0..300
+            body.addView(messageView(message, selfId, encrypted, messageIndex, time?.format(clockFormat).orEmpty(), continued))
+            previousTime = time
+            previousSender = sender
         }
         val footer = chatStatus!!
         footer.removeAllViews()
-        if (draftSaveError != null) footer.addView(notice(draftSaveError, true, "重试保存草稿") { actions.retryDraftSave() })
+        if (draftSaveError != null) footer.addView(chatAlert(draftSaveError, "重试保存草稿") { actions.retryDraftSave() })
         when {
             readOnly -> footer.addView(text("这是旧版导入的只读聊天。你仍可查看历史记录。", 14, secondary = true))
             blocked -> footer.addView(text("双方私聊已屏蔽。历史和草稿保留，解除屏蔽后可发送。", 14, secondary = true))
@@ -319,11 +329,26 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
                     isSingleLine = false; minLines = 1; maxLines = 5
                     setText(draft); setSelection(text.length)
                     imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
-                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    minimumHeight = dp(48)
+                    background = StateListDrawable().apply {
+                        addState(intArrayOf(android.R.attr.state_focused), rounded(color(R.color.navigation_surface), 20).apply { setStroke(dp(1), color(R.color.chat_action)) })
+                        addState(intArrayOf(), rounded(color(R.color.navigation_surface), 20).apply { setStroke(dp(1), color(R.color.chat_rule)) })
+                    }
+                    setPadding(dp(16), dp(10), dp(16), dp(10))
                 }
                 composer = input
                 composeRow.addView(input, weight().apply { rightMargin = dp(8) })
-                val send = button("发送", primary = true) { actions.send(input.text.toString()) }
+                val send = button("发送", primary = true) { actions.send(input.text.toString()) }.apply {
+                    contentDescription = "发送"
+                    stateListAnimator = null; backgroundTintList = null
+                    val enabled = intArrayOf(android.R.attr.state_enabled)
+                    background = RippleDrawable(ColorStateList.valueOf(color(R.color.divider)), StateListDrawable().apply {
+                        addState(enabled, rounded(color(R.color.chat_action), 20))
+                        addState(intArrayOf(), rounded(color(R.color.chat_reply), 20))
+                    }, null)
+                    setTextColor(ColorStateList(arrayOf(enabled, intArrayOf()), intArrayOf(color(R.color.on_accent), color(R.color.chat_muted))))
+                    setPadding(dp(18), 0, dp(18), 0)
+                }
                 chatSend = send
                 composeRow.addView(send)
                 composerWatcher = object : TextWatcher {
@@ -366,11 +391,24 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         scroll.setOnScrollChangeListener { _: View, _: Int, _: Int, _: Int, _: Int -> if (history === scroll && isAtLatest()) actions.visibleLatest() }
     }
 
-    private fun messageView(message: JSONObject, selfId: String, encrypted: Boolean, all: Map<String, JSONObject>): View {
+    private fun messageView(message: JSONObject, selfId: String, encrypted: Boolean, all: Map<String, JSONObject>, time: String, continued: Boolean): View {
         val own = message.optString("senderId") == selfId
-        val outer = column().apply { gravity = if (own) Gravity.END else Gravity.START; setPadding(0, dp(4), 0, dp(8)) }
-        outer.addView(text((if (own) "我" else message.optString("senderName").ifBlank { "未知联系人" }) + "  ·  " + formatTime(message.optString("createdAt")), 12, secondary = true).apply { gravity = if (own) Gravity.END else Gravity.START; setPadding(dp(4), 0, dp(4), dp(6)) })
-        val bubble = column(14).apply { background = rounded(color(if (own) R.color.selected_surface else R.color.navigation_surface), 16) }
+        val sender = if (own) "我" else message.optString("senderName").ifBlank { "未知联系人" }
+        val outer = column().apply { gravity = if (own) Gravity.END else Gravity.START; setPadding(0, dp(if (continued) 4 else 16), 0, 0) }
+        val byline = listOf(sender, time).filter(String::isNotEmpty).joinToString("  ·  ")
+        if (!continued) outer.addView(text(byline, 13, secondary = true).apply {
+            gravity = if (own) Gravity.END else Gravity.START
+            setTextColor(color(R.color.chat_muted)); setPadding(0, 0, dp(if (own) 4 else 0), dp(5))
+        })
+        val bubble = column().apply {
+            if (own) {
+                val wide = dp(18).toFloat(); val turn = dp(5).toFloat()
+                background = rounded(color(R.color.chat_reply), 18).apply {
+                    cornerRadii = floatArrayOf(wide, wide, turn, turn, wide, wide, wide, wide)
+                }
+                setPadding(dp(14), dp(9), dp(14), dp(9))
+            }
+        }
         val withdrawn = message.optString("status") == "withdrawn"
         val sealed = message.has("sealed") && !message.isNull("sealed")
         val readable = !sealed || message.optBoolean("_decrypted")
@@ -387,7 +425,10 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
                 bubble.addView(text(replyPreview, 13, secondary = true).apply { maxLines = 2; setPadding(0, 0, 0, dp(8)) })
             }
             val content = message.optString("text")
-            if (content.isNotEmpty()) bubble.addView(text(content, 16).apply { setTextIsSelectable(true); setLineSpacing(dp(3).toFloat(), 1f) })
+            if (content.isNotEmpty()) bubble.addView(text(content, 17).apply {
+                setTextColor(color(R.color.chat_ink)); setTextIsSelectable(true); setLineSpacing(dp(3).toFloat(), 1f)
+                if (continued) contentDescription = "$byline，$content"
+            })
             val attachments = message.optJSONArray("attachments") ?: JSONArray()
             for (i in 0 until attachments.length()) {
                 val a = attachments.getJSONObject(i)
@@ -398,7 +439,7 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
             val status = when (message.optString("status")) { "generating" -> "正在回复…"; "failed" -> "回复未完成"; "interrupted" -> "回复已中断"; else -> "" }
             if (status.isNotBlank()) bubble.addView(text(status, 13, secondary = true).apply { setPadding(0, dp(8), 0, 0) })
         }
-        outer.addView(bubble, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (own) leftMargin = dp(24) else rightMargin = dp(24) })
+        outer.addView(bubble, LinearLayout.LayoutParams(-2, -2).apply { if (own) leftMargin = dp(32) else rightMargin = dp(32) })
         return outer
     }
 
@@ -459,16 +500,110 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         if (page == "login" || page == "gate") {
             conversationScroll.clear(); savedListScroll.clear(); searchQuery = ""; firstMessageId = ""
         }
+        chatHeader?.closeMenu()
         root.removeAllViews(); currentPage = page; history = null; listScroll = null; composer = null; searchInput = null
+        root.setBackgroundColor(color(if (page.startsWith("chat:")) R.color.chat_paper else R.color.surface))
         chatHeader = null; chatBody = null; chatStatus = null; chatComposerRow = null; chatSend = null; composerAllowed = false
         root.requestApplyInsets()
     }
-    private fun header(title: String, back: String?, action: String?, onAction: () -> Unit, busy: Boolean = false, parent: LinearLayout = root) {
+    private fun rule(parent: LinearLayout) = parent.addView(View(activity).apply { setBackgroundColor(color(R.color.chat_rule)) }, -1, dp(1))
+
+    private fun chatAlert(message: String, retry: String, action: () -> Unit): View = row().apply {
+        gravity = Gravity.CENTER_VERTICAL
+        background = rounded(color(R.color.error_surface), 12)
+        setPadding(dp(12), dp(2), dp(4), dp(2))
+        addView(text(message, 14).apply {
+            setTextColor(color(R.color.error_text)); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }, weight())
+        addView(Button(activity, null, android.R.attr.borderlessButtonStyle).apply {
+            text = retry; textSize = 14f; isAllCaps = false; minHeight = dp(48)
+            setTextColor(color(R.color.error_text)); setOnClickListener { action() }
+        })
+        layoutParams = full().apply { bottomMargin = dp(8) }
+    }
+
+    private fun dayDivider(time: ZonedDateTime): View = row().apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, dp(16), 0, dp(2))
+        addView(text(time.format(dayFormat), 13, secondary = true).apply {
+            setTextColor(color(R.color.chat_muted)); setPadding(0, 0, dp(12), 0)
+        })
+        addView(View(activity).apply { setBackgroundColor(color(R.color.chat_rule)) }, LinearLayout.LayoutParams(0, dp(1), 1f))
+    }
+
+    private fun barIcon(icon: Int, label: String, action: () -> Unit) = ImageButton(activity).apply {
+        contentDescription = label; setImageResource(icon); scaleType = ImageView.ScaleType.CENTER
+        val attr = android.util.TypedValue()
+        activity.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, attr, true)
+        setBackgroundResource(attr.resourceId); setOnClickListener { action() }
+        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+    }
+
+    private data class Commands(val busy: Boolean, val verify: Boolean, val enable: Boolean, val pending: Boolean)
+
+    private inner class ConversationBar : LinearLayout(activity) {
+        private val name = text("", 21, bold = true, heading = true).apply {
+            maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; setTextColor(color(R.color.chat_ink))
+        }
+        private val status = text("", 13, secondary = true).apply {
+            setTextColor(color(R.color.chat_muted)); compoundDrawablePadding = dp(4)
+        }
+        private val identity = column().apply {
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48); setPadding(dp(4), 0, dp(8), 0)
+            addView(name); addView(status)
+        }
+        private val more = barIcon(R.drawable.ic_chat_more, "更多操作") { showMenu() }
+        private val feedback = column()
+        private var commands = Commands(false, false, false, false)
+        private var menu: PopupMenu? = null
+
+        init {
+            orientation = VERTICAL
+            val bar = row().apply {
+                gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(68); setPadding(dp(4), dp(4), dp(8), dp(4))
+                addView(barIcon(R.drawable.ic_chat_back, "返回") { actions.back() })
+                addView(identity, weight()); addView(more)
+            }
+            addView(bar); rule(this); addView(feedback)
+            clickable(identity) { showMenu() }
+        }
+
+        fun bind(title: String, kind: String, encrypted: Boolean, busy: Boolean, error: String?, verify: Boolean, enable: Boolean, pending: Boolean) {
+            val next = Commands(busy, verify, enable, pending)
+            if (commands != next) closeMenu()
+            commands = next
+            name.text = title
+            val security = if (encrypted) "端到端加密" else "未开启端到端加密"
+            status.text = "$kind · $security"
+            status.setCompoundDrawablesWithIntrinsicBounds(if (encrypted) R.drawable.ic_chat_lock else R.drawable.ic_chat_unlocked, 0, 0, 0)
+            identity.isClickable = verify || enable; identity.isFocusable = identity.isClickable
+            identity.contentDescription = if (identity.isClickable) "$title，$kind，$security，查看会话选项" else null
+            feedback.removeAllViews()
+            if (error != null) feedback.addView(notice(error, true, "重试") { actions.refresh() })
+        }
+
+        private fun showMenu() {
+            val popup = PopupMenu(activity, more, Gravity.END)
+            popup.menu.add(if (commands.busy) "刷新中…" else "刷新").apply {
+                isEnabled = !commands.busy; setOnMenuItemClickListener { actions.refresh(); true }
+            }
+            if (commands.verify) popup.menu.add("核对设备").setOnMenuItemClickListener { actions.crypto(); true }
+            if (commands.enable) popup.menu.add("开启加密").apply {
+                isEnabled = !commands.busy && !commands.pending
+                setOnMenuItemClickListener { actions.enableEncryption(); true }
+            }
+            menu = popup; popup.setOnDismissListener { menu = null }; popup.show()
+        }
+
+        fun closeMenu() { menu?.dismiss() }
+    }
+
+    private fun header(title: String, back: String?, action: String?, onAction: () -> Unit, busy: Boolean = false) {
         val header = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(8), dp(8), dp(4)); minimumHeight = dp(64) }
         if (back != null) header.addView(button("‹") { actions.back() }.apply { contentDescription = back; textSize = 32f; minWidth = dp(48); minimumWidth = dp(48); setPadding(0, 0, 0, 0) })
         header.addView(text(title, if (back == null) 29 else 21, bold = true, heading = true).apply { maxLines = 2; setPadding(if (back == null) dp(8) else 0, 0, dp(6), 0) }, weight())
         if (action != null) header.addView(button(if (busy) "刷新中…" else action) { onAction() }.apply { isEnabled = !busy })
-        parent.addView(header)
+        root.addView(header)
     }
     private fun navigation(contacts: Boolean): View = row().apply {
         setPadding(dp(12), dp(8), dp(12), dp(10)); setBackgroundColor(color(R.color.navigation_surface))
@@ -535,7 +670,9 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
     private fun weight() = LinearLayout.LayoutParams(0, -2, 1f)
     private fun color(id: Int) = activity.getColor(id)
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density + .5f).toInt()
-    private fun formatTime(value: String): String = try { OffsetDateTime.parse(value).atZoneSameInstant(java.time.ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm")) } catch (_: java.time.format.DateTimeParseException) { "" }
-    private fun formatDate(value: String): String = try { OffsetDateTime.parse(value).atZoneSameInstant(java.time.ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy年M月d日", Locale.CHINESE)) } catch (_: java.time.format.DateTimeParseException) { "" }
+    private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
+    private val dayFormat = DateTimeFormatter.ofPattern("yyyy年M月d日  EEEE", Locale.CHINESE)
+    private fun localTime(value: String): ZonedDateTime? = try { OffsetDateTime.parse(value).atZoneSameInstant(ZoneId.systemDefault()) } catch (_: java.time.format.DateTimeParseException) { null }
+    private fun formatTime(value: String): String = localTime(value)?.format(clockFormat).orEmpty()
     private fun fileSize(bytes: Long): String = if (bytes < 1024) "$bytes B" else if (bytes < 1024 * 1024) "${bytes / 1024} KB" else String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
 }

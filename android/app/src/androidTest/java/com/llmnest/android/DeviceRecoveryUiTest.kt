@@ -13,6 +13,8 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.json.JSONObject
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
@@ -31,6 +33,11 @@ class DeviceRecoveryUiTest {
     private lateinit var activity: Activity
     private lateinit var host: CryptoHost
     private lateinit var web: WebView
+    private var handsetDrafts = false
+    private val handsetTimeout = 600_000L
+    private fun resumedQa(): MainActivity? = ActivityLifecycleMonitorRegistry.getInstance()
+        .getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>()
+        .singleOrNull { it.packageName == instrumentation.targetContext.packageName && !it.isFinishing && !it.isDestroyed }
     private fun <T> main(work: () -> T): T {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return work()
         val result = AtomicReference<Result<T>>()
@@ -119,7 +126,7 @@ class DeviceRecoveryUiTest {
             editNative("写消息…", baseline)
             waitFor("baseline disk write") { journal.load(room).text == baseline }
 
-            fun returnAndUnlock(write: CompletableDeferred<DraftRecord>? = null, succeed: Boolean = true, expected: String) {
+            fun returnAndUnlock(case: String, write: CompletableDeferred<DraftRecord>? = null, succeed: Boolean = true, expected: String) {
                 val previousHost = main { field("host").get(activity) }
                 main { assertTrue("Actual Android task can background", activity.moveTaskToBack(true)) }
                 waitFor("background gate") { main { field("foreground").get(activity) == false && field("gateLocked").get(activity) == true } }
@@ -127,9 +134,19 @@ class DeviceRecoveryUiTest {
                     assertNull("No composer behind the gate", mountedDraft())
                     assertNull("Subscription stopped", field("stream").get(activity))
                 }
-                instrumentation.targetContext.startActivity(Intent(instrumentation.targetContext, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
-                waitFor("actual foreground return") { main { field("foreground").get(activity) == true && activity.hasWindowFocus() } }
+                if (handsetDrafts) {
+                    stage("WAIT_RETURN_QA case=$case package=${instrumentation.targetContext.packageName}")
+                } else {
+                    instrumentation.targetContext.startActivity(Intent(instrumentation.targetContext, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                }
+                waitFor("actual foreground return", if (handsetDrafts) handsetTimeout else 140_000L) {
+                    main {
+                        if (handsetDrafts) assertTrue("Same task Activity retained", resumedQa() == null || resumedQa() === activity)
+                        field("foreground").get(activity) == true && activity.hasWindowFocus()
+                    }
+                }
+                stage("RETURNED_QA case=$case")
                 if (write != null) {
                     main {
                         assertSame("Slow save has not closed keys yet", previousHost, field("host").get(activity))
@@ -160,25 +177,30 @@ class DeviceRecoveryUiTest {
                 write
             }
             val slow = "slow-save-${UUID.randomUUID()}"
-            returnAndUnlock(injectUnsaved(slow), expected = slow)
+            returnAndUnlock("slow", injectUnsaved(slow), expected = slow)
             assertEquals(slow, journal.load(room).text)
             val failed = "failed-save-${UUID.randomUUID()}"
-            returnAndUnlock(injectUnsaved(failed), succeed = false, expected = failed)
+            returnAndUnlock("failed", injectUnsaved(failed), succeed = false, expected = failed)
             assertEquals("Failed save did not replace disk content", slow, journal.load(room).text)
             assertNotNull("Recovery requires an explicit retry", main { field("draftError").get(activity) })
             // No lastWrite now: a second Home/return must not replace the recovery with empty
             // or old disk text, and must not clear its retry state.
-            returnAndUnlock(expected = failed)
+            returnAndUnlock("failed-retained", expected = failed)
             assertNotNull(main { field("draftError").get(activity) })
             main { (activity as MainActivity).retryDraftSave() }
             waitFor("production retry is durable") { journal.load(room).text == failed && main { field("draftError").get(activity) == null } }
-            returnAndUnlock(expected = failed)
+            returnAndUnlock("retry-durable", expected = failed)
             stage("SLOW_AND_FAILED_DRAFT_BACKGROUND_LOCK_VERIFIED retry-durable=true")
         } finally { peerClient.close() }
     }
 
     @Test fun exportCancelAndWriteRequireSeparateExplicitRecoveryConfirmation() {
         val args = InstrumentationRegistry.getArguments()
+        handsetDrafts = args.getString("handsetDrafts") == "true"
+        if (handsetDrafts) {
+            assertEquals("Only the dedicated QA application is authorized", "com.llmnest.android.debug", instrumentation.targetContext.packageName)
+            assertEquals("Handset drafts must include the background checks", "true", args.getString("backgroundDraftCheck"))
+        }
         fun arg(key: String) = requireNotNull(args.getString(key)) { "Supply isolated fixture argument $key" }
         // The caller must pass an unused account pair. No registrations or discovery happen here.
         val client = CloudClient(arg("origin"))
@@ -187,9 +209,17 @@ class DeviceRecoveryUiTest {
         val file = File(cache, "device-recovery-ui-${UUID.randomUUID()}.json").canonicalFile
         val cleanup = listOf(file)
         cleanup.forEach { require(it.parentFile == cache && it.name.startsWith("device-recovery-ui-")); assertFalse(it.exists()) }
+        stage("CLEANUP_PLAN remove-only-new-private-recovery-file filename=${file.name}")
         var monitor: PickerResult? = null
         try {
-            activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            if (handsetDrafts) {
+                stage("WAIT_LAUNCH_QA package=${instrumentation.targetContext.packageName}")
+                waitFor("external QA launch", handsetTimeout) {
+                    main { resumedQa()?.also { activity = it } != null }
+                }
+            } else {
+                activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
             waitFor("login") { hasNative("回到你的聊天") }
             editNative("服务器地址", arg("origin")); editNative("邮箱", arg("emailA")); editNative("密码", arg("passwordA")); tapNative("登录")
             waitFor("account access") { hasNative("账号") }
@@ -258,6 +288,7 @@ class DeviceRecoveryUiTest {
             // Only the exact private file allocated and checked by this test is removed.
             cleanup.forEach { if (it.exists()) check(it.delete()) { "Unable to remove isolated recovery test file" } }
             assertTrue(cleanup.none { it.exists() })
+            stage("CLEANUP_VERIFIED private-recovery-file-removed=true")
         }
     }
 }

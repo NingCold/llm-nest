@@ -53,6 +53,16 @@ python tools/run_interop.py --assisted-handset --fixture $qa --serial $serial
 2. **保存：** 第一次在系统文件选择器点返回；第二次选本机「下载」，用提示中的唯一文件名保存。确认写入成功后才点「我已安全保存」。
 3. **锁定：** 按 Home，看到 `BACKGROUND_LOCK_VERIFIED` 后从最近任务回到 QA 客户端，点「解锁加密设备」。测试会用临时口令解锁，核对回到原会话、草稿恢复且没有误发。
 
+要复查**草稿写完前就返回，或写入失败后再返回**，在同一套 QA 包上运行下面的命令。它使用 fixture 中独立的 Recovery 账号，请在该账号首次建立加密身份时运行。
+
+```powershell
+# 一个终端看提示，另一个终端运行测试：
+adb -s $serial logcat -T 1 -s LLMNRecoveryUi:I
+python tools/run_interop.py --handset-drafts --user $profileId --fixture $qa --serial $serial
+```
+
+看到 `WAIT_LAUNCH_QA` 时打开 QA 客户端；之后每次看到 `WAIT_RETURN_QA` 就重新打开它。用例会分别检查慢写、写失败、失败后再次退到后台、重试落盘后的恢复。最终应显示 `DeviceRecoveryUiTest: passed`。
+
 要单独复查「历史刷新时打字不被打断」，保留已安装的两个 QA 包，执行以下命令后在手机上打开 QA 客户端。此项不需要服务器或账号：
 
 ```powershell
@@ -66,6 +76,10 @@ adb -s $serial shell am instrument --user $profileId -w -e class com.llmnest.and
 在 API 36 独立模拟器上，把有未发送文字的聊天切到后台，在草稿写入尚未完成时立即返回，聊天没有重新出现。分别让写入成功和失败，两次都必须用本机口令解锁。失败后再进一次后台，回到原会话仍可看到未保存的文字；点重试后，从草稿存储读回了同一段文字。慢写和失败由测试在存储边界注入，切换前后台及 Matrix 解锁走实际客户端。
 
 同轮通过了原生聊天收发、Matrix 加密互通及恢复文件保存用例，普通 APK 也在该模拟器上从 dev.3 覆盖安装到 dev.4。19 项 JVM 单元测试通过，Lint 无错误。其中 HTTPS 测试核对服务端实际收到的请求：客户端不跟随 302；收到 503 或提交后断线时，不自动重发请求。
+
+**真机复验：** vivo V2359A（Android 16 / API 36）的普通包从 dev.3 保留数据升级到 dev.4，正常打开到登录页。独立 QA 包上，草稿写入未完成时返回没有显示输入框；写入失败后再次切到后台，解锁仍能找回原文，重试后从存储读回一致。正常草稿在按 Home、手动解锁后也回到原会话，没有误发。
+
+同机的临时对端恰好收到一次「你好」；系统文件选择器取消不确认，保存到「下载」并在应用内确认后，服务端才登记恢复材料。历史刷新时，正在输入的拼音组合、选区和焦点均保留。中文发送验证使用实际输入框的 Android 输入连接，未验证 Gboard 手工选词。
 
 ## 2026-11-06 · Android 0.1.0-dev.3：刷新不断开正在输入的文字
 

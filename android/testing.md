@@ -30,6 +30,29 @@ QA APK 使用单独的应用 ID 和临时测试 CA；**不要把它交给使用�
 
 `AndroidChatUiTest` 通过可见控件登录、从通讯录打开既有私聊，并让对端核对收到的正文和条数；对端发送后，不点击刷新即可在手机看到回复。它还会核对返回原会话后历史和草稿是否还在。`CryptoInteropTest` 在 Android WebView 中实际运行官方 Matrix SDK，检验双方信任、密文收发、恢复原文和拒绝明文降级。截图、编译通过或单方“已发送”都不能代替另一端读回同一条原文。
 
+## 在授权真机上验证输入法、文件保存和后台锁定
+
+沿用上面的**新 fixture 和对应的两个 QA APK**。测试使用独立包 `com.llmnest.android.debug`，不需要动日常账号或系统证书。用 `adb devices -l` 核对设备，将完整序号赋给 `$serial`。先检查当前用户是否已有 QA 包：如果已有，保留其数据，改用另一台测试设备或与机主确认用途。普通包 `com.llmnest.android` 不参与这项测试。
+
+```powershell
+$profileId = (adb -s $serial shell am get-current-user).Trim()
+adb -s $serial shell pm list packages --user $profileId com.llmnest.android.debug
+# 当前用户没有上述 QA 包时，逐个安装并确认系统安装结果：
+adb -s $serial install --user $profileId app/build/outputs/apk/debug/app-debug.apk
+adb -s $serial install --user $profileId app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+# 一个终端只看本次测试的交互提示；另一个终端启动测试：
+adb -s $serial logcat -T 1 -s LLMNHandset:I
+python tools/run_interop.py --assisted-handset --fixture $qa --serial $serial
+```
+
+跟随提示在手机上完成三步：
+
+1. **输入：** 在聊天输入框用手机键盘打出「你好」，点发送。对端必须恰好读到一次。若仅验证了输入连接的组合文本，记录为输入连接通过，不能算作中文输入法通过。
+2. **保存：** 第一次在系统文件选择器点返回；第二次选本机「下载」，用提示中的唯一文件名保存。确认写入成功后才点「我已安全保存」。
+3. **锁定：** 按 Home，看到 `BACKGROUND_LOCK_VERIFIED` 后从最近任务回到 QA 客户端，点「解锁加密设备」。测试会用临时口令解锁，核对回到原会话、草稿恢复且没有误发。
+
+结束后只清理本次新装的两个 QA 包和本次保存的唯一文件；按上节步骤停止并清理 fixture。执行普通 `:app:assembleDebug` 后，APK 输出才恢复为供用户安装的普通包。
+
 ## 2026-11-06 · Android 0.1.0-dev.2
 
 在 API 36 的独立模拟器上，用本机 HTTPS 测试服务、独立 PostgreSQL 实例和临时账号完成了三项检查：

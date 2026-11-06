@@ -105,14 +105,16 @@ impl LocalAgentState {
             .join(format!("{:x}", Sha256::digest(owner.server.as_bytes())))
             .join(owner.human.to_string())
     }
-    async fn current(&self, cloud: &CloudState) -> Result<(Owner, PathBuf), String> {
+    async fn current(&self, cloud: &CloudState) -> Result<(Owner, PathBuf, u64), String> {
         if let Some(e) = &self.initial_error {
             return Err(e.clone());
         }
-        let (server, human) = cloud.local_identity().await?;
+        // local_identity binds its request context before its first await and
+        // returns only that server's confirmed human and original generation.
+        let (server, human, generation) = cloud.local_identity().await?;
         let o = Owner { server, human };
         let p = self.dir(&o);
-        Ok((o, p))
+        Ok((o, p, generation))
     }
     fn remember(&self, o: &Owner) -> Result<(), String> {
         let mut owners = self.owners.lock().unwrap();
@@ -416,9 +418,12 @@ pub async fn local_agent_status(
     cloud: tauri::State<'_, CloudState>,
     state: tauri::State<'_, LocalAgentState>,
 ) -> Result<Value, String> {
+    let (owner, p, generation) = state.current(&cloud).await?;
     let _op = state.operation.lock().await;
-    let (_, p) = state.current(&cloud).await?;
-    status(&app, &state, &p).await
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    let result = status(&app, &state, &p).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    Ok(result)
 }
 fn default_daily_calls() -> u64 {
     48
@@ -443,9 +448,8 @@ pub async fn local_agent_budget(
     daily_calls: u64,
     daily_tokens: u64,
 ) -> Result<Value, String> {
+    let (owner, p, generation) = state.current(&cloud).await?;
     let _op = state.operation.lock().await;
-    let generation = cloud.authorized_local_session()?.2;
-    let (owner, p) = state.current(&cloud).await?;
     crypto::ensure_session(&cloud, &owner, generation)?;
     crypto::ensure_stopped(&state, &p)?;
     let mut m = manifest(&p)?.ok_or("请先配置本机 Agent")?;
@@ -578,9 +582,8 @@ pub async fn local_agent_setup(
     state: tauri::State<'_, LocalAgentState>,
     options: SetupOptions,
 ) -> Result<Value, String> {
+    let (owner, p, generation) = state.current(&cloud).await?;
     let _op = state.operation.lock().await;
-    let generation = cloud.authorized_local_session()?.2;
-    let (owner, p) = state.current(&cloud).await?;
     crypto::ensure_session(&cloud, &owner, generation)?;
     if p.exists()
         && (live(&app, &p).await?["running"] == true
@@ -617,8 +620,9 @@ pub async fn local_agent_pair(
     cloud: tauri::State<'_, CloudState>,
     state: tauri::State<'_, LocalAgentState>,
 ) -> Result<Value, String> {
+    let (owner, p, generation) = state.current(&cloud).await?;
     let _op = state.operation.lock().await;
-    let (_, p) = state.current(&cloud).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
     let m = manifest(&p)?.ok_or("请先保存本机模型配置")?;
     if live(&app, &p).await?["running"] == true
         || state
@@ -630,17 +634,25 @@ pub async fn local_agent_pair(
     {
         return Err("请先停止本机 Agent 或等待当前配对结束".into());
     }
+    crypto::ensure_session(&cloud, &owner, generation)?;
     materialize(&p, &m)?;
     let mut pair_command = command(&app, "pair-json", &p, Some(&m))?;
     pair_command.kill_on_drop(true);
     let mut child = pair_command.spawn().map_err(io_error)?;
     let stdout = child.stdout.take().unwrap();
     let mut lines = BufReader::new(stdout).lines();
-    let first = tokio::time::timeout(Duration::from_secs(20), lines.next_line())
-        .await
-        .map_err(|_| "获取配对码超时")?
-        .map_err(io_error)?
-        .ok_or("节点未返回配对码，请检查云端连接")?;
+    let first = owned_session_work(
+        &mut child,
+        async {
+            tokio::time::timeout(Duration::from_secs(20), lines.next_line())
+                .await
+                .map_err(|_| "获取配对码超时")?
+                .map_err(io_error)?
+                .ok_or_else(|| "节点未返回配对码，请检查云端连接".into())
+        },
+        || crypto::ensure_session(&cloud, &owner, generation),
+    )
+    .await?;
     let frame: Value = serde_json::from_str(&first).map_err(|_| "节点配对响应无效")?;
     if frame["type"] != "pairing" {
         return Err("节点未返回预期配对帧".into());
@@ -657,17 +669,25 @@ pub async fn local_agent_pair(
         },
     );
     let app2 = app.clone();
+    let cloud2 = cloud.inner().clone();
+    let owner2 = owner.clone();
     let p2 = p.clone();
     tauri::async_runtime::spawn(async move {
-        let error = supervise_pair(child, lines, cancel, |pairing| {
-            app2.state::<LocalAgentState>()
-                .pairs
-                .lock()
-                .unwrap()
-                .get_mut(&p2)
-                .unwrap()
-                .pairing = Some(pairing);
-        })
+        let error = supervise_pair(
+            child,
+            lines,
+            cancel,
+            || crypto::ensure_session(&cloud2, &owner2, generation),
+            |pairing| {
+                app2.state::<LocalAgentState>()
+                    .pairs
+                    .lock()
+                    .unwrap()
+                    .get_mut(&p2)
+                    .unwrap()
+                    .pairing = Some(pairing);
+            },
+        )
         .await
         .err();
         app2.state::<LocalAgentState>()
@@ -684,16 +704,46 @@ pub async fn local_agent_pair(
                 },
             );
     });
-    status(&app, &state, &p).await
+    let result = status(&app, &state, &p).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    Ok(result)
+}
+// Only a not-yet-confirmed child belongs to this request. Once run-managed
+// acknowledges readiness, its independent background lifetime is preserved.
+async fn owned_session_work<T>(
+    child: &mut tokio::process::Child,
+    work: impl std::future::Future<Output = Result<T, String>>,
+    current: impl Fn() -> Result<(), String>,
+) -> Result<T, String> {
+    let result = session_work(work, current).await.and_then(|result| result);
+    if result.is_err() {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
+    result
+}
+async fn session_work<T>(
+    work: impl std::future::Future<Output = T>,
+    current: impl Fn() -> Result<(), String>,
+) -> Result<T, String> {
+    current()?;
+    tokio::pin!(work);
+    loop {
+        tokio::select! {
+            result = &mut work => { current()?; return Ok(result); }
+            _ = tokio::time::sleep(Duration::from_millis(50)) => current()?,
+        }
+    }
 }
 async fn supervise_pair<R: AsyncBufRead + Unpin>(
     mut child: tokio::process::Child,
     mut lines: Lines<R>,
     cancel: tokio_util::sync::CancellationToken,
+    current: impl Fn() -> Result<(), String>,
     mut update: impl FnMut(Pairing),
 ) -> Result<(), String> {
     let result = tokio::select! {
-        result = async {
+        result = session_work(async {
             loop {
                 let line = lines.next_line().await.map_err(io_error)?
                     .ok_or("本机配对未完成，请重新获取配对码")?;
@@ -709,7 +759,7 @@ async fn supervise_pair<R: AsyncBufRead + Unpin>(
             } else {
                 Err("本机配对未完成，请重新获取配对码".into())
             }
-        } => Some(result),
+        }, current) => Some(result.and_then(|result| result)),
         _ = cancel.cancelled() => None,
     };
     if result.as_ref().is_none_or(|result| result.is_err()) {
@@ -725,8 +775,9 @@ pub async fn local_agent_start(
     cloud: tauri::State<'_, CloudState>,
     state: tauri::State<'_, LocalAgentState>,
 ) -> Result<Value, String> {
+    let (owner, p, generation) = state.current(&cloud).await?;
     let _op = state.operation.lock().await;
-    let (_, p) = state.current(&cloud).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
     let m = manifest(&p)?.ok_or("请先配置本机 Agent")?;
     if state
         .pairs
@@ -738,24 +789,30 @@ pub async fn local_agent_start(
         return Err("请等待配对完成".into());
     }
     if live(&app, &p).await?["running"] != true {
+        crypto::ensure_session(&cloud, &owner, generation)?;
         materialize(&p, &m)?;
-        output(&app, "check", &p, Some(&m)).await?;
+        session_work(output(&app, "check", &p, Some(&m)), || {
+            crypto::ensure_session(&cloud, &owner, generation)
+        })
+        .await??;
+        crypto::ensure_session(&cloud, &owner, generation)?;
         let mut c = command(&app, "run-managed", &p, Some(&m))?;
         c.kill_on_drop(false);
         let mut child = c.spawn().map_err(io_error)?;
         // A status lock probe can beat the child's exclusive startup lock. Wait for
         // the child's acknowledgement before allowing any status process to run.
         let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        if let Err(error) = wait_ready(&mut lines).await {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return Err(error);
-        }
+        owned_session_work(&mut child, wait_ready(&mut lines), || {
+            crypto::ensure_session(&cloud, &owner, generation)
+        })
+        .await?;
         tauri::async_runtime::spawn(async move {
             let _ = child.wait().await;
         });
     }
-    status(&app, &state, &p).await
+    let result = status(&app, &state, &p).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    Ok(result)
 }
 async fn wait_ready<R: AsyncBufRead + Unpin>(lines: &mut Lines<R>) -> Result<(), String> {
     let line = tokio::time::timeout(Duration::from_secs(20), lines.next_line())
@@ -779,12 +836,15 @@ pub async fn local_agent_stop(
     cloud: tauri::State<'_, CloudState>,
     state: tauri::State<'_, LocalAgentState>,
 ) -> Result<Value, String> {
+    let (owner, p, generation) = state.current(&cloud).await?;
     let _op = state.operation.lock().await;
-    let (_, p) = state.current(&cloud).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
     if p.join("node.toml").exists() {
         stop(&app, &p).await?;
     }
-    status(&app, &state, &p).await
+    let result = status(&app, &state, &p).await?;
+    crypto::ensure_session(&cloud, &owner, generation)?;
+    Ok(result)
 }
 #[tauri::command]
 pub async fn local_agent_models(app: tauri::AppHandle) -> Result<Value, String> {
@@ -814,6 +874,135 @@ fn parse_catalog(bytes: &[u8]) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn online_identity_wait_does_not_own_operation_lock_or_adopt_new_session() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        let old = Uuid::new_v4();
+        let cloud = CloudState::new();
+        cloud.set_local_test_session(&server, Some(old));
+        let directory = tempfile::tempdir().unwrap();
+        let state = LocalAgentState::at_root(directory.path().into());
+        let current = state.current(&cloud);
+        tokio::pin!(current);
+        let (mut stream, _) = tokio::select! {
+            result = &mut current => panic!("identity returned before response: {:?}", result.err()),
+            accepted = listener.accept() => accepted.unwrap(),
+        };
+        let mut request = [0; 4096];
+        tokio::select! {
+            result = &mut current => panic!("identity returned before response: {:?}", result.err()),
+            read = stream.read(&mut request) => { assert!(read.unwrap() > 0); },
+        }
+        assert!(
+            state.operation.try_lock().is_ok(),
+            "network identity must not block lifecycle operations"
+        );
+        cloud.set_local_test_session(&server, Some(Uuid::new_v4()));
+        let body = json!({"kind":"human", "id":old}).to_string();
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert!(current.await.err().unwrap().contains("身份已变化"));
+    }
+    #[tokio::test]
+    async fn queued_owner_is_rejected_after_login_change_before_effects() {
+        let cloud = CloudState::new();
+        let o = owner();
+        cloud.set_local_test_session(&o.server, Some(o.human));
+        let generation = cloud.authorized_local_session().unwrap().2;
+        let directory = tempfile::tempdir().unwrap();
+        let state = LocalAgentState::at_root(directory.path().into());
+        let held = state.operation.lock().await;
+        let queued = async {
+            let _op = state.operation.lock().await;
+            crypto::ensure_session(&cloud, &o, generation)?;
+            std::fs::write(directory.path().join("effect"), "started").unwrap();
+            Ok::<_, String>(())
+        };
+        tokio::pin!(queued);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut queued)
+                .await
+                .is_err()
+        );
+        cloud.set_local_test_session(&o.server, Some(Uuid::new_v4()));
+        drop(held);
+        assert!(queued.await.is_err());
+        assert!(!directory.path().join("effect").exists());
+    }
+    #[tokio::test]
+    async fn session_change_reaps_unconfirmed_start_but_keeps_ready_agent() {
+        for ready in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let cloud = CloudState::new();
+            let o = owner();
+            cloud.set_local_test_session(&o.server, Some(o.human));
+            let generation = cloud.authorized_local_session().unwrap().2;
+            let mut child = pairing_child(Some(directory.path()));
+            for _ in 0..100 {
+                if directory.path().join("started").exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(directory.path().join("started").exists());
+            let (mut writer, reader) = tokio::io::duplex(1024);
+            let mut lines = BufReader::new(reader).lines();
+            if ready {
+                use tokio::io::AsyncWriteExt;
+                writer
+                    .write_all(
+                        format!(
+                            "{{\"type\":\"ready\",\"instanceId\":\"{}\"}}\n",
+                            Uuid::new_v4()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                owned_session_work(&mut child, wait_ready(&mut lines), || {
+                    crypto::ensure_session(&cloud, &o, generation)
+                })
+                .await
+                .unwrap();
+                cloud.set_local_test_session(&o.server, None);
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "ready independent Agent must survive logout"
+                );
+                child.kill().await.unwrap();
+                child.wait().await.unwrap();
+            } else {
+                {
+                    let waiting = owned_session_work(&mut child, wait_ready(&mut lines), || {
+                        crypto::ensure_session(&cloud, &o, generation)
+                    });
+                    tokio::pin!(waiting);
+                    assert!(
+                        tokio::time::timeout(Duration::from_millis(10), &mut waiting)
+                            .await
+                            .is_err()
+                    );
+                    cloud.set_local_test_session(&o.server, None);
+                    assert!(waiting.await.is_err());
+                }
+                assert!(
+                    child.try_wait().unwrap().is_some(),
+                    "unconfirmed child must be reaped"
+                );
+                assert!(!directory.path().join("finished").exists());
+            }
+        }
+    }
     #[test]
     fn catalog_contract_preserves_provider_shape_and_rejects_incompatible_protocol() {
         let catalog = json!({"protocolVersion": 1, "agentVersion": "0.1.0",
@@ -1137,6 +1326,7 @@ mod tests {
             pairing_child(None),
             BufReader::new(reader).lines(),
             tokio_util::sync::CancellationToken::new(),
+            || Ok(()),
             |p| codes.push(p.user_code),
         )
         .await
@@ -1166,9 +1356,15 @@ mod tests {
             let updated = std::sync::Arc::new(tokio::sync::Notify::new());
             let task_updated = updated.clone();
             let task = tokio::spawn(async move {
-                supervise_pair(child, BufReader::new(reader).lines(), task_cancel, |_| {
-                    task_updated.notify_one();
-                })
+                supervise_pair(
+                    child,
+                    BufReader::new(reader).lines(),
+                    task_cancel,
+                    || Ok(()),
+                    |_| {
+                        task_updated.notify_one();
+                    },
+                )
                 .await
             });
             updated.notified().await;
@@ -1180,6 +1376,49 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert!(!dir.path().join("finished").exists());
+        }
+    }
+    #[tokio::test]
+    async fn pairing_session_change_cancels_during_read_and_after_paired_frame() {
+        use tokio::io::AsyncWriteExt;
+        for paired in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let cloud = CloudState::new();
+            let o = owner();
+            cloud.set_local_test_session(&o.server, Some(o.human));
+            let generation = cloud.authorized_local_session().unwrap().2;
+            let child = pairing_child(Some(directory.path()));
+            let (mut writer, reader) = tokio::io::duplex(1024);
+            if paired {
+                writer.write_all(b"{\"type\":\"paired\"}\n").await.unwrap();
+            }
+            let work = supervise_pair(
+                child,
+                BufReader::new(reader).lines(),
+                tokio_util::sync::CancellationToken::new(),
+                || crypto::ensure_session(&cloud, &o, generation),
+                |_| panic!("unexpected code"),
+            );
+            tokio::pin!(work);
+            for _ in 0..100 {
+                if directory.path().join("started").exists() {
+                    break;
+                }
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(20), &mut work)
+                        .await
+                        .is_err()
+                );
+            }
+            assert!(directory.path().join("started").exists());
+            cloud.set_local_test_session(&o.server, None);
+            assert!(
+                tokio::time::timeout(Duration::from_secs(1), work)
+                    .await
+                    .unwrap()
+                    .is_err()
+            );
+            assert!(!directory.path().join("finished").exists());
         }
     }
     #[tokio::test]

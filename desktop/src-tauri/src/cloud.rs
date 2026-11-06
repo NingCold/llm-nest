@@ -97,6 +97,14 @@ impl CloudState {
             })),
         }
     }
+    #[cfg(test)]
+    pub(crate) fn set_local_test_session(&self, server: &str, human: Option<Uuid>) {
+        let mut s = self.shared.lock().unwrap();
+        advance(&mut s);
+        s.server = Some(server_url(server).unwrap());
+        s.cookie = human.map(|_| "nest_session=test".into());
+        s.local_human = human;
+    }
     pub(crate) fn with_events(app: tauri::AppHandle) -> Self {
         let state = Self::new();
         state.shared.lock().unwrap().auth_events = Some(Arc::new(move |event| {
@@ -132,7 +140,7 @@ impl CloudState {
             generation: s.generation,
         })
     }
-    pub(crate) async fn local_identity(&self) -> Result<(String, Uuid), String> {
+    pub(crate) async fn local_identity(&self) -> Result<(String, Uuid, u64), String> {
         let ctx = self.context("/api/me", false)?;
         let response = request(&ctx, Method::GET)
             .timeout(Duration::from_secs(15))
@@ -151,11 +159,18 @@ impl CloudState {
             .as_str()
             .and_then(|v| v.parse::<Uuid>().ok())
             .ok_or("云端身份响应无效")?;
-        let s = self.shared.lock().unwrap();
+        let mut s = self.shared.lock().unwrap();
         if s.generation != ctx.generation {
             return Err("登录身份已变化，请重试".into());
         }
-        Ok((ctx.url.origin().ascii_serialization(), owner))
+        // A restored cookie can be valid before /api/me has populated the cache.
+        // This online response establishes the same local authority as cloud_request.
+        s.local_human = Some(owner);
+        Ok((
+            ctx.url.origin().ascii_serialization(),
+            owner,
+            ctx.generation,
+        ))
     }
     #[cfg(test)]
     fn authorized_local_identity(&self) -> Result<(String, Uuid), String> {
@@ -1161,6 +1176,42 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+    #[tokio::test]
+    async fn online_local_identity_accepts_valid_cookie_before_human_cache_is_populated() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        let human = Uuid::new_v4();
+        let state = CloudState::new();
+        {
+            let mut s = state.shared.lock().unwrap();
+            s.server = Some(server_url(&server).unwrap());
+            s.cookie = Some("nest_session=restored".into());
+            assert!(s.local_human.is_none());
+        }
+        let response = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            let count = stream.read(&mut bytes).await.unwrap();
+            let request = String::from_utf8_lossy(&bytes[..count]);
+            assert!(request.contains("nest_session=restored"));
+            let body = serde_json::json!({"id":human,"kind":"human"}).to_string();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let identity = state.local_identity().await.unwrap();
+        assert_eq!(identity, (server, human, 0));
+        assert_eq!(state.authorized_local_session().unwrap(), identity);
+        response.await.unwrap();
     }
     #[test]
     fn local_authority_survives_connection_errors_but_not_session_change() {

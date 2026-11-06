@@ -56,33 +56,53 @@ export function LocalAgentPanel({ ai, operatorId, changed, openChat }: { ai: Man
   const [forceHandover, setForceHandover] = useState(false);
   const alive = useRef(true);
   const reads = useRef(0);
+  const lifetime = useRef(0);
+  const inFlight = useRef(false);
+  const acting = useRef(false);
   const command = useRef({ signature: "", id: "" });
   const statusRef = useRef(status); statusRef.current = status;
+  const changedRef = useRef(changed); changedRef.current = changed;
   const load = async () => {
+    const scope = lifetime.current;
+    const current = () => alive.current && scope === lifetime.current;
+    if (inFlight.current || acting.current || !current()) return;
+    inFlight.current = true;
     const ticket = ++reads.current;
-    const result = await invoke<LocalStatus>("local_agent_status");
-    if (alive.current && ticket === reads.current) {
-      const paired = statusRef.current?.pairing && !result.pairing;
-      setStatus(result);
-      if (paired) await changed();
-    }
+    try {
+      const result = await invoke<LocalStatus>("local_agent_status");
+      if (current() && ticket === reads.current) {
+        const paired = statusRef.current?.pairing && !result.pairing;
+        setStatus(result);
+        if (paired) await changedRef.current();
+      }
+    } catch (e) {
+      if (current() && ticket === reads.current) setError(String(e));
+    } finally { inFlight.current = false; }
   };
   useEffect(() => {
     alive.current = true;
-    const refresh = () => void load().catch(e => { if (alive.current) setError(String(e)); });
-    refresh();
-    void invoke<Catalog>("local_agent_models").then(value => { if (alive.current) setCatalog(value); }, e => { if (alive.current) setError(String(e)); });
-    const timer = setInterval(refresh, 2000);
-    return () => { alive.current = false; reads.current++; clearInterval(timer); };
-  }, []);
+    const scope = ++lifetime.current;
+    const current = () => alive.current && scope === lifetime.current;
+    const refresh = () => { if (current()) void load(); };
+    setStatus(null); setError(""); setNotice(""); setEditing(false); setForceHandover(false);
+    command.current = { signature: "", id: "" };
+    void refresh();
+    void invoke<Catalog>("local_agent_models").then(value => { if (current()) setCatalog(value); }, e => { if (current()) setError(String(e)); });
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => { alive.current = false; lifetime.current++; reads.current++; clearInterval(timer); };
+  }, [operatorId, ai.account.id]);
   const act = async (commandName: string, args?: Record<string, unknown>) => {
+    if (acting.current) return false;
+    acting.current = true;
+    const scope = lifetime.current;
+    const current = () => alive.current && scope === lifetime.current;
     setBusy(true); setError(""); setNotice(""); reads.current++;
     try {
       const result = await invoke<LocalStatus>(commandName, args);
-      if (alive.current) { setStatus(result); if (commandName === "local_agent_setup") setEditing(false); }
-      if (alive.current) await changed(); return alive.current;
-    } catch (e) { if (alive.current) setError(String(e)); return false; }
-    finally { if (alive.current) setBusy(false); }
+      if (current()) { setStatus(result); if (commandName === "local_agent_setup") setEditing(false); }
+      if (current()) await changed(); return current();
+    } catch (e) { if (current()) setError(String(e)); return false; }
+    finally { acting.current = false; if (alive.current) setBusy(false); }
   };
   const boundHere = !!status?.nodeId && ai.node?.id === status.nodeId && status.aiIds.includes(ai.account.id);
   return <div className="cloud-local-agent">
@@ -108,10 +128,15 @@ export function LocalAgentPanel({ ai, operatorId, changed, openChat }: { ai: Man
           const body = { pairingCode: status.pairing!.userCode, expectedBindingVersion: ai.bindingVersion, ...(forceHandover ? { force: true } : {}) };
           const signature = JSON.stringify(body);
           if (command.current.signature !== signature) command.current = { signature, id: crypto.randomUUID() };
+          if (acting.current) return;
+          acting.current = true;
+          const scope = lifetime.current;
+          const current = () => alive.current && scope === lifetime.current;
+          reads.current++;
           setBusy(true); setError("");
-          try { await request(`/ai/${ai.account.id}/node`, "POST", { ...body, requestId: command.current.id }); command.current = { signature: "", id: "" }; if (alive.current) setNotice("已授权，正在等待本机保存连接。完成后可启动 Agent。"); await load(); await changed(); }
-          catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)); }
-          finally { if (alive.current) setBusy(false); }
+          try { await request(`/ai/${ai.account.id}/node`, "POST", { ...body, requestId: command.current.id }); if (current()) { command.current = { signature: "", id: "" }; setNotice("已授权，正在等待本机保存连接。完成后可启动 Agent。"); await changed(); } }
+          catch (e) { if (current()) setError(e instanceof Error ? e.message : String(e)); }
+          finally { acting.current = false; if (alive.current) setBusy(false); if (current()) void load(); }
         }}>授权本机节点</button>
       </div>}
     </>}

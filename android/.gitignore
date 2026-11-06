@@ -6,3 +6,4 @@ local.properties
 *.iml
 .cxx/
 captures/
+java_pid*.hprof

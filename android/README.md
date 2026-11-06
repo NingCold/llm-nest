@@ -1,21 +1,33 @@
 # LLM Nest · Android
 
-用 Android Studio 打开本目录，选择模拟器或测试设备，点击 **Run**。应用有“消息”和“通讯录”两个入口，跟随系统切换浅色、深色。当前是离线界面预览，不需要账号，不会请求网络或读取手机通讯录。
+在手机上登录已有账号，从 **通讯录** 选择联系人即可回到双方原来的私聊。**消息** 中也能打开已加入的群聊。Android 开发版支持文字收发、实时更新、翻阅历史和本机文字草稿，不读取手机联系人，不运行 Agent。
 
-## 从命令行构建
+## 第一次连接
 
-安装 JDK 17 或 21、Android SDK Platform 36 和 Build Tools 36.0.0。让 Android Studio 设置 SDK 路径，或将 `ANDROID_HOME` 指向本机 SDK。设备至少需要 Android 8.0（API 26）。
+1. 输入站点的 **HTTPS 地址**、邮箱和密码。只记住服务器地址，不保存密码或登录令牌。使用内网测试站时，手机须能访问该网络；调试包接受系统中由用户明确安装的 CA，先通过可信渠道核对证书，不要跳过证书错误。
+2. 在 **通讯录** 按名字或完整账号 ID 搜索并点选联系人。打开 **消息** 可回到已有私聊、群聊。网络中断后，未确认的发送会留下原请求；可以先刷新核对历史，再选择 **重试原发送**。放弃重试不会撤回已送达的消息。
+3. 如果站点要求加密，或原来的窗口已开启加密，先按下方步骤准备本机设备。草稿默认留在这台设备的应用私有目录中，是本机明文，不会同步到其他设备。
 
-在本目录运行：
+## 在手机上读回加密聊天
+
+打开 **账号 → 设备与加密设置**。设置一个独立的本机解锁口令。它与登录密码不同。
+
+- **第一次建立这个账号的加密身份：** 创建独立设备并确认建立首次身份。通过系统文件选择器保存恢复文件，等写入成功后再确认已安全保存。不要将文件或本机口令发给他人。
+- **已有可信设备或恢复文件：** 给手机建立独立设备，然后导入已有恢复文件，或在可信设备核对指纹后向手机发送授权，并在手机上确认接收。不要重建账号身份来替代恢复。
+- **和联系人启用加密：** 双方通过独立渠道核对账号主指纹、Ed25519 和 Curve25519 指纹，并在设备设置中确认。点击 **完成，返回聊天**。在原聊天选择 **开启加密**；要求加密的站点显示 **开启此聊天加密**。已经加密的窗口继续使用原密钥；遇到缺密钥或解密失败会提示，不会改发或显示替代明文。
+
+切换到后台会停止订阅并锁定已准备的密钥库；返回后重新输入本机口令。系统文件选择器属于当前恢复操作。退出账号不会删除本机密钥库或草稿；卸载或清除应用数据则会删除，换机前保管好恢复文件。
+
+## 安装与构建
+
+需要 Android 8.0（API 26）或更高版本、可运行当前 Matrix WASM 的 Android System WebView。用 Android Studio 打开本目录，选择模拟器或测试设备，点击 **Run**。命令行使用 JDK 17 或 21、Android SDK Platform 36、Build Tools 36.0.0；在本目录运行：
 
 ```powershell
-.\gradlew.bat :app:assembleDebug :app:lintDebug
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-macOS 或 Linux 使用 `./gradlew`。调试包位于 `app/build/outputs/apk/debug/app-debug.apk`。无需另装 Gradle、Node.js、Rust 或 Agent。
+macOS / Linux 使用 `./gradlew`。调试包在 `app/build/outputs/apk/debug/app-debug.apk`。原生界面、消息网络层和草稿均在本工程；首次构建时，Gradle 会复用匹配的 Node.js 24.18.0，或下载到 Gradle 私有目录；它用固定的 pnpm 11.22.0 和 Web 锁文件打包 Matrix 引擎，无需另装全局 Node 或 pnpm。手机使用随包引擎，不加载站点脚本。
 
-## 从哪里修改
+**当前范围：** 已有账号的文字聊天，包括已加入的群。注册、创建或管理群、群内结构化提及、发送或下载附件、管理 AI 节点仍使用 Web 或桌面。应用退到后台时不会继续接收实时更新或发出推送。暂未公开发布或上架。
 
-- [MainActivity.kt](app/src/main/java/com/llmnest/android/MainActivity.kt)：应用入口、标签切换和页面状态。
-- [布局](app/src/main/res/layout/activity_main.xml)、[文案与浅色样式](app/src/main/res/values)、[深色样式](app/src/main/res/values-night)：两个入口共用的原生界面。
-- [应用构建配置](app/build.gradle.kts)：最低系统版本、应用 ID 和构建版本。启动图标沿用[客户端品牌源文件](../assets/branding/README.md)。
+[Android 验收与复现](testing.md) · [共用加密设计](../docs/design/encryption.md)

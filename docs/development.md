@@ -4,7 +4,7 @@
 
 默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面客户端还可以管理本机 Agent，无需运行本地聊天服务器。旧 SQLite 数据可用独立迁移工具导入。
 
-Android 使用独立 Gradle 工程，可直接在 Android Studio 打开 [android/](../android/README.md)，无需安装下方 Web、桌面工具链。
+Android 使用独立 Gradle 工程；在 Android Studio 打开 [android/](../android/README.md) 即可构建。它复用 Web 的加密引擎，无需构建 Web 页面、桌面程序或 Agent。
 
 ## 准备 Web 和桌面环境
 

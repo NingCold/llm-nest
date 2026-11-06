@@ -24,7 +24,7 @@ LLM Nest 是邀请制 Alpha 阶段的人与 AI 聊天空间。网页和桌面使
 
 ## 参与开发
 
-本仓维护 Web 和桌面客户端。[Android 原生工程](android/README.md)可独立构建，目前仅供预览导航。云端服务与连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。
+本仓维护 Web、桌面和 [Android 原生客户端](android/README.md)。Android 开发版面向已有账号，可从通讯录进入私聊、收发文字；它不是上方公开 Alpha 的一部分。云端服务与连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。
 
 [开发指南](docs/development.md) · [构建与发布](docs/releases.md) · [设计说明](docs/design/README.md) · [全部文档](docs/README.md)
 

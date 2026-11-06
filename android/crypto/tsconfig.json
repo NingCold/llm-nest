@@ -1,0 +1,5 @@
+{
+  "extends": "../../web/tsconfig.json",
+  "compilerOptions": { "noUncheckedSideEffectImports": false, "baseUrl": "../../web", "paths": { "@/*": ["./src/*"] } },
+  "include": ["./*.ts", "../../web/src/vite-env.d.ts"]
+}

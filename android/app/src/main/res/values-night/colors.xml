@@ -1,9 +1,13 @@
 <resources>
-    <color name="surface">#111820</color>
-    <color name="navigation_surface">#18222E</color>
-    <color name="text_primary">#E5EBF3</color>
-    <color name="text_secondary">#A8B6C8</color>
-    <color name="accent">#A9C9F2</color>
-    <color name="selected_surface">#283C54</color>
-    <color name="divider">#2D3B4C</color>
+    <color name="surface">#101820</color>
+    <color name="navigation_surface">#19242F</color>
+    <color name="text_primary">#E8EEF6</color>
+    <color name="text_secondary">#A9B8CA</color>
+    <color name="accent">#A9CAF6</color>
+    <color name="button_accent">#A9CAF6</color>
+    <color name="on_accent">#122C4C</color>
+    <color name="selected_surface">#263D56</color>
+    <color name="divider">#344457</color>
+    <color name="error_surface">#412624</color>
+    <color name="error_text">#FFB8AD</color>
 </resources>

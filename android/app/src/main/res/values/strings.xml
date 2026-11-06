@@ -2,8 +2,4 @@
     <string name="app_name">LLM Nest</string>
     <string name="messages">消息</string>
     <string name="contacts">通讯录</string>
-    <string name="messages_empty">还没有消息</string>
-    <string name="messages_hint">当前预览尚未连接聊天账号。</string>
-    <string name="contacts_empty">通讯录还是空的</string>
-    <string name="contacts_hint">当前预览不会读取你的联系人。</string>
 </resources>

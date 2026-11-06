@@ -21,7 +21,7 @@ import type { Account, Conversation, Snapshot, Page, Message, CloudDraftRecord a
 import "./cloud.css";
 import { localView, prepareLocal, prepareLocalReference, sendLocal, syncLocal, stopLocal, localPage, type LocalView } from "./local-api";
 import { prepareAttachments } from "./crypto/attachments";
-import { completeHistory } from "./crypto/history";
+import { searchHistory } from "./crypto/history";
 import { encryptMessage, projectPage, projectSnapshot, enableEncryption } from "./crypto/content";
 import { consumeCryptoWarning, cryptoDevice, localKeyMessages, receiveLocalKeys } from "./crypto/engine";
 import { synchronizeResources } from "./crypto/resources";
@@ -229,8 +229,9 @@ export default function ChatApp(props: ChatAppProps) {
     refreshing.current = work;
     return work.promise;
   };
-  const requestPage = async (path: string) => {
+  const requestPage = async (path: string, current?: () => boolean) => {
     const data = await request<Page>(path);
+    if (current && !current()) throw new Error("读取历史已取消");
     const id = path.match(/\/conversations\/([^/]+)\/messages/)?.[1];
     const conversation = snapshotRef.current?.conversations.find(c => c.id === id);
     return data.messages?.some(m => m.sealed) || conversation?.encryption ? projectPage(data, conversation) : data;
@@ -272,6 +273,8 @@ export default function ChatApp(props: ChatAppProps) {
     }
     if (!id) return;
     if (!old) { await readHistory(id, false, true); return; }
+    const current = () => e === epoch.current && v === view.current && id === activeRef.current && revision === localPageRevision.current;
+    if (!current()) return;
     const syncedMessages = old.messages.filter(m => !m.local || m.local.synced);
     if (!syncedMessages.length) {
       await readHistory(id, false, true);
@@ -280,15 +283,18 @@ export default function ChatApp(props: ChatAppProps) {
     const first = BigInt(syncedMessages[0].position),
       last = BigInt(syncedMessages[syncedMessages.length - 1].position);
     let before = bottom.current ? "" : String(last + 1n),
-      messages: Message[] = [],
+      pages: Message[][] = [],
       latestPosition = old.latestPosition,
       hasMore = old.hasMore;
     do {
+      if (!current()) return;
       const data = await requestPage(
         `/chat/conversations/${id}/messages?limit=100${before ? `&before=${before}` : ""}`,
+        current,
       );
+      if (!current()) return;
       latestPosition = data.latestPosition;
-      messages = [...data.messages, ...messages];
+      pages.push(data.messages);
       hasMore = data.hasMore;
       if (
         !data.hasMore ||
@@ -300,8 +306,9 @@ export default function ChatApp(props: ChatAppProps) {
     } while (true);
     if (e === epoch.current && v === view.current && id === activeRef.current && revision === localPageRevision.current) {
       setHistoryError("");
+      const messages = pages.reverse().flat().filter((m) => BigInt(m.position) >= first);
       setPage(previous => retainUnsynced({
-        messages: messages.filter((m) => BigInt(m.position) >= first),
+        messages,
         latestPosition,
         hasMore,
       }, previous));
@@ -749,12 +756,12 @@ export default function ChatApp(props: ChatAppProps) {
       v = view.current;
     if (snapshotRef.current?.conversations.some(c => c.encryption)) {
       const candidates = snapshotRef.current.conversations.filter(c => scope !== "current" || c.id === id);
-      const current = () => sequence === searchSeq.current && v === view.current && id === activeRef.current;
-      const messages = (await Promise.all(candidates.map(c => completeHistory(c, current)))).flat();
+      const e = epoch.current;
+      const current = () => e === epoch.current && sequence === searchSeq.current && v === view.current && id === activeRef.current;
+      const { messages, failed } = await searchHistory(candidates, query, current);
       if (!current()) return;
-      setResults(messages.filter(m => !m.cryptoError && m.status !== "withdrawn" && m.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      setResults(messages);
       setSearchMore(false);
-      const failed = messages.filter(m => m.cryptoError).length;
       setNotice(failed ? `完整历史已读取；${failed} 条消息尚不可解密，未纳入搜索。搜索词没有上传云端。` : "已搜索所有授权历史，搜索词没有上传云端。");
       return;
     }

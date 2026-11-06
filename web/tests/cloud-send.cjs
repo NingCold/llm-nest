@@ -1,212 +1,129 @@
-const assert = require("node:assert/strict"), fs = require("node:fs"), vm = require("node:vm"), path = require("node:path"), ts = require("typescript"), React = require("react"), { randomUUID } = require("node:crypto");
-class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); this.status = status; } }
-const me = { id: "me", name: "自己", kind: "human", status: "active" };
-const conversation = { id: "group", kind: "group", revision: "7", directBlocked: false };
-const draft = { text: "@名字只是文字", requestId: null, mentions: ["ai-b", "ai-a"], replyTo: "earlier", reference: { actorId: "ai-a", selection: { conversationId: "source-group", sources: [{ messageId: "group-source", revision: "3" }] } }, images: [{ id: "image", mime: "image/png", data: "YQ==" }], files: [] };
-function harness(record, desktop = false, storage = new Map(), account = me, timing) {
-  const states = [], refs = [], calls = [], saves = [], effects = [], listeners = {};
-  const browserListeners = {}, timers = [], mountEffects = [];
-  const repository = { records: {} }, lifecycle = { locks: 0, logouts: 0, imageReads: 0, fileReads: 0 };
-  let si = 0, ri = 0, ei = 0, cleanup;
-  // Seed an authenticated, open conversation and a recovered draft. Effects stay off:
-  // these cases exercise explicit sends, without any automatic network work.
-  Object.assign(states, { 2: account, 5: { self: account, contacts: [], conversations: [conversation], cursor: "1" }, 6: "group", 12: record, 13: true });
-  const hooks = { ...React,
-    useState(initial) { const i = si++; if (!(i in states)) states[i] = typeof initial === "function" ? initial() : initial; return [states[i], value => { states[i] = typeof value === "function" ? value(states[i]) : value; }]; },
-    useRef(initial) { const i = ri++; return refs[i] ||= { current: initial }; }, useEffect(fn) { if (ei++ === 0 && !cleanup) cleanup = fn(); mountEffects.push(fn); if (desktop && String(fn).includes("drafts-prepare-close")) effects.push(fn); },
-  };
-  const api = { server: "https://example.test", encryptions: 0, invalidate() {}, HttpError, DownloadCancelled: class extends Error {}, async request(path, method, body) { calls.push({ path, method, body }); return api.respond(path, method, body); }, respond: async () => ({}) };
-  const exports = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, "../src/cloud/ChatApp.tsx"), "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
-    performance: timing, requestAnimationFrame: timing ? fn => { api.frame = fn; return 1; } : undefined, cancelAnimationFrame() { api.frame = undefined; },
-    setInterval(fn) { timers.push(fn); return fn; }, clearInterval() {}, exports, location: { hash: "" }, crypto: { randomUUID }, URL, setTimeout, document: { querySelector: () => ({ scrollTop: 123 }) }, window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, addEventListener(name, fn) { browserListeners[name] = fn; }, removeEventListener(name) { delete browserListeners[name]; } },
-    require(name) {
-      if (name === "react") return hooks;
-      if (name === "./api") return api;
-      if (name === "./local-api") return {
-        sendLocal: async (id, requestId, text, sealed, messageId, keyMessages, options) => { calls.push({ local: true, id, requestId, text, sealed, messageId, keyMessages, options }); if (api.sendLocalRespond) return api.sendLocalRespond(); throw new Error("local acknowledgement lost"); },
-        syncLocal: async () => api.localRespond(),
-        localPage: data => ({ messages: data.messages, hasMore: false, latestPosition: "0" }),
-      };
-      if (name === "./Workspace") return { Workspace: "workspace" };
-      if (name === "./Consciousness") return { clearConsciousnessCommands() {} };
-      if (name === "./AiConfiguration") return { clearAiConfigurationCommands() {} };
-      if (name === "./Participation") return { clearParticipationCommands() {} };
-      if (name === "./crypto/engine") return { receiveLocalKeys: async () => { if (api.receiveLocalKeys) await api.receiveLocalKeys(); }, lockCrypto() {}, consumeCryptoWarning() {}, cryptoDevice: () => api.unlocked ? 'device' : undefined, localKeyMessages: () => [{ event_type: "m.room.encrypted", txn_id: "frozen-key", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
-      if (name === "./crypto/resources") return { synchronizeResources: async () => { api.emptySyncs = (api.emptySyncs || 0) + 1; } };
-      if (name === "./crypto/attachments") return { prepareAttachments: (images = [], files = []) => ({ descriptors: [...images, ...files].map((a, index) => ({ index, kind: "file", mime: a.mime, byteLength: 1, mediaEncryptionInfo: "sdk-secret" })), encryptedAttachments: [...images, ...files].map((a, index) => ({ index, data: "cipher-only" })) }) };
-      if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => api.projectPage ? api.projectPage(p) : p, projectSnapshot: async s => s };
-      if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
-      if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
-      if (name === "@tauri-apps/api/core") return { invoke: async () => {} };
-      if (name === "../chat/drafts") return { emptyDraft: () => ({ text: "", requestId: null, mentions: [], replyTo: null }) };
-      if (name === "../chat/images") return { readImages: async (...args) => { lifecycle.imageReads++; return repository.readImages ? repository.readImages(...args) : []; } };
-      if (name === "../chat/files") return { readFiles: async (...args) => { lifecycle.fileReads++; return repository.readFiles ? repository.readFiles(...args) : []; } };
-      if (name === "../chat/draft-storage") return { DraftDatabase: class { async load(owner, ids) { return Object.fromEntries(ids.filter(id => repository.records[id]).map(id => [id, repository.records[id]])); } async save(owner, id, next) { saves.push(structuredClone({ owner, id, next })); if (repository.save) await repository.save(owner, id, next); } } };
-      if (name === "@/hooks/useDesktopReady") return { useDesktopReady() {} };
-      if (name.startsWith("@/") || name.startsWith("./") || name.startsWith("../") || name.startsWith("@tauri")) return {};
-      return require(name);
-    },
-  });
-  return { calls, saves, api, repository, lifecycle, effects, listeners, render() { si = ri = ei = 0; return exports.default({account, location:{active:"group",tab:"messages",accountSection:"profile"}, rememberLocation(){}, onLock(){lifecycle.locks++;}, onLogout(){lifecycle.logouts++;}, onEndSession(){ cleanup(); }}).props; }, browserListeners, timers, mountEffects, unmount() { cleanup(); } };
-}
-const tick = () => new Promise(resolve => setImmediate(resolve));
-function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-async function startupTimingCases() {
-  let clock = 0;
-  const entries = [], cleared = [];
-  const timing = { now: () => ++clock, clearMeasures: name => cleared.push(name), measure: (name, options) => entries.push({ name, ...options }) };
-  const h = harness({ draft, pending: null }, false, new Map(), me, timing);
-  const first = h.render();
-  assert.equal(cleared.length, 5, 'a mount clears only its fixed startup measurements');
-  const pending = deferred(); h.api.respond = () => pending.promise;
-  const reading = first.refresh();
-  assert.equal(entries.length, 0, 'unfinished snapshots do not publish timing results');
-  pending.resolve({ self: me, contacts: [], conversations: [conversation], cursor: 'first' }); await reading;
-  assert.deepEqual(entries.map(e => e.name), ['initRequest', 'snapshotProjection', 'firstSnapshotReady'].map(s => `llmn.chat.startup.${s}`));
-  h.render();
-  const snapshotEffect = () => h.mountEffects.findLast(effect => String(effect).includes('firstSnapshotCommit'))();
-  assert.equal(snapshotEffect(), undefined, 'snapshot changes do not install a frame-cancelling cleanup');
-  assert.equal(entries.at(-1).name, 'llmn.chat.startup.firstSnapshotCommit');
-  const firstFrame = h.api.frame;
-  await h.render().refresh(); h.render(); snapshotEffect();
-  assert.equal(h.api.frame, firstFrame, 'a second snapshot before RAF preserves the first scheduled frame');
-  h.api.frame(); assert.equal(entries.at(-1).name, 'llmn.chat.startup.firstSnapshotFrame');
-  await h.render().refresh(); assert.equal(entries.length, 5, 'later refreshes do not repeat startup measurements');
-  assert.ok(entries.every(e => Object.keys(e).sort().join() === 'end,name,start' && e.end >= e.start), 'measurements contain only fixed names and numeric bounds');
-  h.unmount(); h.api.frame(); assert.equal(entries.length, 5, 'a late animation callback cannot publish after unmount');
-  const late = harness({ draft, pending: null }, false, new Map(), me, timing);
-  const delayed = deferred(); late.api.respond = () => delayed.promise;
-  const waiting = late.render().refresh(), count = entries.length;
-  late.unmount(); delayed.resolve({ self: me, conversations: [], cursor: 'late' }); await waiting;
-  assert.equal(entries.length, count, 'unmounted requests cannot publish timing results');
-  const retry = harness({ draft, pending: null }, false, new Map(), me, timing);
-  const retryView = retry.render();
-  retry.api.respond = async () => { throw new Error('offline'); };
-  await assert.rejects(retryView.refresh(), /offline/);
-  assert.equal(entries.length, count, 'failed initial requests publish no startup timings');
-  retry.api.respond = async () => ({ self: me, contacts: [], conversations: [conversation], cursor: 'retry' });
-  await retryView.refresh(); assert.equal(entries.length, count + 3, 'the first successful retry is measured');
-  retry.render(); retry.mountEffects.findLast(effect => String(effect).includes('firstSnapshotCommit'))();
-  const cancelledFrame = retry.api.frame, beforeUnmount = entries.length;
-  retry.unmount();
-  assert.equal(retry.api.frame, undefined, 'component unmount cancels the pending animation frame');
-  cancelledFrame(); assert.equal(entries.length, beforeUnmount, 'even an already dispatched frame cannot publish after unmount');
-}
+const assert = require('node:assert/strict');
+const { harness, deferred, tick, me, conversation, draft, HttpError, mounted } = require('./cloud-harness.cjs');
+// Discard only mount reads, not sends: assertions below observe explicit user commands.
+async function ready(...args) { const h = await harness(...args); h.calls.length = 0; return h; }
 async function refreshCases() {
-  const h = harness({ draft, pending: null }), requests = [];
-  let concurrent = 0, maximum = 0, notify;
-  h.api.respond = path => {
-    assert.equal(path, '/chat/init');
-    concurrent++; maximum = Math.max(maximum, concurrent);
-    const next = deferred(); requests.push(next);
-    return next.promise.finally(() => concurrent--);
-  };
-  h.api.subscribe = (_cursor, change) => { notify = change; return () => {}; };
-  const first = h.render();
+  const requests = []; let concurrent = 0, maximum = 0;
   const snapshot = cursor => ({ self: me, contacts: [], conversations: [conversation], cursor });
-  // Run the real startup effect, leaving the simulated SSE connection unopened.
-  h.mountEffects.find(effect => String(effect).includes('api_1.subscribe'))();
-  assert.equal(requests.length, 1, 'initial loading does not wait for SSE to connect');
-  const overlapping = [notify(), first.refresh(), first.refresh()];
-  assert.equal(requests.length, 1, 'overlapping notifications do not start parallel snapshot requests');
+  const h = await harness(undefined, false, new Map(), me, undefined, ({ api }) => {
+    api.respond = path => {
+      if (path !== '/chat/init') return { messages: [], hasMore: false, latestPosition: '0' };
+      concurrent++; maximum = Math.max(maximum, concurrent);
+      const pending = deferred(); requests.push(pending);
+      return pending.promise.finally(() => concurrent--);
+    };
+  });
+  assert.equal(requests.length, 1, 'mount requests a snapshot without waiting for SSE');
+  const notification = h.api.event();
+  const overlapping = [h.render().refresh(), h.render().refresh()];
+  assert.equal(requests.length, 1);
   requests[0].resolve(snapshot('first')); await tick();
-  assert.equal(h.render().snapshot.cursor, 'first', 'the first valid snapshot appears while the follow-up is pending');
-  assert.equal(requests.length, 2, 'overlapping triggers request one follow-up');
-  requests[1].resolve(snapshot('latest')); await Promise.all(overlapping); await tick();
+  assert.equal(h.render().snapshot.cursor, 'first', 'publish first result while follow-up waits');
+  assert.equal(requests.length, 2);
+  requests[1].resolve(snapshot('latest')); await Promise.all([notification, ...overlapping]); await tick();
   assert.equal(requests.length, 2); assert.equal(maximum, 1);
   assert.equal(h.render().snapshot.cursor, 'latest');
+  const failure = assert.rejects(h.render().refresh(), /offline/);
+  requests[2].reject(new Error('offline')); await failure;
+  assert.equal(h.render().snapshot.cursor, 'latest');
+  const retry = h.render().refresh(); requests[3].resolve(snapshot('retry')); await retry;
+  assert.equal(h.render().snapshot.cursor, 'retry');
+  const late = h.render().refresh(), queued = h.render().refresh(); h.unmount();
+  requests[4].resolve(snapshot('late')); await Promise.all([late, queued]);
+  assert.equal(requests.length, 5); assert.equal(h.render().snapshot.cursor, 'retry');
+  const replacement = await ready(undefined, false, new Map(), { ...me, id: 'other' });
+  assert.equal(replacement.render().me.id, 'other');
 
-  const failed = h.render().refresh();
-  const rejection = assert.rejects(failed, /offline/);
-  requests[2].reject(new Error('offline')); await rejection;
-  assert.equal(h.render().snapshot.cursor, 'latest', 'failed refresh preserves visible data');
-  const retried = h.render().refresh(); requests[3].resolve(snapshot('retried')); await retried;
-  assert.equal(h.render().snapshot.cursor, 'retried', 'a failed refresh releases the queue for retry');
-
-  const late = h.render().refresh(), queued = h.render().refresh();
-  h.unmount();
-  const replacement = harness({ draft, pending: null }, false, new Map(), { ...me, id: 'other-account' }); replacement.render();
-  requests[4].resolve(snapshot('old-account')); await Promise.all([late, queued]);
-  assert.equal(requests.length, 5, 'unmount discards the queued follow-up');
-  assert.equal(h.render().snapshot.cursor, 'retried', 'late work cannot publish after the session unmounts');
-  assert.equal(replacement.render().snapshot.cursor, '1', 'a replacement session is untouched by the old request');
-  assert.equal(replacement.render().me.id, 'other-account');
-  console.log('PASS: immediate snapshot loading, serial coalesced refresh, first result visibility, retry and session isolation');
-}
-async function refreshRetryCases() {
-  const h = harness({ draft, pending: null });
+  const recovering = await ready(); recovering.api.unlocked = true;
+  // Re-rendering with the same account does not reinstall listeners; simulate the
+  // supported unlock notification, then exercise the real mounted retry timer.
   let snapshots = 0, histories = 0;
-  h.api.unlocked = true;
-  h.api.respond = async path => {
-    if (path === '/chat/init') {
-      if (++snapshots === 1) throw new Error('snapshot offline');
-      return { self: me, contacts: [], conversations: [conversation], cursor: 'advanced' };
-    }
-    if (path.includes('/messages')) {
-      if (++histories === 1) throw new Error('history offline');
-      return { messages: [], hasMore: false, latestPosition: '0' };
-    }
-    throw new Error(path);
+  recovering.api.respond = async path => {
+    if (path === '/chat/init') { if (++snapshots === 1) throw new Error('snapshot offline'); return snapshot('recovered'); }
+    if (++histories === 1) throw new Error('history offline');
+    return { messages: [], hasMore: false, latestPosition: '0' };
   };
-  h.render();
-  h.mountEffects.find(effect => String(effect).includes('llmn-crypto-change'))();
-  h.browserListeners['llmn-crypto-change'](); await tick();
-  assert.match(h.render().error, /snapshot offline/);
-  h.timers[0](); await tick();
-  assert.equal(snapshots, 2, 'an empty crypto sync still retries the failed snapshot');
-  assert.equal(histories, 1, 'history notification survives the preceding snapshot failure');
-  assert.match(h.render().historyError, /history offline/);
-  h.timers[0](); await tick();
-  assert.equal(snapshots, 2, 'successful snapshot is not read again when only history failed');
-  assert.equal(histories, 2, 'the next empty crypto sync retries the failed history');
-  assert.equal(h.render().historyError, '');
-  h.timers[0](); h.timers[0](); await tick();
-  assert.equal(snapshots, 2); assert.equal(histories, 2, 'stable idle sync does not poll snapshot or history');
-  assert.equal(h.api.emptySyncs, 4);
-
-  const requests = []; let concurrent = 0, maximum = 0;
-  h.api.respond = path => {
-    if (path === '/chat/init') return Promise.resolve({ self: me, contacts: [], conversations: [conversation], cursor: 'new' });
-    concurrent++; maximum = Math.max(maximum, concurrent);
-    const next = deferred(); requests.push(next); return next.promise.finally(() => concurrent--);
-  };
-  const initial = h.render().history();
-  h.browserListeners['llmn-crypto-change'](); await tick();
-  assert.equal(requests.length, 1, 'a notification cannot duplicate an in-flight initial history request');
-  requests[0].resolve({ messages: [], hasMore: false, latestPosition: '1' }); await tick();
-  assert.equal(requests.length, 2, 'a notification during history fetch is followed by one latest read');
-  requests[1].resolve({ messages: [], hasMore: false, latestPosition: '2' }); await initial; await tick();
-  assert.equal(maximum, 1); assert.equal(h.render().page.latestPosition, '2');
-  const late = h.render().history(), queued = h.render().history();
-  h.unmount();
-  requests[2].resolve({ messages: [], hasMore: false, latestPosition: 'old-session' }); await Promise.all([late, queued]);
-  assert.equal(requests.length, 3, 'session unmount drops queued history work');
-  assert.equal(h.render().page.latestPosition, '2', 'late history cannot replace the prior visible page');
-  h.timers[0](); await tick(); assert.equal(requests.length, 3, 'an old timer cannot retry reads after unmount');
-
-  const sse = harness({ draft, pending: null }); let notify, initReads = 0, pageReads = 0;
-  sse.api.unlocked = true;
-  sse.api.subscribe = (_cursor, change) => { notify = change; return () => {}; };
-  sse.api.respond = async path => {
-    if (path === '/chat/init') {
-      if (++initReads === 2) throw new Error('SSE refresh offline');
-      return { self: me, contacts: [], conversations: [conversation], cursor: String(initReads) };
-    }
-    pageReads++; return { messages: [], hasMore: false, latestPosition: '0' };
-  };
-  sse.render();
-  sse.mountEffects.find(effect => String(effect).includes('llmn-crypto-change'))();
-  sse.mountEffects.find(effect => String(effect).includes('api_1.subscribe'))(); await tick();
-  await assert.rejects(notify(), /SSE refresh offline/);
-  sse.timers[0](); await tick();
-  assert.equal(initReads, 3); assert.equal(pageReads, 1, 'failed SSE refresh retains both reads until an empty-sync retry');
-  sse.timers[0](); await tick(); assert.equal(initReads, 3); assert.equal(pageReads, 1);
-  console.log('PASS: failed snapshot/history retry on empty crypto sync, stable idle and serial history notifications');
+  await recovering.cryptoChange(); assert.match(recovering.render().error, /snapshot offline/);
+  await recovering.poll(3000); assert.equal(snapshots, 2); assert.equal(histories, 1);
+  assert.match(recovering.render().historyError, /history offline/);
+  await recovering.poll(3000); assert.equal(histories, 2); assert.equal(recovering.render().historyError, '');
+  await recovering.poll(3000); assert.equal(snapshots, 2); assert.equal(histories, 2);
+  console.log('PASS: real mounted snapshot coalescing, visible first result, retries and session isolation');
+}
+async function startupTimingCases() {
+  let clock = 0; const entries = [], cleared = [], pending = deferred();
+  const timing = { now: () => ++clock, clearMeasures: name => cleared.push(name), measure: (name, bounds) => entries.push({ name, ...bounds }) };
+  const h = await harness(undefined, false, new Map(), me, timing, ({ api }) => {
+    api.respond = path => path === '/chat/init' ? pending.promise : { messages: [], hasMore: false, latestPosition: '0' };
+  });
+  assert.equal(cleared.length, 5); assert.equal(entries.length, 0);
+  pending.resolve({ self: me, contacts: [], conversations: [conversation], cursor: 'timed' }); await tick(); h.render();
+  assert.deepEqual(entries.map(e => e.name), ['initRequest', 'snapshotProjection', 'firstSnapshotReady', 'firstSnapshotCommit'].map(s => `llmn.chat.startup.${s}`));
+  const frame = h.api.frame;
+  await h.click('refresh'); assert.equal(h.api.frame, frame, 'later snapshot preserves pending first frame');
+  frame(); assert.equal(entries.at(-1).name, 'llmn.chat.startup.firstSnapshotFrame');
+  await h.click('refresh'); assert.equal(entries.length, 5);
+  assert.ok(entries.every(e => Object.keys(e).sort().join() === 'end,name,start' && e.end >= e.start));
+  h.unmount(); frame(); assert.equal(entries.length, 5);
+  const delayed = deferred(), count = entries.length;
+  const late = await harness(undefined, false, new Map(), me, timing, ({ api }) => { api.respond = path => path === '/chat/init' ? delayed.promise : { messages: [], hasMore: false }; });
+  late.unmount(); delayed.resolve({ self: me, conversations: [], cursor: 'late' }); await tick();
+  assert.equal(entries.length, count);
+}
+async function historyCases() {
+  const message = (id, position, text = id) => ({ id, position: String(position), text, attachments: [] });
+  for (const invalidate of ['switch', 'unmount']) {
+    const h = await ready();
+    h.api.respond = async path => path === '/chat/init' ? { self: me, contacts: [], conversations: [conversation], cursor: '2' } : { messages: [message('old', 1), message('new', 200)], hasMore: false, latestPosition: '200' };
+    await h.click('history');
+    const delayed = deferred(); let pages = 0, decryptions = 0;
+    h.api.projectPage = async page => { decryptions++; return page; };
+    h.api.respond = async path => {
+      if (path === '/chat/init') return { self: me, contacts: [], conversations: [conversation], cursor: '3' };
+      if (path.includes('/other/')) return { messages: [], hasMore: false, latestPosition: '0' };
+      pages++; return delayed.promise;
+    };
+    const reading = h.api.event(); await tick(); assert.equal(pages, 1);
+    if (invalidate === 'switch') { h.render().selectConversation('other'); h.render(); }
+    else h.unmount();
+    delayed.resolve({ messages: [{ ...message('new', 200), sealed: {} }], hasMore: true, latestPosition: '200' });
+    await reading; await tick(); assert.equal(pages, 1, 'stale page loop must not request the next page');
+    assert.equal(decryptions, 0, 'stale response is discarded before decryption');
+  }
+  const h = await ready();
+  h.api.respond = async path => path === '/chat/init' ? { self: me, contacts: [], conversations: [conversation], cursor: '2' } : { messages: [message('old', 1), message('new', 200)], hasMore: false, latestPosition: '200' };
+  await h.click('history');
+  h.api.respond = async path => path === '/chat/init' ? { self: me, contacts: [], conversations: [conversation], cursor: '3' } : path.includes('before=') ? { messages: [message('old', 1, 'edited historical text')], hasMore: false, latestPosition: '201' } : { messages: [message('new', 200), message('latest', 201)], hasMore: true, latestPosition: '201' };
+  await h.api.event(); await tick();
+  assert.deepEqual(Array.from(h.render().page.messages, m => m.id), ['old', 'new', 'latest']);
+  assert.equal(h.render().page.messages[0].text, 'edited historical text', 'full visible range still refreshes old edits');
+  const pending = deferred(); let reads = 0;
+  h.api.respond = async path => path === '/chat/init' ? { self: me, contacts: [], conversations: [conversation], cursor: '4' } : (++reads === 1 ? pending.promise : { messages: [], hasMore: false, latestPosition: '202' });
+  const initial = h.render().history(); const notification = h.api.event(); await tick();
+  assert.equal(reads, 1); pending.resolve({ messages: [], hasMore: false, latestPosition: '201' });
+  await Promise.all([initial, notification]); await tick(); assert.equal(reads, 2, 'notification coalesces to one subsequent history read');
+}
+async function privateSearchCases() {
+  const rooms = [{ ...conversation, encryption: { version: 1, activationPosition: '0' } }, { ...conversation, id: 'plain' }];
+  const h = await harness(undefined, false, new Map(), me, undefined, ({ api }) => {
+    api.respond = async path => path === '/chat/init' ? { self: me, contacts: [], conversations: rooms, cursor: '1' } : {
+      messages: [{ id: path.includes('/plain/') ? 'plain-hit' : 'sealed-hit', position: '1', text: 'private NEEDLE', status: 'committed', createdAt: '2027-01-01' }, { id: 'bad', position: '2', text: '', cryptoError: 'missing key' }], hasMore: false, latestPosition: '2',
+    };
+  });
+  h.render().queryChange('needle'); h.render(); h.calls.length = 0;
+  await h.render().search(false, 'all');
+  assert.deepEqual(Array.from(h.render().results, m => m.id), ['sealed-hit', 'plain-hit']);
+  assert.match(h.render().notice, /2 条消息尚不可解密/);
+  assert.equal(h.render().searchMore, false);
+  assert.equal(h.calls.length, 2); assert.ok(h.calls.every(c => !c.path.includes('needle') && !c.path.includes('/search')));
+  h.calls.length = 0;
+  await h.render().search(false, 'current');
+  assert.deepEqual(Array.from(h.render().results, m => m.id), ['sealed-hit']);
+  assert.equal(h.calls.length, 1);
 }
 async function suspendDraftCases() {
   const frozen = { text: 'unconfirmed send', requestId: 'original-request', mentions: [], replyTo: null };
-  const waiting = harness({ draft, pending: frozen }), write = deferred();
+  const waiting = await ready({ draft, pending: frozen }), write = deferred();
   waiting.repository.save = () => write.promise;
   const originalWrite = waiting.render().save({ draft, pending: frozen }); await tick();
   waiting.render().lock(); await tick();
@@ -220,7 +137,7 @@ async function suspendDraftCases() {
   assert.equal(waiting.lifecycle.locks, 1);
   assert.deepEqual(waiting.saves[0].next.pending, frozen, 'locking preserves the exact unconfirmed command for manual retry');
 
-  const failed = harness({ draft, pending: null }), failedWrite = deferred();
+  const failed = await ready({ draft, pending: null }), failedWrite = deferred();
   failed.repository.save = () => failedWrite.promise;
   failed.render().text('must remain visible'); await tick(); failed.render().lock(); await tick();
   failedWrite.reject(new Error('draft disk full')); await tick(); await tick();
@@ -229,7 +146,7 @@ async function suspendDraftCases() {
   failed.repository.save = undefined; failed.render().text('retry after error'); await tick();
   assert.equal(failed.saves.at(-1).next.draft.text, 'retry after error', 'a failed suspension restores editing');
 
-  const reading = harness({ draft: { ...draft, images: [] }, pending: null }), image = deferred(), imageWrite = deferred();
+  const reading = await ready({ draft: { ...draft, images: [] }, pending: null }), image = deferred(), imageWrite = deferred();
   reading.repository.readImages = () => image.promise; reading.repository.save = () => imageWrite.promise;
   reading.render().attach([{}], true); await tick();
   reading.render().lock(); await tick();
@@ -242,7 +159,7 @@ async function suspendDraftCases() {
   imageWrite.resolve(); await tick(); await tick();
   assert.equal(reading.lifecycle.locks, 1);
 
-  const exiting = harness({ draft, pending: frozen }), exitWrite = deferred();
+  const exiting = await ready({ draft, pending: frozen }), exitWrite = deferred();
   exiting.repository.save = () => exitWrite.promise;
   const save = exiting.render().save({ draft, pending: frozen }); await tick();
   const logout = exiting.render().logout(); await tick();
@@ -251,7 +168,7 @@ async function suspendDraftCases() {
   assert.equal(exiting.saves.length, 1); assert.equal(exiting.calls.length, 0);
   exitWrite.resolve(); await save; await logout;
   assert.equal(exiting.lifecycle.logouts, 1);
-  const failedExit = harness({ draft, pending: frozen }), rejectedExitWrite = deferred();
+  const failedExit = await ready({ draft, pending: frozen }), rejectedExitWrite = deferred();
   failedExit.repository.save = () => rejectedExitWrite.promise;
   const rejectedSave = assert.rejects(failedExit.render().save({ draft, pending: frozen }), /draft unavailable/); await tick();
   const rejectedLogout = assert.rejects(failedExit.render().logout(), /draft unavailable/); await tick();
@@ -261,16 +178,23 @@ async function suspendDraftCases() {
   console.log('PASS: lock/logout freeze new editing and dispatch, preserve unconfirmed drafts, wait existing attachment work, and keep chat open on persistence failure');
 }
 (async () => {
-  const first = harness({ draft, pending: null });
+  const durable = await ready(), disk = deferred();
+  durable.repository.save = () => disk.promise;
+  durable.api.respond = async () => { throw new Error('ack lost'); };
+  const dispatch = durable.click('send'); await tick();
+  assert.equal(durable.saves.length, 1); assert.equal(durable.calls.length, 0, 'dispatch waits for durable command storage');
+  disk.resolve(); await dispatch;
+  assert.equal(durable.calls.length, 1); assert.ok(durable.render().record.pending);
+  const first = await ready({ draft, pending: null });
   first.api.respond = async () => { throw new HttpError(409); };
-  await first.render().send();
+  await first.click("send");
   assert.equal(first.saves.length, 2);
   assert.equal(first.saves[0].next.pending.replyTo, "earlier");
   assert.equal(first.saves[1].next.pending, null, "first explicit rejection unlocks editing");
   assert.deepEqual(first.saves[1].next.draft, draft, "all editable text, targets and attachments survive");
   assert.match(first.render().error, /HTTP 409/);
 
-  const uncertain = harness({ draft, pending: null });
+  const uncertain = await ready({ draft, pending: null });
   uncertain.api.respond = async () => { throw new Error("connection lost"); };
   await uncertain.render().send();
   const pending = uncertain.render().record.pending;
@@ -285,7 +209,7 @@ async function suspendDraftCases() {
   assert.deepEqual(uncertain.calls[0].body.reference, draft.reference.selection);
   assert.equal(JSON.stringify(uncertain.calls[0].body.reference).includes(draft.text), false, "reference sends identifiers and revisions only");
 
-  const recovered = harness({ draft: { ...draft, text: "later input", mentions: ["new-ai"], replyTo: "new-reply" }, pending });
+  const recovered = await ready({ draft: { ...draft, text: "later input", mentions: ["new-ai"], replyTo: "new-reply" }, pending });
   assert.equal(recovered.calls.length, 0, "recovery never sends automatically");
   recovered.api.respond = async () => { throw new HttpError(404); };
   await recovered.render().send();
@@ -294,21 +218,21 @@ async function suspendDraftCases() {
   assert.equal(JSON.stringify(recovered.calls[0].body.mentions), JSON.stringify(draft.mentions));
   assert.equal(recovered.render().record.draft.text, "later input");
   const localPending = { text: "offline text", requestId: "local-request", route: "local", mentions: [], replyTo: null };
-  const local = harness({ draft: { ...localPending, text: "later" }, pending: localPending });
+  const local = await ready({ draft: { ...localPending, text: "later" }, pending: localPending });
   await local.render().send();
   assert.equal(local.calls.length, 1);
   assert.equal(local.calls[0].local, true, "recovered local command never falls through to cloud transport");
   assert.equal(local.calls[0].requestId, "local-request");
   assert.equal(local.render().record.pending.route, "local", "lost local acknowledgement retains route and request identity");
-  const unsupportedLocal = harness({ draft, pending: { ...localPending, images: draft.images } });
+  const unsupportedLocal = await ready({ draft, pending: { ...localPending, images: draft.images } });
   await unsupportedLocal.render().send();
   assert.equal(unsupportedLocal.calls.length, 0, "unsupported local attachment is rejected without silently dropping its bytes or cloud fallback");
   const rememberedRoute = new Map([[`llmn-local-chat-route:${JSON.stringify(["https://example.test/me", "group"])}`, "local"]]);
-  const refreshedLocal = harness({ draft: localPending, pending: null }, true, rememberedRoute);
+  const refreshedLocal = await ready({ draft: localPending, pending: null }, true, rememberedRoute);
   await refreshedLocal.render().send();
   assert.equal(refreshedLocal.calls[0].local, true, "a remembered local route survives reload even without an unconfirmed command or in-memory view");
   assert.equal(refreshedLocal.render().record.pending.route, "local");
-  const oldResponse = harness({ draft: localPending, pending: null }, true, rememberedRoute);
+  const oldResponse = await ready({ draft: localPending, pending: null }, true, rememberedRoute);
   let resolveLocal;
   oldResponse.api.localRespond = () => new Promise(resolve => { resolveLocal = resolve; });
   const beforeLogout = oldResponse.render();
@@ -318,7 +242,7 @@ async function suspendDraftCases() {
   await synchronization;
   assert.equal(oldResponse.render().localChat, undefined, "an already resolved native response cannot restore local data after logout");
   conversation.encryption = { version: 1, activationPosition: "0" };
-  const encrypted = harness({ draft: { text: "private words", requestId: null, mentions: [], replyTo: null }, pending: null });
+  const encrypted = await ready({ draft: { text: "private words", requestId: null, mentions: [], replyTo: null }, pending: null });
   encrypted.api.respond = async () => { throw Error("lost ciphertext acknowledgement"); };
   await encrypted.render().send();
   await encrypted.render().send();
@@ -327,7 +251,7 @@ async function suspendDraftCases() {
   assert.equal(encrypted.calls[0].body.text, "");
   assert.ok(encrypted.calls[0].body.messageId);
   assert.equal(JSON.stringify(encrypted.calls[0].body).includes("private words"), false, "plaintext is not part of the cloud request");
-  const encryptedSocial = harness({ draft, pending: null });
+  const encryptedSocial = await ready({ draft, pending: null });
   encryptedSocial.api.respond = async () => { throw Error("lost social ciphertext acknowledgement"); };
   await encryptedSocial.render().send(); await encryptedSocial.render().send();
   assert.equal(encryptedSocial.api.encryptions, 1);
@@ -338,9 +262,9 @@ async function suspendDraftCases() {
   assert.equal(JSON.stringify(encryptedSocial.calls[0].body).includes("YQ=="), false, "original attachment bytes never join sealed requests");
   delete conversation.encryption;
   const frozenLocal = { ...localPending, encryptedAttachments: [{ index: 0, data: "frozen-cipher" }], expectedConversationRevision: "7", replyTo: "earlier", messageId: "encrypted-local", sealed: { version: 1, ciphertext: "megolm" }, keyMessages: [{ event_type: "m.room.encrypted", txn_id: "original-olm", messages: { "@ai:llmn": { node: { ciphertext: "olm" } } } }] };
-  const ipc = harness({ draft: { ...frozenLocal, text: "later" }, pending: frozenLocal }, true);
+  const ipc = await ready({ draft: { ...frozenLocal, text: "later" }, pending: frozenLocal }, true);
   for (const failure of ['receiveLocalKeys','projectPage']) {
-    const confirmed = harness({ draft: { ...frozenLocal, text: 'already sent' }, pending: frozenLocal }, true);
+    const confirmed = await ready({ draft: { ...frozenLocal, text: 'already sent' }, pending: frozenLocal }, true);
     confirmed.api.sendLocalRespond = async () => ({ human: me, ai: { id: 'ai-a' }, conversation: { id: 'group' }, messages: [{ id: 'confirmed', position: '11', attachments: [], sealed: frozenLocal.sealed }] });
     confirmed.api[failure] = async () => { throw new Error(`${failure} failed`); };
     await confirmed.render().send();
@@ -359,10 +283,10 @@ async function suspendDraftCases() {
   assert.equal(ipc.calls[0].options.replyTo, "earlier");
   assert.equal(ipc.calls[0].options.expectedConversationRevision, "7");
   const target = { ...conversation, id: "direct", kind: "direct", peer: { id: "ai-a" } };
-  const continuation = harness({ draft, pending: null });
+  const continuation = await ready({ draft, pending: null });
   const targetDraft = { draft: { ...draft, text: "保留私聊输入", reference: null }, pending: null };
   continuation.repository.records.direct = targetDraft;
-  continuation.api.respond = async path => path === "/chat/direct" ? target : path.endsWith("reference-preview") ? { conversation: { id: "source-group" }, messages: [] } : { self: me, contacts: [], conversations: [conversation, target], cursor: "2" };
+  continuation.api.respond = async path => path === "/chat/direct" ? target : path.endsWith("reference-preview") ? { conversation: { id: "source-group" }, messages: [] } : path.includes("/messages") ? { messages: [], hasMore: false, latestPosition: "0" } : { self: me, contacts: [], conversations: [conversation, target], cursor: "2" };
   await continuation.render().continuePrivately({ id: "ai-a" }, draft.reference);
   assert.equal(continuation.saves.length, 1);
   assert.equal(continuation.saves[0].id, "direct");
@@ -370,25 +294,26 @@ async function suspendDraftCases() {
   assert.deepEqual(continuation.saves[0].next.draft.reference, draft.reference);
   assert.equal(continuation.render().active, "direct");
   assert.equal(continuation.calls.some(call => call.method === "POST" && call.path.endsWith("/messages")), false, "continuation never auto-sends");
-  const blocked = harness({ draft, pending: null });
+  const blocked = await ready({ draft, pending: null });
   blocked.repository.records.direct = { ...targetDraft, pending };
   blocked.api.respond = continuation.api.respond;
   await assert.rejects(blocked.render().continuePrivately({ id: "ai-a" }, draft.reference), /尚未确认的发送/);
   assert.equal(blocked.saves.length, 0, "continuation cannot replace an uncertain target command");
-  const invalid = harness({ draft, pending: null });
+  const invalid = await ready({ draft, pending: null });
   invalid.api.respond = async path => { if (path === "/chat/direct") return target; throw new HttpError(403); };
   await assert.rejects(invalid.render().continuePrivately({ id: "ai-a" }, draft.reference), /HTTP 403/);
   assert.equal(invalid.saves.length, 0, "preview rejection cannot put invalid source metadata into a draft");
-  const desktop = harness({ draft, pending: null }, true);
-  desktop.render(); const cleanup = desktop.effects[0](); await new Promise(resolve => setImmediate(resolve));
+  const desktop = await ready({ draft, pending: null }, true);
+  await tick();
   await desktop.listeners['drafts-prepare-close']({payload:'close'});
   assert.throws(() => desktop.render().text('still closing'), /正在保存并关闭/);
   desktop.listeners['desktop-close-retained']();
   desktop.render().text('托盘重新打开后继续输入'); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(desktop.saves.at(-1).next.draft.text, '托盘重新打开后继续输入'); cleanup();
+  assert.equal(desktop.saves.at(-1).next.draft.text, '托盘重新打开后继续输入'); desktop.unmount();
   await suspendDraftCases();
   await refreshCases();
   await startupTimingCases();
-  await refreshRetryCases();
+  await historyCases();
+  await privateSearchCases();
   console.log("PASS: cloud structured sends persist before dispatch, unlock only first explicit rejections and preserve uncertain/recovered command snapshots");
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => { for (const h of mounted) h.unmount(); });

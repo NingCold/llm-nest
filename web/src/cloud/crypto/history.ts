@@ -4,18 +4,52 @@ import { projectPage } from "./content";
 import { attachmentBytes } from "./attachments";
 import type { Conversation, Message, Page } from "../types";
 
-export async function completeHistory(conversation: Conversation, current: () => boolean = () => true): Promise<Message[]> {
-  const messages: Message[] = [];
+// Pages arrive newest first; messages inside each page retain chronological order.
+export async function* historyPages(conversation: Conversation, current: () => boolean = () => true): AsyncGenerator<Page> {
   let before: string | undefined;
   for (;;) {
-    const page = await projectPage(await request<Page>(`/chat/conversations/${conversation.id}/messages?limit=100${before ? `&before=${encodeURIComponent(before)}` : ""}`), conversation);
     if (!current()) throw new Error("读取历史已取消");
-    messages.unshift(...page.messages);
-    if (!page.hasMore) return messages;
+    const raw = await request<Page>(`/chat/conversations/${conversation.id}/messages?limit=100${before ? `&before=${encodeURIComponent(before)}` : ""}`);
+    if (!current()) throw new Error("读取历史已取消");
+    const page = await projectPage(raw, conversation);
+    if (!current()) throw new Error("读取历史已取消");
+    yield page;
+    if (!page.hasMore) return;
     const next = page.messages[0]?.position;
     if (!next || next === before) throw new Error("历史分页未前进，无法完成全文读取");
     before = next;
   }
+}
+export async function completeHistory(conversation: Conversation, current: () => boolean = () => true): Promise<Message[]> {
+  const pages: Message[][] = [];
+  for await (const page of historyPages(conversation, current)) pages.push(page.messages);
+  return pages.reverse().flat();
+}
+export async function searchHistory(conversations: Conversation[], query: string, current: () => boolean): Promise<{ messages: Message[]; failed: number }> {
+  const matches: Message[][] = new Array(conversations.length);
+  const normalized = query.toLocaleLowerCase();
+  let next = 0, failed = 0, stopped = false;
+  const scanning = () => !stopped && current();
+  const scan = async () => {
+    while (next < conversations.length && scanning()) {
+      const index = next++, pages: Message[][] = [];
+      for await (const page of historyPages(conversations[index], scanning)) {
+        const found: Message[] = [];
+        for (const message of page.messages) {
+          if (message.cryptoError) failed++;
+          else if (message.status !== "withdrawn" && message.text.toLocaleLowerCase().includes(normalized)) found.push(message);
+        }
+        // Only matching messages survive beyond this page; keep stable tie ordering.
+        if (found.length) pages.push(found);
+      }
+      matches[index] = pages.reverse().flat();
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(3, conversations.length) }, scan));
+  } finally { stopped = true; }
+  if (!current()) throw new Error("读取历史已取消");
+  return { messages: matches.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt)), failed };
 }
 function zip(files: { name: string; data: Uint8Array }[]) {
   // fflate writes ZIP32. Reject format overflow before its 16/32-bit fields truncate.

@@ -1,0 +1,9 @@
+<resources>
+    <color name="surface">#F4F6F9</color>
+    <color name="navigation_surface">#FFFFFF</color>
+    <color name="text_primary">#202D3D</color>
+    <color name="text_secondary">#59697D</color>
+    <color name="accent">#35649B</color>
+    <color name="selected_surface">#E5EDF7</color>
+    <color name="divider">#DCE3EC</color>
+</resources>

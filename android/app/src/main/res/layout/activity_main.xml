@@ -1,0 +1,19 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@color/surface">
+    <TextView android:id="@+id/page_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingStart="24dp" android:paddingEnd="24dp" android:paddingTop="24dp" android:paddingBottom="20dp"
+        android:text="@string/messages" android:textColor="@color/text_primary" android:textSize="30sp" android:textStyle="bold" android:accessibilityHeading="true" />
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true" android:clipToPadding="false">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center" android:padding="32dp">
+            <ImageView android:id="@+id/empty_icon" android:layout_width="64dp" android:layout_height="64dp" android:padding="14dp" android:src="@drawable/ic_message" android:importantForAccessibility="no" />
+            <TextView android:id="@+id/empty_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:gravity="center" android:text="@string/messages_empty" android:textColor="@color/text_primary" android:textSize="21sp" android:textStyle="bold" />
+            <TextView android:id="@+id/empty_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:gravity="center" android:text="@string/messages_hint" android:textColor="@color/text_secondary" android:textSize="16sp" android:lineSpacingExtra="5dp" />
+        </LinearLayout>
+    </ScrollView>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" android:importantForAccessibility="no" />
+    <RadioGroup android:id="@+id/navigation" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="10dp" android:background="@color/navigation_surface">
+        <RadioButton android:id="@+id/tab_messages" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="64dp" android:padding="8dp" android:layout_marginEnd="4dp" android:button="@null" android:gravity="center" android:background="@drawable/tab_background" android:drawableTop="@drawable/ic_message" android:drawablePadding="4dp" android:drawableTint="@color/tab_foreground" android:text="@string/messages" android:textColor="@color/tab_foreground" android:textSize="14sp" />
+        <RadioButton android:id="@+id/tab_contacts" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="64dp" android:padding="8dp" android:layout_marginStart="4dp" android:button="@null" android:gravity="center" android:background="@drawable/tab_background" android:drawableTop="@drawable/ic_contacts" android:drawablePadding="4dp" android:drawableTint="@color/tab_foreground" android:text="@string/contacts" android:textColor="@color/tab_foreground" android:textSize="14sp" />
+    </RadioGroup>
+</LinearLayout>

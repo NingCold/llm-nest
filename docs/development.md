@@ -4,7 +4,9 @@
 
 默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面客户端还可以管理本机 Agent，无需运行本地聊天服务器。旧 SQLite 数据可用独立迁移工具导入。
 
-## 准备环境
+Android 使用独立 Gradle 工程，可直接在 Android Studio 打开 [android/](../android/README.md)，无需安装下方 Web、桌面工具链。
+
+## 准备 Web 和桌面环境
 
 CI 与云端 Dockerfile 使用 Rust 1.99.1，前端使用 Node.js 24.18.0、pnpm 11.22.0；脚本需要 Python 3.11+。Windows 使用 MSVC 工具链。按对应构建入口准备版本，避免因工具差异改动锁文件。还需可用的 `corepack` 命令：许可生成脚本通过 `corepack pnpm@11.22.0` 读取本机依赖，单独安装全局 pnpm 不替代这一要求。
 

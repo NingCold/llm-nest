@@ -1,6 +1,6 @@
 # AGENTS.md — LLM Nest 客户端
 
-本仓维护 `web/` 共用聊天界面和 `desktop/` Tauri 客户端。产品说明见 README，使用见 docs/usage.md，总进度见 docs/project。服务端与连接器由 https://github.com/NingCold/llm-nest-server 维护，Agent 由 https://github.com/NingCold/llm-nest-agent 维护；两份新公开仓已创建，发布状态以总进度和各仓 Release 为准。
+本仓维护 `web/` 共用聊天界面、`desktop/` Tauri 客户端和 `android/` 独立原生工程。Android 的构建与检查入口见 `android/README.md`。产品说明见 README，使用见 docs/usage.md，总进度见 docs/project。服务端与连接器由 https://github.com/NingCold/llm-nest-server 维护，Agent 由 https://github.com/NingCold/llm-nest-agent 维护；两份新公开仓已创建，发布状态以总进度和各仓 Release 为准。
 
 ## 工作前先确认
 

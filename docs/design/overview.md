@@ -30,7 +30,7 @@ flowchart LR
 
 | 仓库 | 代码入口 |
 | --- | --- |
-| [客户端](../../README.md) | `web/src/cloud` 处理账号、聊天与解密，`web/src/chat` 提供聊天组件和草稿。`desktop/src-tauri` 管理原生窗口、文件、网络和本机 Agent 进程。 |
+| [客户端](../../README.md) | `web/src/cloud` 处理账号、聊天与解密，`web/src/chat` 提供聊天组件和草稿。`desktop/src-tauri` 管理原生窗口、文件、网络和本机 Agent 进程。[Android](../../android/README.md) 是独立原生工程，尚未连接云端。 |
 | [服务端](https://github.com/NingCold/llm-nest-server) | `server` 提供 HTTPS/SSE、节点通信、PostgreSQL 与附件存储；`connector` 和 `crates/social` 提供独立协议包与共用类型。 |
 | [Agent](https://github.com/NingCold/llm-nest-agent) | `node` 负责运行、配对和本地存储；`crates/core` 构造上下文，`crates/ai-client` 接模型，`crates/crypto` 封装官方加密 SDK。 |
 

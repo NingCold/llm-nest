@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,6 +32,7 @@ class DeviceRecoveryUiTest {
     private lateinit var host: CryptoHost
     private lateinit var web: WebView
     private fun <T> main(work: () -> T): T {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return work()
         val result = AtomicReference<Result<T>>()
         instrumentation.runOnMainSync { result.set(runCatching(work)) }
         return result.get().getOrThrow()
@@ -46,10 +48,17 @@ class DeviceRecoveryUiTest {
         while (System.currentTimeMillis() < end) { if (check()) return; Thread.sleep(200) }
         fail("Timed out waiting for $label")
     }
-    private fun tapNative(label: String) = main {
-        var view = views(root()).filterIsInstance<TextView>().first { it !is EditText && it.text.toString() == label && it.isShown } as View
-        while (!view.isClickable) view = view.parent as View
-        assertTrue(view.isEnabled); assertTrue(view.performClick())
+    private fun tapNative(label: String) {
+        waitFor("enabled native control $label") {
+            main {
+                views(root()).filter { view ->
+                    view !is EditText && view.isShown &&
+                        ((view as? TextView)?.text?.toString() == label || view.contentDescription?.toString() == label)
+                }.mapNotNull { match ->
+                    generateSequence(match) { it.parent as? View }.firstOrNull { it.isClickable }
+                }.firstOrNull { it.isShown && it.isEnabled }?.performClick() == true
+            }
+        }
     }
     private fun editNative(label: String, value: String) = main {
         views(root()).filterIsInstance<EditText>().single { it.contentDescription?.toString() == label }.setText(value)
@@ -87,6 +96,85 @@ class DeviceRecoveryUiTest {
             captured.set(Intent(intent))
             return Instrumentation.ActivityResult(result, uri?.let { Intent().setData(it) })
         }
+    }
+
+    private fun checkBackgroundDrafts(args: android.os.Bundle, client: CloudClient, account: String, passphrase: String) {
+        // Continue with the same unlocked identity, so slow/failed lifecycle saves exercise
+        // the real production device gate rather than a no-device auto-open path.
+        click("完成，返回聊天")
+        waitFor("account page") { hasNative("设备与加密设置") }
+        tapNative("返回")
+        val peerClient = CloudClient(requireNotNull(args.getString("origin")))
+        try {
+            val peer = peerClient.login(requireNotNull(args.getString("emailB")) { "backgroundDraftCheck requires emailB" }, requireNotNull(args.getString("passwordB")) { "backgroundDraftCheck requires passwordB" })
+            val room = client.request("POST", "/chat/direct", JSONObject().put("accountId", peer.getString("id")))!!.getString("id")
+            tapNative("通讯录")
+            editNative("搜索名称或账号 ID", peer.getString("id")); tapNative("搜索")
+            waitFor("fixture peer") { hasNative(peer.getString("name")) }; tapNative(peer.getString("name"))
+            fun field(name: String) = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
+            fun mountedDraft() = main { views(root()).filterIsInstance<EditText>().firstOrNull { it.contentDescription?.toString() == "写消息…" } }
+            waitFor("loaded draft") { main { field("draft").get(activity) != null } && mountedDraft()?.isEnabled == true }
+            val journal = DraftStore(instrumentation.targetContext, client.origin, account)
+            val baseline = "durable-before-lock-${UUID.randomUUID()}"
+            editNative("写消息…", baseline)
+            waitFor("baseline disk write") { journal.load(room).text == baseline }
+
+            fun returnAndUnlock(write: CompletableDeferred<DraftRecord>? = null, succeed: Boolean = true, expected: String) {
+                val previousHost = main { field("host").get(activity) }
+                main { assertTrue("Actual Android task can background", activity.moveTaskToBack(true)) }
+                waitFor("background gate") { main { field("foreground").get(activity) == false && field("gateLocked").get(activity) == true } }
+                main {
+                    assertNull("No composer behind the gate", mountedDraft())
+                    assertNull("Subscription stopped", field("stream").get(activity))
+                }
+                instrumentation.targetContext.startActivity(Intent(instrumentation.targetContext, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                waitFor("actual foreground return") { main { field("foreground").get(activity) == true && activity.hasWindowFocus() } }
+                if (write != null) {
+                    main {
+                        assertSame("Slow save has not closed keys yet", previousHost, field("host").get(activity))
+                        assertEquals(true, field("gateLocked").get(activity))
+                        assertEquals(true, field("changingGate").get(activity))
+                        assertNull("Fast return cannot expose plaintext", mountedDraft())
+                    }
+                    if (succeed) write.complete(journal.saveText(room, expected))
+                    else write.completeExceptionally(DraftError("Injected disk failure"))
+                }
+                waitFor("replacement locked host") { main { field("host").get(activity) !== previousHost && field("host").get(activity) != null } && hasNative("聊天已锁定") }
+                host = main { field("host").get(activity) as CryptoHost }
+                web = main { CryptoHost::class.java.getDeclaredField("web").apply { isAccessible = true }.get(host) as WebView }
+                assertTrue("Device stays locked after late completion", state().getBoolean("locked"))
+                tapNative("解锁加密设备")
+                waitFor("unlock dialog") { hasButton("解锁本机资料") }
+                assertEquals("true", eval("(()=>{const p=document.querySelector('input[type=password]');if(!p)return false;p.value=${JSONObject.quote(passphrase)};return true})()"))
+                click("解锁本机资料")
+                waitFor("unlocked settings") { hasButton("锁定本机资料") }; click("完成，返回聊天")
+                waitFor("restored original draft") { main { mountedDraft()?.text?.toString() == expected && mountedDraft()?.isEnabled == true } }
+            }
+            fun injectUnsaved(value: String): CompletableDeferred<DraftRecord> = main {
+                val write = CompletableDeferred<DraftRecord>()
+                // Deterministic storage boundary injection: no plaintext is persisted by this
+                // seam; all lifecycle, locking, SDK unlock, loading and retry code is real.
+                field("text").set(activity, value); field("lastWrite").set(activity, write)
+                MainActivity::class.java.getDeclaredMethod("render").apply { isAccessible = true }.invoke(activity)
+                write
+            }
+            val slow = "slow-save-${UUID.randomUUID()}"
+            returnAndUnlock(injectUnsaved(slow), expected = slow)
+            assertEquals(slow, journal.load(room).text)
+            val failed = "failed-save-${UUID.randomUUID()}"
+            returnAndUnlock(injectUnsaved(failed), succeed = false, expected = failed)
+            assertEquals("Failed save did not replace disk content", slow, journal.load(room).text)
+            assertNotNull("Recovery requires an explicit retry", main { field("draftError").get(activity) })
+            // No lastWrite now: a second Home/return must not replace the recovery with empty
+            // or old disk text, and must not clear its retry state.
+            returnAndUnlock(expected = failed)
+            assertNotNull(main { field("draftError").get(activity) })
+            main { (activity as MainActivity).retryDraftSave() }
+            waitFor("production retry is durable") { journal.load(room).text == failed && main { field("draftError").get(activity) == null } }
+            returnAndUnlock(expected = failed)
+            stage("SLOW_AND_FAILED_DRAFT_BACKGROUND_LOCK_VERIFIED retry-durable=true")
+        } finally { peerClient.close() }
     }
 
     @Test fun exportCancelAndWriteRequireSeparateExplicitRecoveryConfirmation() {
@@ -159,6 +247,10 @@ class DeviceRecoveryUiTest {
             waitFor("explicitly confirmed recovery") { state().getBoolean("recoveryConfirmed") }
             waitFor("ready settings feedback") { eval("document.body.textContent.includes('恢复文件 · 已确认保存')") == "true" }
             stage("Explicit native confirmation made recovery ready")
+            if (args.getString("backgroundDraftCheck") == "true") {
+                instrumentation.removeMonitor(successfulMonitor); monitor = null
+                checkBackgroundDrafts(args, client, account, passphrase)
+            }
         } finally {
             monitor?.let { instrumentation.removeMonitor(it) }
             if (::activity.isInitialized) main { activity.finish() }

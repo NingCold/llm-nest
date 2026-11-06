@@ -276,10 +276,10 @@ class CloudClient internal constructor(address: String, private val http: OkHttp
     private fun isCurrent(context: Context): Boolean = synchronized(lock) { !closed && generation == context.generation }
     private fun invalidate() { generation++; cookie = null; calls.forEach { it.cancel() }; calls.clear() }
 
-    private companion object {
-        const val MAX_JSON_BYTES = 16L * 1024 * 1024
-        val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
-        fun newHttpClient() = OkHttpClient.Builder()
+    companion object {
+        private const val MAX_JSON_BYTES = 16L * 1024 * 1024
+        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+        internal fun newHttpClient() = OkHttpClient.Builder()
             .cookieJar(CookieJar.NO_COOKIES).followRedirects(false).followSslRedirects(false)
             .retryOnConnectionFailure(false).connectTimeout(15, TimeUnit.SECONDS)
             // OkHttp's 503 follow-up is independent of retryOnConnectionFailure, even for GET.
@@ -289,7 +289,7 @@ class CloudClient internal constructor(address: String, private val http: OkHttp
             }
             .readTimeout(45, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
 
-        fun normalizeOrigin(address: String): String {
+        private fun normalizeOrigin(address: String): String {
             try {
                 val uri = URI(address.trim())
                 if (!uri.scheme.equals("https", ignoreCase = true) || uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null ||
@@ -301,7 +301,7 @@ class CloudClient internal constructor(address: String, private val http: OkHttp
             }
         }
 
-        fun safeNetworkError(error: IOException): CloudError = when (error) {
+        private fun safeNetworkError(error: IOException): CloudError = when (error) {
             is CloudError -> error
             is SSLException -> CloudError(0, "TLS 证书验证失败，请检查证书、服务器域名和设备时间", "tls_error")
             is UnknownHostException -> CloudError(0, "无法解析服务器域名，请检查地址和网络 DNS", "dns_error")

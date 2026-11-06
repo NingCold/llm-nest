@@ -266,6 +266,7 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         body.removeAllViews()
         if (hasMore) body.addView(button(if (busy) "正在加载…" else "加载更早消息") { actions.loadOlder() }.apply { isEnabled = !busy }, full())
         if (messages.length() == 0) body.addView(empty(if (busy) "正在加载聊天" else "还没有消息", if (busy) "正在读取服务器上的记录。" else "发送第一条消息，开始对话。", R.drawable.ic_message))
+        val messageIndex = (0 until messages.length()).associate { messages.getJSONObject(it).let { row -> row.getString("id") to row } }
         var day = ""
         for (i in 0 until messages.length()) {
             val message = messages.getJSONObject(i)
@@ -274,7 +275,7 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
                 day = date
                 body.addView(text(date, 12, secondary = true).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(14)) })
             }
-            body.addView(messageView(message, selfId, encrypted, messages))
+            body.addView(messageView(message, selfId, encrypted, messageIndex))
         }
         val footer = chatStatus!!
         footer.removeAllViews()
@@ -365,7 +366,7 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         scroll.setOnScrollChangeListener { _: View, _: Int, _: Int, _: Int, _: Int -> if (history === scroll && isAtLatest()) actions.visibleLatest() }
     }
 
-    private fun messageView(message: JSONObject, selfId: String, encrypted: Boolean, all: JSONArray): View {
+    private fun messageView(message: JSONObject, selfId: String, encrypted: Boolean, all: Map<String, JSONObject>): View {
         val own = message.optString("senderId") == selfId
         val outer = column().apply { gravity = if (own) Gravity.END else Gravity.START; setPadding(0, dp(4), 0, dp(8)) }
         outer.addView(text((if (own) "我" else message.optString("senderName").ifBlank { "未知联系人" }) + "  ·  " + formatTime(message.optString("createdAt")), 12, secondary = true).apply { gravity = if (own) Gravity.END else Gravity.START; setPadding(dp(4), 0, dp(4), dp(6)) })
@@ -381,7 +382,7 @@ class ChatScreens(private val activity: Activity, private val actions: Actions) 
         } else {
             val reply = message.optString("replyTo").takeUnless { it == "null" }.orEmpty()
             if (reply.isNotEmpty()) {
-                val source = (0 until all.length()).map { all.getJSONObject(it) }.find { it.optString("id") == reply }
+                val source = all[reply]
                 val replyPreview = if (source == null) "回复了较早的消息" else "回复 ${source.optString("senderName")}：${preview(source)}"
                 bubble.addView(text(replyPreview, 13, secondary = true).apply { maxLines = 2; setPadding(0, 0, 0, dp(8)) })
             }

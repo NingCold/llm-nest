@@ -34,6 +34,8 @@ class MainActivity : Activity(), ChatScreens.Actions {
     private val draftIO = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val disk = CoroutineScope(SupervisorJob() + draftIO)
     private var lastWrite: Deferred<DraftRecord>? = null
+    private val textWrites = DraftTextWrites(disk)
+    private var recoveringDraft: Pair<String, String>? = null
     private var store: DraftStore? = null
     private var cloud: CloudClient? = null
     private var host: CryptoHost? = null
@@ -54,6 +56,7 @@ class MainActivity : Activity(), ChatScreens.Actions {
     private var foreground = false
     private var gateLocked = false
     private var changingGate = false
+    private var backgroundSaving = false
     private var route = 0L
     private var snapshotJob: Job? = null
     private var snapshotQueued = false
@@ -167,7 +170,7 @@ class MainActivity : Activity(), ChatScreens.Actions {
         if (busy || changingGate) return
         val runtime = host ?: return
         runtime.showDevices(selected()?.optJSONObject("peer")?.optString("id")) {
-            if (host === runtime) job {
+            if (host === runtime && !changingGate) job {
                 device = runtime.perform("state")
                 gateLocked = device!!.optBoolean("hasDevice") && device!!.optBoolean("locked")
                 error = null
@@ -279,8 +282,8 @@ class MainActivity : Activity(), ChatScreens.Actions {
     }
     /** Do not leave a failed write behind as a seemingly saved draft. */
     private fun afterDraft(action: () -> Unit) {
-        if (busy) return
-        val write = lastWrite
+        if (busy || (draft != null && draftError != null && lastWrite == null)) return
+        val write = textWrites.barrier(lastWrite)
         val view = route
         if (write == null) action() else job { write.await(); if (route == view && write === lastWrite) action() }
     }
@@ -300,7 +303,13 @@ class MainActivity : Activity(), ChatScreens.Actions {
             val value = try { withContext(draftIO) { journal.load(id) } } catch (e: Exception) {
                 if (isActive && view == route) { draftError = "无法读取本机草稿，请重试。"; render() }; return@job
             }
-            if (view == route && room == id) { draft = value; text = value.text; draftError = null; render() }
+            if (view == route && room == id && !gateLocked && !changingGate) {
+                draft = value
+                text = recoveringDraft?.takeIf { it.first == id }?.second ?: value.text
+                draftError = if (text != value.text) "草稿未能保存，请重试。" else null
+                if (text == value.text) recoveringDraft = null
+                render()
+            }
         }
     }
     override fun searchContacts(query: String) {
@@ -325,33 +334,26 @@ class MainActivity : Activity(), ChatScreens.Actions {
         }
     }
 
-    private fun loadHistory() {
+    private fun loadHistory(older: Boolean = false) {
         val conversation = selected() ?: return
         val client = cloud!!; val runtime = host!!; val id = conversation.getString("id")
-        val count = depth
+        val view = route
+        val previous = page
         historyJob?.cancel()
         historyBusy = true
         historyJob = job {
             try {
-                var before = ""
-                val chunks = ArrayList<JSONArray>()
-                var more = true
-                var latest = ""
-                while (chunks.size < count && more) {
+                val updated = readHistory(older, depth, previous) { before ->
                     val suffix = if (before.isEmpty()) "" else "?before=" + Uri.encode(before)
                     val raw = client.get("/chat/conversations/$id/messages$suffix")
-                    val projected = runtime.perform("projectPage", json("page" to raw, "conversation" to conversation))
-                    val messages = projected.getJSONArray("messages")
-                    if (chunks.isEmpty()) latest = projected.getString("latestPosition")
-                    chunks.add(messages)
-                    more = projected.optBoolean("hasMore") && messages.length() > 0
-                    if (more) before = messages.getJSONObject(0).getString("position")
+                    runtime.perform("projectPage", json("page" to raw, "conversation" to conversation))
                 }
-                val all = JSONArray()
-                chunks.asReversed().forEach { it.objects().forEach(all::put) }
-                page = json("messages" to all, "hasMore" to more, "latestPosition" to latest)
+                ensureActive()
+                if (view != route || room != id) return@job
+                page = updated
+                if (older) depth++
             } catch (e: CloudError) {
-                if (e.status == 403 || e.status == 404) { page = JSONObject(); render() }
+                if ((e.status == 403 || e.status == 404) && view == route && room == id) { page = JSONObject(); render() }
                 throw e
             } finally {
                 if (isActive) { historyBusy = false; render() }
@@ -359,7 +361,7 @@ class MainActivity : Activity(), ChatScreens.Actions {
         }
     }
     override fun loadOlder() {
-        if (!historyBusy && page.optBoolean("hasMore")) { depth++; loadHistory() }
+        if (!historyBusy && page.optBoolean("hasMore")) loadHistory(older = true)
     }
     override fun visibleLatest() {
         val conv = selected() ?: return
@@ -391,13 +393,14 @@ class MainActivity : Activity(), ChatScreens.Actions {
     }
     private fun persistText(id: String, text: String) {
         val journal = store!!; val view = route
-        val write = disk.async { journal.saveText(id, text) }
+        val write = textWrites.save(journal, id, text, draft?.pending == null)
         lastWrite = write
         job {
             try {
                 val value = write.await()
                 if (route == view && write === lastWrite) {
                     draft = value
+                    if (recoveringDraft?.first == id && recoveringDraft?.second == value.text) recoveringDraft = null
                     if (draftError != null) { draftError = null; render() }
                 }
             } catch (e: Exception) { if (route == view && write === lastWrite && isActive) { draftError = "草稿未能保存，请重试。"; render() } }
@@ -416,7 +419,7 @@ class MainActivity : Activity(), ChatScreens.Actions {
         job {
             var dispatched: PreparedCommand? = null
             try {
-                lastWrite?.await()
+                textWrites.barrier(lastWrite)?.await()
                 val original = withContext(draftIO) { journal.load(id) }
                 val cmd = if (retry) original.pending ?: return@job else {
                     check(original.text == input && original.pending == null) { "草稿已改变，请核对后发送" }
@@ -495,6 +498,7 @@ class MainActivity : Activity(), ChatScreens.Actions {
     private fun endSession(reason: String?, closeCloud: Boolean = true) {
         stopOperations(); clearFeed(); host?.close(); host = null
         if (closeCloud) cloud?.close()
+        recoveringDraft = null
         cloud = null; me = null; store = null; device = null; room = null; contacts = false; accountPage = false
         gateLocked = false; changingGate = false; error = reason; render()
     }
@@ -519,10 +523,21 @@ class MainActivity : Activity(), ChatScreens.Actions {
     }
     override fun onStop() {
         foreground = false; stopFeed()
-        if (host != null && host?.isPickingDocument() != true && !isChangingConfigurations) {
-            val write = lastWrite
-            if (write == null) lockDevice()
-            else job { write.await(); if (!foreground && write === lastWrite) lockDevice() }
+        if (host != null && !backgroundSaving && host?.isPickingDocument() != true && !isChangingConfigurations) {
+            backgroundSaving = true
+            // Gate immediately, even if onStart races the save attempt.
+            stopOperations()
+            gateLocked = true; changingGate = true
+            if (lastWrite != null && draft != null) room?.let { recoveringDraft = it to text }
+            render()
+            val write = textWrites.barrier(lastWrite)
+            if (write == null) { backgroundSaving = false; lockDevice() }
+            else job {
+                try { write.await(); recoveringDraft = null }
+                catch (e: CancellationException) { throw e }
+                catch (_: Exception) { /* Unsaved text stays behind the gate for retry. */ }
+                finally { backgroundSaving = false; lockDevice() }
+            }
         }
         super.onStop()
     }

@@ -48,7 +48,7 @@ def main():
             argv += ["-w", "-r", "-e", "class", f"com.llmnest.android.{cls}"]
             test_args = {key: fixture[key] for key in ("origin", "emailA", "passwordA", "emailB", "passwordB")}
             if cls == "DeviceRecoveryUiTest":
-                test_args = {"origin": fixture["origin"], "emailA": fixture["emailRecovery"], "passwordA": fixture["passwordRecovery"]}
+                test_args.update(emailA=fixture["emailRecovery"], passwordA=fixture["passwordRecovery"], backgroundDraftCheck="true")
             for key, value in test_args.items():
                 argv += ["-e", key, value]
             argv.append("com.llmnest.android.debug.test/androidx.test.runner.AndroidJUnitRunner")

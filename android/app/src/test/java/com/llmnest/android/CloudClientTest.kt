@@ -6,11 +6,17 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.UnknownHostException
+import java.net.InetAddress
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -134,15 +140,44 @@ class CloudClientTest {
         subscription.close(); client.close()
     }
 
-    @Test fun redirectIsAnErrorAndNeverBecomesAnotherRequest() {
-        var requests = 0
-        val client = CloudClient("https://host.test", http { chain ->
-            requests++; response(chain, code = 302, body = "private redirect body")
-                .newBuilder().header("Location", "https://evil.test/").build()
-        })
-        try { client.request("GET", "/me"); fail() } catch (error: CloudError) {
-            assertEquals(302, error.status); assertFalse(error.toString().contains("private"))
+    private fun withHttps(block: (CloudClient, MockWebServer) -> Unit) {
+        val cert = HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
+        val serverTls = HandshakeCertificates.Builder().heldCertificate(cert).build()
+        val clientTls = HandshakeCertificates.Builder().addTrustedCertificate(cert.certificate).build()
+        MockWebServer().use { server ->
+            server.useHttps(serverTls.sslSocketFactory(), false)
+            server.start(InetAddress.getByName("127.0.0.1"), 0)
+            val transport = CloudClient.newHttpClient().newBuilder()
+                .sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager).build()
+            CloudClient("https://127.0.0.1:${server.port}", transport).use { block(it, server) }
         }
-        assertEquals(1, requests)
+    }
+
+    @Test fun transportDoesNotFollowRedirectsOrRetry503() = withHttps { client, server ->
+        for (status in listOf(302, 503)) {
+            server.enqueue(MockResponse().setResponseCode(status).apply {
+                if (status == 302) addHeader("Location", "/redirected") else addHeader("Retry-After", "0")
+            })
+        }
+        server.enqueue(MockResponse().setBody("{}")) // A forbidden follow-up would succeed.
+        for (status in listOf(302, 503)) {
+            val error = assertThrows(CloudError::class.java) { client.request("GET", "/me") }
+            assertEquals(status, error.status)
+        }
+        assertEquals(2, server.requestCount)
+        repeat(2) { assertEquals("/api/me", server.takeRequest().path) }
+    }
+
+    @Test fun lostAcknowledgementDoesNotReplayMessage() = withHttps { client, server ->
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("{}"))
+        val error = assertThrows(CloudError::class.java) {
+            client.request("POST", "/chat/conversations/test/messages", JSONObject().put("requestId", "same-request"))
+        }
+        assertEquals(0, error.status)
+        assertEquals(1, server.requestCount)
+        val sent = server.takeRequest()
+        assertEquals("POST", sent.method)
+        assertEquals("same-request", JSONObject(sent.body.readUtf8()).getString("requestId"))
     }
 }

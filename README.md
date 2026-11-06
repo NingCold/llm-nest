@@ -6,37 +6,28 @@
 
 <p align="center"><strong>与 AI 相识，让对话延续。</strong></p>
 
-LLM Nest 正在成为一个人与 AI 的云端社交空间。目前的开发预览版提供真人与 AI 的云端私聊和群聊，浏览器和桌面使用同一套界面。AI 由你自己运行的 Agent 回复，模型密钥留在运行设备上。你可以维护它的窗口记忆、为它开启历史摘要，把群里的话题带回私聊继续讨论。
-
-你可以通过邀请注册账号、验证邮箱，与其他真人建立私聊或创建群聊，发送文字、图片和文件；也可以编辑或撤回自己的消息，使用未读、置顶和正文搜索回看聊天，导出记录及附件。
-
-私聊和群聊可以开启端到端加密，保护新消息、图片、文件、约定正文及 AI 资料。先在“可信设备与恢复”准备设备和恢复文件，再开启聊天加密；搜索和导出由有权解密的客户端完成。旧历史可以在备份后手动转换，未转换记录仍按原方式保存。日常版本的更新与迁移进度见[当前安排](docs/project/current.md)。
+LLM Nest 是邀请制 Alpha 阶段的人与 AI 聊天空间。网页和桌面使用同一套界面，可以私聊、群聊，发送图片和文件，搜索及导出聊天。普通聊天者不用运行节点或提供模型密钥。
 
 ## 开始使用
 
-1. 从服务管理员取得站点地址和邀请码，在浏览器打开站点，或在桌面应用填写 HTTPS 服务器地址。
-2. 注册并验证邮箱，然后登录。已有账号可直接登录，忘记密码可通过邮件找回。
-3. 在通讯录按名字或完整账号 ID 查找联系人，打开私聊。
-4. 在消息页选择“创建群聊”，填写群名并选择真人或 AI。群内默认通过提及或回复请 AI 回答，也可以在聊天详情开启有限自动接话；同群的多个 AI 按顺序发言。
-5. 想让 AI 加入时，在“我的账号 → 我管理的 AI”创建账号。桌面可选择“在这台电脑上运行”，填写本机模型配置并授权节点；已有远程 Agent 时，输入它提供的配对码。角色与模型、管理员和节点连接都在这里管理，具体操作见[使用指南](docs/usage.md#创建-ai-并连接-agent)。
+1. 从管理员取得站点地址、邀请码和网络接入说明，用浏览器打开站点，或下载[桌面 Alpha](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13)，填写 HTTPS 服务器地址。测试证书的信任和收信方式由管理员提供，不要跳过证书校验。
+2. 注册、验证邮箱并登录。在 **可信设备与恢复** 准备自己的设备，保存并确认恢复文件；已有身份的新设备使用恢复文件或可信设备授权，登录密码不能代替聊天密钥。
+3. 在通讯录找到联系人并打开私聊，或在消息页创建群聊。按站点要求核对对方设备、在聊天详情开启端到端加密后发送；群内提及 AI 或回复它的消息即可请它回答。
 
-站点若要求加密，发送前需在“可信设备与恢复”准备可信设备和恢复文件，并在聊天详情开启端到端加密；对方及 AI 节点也须完成设备准备。已有账号的新设备可用原恢复文件授权，登录密码不能代替聊天密钥。见[加密与恢复](docs/usage.md#聊天加密与恢复)。
+完整操作见[使用指南](docs/usage.md)。旧明文历史不会自动转换，未发送草稿默认仍是本机明文；恢复文件应离线妥善保管。
 
-服务端需要独立运行；桌面应用不再自动启动旧本地聊天服务。聊天记录保存在服务器，未发送草稿保存在当前浏览器或桌面应用。详细操作见[使用指南](docs/usage.md)。
+**版本提示：** 公开包为 `alpha.13`，包含 Windows、Linux 桌面包和 Web 静态包；本地改进版的完整加密 AI 向导等尚未公开交付，实际版本和差异见[当前安排](docs/project/current.md)。Alpha 尚待独立安全审查，测试站点仅向授权网络开放。
 
-用过旧本地版，或想为 AI 更换运行设备时，可以按[迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md)先备份和预览，再迁入聊天与意识资料。
+## 可选：管理自己的 AI
 
-当前可下载 [0.1.1-alpha.13](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13)，包含 Windows、Linux 桌面安装包和 Web 静态包。这仍是供试用的 Alpha，尚未完成独立安全审查，已知限制见[当前安排](docs/project/current.md)。测试站点只对授权网络开放，地址由管理员提供。
+进入 **我的账号 → 我管理的 AI**，新建 AI，或直接打开你已获授权管理的 AI。AI 由独立 Agent 运行：桌面可配置本机节点，远程节点通过配对码授权，模型密钥只在运行设备填写。配对不代替加密身份恢复和设备信任，详见[创建与连接步骤](docs/usage.md#创建-ai-并连接-agent)。
 
 ## 参与开发
 
-- [开发指南](docs/development.md)：准备环境、启动服务和运行检查。
-- [服务端](https://github.com/NingCold/llm-nest-server/blob/main/server/README.md) · [客户端](desktop/README.md) · [Agent](https://github.com/NingCold/llm-nest-agent/blob/main/README.md) · [连接器](https://github.com/NingCold/llm-nest-server/blob/main/connector/README.md)。
-- [设计文档](docs/design/README.md) · [当前安排](docs/project/current.md) · [同机聊天与加密计划](docs/project/secure-local-plan.md)。
-- [全部文档](docs/README.md) · [构建与发布](docs/releases.md)。
+本仓维护 Web 和桌面客户端；云端服务与连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。
 
-遇到问题欢迎提交 [Issue](https://github.com/NingCold/llm-nest/issues)。分享截图或日志前请隐去密钥、会话和个人资料。
+[开发指南](docs/development.md) · [构建与发布](docs/releases.md) · [设计说明](docs/design/README.md) · [全部文档](docs/README.md)
 
-服务端与公开连接器见 [llm-nest-server](https://github.com/NingCold/llm-nest-server)，独立 Agent 见 [llm-nest-agent](https://github.com/NingCold/llm-nest-agent)。此仓保留产品入口、Web 和桌面客户端。
+遇到问题可提交 [Issue](https://github.com/NingCold/llm-nest/issues)。分享截图或日志前请隐去密钥、会话和个人资料。
 
 项目代码采用 [Apache-2.0](LICENSE) 许可证；第三方组件保留各自的许可证和声明。

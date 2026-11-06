@@ -8,7 +8,7 @@
 bash scripts/linux/build.sh
 ```
 
-脚本只构建客户端。先显式设置 LLMN_AGENT_MANIFEST、LLMN_AGENT_VERSION、LLMN_AGENT_TARGET；本地固定产物另设 LLMN_AGENT_FILE。清单按 SHA-256 验证，缺少时失败，不编译 Agent。
+脚本只构建客户端。先显式设置 LLMN_AGENT_MANIFEST、LLMN_AGENT_VERSION、LLMN_AGENT_TARGET；本地固定产物另设 `LLMN_AGENT_FILE` 和 `LLMN_AGENT_NOTICES_FILE`，分别指向清单对应的程序与第三方声明。清单按 SHA-256 验证，缺少时失败，不编译 Agent。
 
 需要独立构建环境时，可使用本目录的 [Dockerfile](Dockerfile)，具体命令见[发布指南](../../docs/releases.md#本地-linux-打包)。拆仓后客户端改为接收独立 Agent 构建提供的固定产物；脚本不读取其他仓源码。
 

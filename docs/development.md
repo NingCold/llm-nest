@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [模型配置](https://github.com/NingCold/llm-nest-agent/blob/main/docs/configuration.md) · [设计文档](design/README.md) · [发布指南](releases.md)
 
-默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面仅管理独立 Agent，旧本地宿主已移除；旧 SQLite 仍可通过独立迁移工具导入。
+默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面客户端还可以管理本机 Agent，无需运行本地聊天服务器。旧 SQLite 数据可用独立迁移工具导入。
 
 ## 准备环境
 
@@ -79,7 +79,7 @@ Web 构建从已安装的生产依赖读取完整许可正文，再合并 `packa
 
 ### 独立 Agent 与外部接入
 
-`agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点说明](https://github.com/NingCold/llm-nest-agent/blob/main/node/README.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
+`agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点操作与命令](https://github.com/NingCold/llm-nest-agent/blob/main/docs/node-cli.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
 
 外部程序可只依赖[连接器](https://github.com/NingCold/llm-nest-server/blob/main/connector/README.md)。固定回答示例覆盖任务接收、回复、取消、撤权及不支持的管理请求，有独立的模拟 WSS 测试；不调用模型，也不代替持久恢复的自带 Agent。在线角色与模型管理由节点声明 `profileManagement` 能力，旧节点和示例不会被当成支持该能力。
 
@@ -119,17 +119,11 @@ python scripts/clean-build-artifacts.py --apply
 
 云端页面与桌面实际网络转发需要单独验收，见 [Windows](validation/windows.md) / [Linux](validation/linux.md) 和[验证指南](validation/README.md)。
 
-## 云端数据库测试
+## 客户端与跨仓联调
 
-为测试单独准备 PostgreSQL，并设置 `CLOUD_TEST_DATABASE_URL` 后执行：
+`node web/tests/cloud-api.cjs` 检查客户端网络协议的模拟调用，不需要 PostgreSQL。服务端数据库测试与跨仓组合验收由[服务端仓](https://github.com/NingCold/llm-nest-server)维护；独立 Agent 的模型测试由[Agent 仓](https://github.com/NingCold/llm-nest-agent)维护。
 
-```bash
-node web/tests/cloud-api.cjs
-```
-
-服务端 PostgreSQL 与跨仓组合验收由服务端仓维护；本仓只运行客户端检查。
-
-远端测试服务当前只通过 Tailscale HTTPS 8443 开放，使用测试 CA 和私有 outbox；不在文档记录真实地址、证书私钥、路径或凭据。浏览器与桌面端到端和部署验收范围见[验证指南](validation/README.md)。
+端到端联调使用隔离服务、测试账号和模拟模型。授权测试站点若使用私有 CA，应分别配置浏览器系统信任和桌面 `CLOUD_CA_CERT_FILE`；不能关闭 TLS 校验。测试网络、邮件投递与部署版本由维护者提供，不在文档记录真实地址、证书私钥或凭据。验收步骤见[验证指南](validation/README.md)。
 
 ## 提交前
 
@@ -145,4 +139,4 @@ pnpm --dir desktop icons
 
 客户端发版同步 Web/桌面 package.json、Tauri 配置和桌面 Cargo.toml 的显式 `package.version`，不要求与服务端/Agent 同版；用 `python scripts/release.py validate` 校对，详见[发布指南](releases.md)。
 
-提交说明写清问题、结果和验证范围。检查没有混入个人配置、聊天数据、密钥或临时产物。项目许可证尚待确定。
+提交说明写清问题、结果和验证范围。检查没有混入个人配置、聊天数据、密钥或临时产物。项目代码采用 Apache-2.0，第三方组件保留各自许可与声明。

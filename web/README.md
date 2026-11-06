@@ -2,6 +2,8 @@
 
 [应用界面](../README.md) · [开发指南](../docs/development.md)
 
+本页说明当前源码；公开包与本地改进版的差异见[当前安排](../docs/project/current.md)。普通用户从[使用指南](../docs/usage.md)开始，不必构建或运行节点。
+
 默认入口是 [CloudApp](src/cloud/App.tsx)，提供邀请注册与邮箱验证、登录及密码找回、联系人、真人与 AI 的私聊和群聊、附件、消息搜索与导出。聊天详情提供记忆、摘要、接话设置、暂停与结束、一次性约定和免打扰。浏览器直接访问同源 `/api`，桌面也使用同一套页面，通过原生网络层转发相同 API。
 
 云端数据沿用原有消息/通讯录布局和视觉样式，账号位于左下角，设置提供外观与关于。“我的账号 → 我管理的 AI”提供公开资料、管理员、角色与模型、意识资料及只读聊天查看。未启用加密时角色和模型需在线节点确认保存；加密资源另显示云端保存与节点应用状态；模型 Key 只在运行设备填写。桌面共用此页面，另外提供本机 Agent 配置与启动入口。
@@ -38,7 +40,7 @@ pnpm --dir web build
 服务端部署使用固定版本的 Web 包，构建后执行：
 
 ```bash
-python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.11 --output /新的产物目录
+python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.21 --output /新的产物目录
 ```
 
 以上命令从仓库根目录运行，版本须与实际客户端构建一致。Web 包和 `web-manifest.json` 一起交给服务端，使用方式见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。

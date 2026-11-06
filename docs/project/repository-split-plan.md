@@ -46,7 +46,7 @@ flowchart LR
 | `crates/runtime`、旧 `crates/storage`、`server/social`、`server/http` | 解除依赖后退役 | 留下迁移实际需要的读取能力和测试材料，不将整套旧宿主搬进新仓 |
 | `agent/tools` 及旧 worker 入口 | 随旧宿主退役 | 当前云端聊天没有使用它；不因拆仓新增工具功能 |
 
-第一批已将 `web/src/social` 中仍在使用的组件、样式、图片/文件处理及草稿移到 `web/src/chat`。旧本地状态、页面与接口已移除，草稿数据库名和按服务器/账号隔离的保存方式沿用。有效的输入、附件和草稿测试已改为验证当前页面；旧库 v1–v13 SQL 原样保存在 `server/cloud/tests/fixtures/local-v13`，继续验证 v13 导入。
+第一批已将 `web/src/social` 中仍在使用的组件、样式、图片/文件处理及草稿移到 `web/src/chat`。旧本地状态、页面与接口已移除，草稿数据库名和按服务器/账号隔离的保存方式沿用。有效的输入、附件和草稿测试已改为验证当前页面；旧库 v1–v13 SQL 已随服务端迁入其 `server/tests/fixtures/local-v13` 目录，继续验证 v13 导入。
 
 每仓拥有自己的 `Cargo.toml`、锁文件、构建脚本、CI、README 和 AGENTS。客户端根 README 继续介绍产品和使用入口，并链接另外两仓；服务端 README 说明部署，Agent README 说明运行与接入。
 
@@ -54,7 +54,7 @@ flowchart LR
 
 ## 先解除的实际依赖
 
-拆分前，桌面直接链接 `social-feature`、`runtime`、`storage` 和 `ai-client`。第一批已解除这些依赖，下面记录处理方式；第二批已完成各仓干净 checkout 验证，第三批公开仓 CI 结果另见[验证记录](../validation/README.md#拆仓第三批验证)。
+拆分前，桌面直接链接 `social-feature`、`runtime`、`storage` 和 `ai-client`。第一批已解除这些依赖，下面记录处理方式；第二批已完成各仓干净 checkout 验证，第三批公开仓 CI 结果另见[验证记录](../validation/records.md#拆仓第三批验证)。
 
 1. **移除桌面旧 Runtime 和旧 IPC。** 保留当前云端、本机直连、文件保存和窗口功能。目录解析改为客户端内部的小模块，沿用原数据路径；不能因删掉 `storage` 就让程序找不到已有资料。
 2. **模型目录由 Agent 提供。** 桌面通过随包的 `llmn-agent catalog` 取得带版本的目录，候选配置由 Agent 的 `check` 命令校验。运行模型和最终配置校验归 Agent；客户端不再包含供应商适配器，也不直接读节点数据库。
@@ -148,9 +148,9 @@ python ../../llm-nest-split-backup-20261029/run-local.py ../llm-nest-agent cargo
 | 2：本地拆成三个可独立使用的仓库（已完成） | 备份基线、在副本提取历史、调整目录与锁文件、拆出 README/AGENTS/CI/脚本，保存提交映射 | 三份独立干净 checkout 均能构建和运行本仓检查，不借用兄弟源码；迁移文件和最终源码内容核对；组合联调通过；此时仍不推送 |
 | 3：GitHub 与发布切换（已完成） | 创建并推送两新仓，原仓正常前进到客户端结构；验证远端独立构建，发布固定产物并更新部署说明 | 可从公开仓复现三端构建与兼容组合，桌面仍附带 Agent；内网部署和本机升级保留原账号及资料，旧仓入口与文档能找到各部分 |
 
-第一批已完成：桌面使用固定 Agent 清单；服务端使用经版本和 SHA-256 核验的 Web 包及最小构建目录；旧宿主和专用入口退役，迁移能力保留。实际验证及未覆盖范围见[验证记录](../validation/README.md#拆仓第一批验证)。
+第一批已完成：桌面使用固定 Agent 清单；服务端使用经版本和 SHA-256 核验的 Web 包及最小构建目录；旧宿主和专用入口退役，迁移能力保留。实际验证及未覆盖范围见[验证记录](../validation/records.md#拆仓第一批验证)。
 
-第三批已完成：客户端与 Agent `alpha.13`、服务端 `alpha.12` 均已公开为 Alpha，本机安装和内网部署已更新。Windows 持久资料、云端关键表及既有调用数保持；服务端另通过旧库备份还原后的隔离升级。历史 SQL 在所有平台保留原始字节，并纳入发布检查。确切版本组合见[兼容清单](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/compatibility.json)，实际范围见[第三批验证](../validation/README.md#拆仓第三批验证)。
+第三批已完成：客户端与 Agent `alpha.13`、服务端 `alpha.12` 均已公开为 Alpha，本机安装和内网部署已更新。Windows 持久资料、云端关键表及既有调用数保持；服务端另通过旧库备份还原后的隔离升级。历史 SQL 在所有平台保留原始字节，并纳入发布检查。确切版本组合见[兼容清单](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/compatibility.json)，实际范围见[第三批验证](../validation/records.md#拆仓第三批验证)。
 
 每批按改动覆盖以下已有行为：云端真人/AI 私聊和群聊；桌面本机 Agent 配对、启停、后台与托盘；同机加密通信、断云接续与重连补传；原可信设备与历史解密、锁屏和登录材料；角色/记忆/摘要同步；旧 v13 资料导入。普通验证使用临时资料和模拟模型，日常安装升级另做资料核对，不增加未授权模型调用。
 

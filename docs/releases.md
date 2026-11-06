@@ -4,7 +4,7 @@
 
 本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。
 
-客户端 [0.1.1-alpha.13](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13) 已公开为 Alpha 预发布，桌面固定附带 Agent `alpha.13`。Windows NSIS 已在本机覆盖安装；MSI 已构建和检查，尚未实际安装。Linux deb 与 AppImage 均通过隔离启动及资源校验。本机后续已构建并安装尚未公开发布的 `alpha.14`，日常账号重启解锁及 Agent 停止时十条原历史验读通过；干净 Windows 和 GNOME 人工验收仍待补齐，见[验证指南](validation/README.md#日常重启与离线节点历史验读)。
+公开客户端为 [0.1.1-alpha.13](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13)，桌面附带 Agent `alpha.13`。当前源码为 `0.1.1-alpha.21`，本机改进版附带 Agent `alpha.14`，尚未公开发布；不要把本地构建或安装当作公开 Release。实际安装与部署组合见[当前安排](project/current.md)，历史检查结果见[验证记录](validation/records.md)。
 
 ## 安装包范围
 
@@ -28,22 +28,22 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 | `desktop/package.json` | `version` |
 | `web/package.json` | `version` |
 
-每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.14`，尚未公开发布；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
+每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.21`，尚未公开发布；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
-MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.14`。前三段与应用基础版本一致，第四段与 `alpha.N` 中的 N 一致，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
+MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.21`。前三段与应用基础版本一致，第四段与 `alpha.N` 中的 N 一致，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
 
 客户端、服务端和 Agent 分别维护版本，不再要求三个产品同版。修改相应 Cargo 包版本时同步锁文件。客户端版本与发布标签检查：
 
 ```bash
-python scripts/release.py validate --tag v0.1.1-alpha.14
+python scripts/release.py validate --tag v0.1.1-alpha.21
 python scripts/test_release.py
 ```
 
 示例标签替换为实际版本。确认代码、检查和安装包验收完成后，再在待发布提交上打标签并推送：
 
 ```bash
-git tag -a v0.1.1-alpha.14 -m "LLM Nest 0.1.1-alpha.14"
-git push origin v0.1.1-alpha.14
+git tag -a v0.1.1-alpha.21 -m "LLM Nest 0.1.1-alpha.21"
+git push origin v0.1.1-alpha.21
 ```
 
 修改版本、构建安装包、推送标签和公开 Release 是分别执行的操作。已公开版本需要修复时，发布新版本，保留旧标签和资产。
@@ -51,11 +51,11 @@ git push origin v0.1.1-alpha.14
 ## GitHub 工作流
 
 - [ci.yml](../.github/workflows/ci.yml)：检查 PR、main 提交和手动运行，覆盖 Windows/Linux 的 Rust、前端和离线链路。
-- [release.yml](../.github/workflows/release.yml)：手动运行生成 Actions artifacts，可显式输入已存在且匹配源码版本的 release_tag 创建草稿；必须输入实际已发布 Agent 的固定 HTTPS 清单和版本；本轮尚无正式 Agent 发布，不伪造默认清单，附带安装包和 SHA-256 清单。
+- [release.yml](../.github/workflows/release.yml)：手动运行生成 Actions artifacts，可显式输入已存在且匹配源码版本的 release_tag 创建草稿；必须输入实际已发布 Agent 的固定 HTTPS 清单和版本；不伪造清单或使用浮动版本，附带安装包和 SHA-256 清单。
 
 首次使用可在 **Actions → Build installers → Run workflow** 选择分支，下载 `installers-windows-x86_64` 和 `installers-linux-x86_64` 验证。工作流使用临时 `GITHUB_TOKEN`，无需模型 API Key 或个人访问令牌。
 
-标签须与四处客户端版本完整匹配，带后缀的版本标记为 prerelease。重跑可以更新同标签草稿，已公开资产不会被覆盖。维护者验收产物、确认许可证并补充变更说明后，再点击 **Publish release**。
+标签须与四处客户端版本完整匹配，带后缀的版本标记为 prerelease。重跑可以更新同标签草稿，已公开资产不会被覆盖。维护者验收产物、核对随包许可材料并补充变更说明后，再点击 **Publish release**。
 
 工作流中的模拟模型检查、包启动检查和真人桌面操作覆盖不同范围，查看[验证指南](validation/README.md)了解各自证明了什么。
 
@@ -129,12 +129,12 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 ```bash
 pnpm --dir web build
-python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.14 --output /新的web产物目录
+python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.21 --output /新的web产物目录
 ```
 
 将 Web 包及 web-manifest.json 交给独立服务端仓，按[服务端部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)创建构建上下文和镜像。客户端仓不包含服务端准备脚本。保留上一组可回退产物；正式 Agent 下载使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
 
-客户端发布工作流只消费指定 Agent 清单，Web 包和清单随 Linux 产物上传。填写 release_tag 时，构建直接 checkout 该标签并核对提交；草稿发布再次核对标签仍指向实际构建提交。未填写时按启动工作流的固定提交生成下载产物。实际远端发布属于拆仓第三批，当前不代表已经公开发布或部署。部署时记录服务端、Web、Agent 与连接器的实际版本、提交和摘要。
+客户端发布工作流只消费指定 Agent 清单，Web 包和清单随 Linux 产物上传。填写 release_tag 时，构建直接 checkout 该标签并核对提交；草稿发布再次核对标签仍指向实际构建提交。未填写时按启动工作流的固定提交生成下载产物。生成产物、公开 Release 和部署是独立操作。部署时记录服务端、Web、Agent 与连接器的实际版本、提交和摘要。
 
 ## 随包许可材料
 

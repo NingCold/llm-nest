@@ -9,4 +9,4 @@
 - `clean-build-artifacts.py` 先生成完整清单再逐文件清理，不递归删除；使用前读帮助和 AGENTS。
 - `package-crypto-fixture.cjs OUTPUT` 从现有客户端模块编译测试专用加密夹具。需要先安装 web 依赖。输出 CJS 和含客户端版本/文件 SHA-256 的 manifest.json，API 替身由隔离集成测试注入，不进入产品运行。
 
-服务端、迁移和跨仓加密验收由[服务端仓](https://github.com/NingCold/llm-nest-server)维护；模型及 Agent 验收由[Agent 仓](https://github.com/NingCold/llm-nest-agent)维护。新远端本轮尚未发布。
+服务端、迁移和跨仓加密验收由[服务端仓](https://github.com/NingCold/llm-nest-server)维护；模型及 Agent 验收由[Agent 仓](https://github.com/NingCold/llm-nest-agent)维护。各组件的公开版本与本地版本见[当前安排](../docs/project/current.md)。

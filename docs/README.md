@@ -17,11 +17,9 @@
 | 查看首版范围、下一步及未完成事项 | [当前安排](project/current.md) · [待验收与候选](project/backlog.md) |
 | 执行验收或查阅已有证据 | [验证方法](validation/README.md) · [验收记录](validation/records.md) |
 
-## 已完成的阶段记录
+## 已有能力与验收记录
 
-[已有能力](project/completed.md) · [云端社交与 Agent 接入记录](project/cloud-plan.md) · [同机聊天与加密记录](project/secure-local-plan.md) · [三仓拆分记录](project/repository-split-plan.md)
-
-这些页面保留既成阶段的范围和结果，不作为下一批待办；当前工作以[当前安排](project/current.md)为准。
+[已有能力](project/completed.md)汇总当前功能，并链接云端接入、同机加密与三仓拆分的验收记录。规则维护在设计说明，已执行的版本、环境与缺口维护在[验收记录](validation/records.md)；下一步以[当前安排](project/current.md)为准。
 
 ## 维护文档
 

@@ -10,7 +10,7 @@ bash scripts/linux/build.sh
 
 脚本只构建客户端。先显式设置 LLMN_AGENT_MANIFEST、LLMN_AGENT_VERSION、LLMN_AGENT_TARGET；本地固定产物另设 `LLMN_AGENT_FILE` 和 `LLMN_AGENT_NOTICES_FILE`，分别指向清单对应的程序与第三方声明。清单按 SHA-256 验证，缺少时失败，不编译 Agent。
 
-需要独立构建环境时，可使用本目录的 [Dockerfile](Dockerfile)，具体命令见[发布指南](../../docs/releases.md#本地-linux-打包)。拆仓后客户端改为接收独立 Agent 构建提供的固定产物；脚本不读取其他仓源码。
+需要独立构建环境时，可使用本目录的 [Dockerfile](Dockerfile)，具体命令见[发布指南](../../docs/releases.md#本地-linux-打包)。
 
 [smoke.py](smoke.py) 必须核对包内 Agent 的 `agent-artifact.json`、实际程序摘要和 `--version`，并检查桌面动态库依赖；`--gui` 仅在隔离 Xvfb 中检查程序持续启动，不代表前端 IPC、聊天、GNOME/Wayland 或安装升级验收。使用已安装的程序时，显式提供其 Agent 资源目录：
 

@@ -26,15 +26,15 @@
 
 ## 已完成的改造与验收入口
 
-云端改造、同机与加密、三仓拆分的实施阶段均已结束。下表连接各批实际证据；这些历史结果不代替当前版本的复验。实际安装和部署版本仍以[当前安排](current.md)为准，平台、安全审查及日常使用缺口见[待验收](backlog.md#待验收)。
+云端改造、同机与加密、三仓拆分的实施阶段均已结束。下表连接各批验收证据；实际版本见[当前安排](current.md)，使用与平台缺口集中在[待验收](backlog.md#待验收)。
 
 | 已交付的范围 | 验收记录 |
 | --- | --- |
 | 邀请注册与真人聊天、独立 AI 节点 | [云端真人聊天](../validation/records.md#云端真人聊天验证) · [AI 节点](../validation/records.md#云端-ai-节点验证) |
 | 群聊、记忆与话题接续、接话与约定、AI 管理 | [群聊](../validation/records.md#云端群聊验证) · [意识系统](../validation/records.md#云端意识系统验证) · [接话与约定](../validation/records.md#云端接话与约定验证) · [管理与本机运行](../validation/records.md#云端管理与本机运行验证) |
 | 旧 v13 资料导入、联网试用与备份恢复 | [数据迁移与联网试用](../validation/records.md#数据迁移与联网试用验证)；迁移不重放旧调用或自动启用未经确认的约定 |
-| 同机文字执行、断云接续与原结果补传 | [同机文字私聊](../validation/records.md#同机文字私聊验证) · [日常断云验证](../validation/records.md#日常同机断云验证)；实际断云测试保留了模型互联网连接，全网断开、本地模型与离线重启仍待验 |
+| 同机文字执行、断云接续与原结果补传 | [同机文字私聊](../validation/records.md#同机文字私聊验证) · [日常断云验证](../validation/records.md#日常同机断云验证)；断云测试保留了模型互联网连接 |
 | 私聊与 AI 资料加密、设备恢复、完整社交加密 | [私聊与 AI 资料](../validation/records.md#私聊与-ai-资料加密验证) · [完整社交](../validation/records.md#完整社交加密验证) |
-| 旧明文转换能力、强制拒绝新明文与内网日常切换 | [存量转换](../validation/records.md#存量加密转换验证) · [日常恢复与切换](../validation/records.md#聊天布局与-web-更新)；旧测试资料保持原样，未转入日常账号，公开发布前仍需独立安全审查 |
-| 保持登录、锁屏及桌面加密 AI 设置与额度 | [登录与解锁](../validation/records.md#保持登录与本机解锁验证) · [真实客户端重启验读](../validation/records.md#日常重启与离线节点历史验读) · [AI 设置与额度](../validation/records.md#桌面创建加密-ai-与额度)；日常自动解锁未开启，AI 恢复导入尚未单独 GUI 手测 |
+| 旧明文转换能力、强制拒绝新明文与内网日常切换 | [存量转换](../validation/records.md#存量加密转换验证) · [日常恢复与切换](../validation/records.md#聊天布局与-web-更新)；旧测试资料保持原样，未转入日常账号 |
+| 保持登录、锁屏及桌面加密 AI 设置与额度 | [登录与解锁](../validation/records.md#保持登录与本机解锁验证) · [真实客户端重启验读](../validation/records.md#日常重启与离线节点历史验读) · [AI 设置与额度](../validation/records.md#桌面创建加密-ai-与额度) |
 | 三仓独立构建、历史保留、固定产物与公开发布切换 | [解除旧宿主依赖](../validation/records.md#拆仓第一批验证) · [本地拆仓及备份](../validation/records.md#拆仓第二批验证) · [公开发布与试用切换](../validation/records.md#拆仓第三批验证) |

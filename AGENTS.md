@@ -1,6 +1,6 @@
 # AGENTS.md — LLM Nest 客户端
 
-本仓维护 `web/` 共用聊天界面、`desktop/` Tauri 客户端和 `android/` 独立原生工程。Android 的构建与检查入口见 `android/README.md`。产品说明见 README，使用见 docs/usage.md，总进度见 docs/project。服务端与连接器由 https://github.com/NingCold/llm-nest-server 维护，Agent 由 https://github.com/NingCold/llm-nest-agent 维护；两份新公开仓已创建，发布状态以总进度和各仓 Release 为准。
+本仓维护 `web/` 共用聊天界面、`desktop/` Tauri 客户端和 `android/` 独立原生工程。Android 的构建与检查入口见 `android/README.md`。产品说明见 README，使用见 docs/usage.md，总进度见 docs/project。服务端与连接器由 https://github.com/NingCold/llm-nest-server 维护，Agent 由 https://github.com/NingCold/llm-nest-agent 维护，版本组合见 docs/project/current.md。
 
 ## 工作前先确认
 
@@ -10,7 +10,6 @@
 - 避免过分防御性编程：在外部输入、存储事务、权限和模型协议边界校验；内部使用已经成立的类型与不变量。不重复校验、不吞错或静默回退，不为假设性场景提前增加空框架、备用路径和配置开关。
 - 正常验证使用独立临时配置/数据和模拟 provider。真实 API 验收会产生费用，仅在已有明确授权时执行。
 - `config/llmn.toml`、`.env`、用户会话、API Key 不得提交、打包、上传到 CI 或打印到日志。保留环境变量引用，不把它替换为明文。
-- 图标的唯一编辑源是 `assets/branding/app-icon.svg`；不要单独修改某一个派生尺寸。
 - 已授权的操作若因工具或权限限制无法执行，可脚本化的部分应提供脚本和运行方法交给用户；说明影响范围，能预览的先验证预览，不把未执行写成完成。
 - 每批编译结束后，代理主动检查并清理无用产物，不等用户再次提醒。确认没有并行 Cargo/rustc 后，用 `scripts/clean-build-artifacts.py` 先生成完整清单、再逐文件删除，目录确认空后逐个删除并核验；禁止递归删除命令/API。保留可复用的依赖和构建缓存，不用全量 `cargo clean` 代替整理。Windows 普通测试复用 MSVC 的默认 `target/debug`，安装包沿用明确的 release target，避免重复生成另一套 debug。
 - 安装包保留当前和上一可回退版本，不在工作目录复制同一包；服务器只清理本项目已核验的旧镜像及无用构建缓存。备份按实际内容判断，账号、聊天、密钥和恢复材料不能按日期自动删除；新备份不重复包含可再生浏览器缓存。删除被策略拒绝时不换方式绕过，交付已核对的脚本并标明待用户执行。
@@ -21,7 +20,7 @@
 - 主代理负责明确架构与行为约定、划分互不冲突的修改范围、审核实现和验证结果，并完成文档一致性检查及最终交付。跨模块工作先确定共享契约，再分派实现。
 - 计划按完整可体验的结果安排批次，写明范围和结束条件；前端、后端、验证与文档是批次内的工作，不逐个升级为产品阶段。新想法放入候选清单，不自动延长当前批次或成为下一批；依赖明确且互不冲突的工作可并行。
 - 委派时提供必要的项目背景、约束、文件范围与验收要求；保留用户未提交修改。子代理负责自己范围内的实现与相关检查，统一提交由主代理完成。
-- 主代理和子代理都遵守上面的“避免过分防御性编程”约定；任务交代与代码审查明确检查这一点。边界校验保留，内部直接使用已成立的不变量，不叠加重复检查、静默兜底或假设性扩展。
+- 委派与审查同样执行上述边界校验和内部不变量约定。
 
 ## Git 工作约定
 
@@ -46,4 +45,4 @@
 
 运行 pnpm --dir web typecheck、pnpm --dir web test、cargo fmt --all -- --check、cargo test -p tauri-frontend --locked、cargo clippy -p tauri-frontend --all-targets --locked，以及 scripts/check-boundaries.py、scripts/test_release.py、scripts/test_build_artifacts.py 和 desktop/scripts/prepare-agent.test.mjs。桌面构建使用 Tauri CLI；不以裸 cargo release 代替安装包验收。正式 Agent 发布前 CI/打包必须显式提供实际产物清单，不能伪造 URL、版本或摘要。
 
-前端代码在 web/src/cloud 和 web/src/chat；桌面原生代码在 desktop/src-tauri。修改只落在实际负责模块，维持既有生命周期，不增加重复校验、静默回退或假设性框架。文档直接修订当前说明，平台验证保留日期与版本，最终报告区分本地提交、推送和安装。
+前端代码在 web/src/cloud 和 web/src/chat；桌面原生代码在 desktop/src-tauri。文档直接修订当前说明；使用指南写操作，设计文档写契约，项目进度写安排，验收记录保留日期、版本、环境、结果与缺口。一个话题维护一份主要说明，其余入口引用。最终报告区分本地提交、推送和安装。

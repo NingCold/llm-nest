@@ -30,7 +30,8 @@
     "source": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE",
     "npmMetadata": "https://registry.npmjs.org/react-remove-scroll-bar/2.3.8",
     "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
-    "sourceNote": "npm 2.3.8 declares MIT; its gitHead b3b1287aad81def2e2ae707274b74531b61ddbaf is unavailable upstream. This MIT text is pinned from upstream commit whose package.json says 2.3.7; The published 2.3.8 package itself declares MIT; the exact 2.3.8 source commit has not been verified."
+    "sourceNote": "The 2.3.8 package declares MIT but omits the full text; its gitHead (b3b1287aad81def2e2ae707274b74531b61ddbaf) is unavailable upstream. The included text is from the linked upstream 2.3.7 source tree. Attribution for the published 2.3.8 package is awaiting maintainer confirmation: https://github.com/theKashey/react-remove-scroll-bar/issues/96",
+    "npmIntegrity": "sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q=="
   },
   "katex@0.18.4": {
     "file": "katex-0.18.4-fonts.txt",
@@ -98,7 +99,7 @@
     "file": "matrix-sdk-crypto-wasm-18.9.0.txt",
     "additional": true,
     "source": "https://codeload.github.com/matrix-org/matrix-sdk-crypto-wasm/tar.gz/a3d573d1aa41b9d593a9615837e812cb77cff336",
-    "sha256": "9c803fbeba7fb0ed95c49395d3bdeeb58e0428a5dbd624169859fc62ed409144",
+    "sha256": "7b6b7529dd57b91bd782a9f56815e8d74ae54b174ed7edade74f5b1188b55568",
     "sourceArchiveSha256": "50735db18d9cf10561bf714b9b77e2b1324318c7296ee70669ac5f037329880f",
     "npmIntegrity": "sha512-NtLzNDTEfNASBjNCTGZHuk7N0jrQhS6Zx2CM857rCHZYYh/rpbKGQNrJ7azktm4S1P5Jy3WU3nwJTGohGw26qQ==",
     "wasmSha256": "e6fc166a85fc6aef11d67228768a2d61f964e22e37d218f237ce13641c76522d",

@@ -1,0 +1,97 @@
+{
+  "encoding_rs": {
+    "version": "0.8.35",
+    "file": "encoding_rs-0.8.35-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/encoding_rs/encoding_rs-0.8.35.crate#COPYRIGHT"
+  },
+  "utf8_iter": {
+    "version": "1.0.4",
+    "file": "utf8_iter-1.0.4-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/utf8_iter/utf8_iter-1.0.4.crate#COPYRIGHT"
+  },
+  "unicode-segmentation": {
+    "version": "1.13.3",
+    "file": "unicode-segmentation-1.13.3-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/unicode-segmentation/unicode-segmentation-1.13.3.crate#COPYRIGHT"
+  },
+  "rand_core": {
+    "version": "0.9.5",
+    "file": "rand-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/rand_core/rand_core-0.9.5.crate#COPYRIGHT"
+  },
+  "rand": {
+    "version": "0.9.5",
+    "file": "rand-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/rand/rand-0.9.5.crate#COPYRIGHT"
+  },
+  "rand_chacha": {
+    "version": "0.9.0",
+    "file": "rand-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/rand_chacha/rand_chacha-0.9.0.crate#COPYRIGHT"
+  },
+  "linux-raw-sys": {
+    "version": "0.12.1",
+    "file": "linux-raw-sys-0.12.1-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/linux-raw-sys/linux-raw-sys-0.12.1.crate#COPYRIGHT"
+  },
+  "rustix": {
+    "version": "1.1.4",
+    "file": "rustix-1.1.4-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/rustix/rustix-1.1.4.crate#COPYRIGHT"
+  },
+  "atk": {
+    "version": "0.18.2",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/atk/atk-0.18.2.crate#COPYRIGHT"
+  },
+  "cairo-rs": {
+    "version": "0.18.5",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/cairo-rs/cairo-rs-0.18.5.crate#COPYRIGHT"
+  },
+  "gdk-pixbuf": {
+    "version": "0.18.5",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/gdk-pixbuf/gdk-pixbuf-0.18.5.crate#COPYRIGHT"
+  },
+  "gdk": {
+    "version": "0.18.2",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/gdk/gdk-0.18.2.crate#COPYRIGHT"
+  },
+  "gdkx11": {
+    "version": "0.18.2",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/gdkx11/gdkx11-0.18.2.crate#COPYRIGHT"
+  },
+  "gio": {
+    "version": "0.18.4",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/gio/gio-0.18.4.crate#COPYRIGHT"
+  },
+  "glib-macros": {
+    "version": "0.18.5",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/glib-macros/glib-macros-0.18.5.crate#COPYRIGHT"
+  },
+  "glib": {
+    "version": "0.18.5",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/glib/glib-0.18.5.crate#COPYRIGHT"
+  },
+  "gtk3-macros": {
+    "version": "0.18.2",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/gtk3-macros/gtk3-macros-0.18.2.crate#COPYRIGHT"
+  },
+  "gtk": {
+    "version": "0.18.2",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/gtk/gtk-0.18.2.crate#COPYRIGHT"
+  },
+  "pango": {
+    "version": "0.18.3",
+    "file": "gtk-rs-COPYRIGHT.txt",
+    "source": "https://static.crates.io/crates/pango/pango-0.18.3.crate#COPYRIGHT"
+  }
+}

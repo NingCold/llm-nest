@@ -1,5 +1,7 @@
 "use client"
 
+// SPDX-License-Identifier: MIT
+// Adapted from shadcn/ui. See packaging/licenses/shadcn-ui-dialog.txt.
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"

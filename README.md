@@ -36,4 +36,4 @@ LLM Nest 是一个邀请制聊天空间。真人和 AI 都有自己的账号：�
 
 问题与反馈请提交 [Issue](https://github.com/NingCold/llm-nest/issues)，截图或日志请隐去密钥、会话和个人资料。
 
-项目代码采用 [Apache-2.0](LICENSE) 许可证；第三方组件保留各自的许可证和声明。
+本仓自有代码采用 [Apache-2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。第三方组件保留各自的许可证与署名。

@@ -4,7 +4,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 function generate(licenses, overrides, overrideDirectory) {
-  const sections = [];
+  const sections = [{ key: 'shadcn/ui Dialog', text: readFileSync(path.join(root, 'packaging/licenses/shadcn-ui-dialog.txt'), 'utf8').trimEnd() }];
   for (const packages of Object.values(licenses)) for (const pkg of packages) {
     const header = `${pkg.name} ${pkg.versions.join(', ')}\nDeclared license: ${pkg.license}\n${pkg.homepage || ''}`;
     const texts = [];

@@ -140,7 +140,14 @@ python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.21 --output 
 
 发布工作流和 Linux 构建镜像已按固定 SHA-256 安装官方 cargo-about 0.9.3；本地构建须自行准备该版本，可通过 `CARGO_ABOUT` 指定路径。前端许可生成还要求 Corepack 可用，并使用固定 pnpm 11.22.0。Agent 清单必须为目标平台提供 `notices.file`、`notices.sha256`，正式下载另需固定 HTTPS `notices.url`；声明缺失或校验失败时不打包。
 
-Web 包必须包含 `THIRD_PARTY_NOTICES.txt`、`LICENSE.txt`、`NOTICE.txt`。桌面资源包含 Web、当前目标 Rust 和安装器模板的合并声明，以及单独校验的 Agent 声明。依赖升级时先按[开发指南](development.md#生成随包声明)更新精确版本的补充正文与来源证据，再重新构建；不要手工修改生成文件或仅保留许可证名称。公开前核对实际归档和安装包中的这些文件，分别保留各组件的原始许可条件。
+Web 包随附 `THIRD_PARTY_NOTICES.txt`、`LICENSE.txt` 和 `NOTICE.txt`。桌面另带目标平台的 Rust、安装器及 Agent 声明；Android APK 同时包含[原生依赖声明](../android/gradle/licenses/README.md)和 Matrix/WASM 声明。依赖升级时按[开发指南](development.md#生成随包声明)更新来源与正文，再检查实际归档。
+
+有两项第三方署名仍待上游确认：
+
+- **Web · `react-remove-scroll-bar 2.3.8`**：npm 包声明 MIT，但没有附全文，对应提交也未公开。随包材料标明所附 MIT 正文来自上游的 2.3.7 源码树；该正文是否适用于 2.3.8，见[上游确认请求](https://github.com/theKashey/react-remove-scroll-bar/issues/96)。
+- **Linux 桌面 · `sigchld 0.2.4`**：发布包和对应源码提交都声明 MIT，但未提供 LICENSE 或版权行。[原生依赖归属说明](../scripts/licenses/README.md)记录了可核实的信息。
+
+发布前应取得这两个版本的上游确认，或改用许可材料完整的依赖版本并验证兼容性。
 
 ## 发布前核对
 

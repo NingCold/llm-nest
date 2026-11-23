@@ -8,10 +8,12 @@
   "npmTarballSha256": "5cdfb6a3957988fcc86ab2b9291545efeb622b4b2cddd149ad85a044b6230155",
   "wasmSha256": "e6fc166a85fc6aef11d67228768a2d61f964e22e37d218f237ce13641c76522d",
   "cargoLockSha256": "f8d1c00a2210fd2869f37bcf693dd5028b7c59fda0125c52e6c6b6ad90844302",
-  "noticesSha256": "9c803fbeba7fb0ed95c49395d3bdeeb58e0428a5dbd624169859fc62ed409144",
-  "noticesBytes": 411876,
+  "noticesSha256": "7b6b7529dd57b91bd782a9f56815e8d74ae54b174ed7edade74f5b1188b55568",
+  "noticesBytes": 439349,
   "cargoAboutVersion": "0.9.3",
   "target": "wasm32-unknown-unknown",
   "features": "upstream default features (qrcode), matching scripts/build.sh",
-  "uniqueComponents": 275
+  "uniqueComponents": 275,
+  "originalGeneratedNoticesSha256": "9c803fbeba7fb0ed95c49395d3bdeeb58e0428a5dbd624169859fc62ed409144",
+  "licenseTextSources": "Corrected blocks cite the fixed upstream LICENSE for each component; libm also includes per-file notices."
 }

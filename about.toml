@@ -4,3 +4,62 @@ ignore-dev-dependencies = true
 ignore-build-dependencies = false
 ignore-transitive-dependencies = false
 workarounds = ["chrono", "rustix", "linux-raw-sys", "unicode-ident"]
+
+# These published archives omit their selected license. cargo-about reads the
+# repository root at each crate's own .cargo_vcs_info.json revision.
+[alloc-stdlib.clarify]
+license = "BSD-3-Clause"
+[[alloc-stdlib.clarify.git]]
+path = "LICENSE"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+[webview2-com.clarify]
+license = "MIT"
+[[webview2-com.clarify.git]]
+path = "LICENSE"
+checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+
+[webview2-com-sys.clarify]
+license = "MIT"
+[[webview2-com-sys.clarify.git]]
+path = "LICENSE"
+checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+
+[webview2-com-macros.clarify]
+license = "MIT"
+[[webview2-com-macros.clarify.git]]
+path = "LICENSE"
+checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+
+# Choose the BSD alternative actually present in brotli-decompressor's archive.
+[brotli-decompressor.clarify]
+license = "BSD-3-Clause"
+[[brotli-decompressor.clarify.files]]
+path = "LICENSE"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+# dpi includes libm-derived code under MIT in addition to its Apache license.
+[dpi.clarify]
+license = "Apache-2.0 AND MIT"
+[[dpi.clarify.files]]
+path = "LICENSE"
+license = "Apache-2.0"
+checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+[[dpi.clarify.files]]
+path = "LICENSE-LIBM-MIT"
+license = "MIT"
+checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997"
+
+# Published dlopen2 archive omits the repository-root license.
+[dlopen2.clarify]
+license = "MIT"
+[[dlopen2.clarify.git]]
+path = "LICENSE"
+checksum = "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2"
+
+# Published dlopen2_derive archive omits the repository-root license.
+[dlopen2_derive.clarify]
+license = "MIT"
+[[dlopen2_derive.clarify.git]]
+path = "LICENSE"
+checksum = "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2"

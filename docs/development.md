@@ -77,7 +77,7 @@ Linux 使用对应目标三元组与无 `.exe` 的程序。版本必须匹配程
 
 桌面安装包构建需要官方 [cargo-about 0.9.3](https://github.com/EmbarkStudios/cargo-about/releases/tag/0.9.3) 预编译工具，下载后核对官方 SHA-256；各平台固定摘要见[发布工作流](../.github/workflows/release.yml)。将工具加入 PATH，或设置 `CARGO_ABOUT` 为可执行文件绝对路径。Web 开发和普通类型检查不需要该工具；桌面构建按本仓 `about.toml`、`about.hbs` 和锁文件生成当前目标的 Rust 声明。它会运行 Cargo metadata，并可能联网取得依赖或缺失的许可正文，不编译 Rust。
 
-Web 构建从已安装的生产依赖读取完整许可正文，再合并 `packaging/licenses` 中按精确版本保存的补充材料；不会下载 Matrix SDK 源码。升级依赖时，重新检查缺失正文、附带字体与预编译 WASM 的内部依赖，更新固定文本、`sources.json` 的来源及 SHA-256。Matrix WASM 的源码提交、锁文件、分发 WASM 和声明摘要保存在对应 provenance 文件；升级该 SDK 时须用新版本的固定源码和锁文件重新生成，不能沿用旧版本声明。补充材料缺失或摘要不符会中止构建。Web 和桌面构建自动附带第三方声明及本项目 LICENSE、NOTICE，不提交派生 dist 或资源文件。
+Web 和桌面随包提供项目的 LICENSE、NOTICE，以及 npm 生产依赖和直接改编的 shadcn/ui Dialog 的第三方声明。补充材料在 `packaging/licenses`；升级依赖时核对缺失正文、字体和预编译 WASM 的内部依赖，在 `sources.json` 更新精确版本的来源与 SHA-256。Matrix WASM 的源码提交、锁文件、分发 WASM 和声明摘要见对应 provenance 文件；升级时用新版本的固定源码和锁文件重新生成声明。普通 Web 构建直接读取这些材料，不下载 Matrix SDK 源码。
 
 ### 独立 Agent 与外部接入
 

@@ -99,7 +99,12 @@ abstract class CryptoAssetNotices : NodeTask() {
 }
 val cryptoNotices = tasks.register<CryptoAssetNotices>("cryptoNotices") {
     dependsOn(verifyCryptoBundle)
-    inputs.files(webRoot.resolve("pnpm-lock.yaml"), rootProject.projectDir.resolve("../scripts/web-notices.cjs"))
+    inputs.files(
+        webRoot.resolve("pnpm-lock.yaml"),
+        rootProject.projectDir.resolve("../scripts/web-notices.cjs"),
+        rootProject.projectDir.resolve("../LICENSE"),
+        rootProject.projectDir.resolve("../NOTICE"),
+    )
     inputs.dir(rootProject.projectDir.resolve("../packaging/licenses"))
     outputDirectory.set(layout.buildDirectory.dir("generated/cryptoAssets"))
     workingDir.set(rootProject.projectDir.resolve(".."))
@@ -123,6 +128,7 @@ androidComponents.onVariants { variant ->
         sourceLicense.set(rootProject.layout.projectDirectory.file("../LICENSE"))
         sourceNotice.set(rootProject.layout.projectDirectory.file("../NOTICE"))
         mplLicense.set(rootProject.layout.projectDirectory.file("gradle/licenses/MPL-2.0.txt"))
+        supplementalNotices.set(rootProject.layout.projectDirectory.dir("gradle/licenses"))
         outputDirectory.set(layout.buildDirectory.dir("generated/nativeNotices/${variant.name}"))
     }
     variant.sources.assets?.addGeneratedSourceDirectory(notices) { it.outputDirectory }
@@ -135,6 +141,7 @@ abstract class NativeAssetNotices : DefaultTask() {
     @get:InputFile abstract val sourceLicense: RegularFileProperty
     @get:InputFile abstract val sourceNotice: RegularFileProperty
     @get:InputFile abstract val mplLicense: RegularFileProperty
+    @get:InputDirectory abstract val supplementalNotices: DirectoryProperty
     @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
 
     @TaskAction fun generate() {
@@ -156,7 +163,19 @@ abstract class NativeAssetNotices : DefaultTask() {
             val (coordinate, path) = entry.split('|', limit = 2)
             val module = coordinate.substringBeforeLast(':')
             val source = sources[module] ?: error("Missing native license mapping for $coordinate")
-            text.append("$coordinate\nLicense: Apache-2.0\nSource: $source\n\n")
+            text.append("$coordinate\nPackage license: Apache-2.0\nSource: $source\n\n")
+            val supplement = when (module) {
+                "org.jetbrains.kotlin:kotlin-stdlib" -> {
+                    check(coordinate == "org.jetbrains.kotlin:kotlin-stdlib:2.2.10") { "Review stdlib third-party licenses for $coordinate" }
+                    "kotlin-stdlib-2.2.10.txt"
+                }
+                "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm", "org.jetbrains.kotlinx:kotlinx-coroutines-android" -> {
+                    check(coordinate.endsWith(":1.6.4")) { "Review coroutines NOTICE for $coordinate" }
+                    "kotlinx-coroutines-1.6.4-NOTICE.txt"
+                }
+                else -> null
+            }
+            if (supplement != null) text.append(supplementalNotices.file(supplement).get().asFile.readText(Charsets.UTF_8)).append("\n\n")
             if (module == "com.squareup.okhttp3:okhttp") hasOkHttp = true
             ZipFile(path).use { archive ->
                 archive.entries().asSequence().filter { file ->
@@ -166,7 +185,7 @@ abstract class NativeAssetNotices : DefaultTask() {
                 }
             }
         }
-        text.append("Apache License 2.0 — applies to the native dependencies listed above\n\n")
+        text.append("Apache License 2.0 — package license; bundled third-party material retains the terms listed above and below.\n\n")
             .append(sourceLicense.get().asFile.readText(Charsets.UTF_8))
         if (hasOkHttp) text.append("\n\nOkHttp Public Suffix List resource — Mozilla Public License 2.0\n")
             .append("Source: https://publicsuffix.org/list/public_suffix_list.dat\nLicense source: https://www.mozilla.org/media/MPL/2.0/index.txt\n\n")

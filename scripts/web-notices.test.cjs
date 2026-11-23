@@ -6,6 +6,9 @@ const { generate } = require('./web-notices.cjs');
 const directory = path.join(__dirname, '../packaging/licenses');
 const overrides = JSON.parse(readFileSync(path.join(directory, 'sources.json')));
 const packages = { MIT: [{ name: 'fastdom', versions: ['1.0.12'], license: 'MIT', paths: [directory] }] };
+test('the copied Dialog component ships its MIT notice independently of npm packages', () => {
+  assert.ok(generate({}, {}, directory).includes(readFileSync(path.join(directory, 'shadcn-ui-dialog.txt'), 'utf8').trimEnd()));
+});
 test('version-pinned supplemental text includes copyright and exact source', () => {
   const text = generate(packages, overrides, directory);
   assert.match(text, /Copyright \(c\) 2016 Wilson Page/);
@@ -29,5 +32,8 @@ test('Matrix WASM includes its pinned internal Rust notices and blocks unreviewe
   assert.match(text, /Mozilla Public License/);
   assert.match(text, /eyeball/);
   assert.match(text, /wasm32-unknown-unknown/);
+  assert.match(text, /Copyright \(c\) 2021-2025 null8626/);
+  assert.match(text, /Copyright \(c\) 2021-2022 Alexei Sibidanov/);
+  assert.doesNotMatch(text, /Copyright \(c\) <year> <copyright holders>/i);
   assert.throws(() => generate({ 'Apache-2.0': [{ ...package, versions: ['19.0.0'] }] }, overrides, directory), /Missing license text/);
 });

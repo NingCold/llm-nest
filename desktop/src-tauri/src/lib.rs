@@ -127,6 +127,7 @@ pub fn run() {
             local_agent::local_agent_crypto_status,
             local_agent::local_agent_crypto_initialize,
             local_agent::local_agent_crypto_export,
+            local_agent::local_agent_crypto_export_challenge,
             local_agent::local_agent_crypto_recover,
             local_agent::local_agent_crypto_trust,
             local_agent::local_agent_pair,

@@ -52,7 +52,7 @@ function fixture(relative, name, props, seeds={}, theme='light', desktop=false) 
       if (resolved) {
         const basename = path.basename(resolved);
         if (basename==='api' || basename==='local-api') return {request:blocked,download:blocked,server:'https://offline.invalid',HttpError:class extends Error{}};
-        if (resolved.includes(path.sep+'crypto'+path.sep) && !['Devices','ResourcePanel','HistoryMigrationPanel'].includes(basename)) return new Proxy({cryptoDevice:()=> 'fixture-device',hasCryptoDevice:()=>true,recoveryConfirmed:()=>true,resourceStatus:r=>r.applied?.status==='applied'?'已保存 · 节点已应用':'已保存 · 等待节点应用'}, {get:(obj,key)=>obj[key] || blocked});
+        if (resolved.includes(path.sep+'crypto'+path.sep) && !['Devices','ResourcePanel','HistoryMigrationPanel'].includes(basename)) return new Proxy({cryptoDevice:()=> 'fixture-device',trustedCryptoDevice:()=> 'fixture-device',hasPendingCryptoDevice:()=>false,hasCryptoDevice:()=>true,recoveryConfirmed:()=>true,resourceStatus:r=>r.applied?.status==='applied'?'已保存 · 节点已应用':'已保存 · 等待节点应用'}, {get:(obj,key)=>obj[key] || blocked});
         const candidate = ['.tsx','.ts',''].map(ext=>resolved+ext).find(p=>fs.existsSync(p)&&fs.statSync(p).isFile());
         if (!candidate) throw new Error(`Cannot resolve ${spec} from ${key}`);
         return load(candidate);

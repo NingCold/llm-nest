@@ -58,6 +58,7 @@ function harness(options = {}) {
   const engine = {
     prewarmCrypto: () => { state.prewarms = (state.prewarms ?? 0) + 1; return () => { state.prewarmCleanups = (state.prewarmCleanups ?? 0) + 1; }; },
     cryptoDevice: () => state.active ? 'existing-device' : undefined,
+    trustedCryptoDevice: () => state.active && state.trusted !== false ? "existing-device" : null,
     hasCryptoDevice: () => state.known,
     lockCrypto: () => { state.active = false; events.dispatchEvent(new Event('llmn-crypto-change')); },
   };
@@ -74,7 +75,7 @@ function harness(options = {}) {
     r.hooks.useEffect(() => { state.mounts++; state.subscriptions++; return () => { state.unmounts++; state.subscriptions--; }; }, []);
     return jsx.jsxs('main', { 'data-chat': true, 'data-location': location, children: ['DECRYPTED CHAT SENTINEL', jsx.jsx('button', { onClick: () => { const next = { active: 'group-1', tab: 'messages', accountSection: 'crypto', scrollTop: 312 }; setLocation(next); props.rememberLocation(next); }, children: 'navigate group' }), jsx.jsx('button', { onClick: props.onLock, children: 'lock chat' }), jsx.jsx('button', { onClick: props.onLogout, children: 'logout chat' })] });
   }
-  function CryptoDevices() { return jsx.jsxs('section', { 'data-recovery': true, children: ['RECOVERY SETUP ONLY', jsx.jsx('button', { onClick: () => { state.active = true; state.known = true; events.dispatchEvent(new Event('llmn-crypto-change')); }, children: 'complete recovery' })] }); }
+  function CryptoDevices() { return jsx.jsxs('section', { 'data-recovery': true, children: ['RECOVERY SETUP ONLY', jsx.jsx('button', { onClick: () => { state.active = true; state.known = true; state.trusted = true; events.dispatchEvent(new Event('llmn-crypto-change')); }, children: 'complete recovery' })] }); }
   class HttpError extends Error {}
   let api = { server: 'https://gate.invalid', HttpError, request: async path => { state.apiCalls++; return state.respond ? state.respond(path) : { id: 'human', name: 'Human' }; }, connectServer: async () => ({ id: 'human', name: 'Human' }), invalidate() { state.invalidations = (state.invalidations ?? 0) + 1; } };
   if (options.realApi) {
@@ -87,7 +88,7 @@ function harness(options = {}) {
   vm.runInNewContext(sessionCode, { exports, Event, window: events, location: { hash: '' }, FormData:class {constructor(form){this.fields=form.fields;}entries(){return Object.entries(this.fields);}get(key){return this.fields[key];}}, require: name => name === 'react' ? r.hooks : name === 'lucide-react' ? { ArrowLeft: icon } : name === '@/lib/desktop' ? { CUSTOM_WINDOW_CHROME: false, IS_DESKTOP: !!options.desktop } : name === '@/hooks/useDesktopReady' ? { useDesktopReady() {} } : name === '@/components/StartupSurface' ? { StartupSurface: () => jsx.jsx('main', { children: 'STARTUP' }) } : name === './LockScreen' ? lock : name === './AuthPage' ? { AuthPage } : name === './ChatApp' ? { default: ChatApp } : name === './crypto/Devices' ? { CryptoDevices } : name === './crypto/engine' ? engine : name === './crypto/auto-unlock' ? automatic : name === './api' ? api : name === '@tauri-apps/api/core' ? { invoke } : name === '@tauri-apps/api/event' ? { listen: async (name, callback) => { assert.equal(name, 'cloud-auth-lost'); nativeListeners.add(callback); return () => nativeListeners.delete(callback); } } : name.endsWith('.css') ? {} : require(name) });
   let logouts = 0;
   r.mount(options.cloud ? exports.default : exports.AccountSession, options.cloud ? {} : { account: { id: 'human', name: 'Human' }, onLogout: async () => { logouts++; }, onEndSession() {} }, options.strict);
-  return { r, state, pending, native, get logouts() { return logouts; } };
+  return { r, state, pending, native, trust(value) { state.trusted = value; events.dispatchEvent(new Event('llmn-crypto-change')); }, get logouts() { return logouts; } };
 }
 async function manual(h, value) {
   const input = nodes(h.r.tree).find(node => node.type === 'input' && node.props.type === 'password');
@@ -141,6 +142,17 @@ async function manual(h, value) {
   button(recovery.r.tree, 'complete recovery').props.onClick(); await recovery.r.flush();
   button(recovery.r.tree, '进入聊天').props.onClick(); await recovery.r.flush();
   assert.equal(recovery.state.mounts, 1); recovery.r.unmount();
+  const replacement = harness({ active: true });
+  replacement.state.trusted = false; await replacement.r.flush();
+  assert.equal(replacement.state.mounts, 0);
+  assert.match(text(replacement.r.tree), /RECOVERY SETUP ONLY/);
+  assert.ok(!text(replacement.r.tree).includes('进入聊天'));
+  button(replacement.r.tree, 'complete recovery').props.onClick(); await replacement.r.flush();
+  assert.equal(replacement.state.mounts, 1, 'chat mounts only after verified recovery');
+  replacement.trust(false); await replacement.r.flush();
+  assert.equal(replacement.state.subscriptions, 0, 'loss of admission removes the active chat, not just its navigation button');
+  assert.match(text(replacement.r.tree), /RECOVERY SETUP ONLY/);
+  replacement.r.unmount();
   const failed = harness(); failed.pending.reject(new Error('auto material expired')); await failed.r.flush();
   assert.match(text(failed.r.tree), /auto material expired/); assert.equal(failed.state.mounts, 0); failed.r.unmount();
   const startup = harness({ cloud: true, strict: true }); await startup.r.flush();

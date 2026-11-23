@@ -219,21 +219,70 @@ pub async fn local_agent_crypto_initialize(
     .await?;
     read_status(&app, &cloud, &owner, generation, &p, &ai_id, &device_id).await
 }
-async fn recovery(
-    window: tauri::WebviewWindow,
-    cloud: &CloudState,
-    state: &LocalAgentState,
-    ai: &str,
+pub(super) struct ExportChallenge {
+    owner: Owner,
+    generation: u64,
+    device: String,
+    ai: String,
+    path: String,
+    nonce: Uuid,
+    issued: std::time::Instant,
+}
+impl ExportChallenge {
+    fn statement(&self) -> String {
+        format!(
+            "llmnest.local-ai.recovery-export.v1\n{}",
+            json!([
+                self.owner.server,
+                self.owner.human,
+                self.generation.to_string(),
+                self.ai,
+                self.device,
+                self.nonce
+            ])
+        )
+    }
+    fn validate(
+        &self,
+        owner: &Owner,
+        generation: u64,
+        device: &str,
+        ai: &str,
+        fingerprint: &str,
+        signature: &str,
+    ) -> Result<(), String> {
+        use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
+        use ed25519_dalek::{Signature, VerifyingKey};
+        let invalid = || "导出授权无效或已过期，请重新选择保存位置".to_owned();
+        if &self.owner != owner
+            || self.generation != generation
+            || self.device != device
+            || self.ai != ai
+            || self.issued.elapsed() >= Duration::from_secs(90)
+        {
+            return Err(invalid());
+        }
+        let key: [u8; 32] = STANDARD_NO_PAD
+            .decode(fingerprint)
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(invalid)?;
+        let bytes = STANDARD_NO_PAD.decode(signature).map_err(|_| invalid())?;
+        let signature = Signature::try_from(bytes.as_slice()).map_err(|_| invalid())?;
+        VerifyingKey::from_bytes(&key)
+            .and_then(|k| k.verify_strict(self.statement().as_bytes(), &signature))
+            .map_err(|_| invalid())
+    }
+}
+async fn recovery_path(
+    window: &tauri::WebviewWindow,
     export: bool,
-) -> Result<bool, String> {
-    let _op = state.operation.lock().await;
-    let app = window.app_handle();
-    let (owner, p, generation) = context(app, cloud, state, ai).await?;
+) -> Result<Option<String>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let dialog = window
         .dialog()
         .file()
-        .set_parent(&window)
+        .set_parent(window)
         .add_filter("AI 恢复文件", &["json"]);
     if export {
         dialog
@@ -248,46 +297,87 @@ async fn recovery(
         });
     }
     let Some(path) = rx.await.map_err(|_| "恢复文件窗口已关闭")? else {
-        ensure_session(cloud, &owner, generation)?;
-        return Ok(false);
+        return Ok(None);
     };
     let path = path.into_path().map_err(|_| "恢复文件位置无效")?;
-    // Recheck cloud ownership after the user has spent time in the native dialog.
-    let _ = context(app, cloud, state, ai).await?;
-    ensure_session(cloud, &owner, generation)?;
     if export && path.exists() {
         return Err("目标文件已存在，请选择新的文件名；不会覆盖恢复材料".into());
     }
-    let path = path.to_str().ok_or("恢复文件路径无法编码")?.to_owned();
-    invoke(
-        app,
-        cloud,
-        &owner,
-        generation,
-        &p,
-        ai,
-        (
-            if export {
-                "crypto-export-recovery"
-            } else {
-                "crypto-recover"
-            },
-            &[path],
-        ),
-    )
-    .await?;
-    Ok(true)
+    Ok(Some(
+        path.to_str().ok_or("恢复文件路径无法编码")?.to_owned(),
+    ))
 }
 #[tauri::command]
-pub async fn local_agent_crypto_export(
+pub async fn local_agent_crypto_export_challenge(
     window: tauri::WebviewWindow,
     cloud: tauri::State<'_, CloudState>,
     state: tauri::State<'_, LocalAgentState>,
     ai_id: String,
     device_id: String,
+) -> Result<Option<String>, String> {
+    let _op = state.operation.lock().await;
+    state.export.lock().unwrap().take();
+    let (owner, _, generation) = context(window.app_handle(), &cloud, &state, &ai_id).await?;
+    cloud
+        .local_export_key(owner.human, &device_id, generation)
+        .await?;
+    let path = recovery_path(&window, true).await?;
+    ensure_session(&cloud, &owner, generation)?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let challenge = ExportChallenge {
+        owner,
+        generation,
+        device: device_id,
+        ai: ai_id,
+        path,
+        nonce: Uuid::new_v4(),
+        issued: std::time::Instant::now(),
+    };
+    let statement = challenge.statement();
+    *state.export.lock().unwrap() = Some(challenge);
+    Ok(Some(statement))
+}
+#[tauri::command]
+pub async fn local_agent_crypto_export(
+    app: tauri::AppHandle,
+    cloud: tauri::State<'_, CloudState>,
+    state: tauri::State<'_, LocalAgentState>,
+    ai_id: String,
+    device_id: String,
+    signature: String,
 ) -> Result<bool, String> {
-    let _ = device_id;
-    recovery(window, &cloud, &state, &ai_id, true).await
+    let _op = state.operation.lock().await;
+    let challenge = state
+        .export
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("请重新选择恢复文件保存位置")?;
+    let (owner, p, generation) = context(&app, &cloud, &state, &ai_id).await?;
+    let fingerprint = cloud
+        .local_export_key(owner.human, &device_id, generation)
+        .await?;
+    challenge.validate(
+        &owner,
+        generation,
+        &device_id,
+        &ai_id,
+        &fingerprint,
+        &signature,
+    )?;
+    invoke(
+        &app,
+        &cloud,
+        &owner,
+        generation,
+        &p,
+        &ai_id,
+        ("crypto-export-recovery", &[challenge.path]),
+    )
+    .await?;
+    Ok(true)
 }
 #[tauri::command]
 pub async fn local_agent_crypto_recover(
@@ -295,10 +385,27 @@ pub async fn local_agent_crypto_recover(
     cloud: tauri::State<'_, CloudState>,
     state: tauri::State<'_, LocalAgentState>,
     ai_id: String,
-    device_id: String,
 ) -> Result<bool, String> {
-    let _ = device_id;
-    recovery(window, &cloud, &state, &ai_id, false).await
+    let _op = state.operation.lock().await;
+    let app = window.app_handle();
+    let (owner, p, generation) = context(app, &cloud, &state, &ai_id).await?;
+    let path = recovery_path(&window, false).await?;
+    ensure_session(&cloud, &owner, generation)?;
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    context(app, &cloud, &state, &ai_id).await?;
+    invoke(
+        app,
+        &cloud,
+        &owner,
+        generation,
+        &p,
+        &ai_id,
+        ("crypto-recover", &[path]),
+    )
+    .await?;
+    Ok(true)
 }
 #[tauri::command]
 pub async fn local_agent_crypto_trust(
@@ -355,6 +462,93 @@ pub async fn local_agent_crypto_trust(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn accepts_export_statement_signed_by_matrix_sdk() {
+        // Public output of OlmMachine.sign in the bundled Matrix WASM SDK.
+        let owner = Owner {
+            server: "https://fixture.invalid".into(),
+            human: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+        };
+        let ai = "22222222-2222-4222-8222-222222222222";
+        let challenge = ExportChallenge {
+            owner: owner.clone(),
+            generation: 7,
+            device: "fixture".into(),
+            ai: ai.into(),
+            path: "chosen-path".into(),
+            nonce: "33333333-3333-4333-8333-333333333333".parse().unwrap(),
+            issued: std::time::Instant::now(),
+        };
+        assert!(challenge.validate(&owner, 7, "fixture", ai, "dI2nvwphKdXPpQA5Ld7a5k6VrGA4ZWK7Awmbhxkfoyg",
+            "7kJJI4b+Uvap8V4W7n894rOG8psKbehy6o+AR5uvt5MsTkybmlba1ZPg3pX5JZ4EbR1wdSSW3hhERMXNK1qQDw").is_ok());
+    }
+    #[test]
+    fn export_requires_the_registered_device_signature_for_this_request() {
+        use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
+        use ed25519_dalek::{Signer, SigningKey};
+        let key = SigningKey::from_bytes(&[1; 32]);
+        let fingerprint = STANDARD_NO_PAD.encode(key.verifying_key().as_bytes());
+        let owner = Owner {
+            server: "https://test.invalid".into(),
+            human: Uuid::new_v4(),
+        };
+        let mut challenge = ExportChallenge {
+            owner: owner.clone(),
+            generation: 3,
+            device: "d".into(),
+            ai: "a".into(),
+            path: "chosen-path".into(),
+            nonce: Uuid::new_v4(),
+            issued: std::time::Instant::now(),
+        };
+        let proof = STANDARD_NO_PAD.encode(key.sign(challenge.statement().as_bytes()).to_bytes());
+        assert!(
+            challenge
+                .validate(&owner, 3, "d", "a", &fingerprint, &proof)
+                .is_ok()
+        );
+        assert!(
+            challenge
+                .validate(&owner, 4, "d", "a", &fingerprint, &proof)
+                .is_err()
+        );
+        assert!(
+            challenge
+                .validate(&owner, 3, "other", "a", &fingerprint, &proof)
+                .is_err()
+        );
+        assert!(
+            challenge
+                .validate(&owner, 3, "d", "other", &fingerprint, &proof)
+                .is_err()
+        );
+        let other = SigningKey::from_bytes(&[2; 32]);
+        assert!(
+            challenge
+                .validate(
+                    &owner,
+                    3,
+                    "d",
+                    "a",
+                    &STANDARD_NO_PAD.encode(other.verifying_key().as_bytes()),
+                    &proof
+                )
+                .is_err()
+        );
+        challenge.nonce = Uuid::new_v4();
+        assert!(
+            challenge
+                .validate(&owner, 3, "d", "a", &fingerprint, &proof)
+                .is_err()
+        );
+        let fresh = STANDARD_NO_PAD.encode(key.sign(challenge.statement().as_bytes()).to_bytes());
+        challenge.issued -= Duration::from_secs(91);
+        assert!(
+            challenge
+                .validate(&owner, 3, "d", "a", &fingerprint, &fresh)
+                .is_err()
+        );
+    }
     #[tokio::test]
     async fn session_change_stops_owned_crypto_child_before_followup() {
         let dir = tempfile::tempdir().unwrap();

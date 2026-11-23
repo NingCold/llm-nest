@@ -14,7 +14,7 @@ function fixture({ saved = true, trusted = true } = {}) {
   const state = { trusted, registrationError: undefined, wrong: false, receives: 0, closed: 0 };
   const api = { server: 'https://unlock.invalid', HttpError, ConnectionError, request: async path => {
     calls.push(path);
-    if (path === '/crypto/devices') { registered.resolve(); if (state.registrationGate) await state.registrationGate.promise; if (state.registrationError) throw state.registrationError; return {}; }
+    if (path === '/crypto/devices') { registered.resolve(); if (state.registrationGate) await state.registrationGate.promise; if (state.registrationError) throw state.registrationError; return {authorized: state.authorized ?? state.trusted, fingerprint:'ed'}; }
     if (path.startsWith('/crypto/sync?')) return state.syncResponse ?? gate.promise;
     if (path === '/crypto/requests') { if (state.flushGate) await state.flushGate.promise; if (state.flushError) throw state.flushError; state.sent++; return {}; }
     throw new Error('unexpected request ' + path);
@@ -33,7 +33,7 @@ function fixture({ saved = true, trusted = true } = {}) {
       return { free() { state.freed = (state.freed ?? 0) + 1; } };
     } }, OlmMachine: { initFromStore: async () => { state.initialized = (state.initialized ?? 0) + 1; if (state.machineError) throw state.machineError; return machine; } } };
   const exports = {};
-  vm.runInNewContext(source + '\nexports.flushForTest = () => flush(active);', { exports, Error, performance, crypto: webcrypto, TextEncoder, Event, CustomEvent: class extends Event { constructor(name, options) { super(name); this.detail = options.detail; } }, window: { dispatchEvent: event => { events.push(event); target.dispatchEvent(event); }, addEventListener: (...args) => target.addEventListener(...args), removeEventListener: (...args) => target.removeEventListener(...args) }, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, require: name => name === '../api' ? api : name === '@matrix-org/matrix-sdk-crypto-wasm' ? sdk : {} });
+  vm.runInNewContext(source + '\nexports.flushForTest = () => flush(active);', { exports, Error, performance, crypto: webcrypto, TextEncoder, Event, CustomEvent: class extends Event { constructor(name, options) { super(name); this.detail = options.detail; } }, window: { dispatchEvent: event => { events.push(event); target.dispatchEvent(event); }, addEventListener: (...args) => target.addEventListener(...args), removeEventListener: (...args) => target.removeEventListener(...args) }, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, require: name => name === '../api' ? api : name === '@matrix-org/matrix-sdk-crypto-wasm' ? sdk : {} });
   const finish = () => gate.resolve({ next_batch: 'done', to_device: { events: [] }, device_lists: { changed: [], left: [] }, device_one_time_keys_count: {}, device_unused_fallback_key_types: [] });
   return { exports, state, events, calls, gate, registered, storage, key, finish, api, target, measurements };
 }
@@ -159,7 +159,9 @@ function subscribeWarnings(h, reports) {
   discarded.storage.set(discarded.key('b'), JSON.stringify({ deviceId: 'device-b', cursor: '0' }));
   discarded.state.registrationError = new ConnectionError('offline'); await discarded.exports.unlockCrypto('b', 'correct');
   assert.equal(discarded.exports.consumeCryptoWarning('b'), undefined, 'queued warning never leaks into next account');
-  const offline = fixture(); offline.state.registrationError = new ConnectionError('offline');
+  const offline = fixture();
+  offline.storage.set('llmn-device-admission:' + JSON.stringify([offline.api.server,'a']) + ':local-device','ed');
+  offline.state.registrationError = new ConnectionError('offline');
   assert.equal((await offline.exports.unlockCrypto('a', 'correct')).trusted, true);
   assert.equal(offline.state.identities, 1, 'offline registration reuses the completed local status');
   for (const switchAccount of [false, true]) {
@@ -225,8 +227,18 @@ function subscribeWarnings(h, reports) {
   await fastUnlock(pendingVersion); pendingVersion.exports.lockCrypto();
   pendingVersion.state.flushGate.resolve(); await tick();
   assert.equal(JSON.parse(pendingVersion.storage.get(pendingVersion.key('a'))).deviceListsVersion, undefined, 'locking before acknowledgement cannot persist the directory version');
-  const replacement = fixture(); replacement.storage.set(replacement.key('a'), JSON.stringify({ deviceId: 'local-device', cursor: 'old', deviceListsVersion: '99' }));
+  const replacement = fixture({ trusted: false }); replacement.storage.set(replacement.key('a'), JSON.stringify({ deviceId: 'local-device', cursor: 'old', deviceListsVersion: '99' }));
   replacement.state.syncResponse = response('100'); await replacement.exports.unlockCrypto('a', 'correct', 'new-device');
   assert.ok(!replacement.calls.filter(p => p.startsWith('/crypto/sync?')).at(-1).includes('deviceListsVersion='), 'replacement device starts without a directory acknowledgement');
+  const pendingId = replacement.exports.cryptoDevice('a');
+  assert.notEqual(pendingId, 'local-device');
+  assert.equal(replacement.exports.localCryptoDevice('a'), 'local-device', 'an unapproved replacement cannot overwrite the original unlock target');
+  replacement.exports.lockCrypto();
+  await replacement.exports.unlockCrypto('a', 'correct', 'resume-device');
+  assert.equal(replacement.exports.cryptoDevice('a'), pendingId, 'interrupted recovery can resume in the staged store');
+  replacement.exports.lockCrypto();
+  replacement.state.trusted = true;
+  await replacement.exports.unlockCrypto('a', 'correct');
+  assert.equal(replacement.exports.cryptoDevice('a'), 'local-device', 'regular unlock still opens the original device');
   console.log('PASS: trusted local unlock returns before deferred sync; registration, new-device, passphrase, offline and stale-session boundaries remain enforced');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -226,6 +226,46 @@ impl CloudState {
         }
         Ok(())
     }
+    pub(crate) async fn local_export_key(
+        &self,
+        human: Uuid,
+        device: &str,
+        generation: u64,
+    ) -> Result<String, String> {
+        if device.is_empty()
+            || device.len() > 255
+            || !device
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
+        {
+            return Err("设备 ID 无效".into());
+        }
+        let ctx = self.context(&format!("/api/crypto/authority/devices/{device}"), false)?;
+        if ctx.generation != generation {
+            return Err("登录身份已变化，请重试".into());
+        }
+        let response = request(&ctx, Method::GET)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(connection_error)?;
+        self.reject_session(&ctx, response.status())?;
+        if !response.status().is_success() {
+            return Err("无法确认当前真人设备的导出权限".into());
+        }
+        let value: serde_json::Value = response.json().await.map_err(|_| "设备授权响应无效")?;
+        if self.authorized_local_session()?.2 != generation
+            || value["accountId"] != human.to_string()
+            || value["deviceId"] != device
+            || value["authorized"] != true
+        {
+            return Err("请使用已获账号授权的真人设备导出恢复文件".into());
+        }
+        value["fingerprint"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "可信设备公钥无效".into())
+    }
     pub(crate) async fn direct_grant(
         &self,
         conversation: &str,
@@ -1234,6 +1274,49 @@ mod tests {
             .unwrap();
         assert!(state.authorized_local_identity().is_err());
         assert!(CloudState::new().authorized_local_identity().is_err());
+    }
+    #[tokio::test]
+    async fn export_reads_only_current_humans_authorized_device_key() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        let human = Uuid::new_v4();
+        let state = CloudState::new();
+        state.set_local_test_session(&server, Some(human));
+        let generation = state.session_generation();
+        let respond = tokio::spawn(async move {
+            for (account, device, allowed) in [
+                (human, "fixture", true),
+                (human, "fixture", false),
+                (Uuid::new_v4(), "fixture", true),
+                (human, "another", true),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = [0; 4096];
+                let n = stream.read(&mut bytes).await.unwrap();
+                let request = String::from_utf8_lossy(&bytes[..n]);
+                assert!(request.starts_with("GET /api/crypto/authority/devices/fixture "));
+                assert!(request.contains("nest_session=test"));
+                let body = serde_json::json!({"accountId":account,"deviceId":device,"authorized":allowed,"fingerprint":"fixture-key"}).to_string();
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        assert_eq!(
+            state
+                .local_export_key(human, "fixture", generation)
+                .await
+                .unwrap(),
+            "fixture-key"
+        );
+        for _ in 0..3 {
+            assert!(
+                state
+                    .local_export_key(human, "fixture", generation)
+                    .await
+                    .is_err()
+            );
+        }
+        respond.await.unwrap();
     }
     #[tokio::test]
     #[ignore = "requires explicit CLOUD_TLS_TEST_URL and CLOUD_CA_CERT_FILE"]

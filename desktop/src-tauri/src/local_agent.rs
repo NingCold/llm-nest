@@ -46,6 +46,7 @@ struct PairState {
 pub struct LocalAgentState {
     root: PathBuf,
     operation: AsyncMutex<()>,
+    export: Mutex<Option<crypto::ExportChallenge>>,
     pairs: Mutex<HashMap<PathBuf, PairState>>,
     owners: Mutex<Vec<Owner>>,
     initial_error: Option<String>,
@@ -95,6 +96,7 @@ impl LocalAgentState {
         Self {
             root,
             operation: AsyncMutex::new(()),
+            export: Mutex::new(None),
             pairs: Mutex::new(HashMap::new()),
             owners: Mutex::new(owners),
             initial_error,

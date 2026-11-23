@@ -1,17 +1,35 @@
 import { request, server, HttpError, ConnectionError } from "../api";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import type * as Matrix from "@matrix-org/matrix-sdk-crypto-wasm";
 import { canonicalJson } from "./canonical";
 import { verifyEnvelope, unsignedEnvelope, type SignedEnvelope } from "./envelope";
 
 type Sdk = typeof Matrix;
-type Session = { sdk: Sdk; machine: Matrix.OlmMachine; account: string; owner: string; deviceId: string; cursor: string; deviceListsVersion?: string; pendingWarning?: string; pendingChange?: boolean; flushing?: Promise<void>; authorization?: { secrets: unknown; roomKeys: unknown; senderDevice: string } };
+type Session = { authorized?: boolean; localVerified?: boolean; liveBackup?: string | null; sdk: Sdk; machine: Matrix.OlmMachine; account: string; owner: string; deviceId: string; cursor: string; deviceListsVersion?: string; pendingWarning?: string; pendingChange?: boolean; flushing?: Promise<void>; authorization?: { secrets: unknown; roomKeys: unknown; senderDevice: string } };
 let active: Session | undefined;
 let generation = 0;
 let timingAttempt = 0;
 let syncing: Promise<void> | undefined;
-let preparedRecovery: { owner: string; version: string; expectedVersion: string | null; ciphertext: string } | undefined;
+type BackupInfo = {version: string; algorithm: string; sealed?: boolean; auth_data: {public_key: string}};
+let preparedRecovery: { session: Session; version: string; command: Record<string,unknown>; key: string; backupVersion: string } | undefined;
 const ownerOf = (account: string) => JSON.stringify([server, account]);
 const metadataKey = (account: string) => `llmn-crypto-device:${ownerOf(account)}`;
+const pendingDeviceKey = (account: string) => `llmn-crypto-pending-device:${ownerOf(account)}`;
+const replacements = new WeakSet<Session>();
+export function hasPendingCryptoDevice(account: string) { return localStorage.getItem(pendingDeviceKey(account)) !== null; }
+function persistDevice(s: Session) {
+  current(s);
+  const primary = metadataKey(s.account), pending = pendingDeviceKey(s.account);
+  const metadata = JSON.stringify({deviceId: s.deviceId, cursor: s.cursor, deviceListsVersion: s.deviceListsVersion});
+  if (replacements.has(s)) {
+    const stored = localStorage.getItem(pending);
+    if (!stored || JSON.parse(stored).deviceId !== s.deviceId) return;
+    if (trustedCryptoDevice(s.account) !== s.deviceId) { localStorage.setItem(pending, metadata); return; }
+    localStorage.setItem(primary, metadata);
+    localStorage.removeItem(pending);
+    replacements.delete(s);
+  } else if (localCryptoDevice(s.account) === s.deviceId) localStorage.setItem(primary, metadata);
+}
 export const matrixUser = (account: string) => `@${account}:llmn`;
 export const matrixRoom = (conversation: string) => `!${conversation}:llmn`;
 const changed = () => window.dispatchEvent(new Event("llmn-crypto-change"));
@@ -33,6 +51,41 @@ function session() {
 export class CryptoSessionChanged extends Error {}
 function current(s: Session) { if (active !== s || s.owner !== ownerOf(s.account)) throw new CryptoSessionChanged("加密设备已锁定或账号已切换"); }
 export function cryptoDevice(account: string) { return active?.owner === ownerOf(account) ? active.deviceId : undefined; }
+export function trustedCryptoDevice(account: string): string | null {
+  return active?.owner === ownerOf(account) && active.authorized === true && active.localVerified === true ? active.deviceId : null;
+}
+function admissionKey(s: Session) { return `llmn-device-admission:${s.owner}:${s.deviceId}`; }
+function admission(s: Session, allowed: boolean) {
+  current(s);
+  s.authorized = allowed;
+  localStorage.setItem(admissionKey(s), allowed ? s.machine.identityKeys.ed25519.toBase64() : "");
+}
+async function deviceSignature(s: Session, statement: string): Promise<string> {
+  current(s);
+  const signed = await s.machine.sign(statement);
+  current(s);
+  const signature = JSON.parse(signed.asJSON())[matrixUser(s.account)]?.[`ed25519:${s.deviceId}`];
+  if (typeof signature !== "string") throw new Error("当前设备不能签署授权");
+  return signature;
+}
+const statement = (account: string, action: string, data: unknown) => "llmn.authority.v1\n" + canonicalJson([account, action, data]);
+const proof = (s: Session, action: string, body: unknown) => deviceSignature(s, statement(s.account, action, [s.deviceId, body]));
+async function signedCommand(s: Session, action: string, body: Record<string, unknown>) {
+  const command = { ...body, deviceId: s.deviceId };
+  return { ...command, proof: await proof(s, action, command) };
+}
+export async function signLocalExportChallenge(accountId: string, value: string) {
+  const s = session();
+  if (!value.startsWith("llmnest.local-ai.recovery-export.v1\n") || trustedCryptoDevice(accountId) !== s.deviceId) throw new Error("仅可信设备可导出恢复资料");
+  const signature = await deviceSignature(s, value);
+  if (trustedCryptoDevice(accountId) !== s.deviceId) throw new CryptoSessionChanged("设备授权已变化");
+  return signature;
+}
+export async function revokeCryptoDevice(accountId: string, deviceId: string) {
+  const s = session();
+  await request(`/crypto/devices/${encodeURIComponent(deviceId)}/revoke?accountId=${encodeURIComponent(accountId)}`, "POST", await signedCommand(s, "revoke", { accountId, target: deviceId }));
+  await syncCrypto();
+}
 export function consumeCryptoWarning(account: string) {
   if (active?.owner !== ownerOf(account)) return undefined;
   const warning = active.pendingWarning;
@@ -118,7 +171,7 @@ async function sendOutgoing(s: Session, outgoing: Matrix.OutgoingRequest) {
   }
   const kinds = ["keysUpload", "keysQuery", "keysClaim", "toDevice", "signatures", "roomMessage", "keysBackup"];
   if (outgoing.type === s.sdk.RequestType.KeysBackup) body.version = (outgoing as Matrix.KeysBackupRequest).version;
-  const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id ?? crypto.randomUUID(), kind: kinds[outgoing.type], body });
+  const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id ?? crypto.randomUUID(), kind: kinds[outgoing.type], body, ...(outgoing.type===s.sdk.RequestType.KeysBackup ? {proof:await proof(s,"keysBackup",body)} : {}) });
   current(s);
   if (outgoing.id) await s.machine.markRequestAsSent(outgoing.id, outgoing.type, JSON.stringify(response));
   current(s);
@@ -130,7 +183,7 @@ async function flushInner(s: Session) {
   while (queued.length) {
     const outgoing = queued[0];
     let response: unknown;
-    try { response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id, kind: outgoing.kind, body: outgoing.body }); }
+    try { response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id, kind: outgoing.kind, body: outgoing.body, ...(outgoing.kind==="signingKeys" ? {proof:await proof(s,"signingKeys",outgoing.body)} : {}) }); }
     catch (error) {
       if (outgoing.body.llmn_purpose === "conversationHistory" && error instanceof HttpError && [403, 404, 409].includes(error.status)) {
         current(s);
@@ -174,11 +227,19 @@ export async function syncCrypto() {
   if (syncing) return syncing;
   const s = session();
   const work = (async () => {
-    const sync = await request<{ next_batch: string; to_device: { events: unknown[] }; device_lists: { changed: string[]; left: string[] }; device_one_time_keys_count: Record<string, number>; device_unused_fallback_key_types: string[]; llmn_device_lists_version?: string }>(`/crypto/sync?deviceId=${encodeURIComponent(s.deviceId)}&after=${encodeURIComponent(s.cursor)}${s.deviceListsVersion === undefined ? "" : `&deviceListsVersion=${encodeURIComponent(s.deviceListsVersion)}`}`).catch(error => {
+    const sync = await request<{ next_batch: string; to_device: { events: unknown[] }; device_lists: { changed: string[]; left: string[] }; device_one_time_keys_count: Record<string, number>; device_unused_fallback_key_types: string[]; llmn_authorized?: boolean; llmn_fingerprint?: string | null; llmn_backup_retired?: boolean; llmn_active_backup?: {version:string;publicKey:string} | null; llmn_device_lists_version?: string }>(`/crypto/sync?deviceId=${encodeURIComponent(s.deviceId)}&after=${encodeURIComponent(s.cursor)}${s.deviceListsVersion === undefined ? "" : `&deviceListsVersion=${encodeURIComponent(s.deviceListsVersion)}`}`).catch(error => {
       if (error instanceof HttpError && [401, 403].includes(error.status) && active === s) lockCrypto();
       throw error;
     });
     current(s);
+    if (sync.llmn_authorized !== undefined) {
+      const allowed = sync.llmn_authorized && sync.llmn_fingerprint === s.machine.identityKeys.ed25519.toBase64();
+      if (s.authorized !== allowed) s.pendingChange = true;
+      admission(s, allowed);
+    }
+    if (sync.llmn_active_backup !== undefined) {
+      await selectBackup(s, sync.llmn_active_backup, sync.llmn_backup_retired === true);
+    }
     await flush(s);
     current(s);
     if (sync.to_device.events.length || sync.device_lists.changed.length || sync.device_lists.left.length) s.pendingChange = true;
@@ -199,33 +260,45 @@ export async function syncCrypto() {
         if (!Array.isArray(event.content.keys) || event.content.keys.some((key: { room_id: string }) => key.room_id !== matrixRoom(conversation.id))) { window.dispatchEvent(new CustomEvent("llmn-crypto-warning", { detail: "历史密钥包含其他范围，已拒绝导入" })); continue; }
         await s.machine.importExportedRoomKeys(JSON.stringify(event.content.keys), () => {});
       } else if (event.type === "com.llmn.ai-history.v1" && event.sender === matrixUser(event.content.aiId)) {
+        const { chatRevisions, keys, audienceRevision } = event.content;
+        const rooms = new Set<string>();
+        if (chatRevisions && typeof chatRevisions === "object" && !Array.isArray(chatRevisions)) {
+          for (const [id, revision] of Object.entries(chatRevisions)) {
+            if (/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(id) && typeof revision === "string" && /^[1-9]\d*$/.test(revision)) rooms.add(matrixRoom(id));
+          }
+        }
+        if (!audienceRevision || !rooms.size || !Array.isArray(keys) || keys.some(key => !rooms.has(key?.room_id))) {
+          window.dispatchEvent(new CustomEvent("llmn-crypto-warning", { detail: "AI 历史分享没有有效的聊天范围，请让节点重新分享" }));
+          continue;
+        }
         await s.machine.importExportedRoomKeys(JSON.stringify(event.content.keys), () => {});
       }
     }
     current(s);
     await flush(s);
     current(s);
-    const backup = await s.machine.backupRoomKeys();
+    const backup = s.liveBackup===null || s.authorized===false ? null : await s.machine.backupRoomKeys();
     current(s);
     if (backup) await sendOutgoing(s, backup);
     current(s);
-    localStorage.setItem(metadataKey(s.account), JSON.stringify({ deviceId: s.deviceId, cursor: sync.next_batch, deviceListsVersion: sync.llmn_device_lists_version }));
     s.cursor = sync.next_batch;
     s.deviceListsVersion = sync.llmn_device_lists_version;
+    persistDevice(s);
     if (s.pendingChange) { s.pendingChange = false; changed(); }
   })().finally(() => { if (syncing === work) syncing = undefined; });
   syncing = work;
   return work;
 }
 
-export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" = false, expected?: { generation: number; deviceId: string; isCurrent?: () => boolean }) {
+export async function unlockCrypto(account: string, passphrase: string, create: boolean | "new-device" | "resume-device" = false, expected?: { generation: number; deviceId: string; isCurrent?: () => boolean }) {
   const attempt = ++timingAttempt;
   const clock = typeof performance === "undefined" ? undefined : performance;
   const timingNames = ["sdkImport", "sdkInit", "storeOpen", "storePrepare", "storeMetadataRead", "storeMetadata", "storeCipher", "storeDatabase", "machineLoad", "deviceRegister", "trackedUsers", "deviceStatus", "statusIdentity", "statusCrossSigning", "statusOwnDeviceTrust", "unlockReady", "backgroundSync"] as const;
   for (const name of timingNames) clock?.clearMeasures(`llmn.crypto.unlock.${name}`);
   const started = clock?.now() ?? 0;
   if (!passphrase.trim()) throw new Error("请输入本机加密库口令；它与登录密码和恢复材料分开保管");
-  const saved = localStorage.getItem(metadataKey(account));
+  const saved = localStorage.getItem(create === "resume-device" ? pendingDeviceKey(account) : metadataKey(account));
+  if (create === "resume-device" && !saved) throw new Error("未找到待授权设备，请重新建立设备");
   if (!saved && !create) throw new Error("此账号在当前设备没有加密资料，请明确创建新设备，再由可信设备或恢复包授权");
   if (saved && create === true) throw new Error("本机已有设备身份，请解锁，不能覆盖或重置");
   // Automatic unlock must never create a replacement SDK identity when its local store was removed.
@@ -282,14 +355,18 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
   const unlocked: Session = { sdk, machine, account, owner: ownerOf(account), deviceId: metadata.deviceId, cursor: metadata.cursor, deviceListsVersion: metadata.deviceListsVersion };
   const measuredSync = async () => { const start = clock?.now() ?? 0; await syncCrypto(); elapsed("backgroundSync", start); };
   active = unlocked;
-  localStorage.setItem(metadataKey(account), JSON.stringify(metadata));
+  if (saved && (create === "new-device" || create === "resume-device")) {
+    replacements.add(unlocked);
+    localStorage.setItem(pendingDeviceKey(account), JSON.stringify(metadata));
+  } else if (!saved) localStorage.setItem(metadataKey(account), JSON.stringify(metadata));
   let offlineStatus: Awaited<ReturnType<typeof deviceStatus>> | undefined;
   try {
     const [registration, local] = await Promise.allSettled([
       (async () => {
         const start = clock?.now() ?? 0;
-        await request("/crypto/devices", "POST", { deviceId: metadata.deviceId, name: "LLM Nest 客户端" });
+        const grant=await request<{authorized:boolean;fingerprint:string|null}>("/crypto/devices", "POST", { deviceId: metadata.deviceId, name: "LLM Nest 客户端" });
         current(unlocked);
+        admission(unlocked, grant.authorized===true && grant.fingerprint===machine.identityKeys.ed25519.toBase64());
         elapsed("deviceRegister", start);
       })(),
       (async () => {
@@ -307,7 +384,8 @@ export async function unlockCrypto(account: string, passphrase: string, create: 
     // Permission failures take precedence even when the local read also failed.
     if (registration.status === "rejected" && !(registration.reason instanceof ConnectionError)) throw registration.reason;
     if (local.status === "rejected") { lockCrypto(); throw local.reason; }
-    const localStatus = local.value;
+    if (registration.status === "rejected" && saved && create !== "new-device") unlocked.authorized = localStorage.getItem(admissionKey(unlocked))===machine.identityKeys.ed25519.toBase64();
+    const localStatus = {...local.value, trusted:!!trustedCryptoDevice(account)};
     if (registration.status === "rejected") { offlineStatus = localStatus; throw registration.reason; }
     if (expected?.isCurrent?.() === false) throw new CryptoSessionChanged("自动解锁已取消");
     // A persisted trusted identity is usable after the server permission check.
@@ -352,7 +430,11 @@ export async function deviceStatus(measure?: (name: "statusIdentity" | "statusCr
   const ownsDevice = identity && "trustsOurOwnDevice" in identity ? await identity.trustsOurOwnDevice() : false;
   current(s);
   measure?.("statusOwnDeviceTrust", start);
-  return { deviceId: s.deviceId, fingerprint: s.machine.identityKeys.ed25519.toBase64(), curve: s.machine.identityKeys.curve25519.toBase64(), master: identity ? masterFingerprint(identity.masterKey) : null, trusted: !!identity?.isVerified() && ownsDevice, hasRecoverySecrets: cross.hasMaster && cross.hasSelfSigning && cross.hasUserSigning, authorizationAvailable: !!s.authorization };
+  const wasTrusted=!!trustedCryptoDevice(s.account);
+  s.localVerified = !!identity?.isVerified() && ownsDevice;
+  if (trustedCryptoDevice(s.account)) persistDevice(s);
+  if(wasTrusted!==!!trustedCryptoDevice(s.account)) changed();
+  return { deviceId: s.deviceId, fingerprint: s.machine.identityKeys.ed25519.toBase64(), curve: s.machine.identityKeys.curve25519.toBase64(), master: identity ? masterFingerprint(identity.masterKey) : null, trusted: !!trustedCryptoDevice(s.account), hasRecoverySecrets: cross.hasMaster && cross.hasSelfSigning && cross.hasUserSigning, authorizationAvailable: !!s.authorization };
 }
 export async function initializeIdentity() {
   const s = session();
@@ -388,6 +470,7 @@ export async function trustDevice(account: string, deviceId: string, fingerprint
   const device = await s.machine.getDevice(new s.sdk.UserId(matrixUser(account)), new s.sdk.DeviceId(deviceId));
   const identity = await s.machine.getIdentity(new s.sdk.UserId(matrixUser(account)));
   if (!device || device.ed25519Key?.toBase64() !== fingerprint || device.curve25519Key?.toBase64() !== curve || !identity || masterFingerprint(identity.masterKey) !== master) throw new Error("设备或账号主指纹已变化，请重新核对");
+  if (account===s.account && deviceId!==s.deviceId) await request("/crypto/authority/enroll","POST",await signedCommand(s,"enroll",{target:deviceId,fingerprint}));
   await sendOutgoing(s, await identity.verify());
   if (account === s.account && (await s.machine.crossSigningStatus()).hasSelfSigning) await sendOutgoing(s, await device.verify());
   else if (!device.isCrossSignedByOwner()) throw new Error("此设备尚未被其账号的可信身份签名，请先在该账号可信设备上授权");
@@ -487,7 +570,7 @@ export async function importRecoverySecrets(secrets: unknown, roomKeys: unknown)
   const s = session();
   await s.machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(secrets));
   await s.machine.importExportedRoomKeys(JSON.stringify(roomKeys), () => {});
-  await enableStoredBackup(s);
+  await storedBackup(s);
   await flush(s);
   const device = await s.machine.getDevice(new s.sdk.UserId(matrixUser(s.account)), new s.sdk.DeviceId(s.deviceId));
   if (device) await sendOutgoing(s, await device.verify());
@@ -516,72 +599,183 @@ export async function acceptAuthorization() {
   changed();
 }
 
-export interface RecoveryFile { format: "llmn-recovery-v1"; server: string; accountId: string; version: string; mediaEncryptionInfo: string }
+export interface RecoveryFile { format: "llmn-recovery-v1" | "llmn-recovery-v2"; server: string; accountId: string; version: string; mediaEncryptionInfo: string; enrollmentSeed?: string }
 const bytes64 = (bytes: Uint8Array) => { let binary = ""; for (const b of bytes) binary += String.fromCharCode(b); return btoa(binary); };
+const unpadded = (bytes: Uint8Array) => bytes64(bytes).replace(/=+$/, "");
 const from64 = (value: string) => Uint8Array.from(atob(value), c => c.charCodeAt(0));
 export function recoveryConfirmed(account: string) { return localStorage.getItem(`llmn-crypto-recovery:${ownerOf(account)}`) === "confirmed"; }
 export function confirmRecovery() { const s = session(); localStorage.setItem(`llmn-crypto-recovery:${s.owner}`, "confirmed"); changed(); }
+const backupAlgorithm = "m.megolm_backup.v1.curve25519-aes-sha2";
+const atVersion = (path: string, version: string) => path + "?version=" + encodeURIComponent(version);
 
-async function enableStoredBackup(s: Session) {
+type BackupPointer = { version: string; publicKey: string };
+const retiredKey = (s: Session, version: string) => `llmn-backup-retired:${s.owner}:${version}`;
+function backupWarning(s: Session, message: string) {
+  if (s.pendingWarning === message) return;
+  s.pendingWarning = message;
+  window.dispatchEvent(new CustomEvent("llmn-crypto-warning", { detail: message }));
+}
+async function selectBackup(s: Session, next: BackupPointer | null, retired: boolean) {
+  if (retired && s.authorized && recoveryConfirmed(s.account)) {
+    localStorage.setItem(`llmn-crypto-recovery:${s.owner}`, "retired");
+    s.pendingChange = true;
+    backupWarning(s, "旧备份已封存。请在可信设备与恢复中保存新的恢复文件，再继续备份。");
+  }
+  const version = next?.version ?? null;
+  if (s.liveBackup === version) return;
+  if (await s.machine.isBackupEnabled()) await s.machine.disableBackup();
+  current(s);
+  const local = await s.machine.getBackupKeys();
+  const previous = local.backupVersion;
+  if (previous && previous !== version && (version || retired)) localStorage.setItem(retiredKey(s, previous), "1");
+  s.liveBackup = null;
+  if (!next || !s.authorized) return;
+
+  const pinned = local.decryptionKey?.megolmV1PublicKey.publicKeyBase64;
+  if (previous === version && pinned === next.publicKey && !localStorage.getItem(retiredKey(s, next.version))) {
+    const info = await request<BackupInfo>(atVersion("/crypto/backup", next.version));
+    const matches = !info.sealed && info.version === next.version && info.algorithm === backupAlgorithm && info.auth_data.public_key === pinned;
+    if (matches && (await s.machine.verifyBackup(info)).trusted()) {
+      current(s);
+      await s.machine.enableBackupV1(next.publicKey, next.version);
+      s.liveBackup = version;
+      return;
+    }
+  }
+  backupWarning(s, "请从当前恢复文件或可信设备同步新的备份密钥");
+}
+async function storedBackup(s: Session) {
   const keys = await s.machine.getBackupKeys();
   if (!keys.decryptionKey || !keys.backupVersion) throw new Error("恢复材料缺少历史备份密钥");
-  const info = await request<{ version: string; algorithm: string; auth_data: { public_key: string } }>("/crypto/backup");
-  if (info.version !== keys.backupVersion || info.auth_data.public_key !== keys.decryptionKey.megolmV1PublicKey.publicKeyBase64 || info.algorithm !== "m.megolm_backup.v1.curve25519-aes-sha2") throw new Error("云端历史备份身份与本机恢复密钥不一致，请核对，不能使用替换的备份");
-  await s.machine.enableBackupV1(info.auth_data.public_key, info.version);
+  const info = await request<BackupInfo>(atVersion("/crypto/backup", keys.backupVersion));
+  if (info.version !== keys.backupVersion || info.algorithm !== backupAlgorithm || info.auth_data.public_key !== keys.decryptionKey.megolmV1PublicKey.publicKeyBase64)
+    throw new Error("云端历史备份与恢复密钥不匹配");
   return keys;
 }
-export async function createRecoveryFile(): Promise<RecoveryFile> {
-  const s = session(), status = await deviceStatus();
-  if (!status.hasRecoverySecrets) throw new Error("此设备没有完整恢复秘密，请先由可信设备或恢复文件授权");
-  const existing = await s.machine.getBackupKeys();
-  const backupCommandKey = `llmn-crypto-backup-publish:${s.owner}`;
-  if (!existing.decryptionKey) {
-    try { await request("/crypto/backup"); throw new Error("账号已有历史备份，请使用现有恢复材料，不能替换备份密钥"); } catch (error) { if (!(error instanceof HttpError && error.status === 404)) throw error; }
-    const key = s.sdk.BackupDecryptionKey.createRandomKey(), version = crypto.randomUUID();
-    const auth_data = { public_key: key.megolmV1PublicKey.publicKeyBase64, signatures: {} as unknown };
-    auth_data.signatures = JSON.parse((await s.machine.sign(JSON.stringify({ public_key: auth_data.public_key }))).asJSON());
-    await s.machine.saveBackupDecryptionKey(key, version);
-    localStorage.setItem(backupCommandKey, JSON.stringify({ deviceId: s.deviceId, expectedVersion: null, version, algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", auth_data }));
-  }
-  const backupCommand = localStorage.getItem(backupCommandKey);
-  if (backupCommand) { await request("/crypto/backup", "PUT", JSON.parse(backupCommand)); current(s); localStorage.removeItem(backupCommandKey); }
-  await enableStoredBackup(s);
-  const bundle = await s.machine.exportSecretsBundle();
-  const encrypted = s.sdk.Attachment.encrypt(new TextEncoder().encode(JSON.stringify(bundle.to_json())));
-  const version = crypto.randomUUID();
-  let expectedVersion: string | null;
-  try { expectedVersion = (await request<{ version: string }>("/crypto/recovery")).version; } catch (error) { if (error instanceof HttpError && error.status === 404) expectedVersion = null; else throw error; }
-  preparedRecovery = { owner: s.owner, version, expectedVersion, ciphertext: bytes64(encrypted.encryptedData) };
-  current(s);
-  await syncCrypto();
-  return { format: "llmn-recovery-v1", server, accountId: s.account, version, mediaEncryptionInfo: encrypted.mediaEncryptionInfo! };
-}
-export async function commitRecoveryFile(file: RecoveryFile) {
-  const s = session();
-  if (!preparedRecovery || preparedRecovery.owner !== s.owner || preparedRecovery.version !== file.version) throw new Error("这份恢复文件不再是当前待确认版本，请重新生成并保存");
-  await request("/crypto/recovery", "PUT", { deviceId: s.deviceId, expectedVersion: preparedRecovery.expectedVersion, version: preparedRecovery.version, ciphertext: preparedRecovery.ciphertext });
-  current(s); preparedRecovery = undefined; confirmRecovery();
-}
-export async function restoreRecoveryFile(file: RecoveryFile) {
-  const s = session();
-  if ((file.format && file.format !== "llmn-recovery-v1") || file.server !== server || file.accountId !== s.account) throw new Error("恢复文件不属于当前服务器与真人账号");
-  const recovery = await request<{ version: string; ciphertext: string }>("/crypto/recovery");
-  if (file.version !== recovery.version) throw new Error("恢复文件版本与云端不一致，请使用当前版本文件");
-  const plaintext = s.sdk.Attachment.decrypt(new s.sdk.EncryptedAttachment(from64(recovery.ciphertext), file.mediaEncryptionInfo));
-  await s.machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(JSON.parse(new TextDecoder().decode(plaintext))));
-  plaintext.fill(0);
-  const keys = await enableStoredBackup(s);
-  const backup = await request<{ rooms: Record<string, { sessions: Record<string, { session_data: { ephemeral: string; mac: string; ciphertext: string } }> }> }>("/crypto/backup/keys");
+async function readBackup(s: Session, key: Matrix.BackupDecryptionKey, version: string) {
+  const backup = await request<{ rooms: Record<string, { sessions: Record<string, { session_data: { ephemeral: string; mac: string; ciphertext: string } }> }> }>(atVersion("/crypto/backup/keys", version));
   const rooms = new Map<Matrix.RoomId, Map<string, unknown>>();
   for (const [room, content] of Object.entries(backup.rooms)) {
     const sessions = new Map<string, unknown>();
-    for (const [id, value] of Object.entries(content.sessions)) sessions.set(id, JSON.parse(keys.decryptionKey!.decryptV1(value.session_data.ephemeral, value.session_data.mac, value.session_data.ciphertext)));
+    for (const [id, { session_data }] of Object.entries(content.sessions)) sessions.set(id, JSON.parse(key.decryptV1(session_data.ephemeral, session_data.mac, session_data.ciphertext)));
     rooms.set(new s.sdk.RoomId(room), sessions);
   }
-  await s.machine.importBackedUpRoomKeys(rooms, () => {}, keys.backupVersion!);
+  await s.machine.importBackedUpRoomKeys(rooms, () => { }, version);
+}
+async function latest<T>(path: string): Promise<T | null> {
+  try { return await request<T>(path); }
+  catch (error) {
+    if (error instanceof HttpError && error.status === 404) return null;
+    throw error;
+  }
+}
+async function prepareBackup(s: Session, old: BackupInfo | null, existing: Matrix.BackupKeys) {
+  const previous = existing.decryptionKey;
+  if (old && (existing.backupVersion !== old.version || previous?.megolmV1PublicKey.publicKeyBase64 !== old.auth_data.public_key)) {
+    throw new Error("请导入当前恢复文件或从持有该备份的可信设备取得授权；现有备份不会被覆盖");
+  }
+  if (old && !old.sealed && previous) return { key: previous, backupVersion: old.version };
+  if (old && previous) await readBackup(s, previous, old.version);
+  current(s);
+
+  const key = s.sdk.BackupDecryptionKey.createRandomKey();
+  const backupVersion = crypto.randomUUID();
+  const publicKey = { public_key: key.megolmV1PublicKey.publicKeyBase64 };
+  const signatures = await s.machine.sign(canonicalJson(publicKey));
+  const newBackup = {
+    version: backupVersion, expectedVersion: old?.version ?? null, algorithm: backupAlgorithm,
+    auth_data: { ...publicKey, signatures: JSON.parse(signatures.asJSON()) }
+  };
+  return { key, backupVersion, newBackup };
+}
+export async function createRecoveryFile(): Promise<RecoveryFile> {
+  const s = session(), status = await deviceStatus();
+  if (!status.trusted || !status.hasRecoverySecrets) throw new Error("请先用可信设备或恢复文件授权本机");
+  const [old, recovery, existing] = await Promise.all([latest<BackupInfo>("/crypto/backup"), latest<{ version: string }>("/crypto/recovery"), s.machine.getBackupKeys()]);
+  current(s);
+  const { key, backupVersion, newBackup } = await prepareBackup(s, old, existing);
+  const bundle = (await s.machine.exportSecretsBundle()).to_json() as Record<string, unknown>;
+  bundle.backup = { algorithm: backupAlgorithm, key: key.toBase64(), backup_version: backupVersion };
+  const bytes = new TextEncoder().encode(JSON.stringify(bundle));
+  const encrypted = s.sdk.Attachment.encrypt(bytes);
+  bytes.fill(0);
+  const version = crypto.randomUUID(), seed = ed25519.utils.randomSecretKey();
+  const enrollmentKey = unpadded(ed25519.getPublicKey(seed));
+  current(s);
+  const command = {
+    expectedVersion: recovery?.version ?? null, version, backupVersion,
+    ciphertext: bytes64(encrypted.encryptedData), enrollmentKey,
+    ...(newBackup ? { newBackup } : {})
+  };
+  preparedRecovery = { session: s, version, backupVersion, key: key.toBase64(), command };
+  return { format: "llmn-recovery-v2", server, accountId: s.account, version, mediaEncryptionInfo: encrypted.mediaEncryptionInfo!, enrollmentSeed: unpadded(seed) };
+}
+export async function commitRecoveryFile(file: RecoveryFile) {
+  const s = session(), pending = preparedRecovery;
+  if (!pending || pending.session !== s || pending.version !== file.version) throw new Error("请重新生成并保存当前恢复文件");
+  await request("/crypto/recovery", "PUT", await signedCommand(s, "recovery", pending.command));
+  current(s);
+  const key = s.sdk.BackupDecryptionKey.fromBase64(pending.key);
+  const before = await s.machine.getBackupKeys();
+  if (before.backupVersion && before.backupVersion !== pending.backupVersion) await s.machine.disableBackup();
+  await s.machine.saveBackupDecryptionKey(key, pending.backupVersion);
+  await s.machine.enableBackupV1(key.megolmV1PublicKey.publicKeyBase64, pending.backupVersion);
+  current(s);
+  s.liveBackup = pending.backupVersion;
+  preparedRecovery = undefined;
+  confirmRecovery();
+  await syncCrypto();
+}
+function validateFile(s: Session, file: RecoveryFile) {
+  if (!["llmn-recovery-v1", "llmn-recovery-v2"].includes(file.format) || file.server !== server || file.accountId !== s.account) throw new Error("恢复文件不属于当前服务器与真人账号");
+}
+async function openFile(s: Session, file: RecoveryFile) {
+  validateFile(s, file);
+  const recovery = await request<{ version: string; ciphertext: string }>(atVersion("/crypto/recovery", file.version));
+  if (recovery.version !== file.version) throw new Error("恢复文件版本不匹配");
+  const bytes = s.sdk.Attachment.decrypt(new s.sdk.EncryptedAttachment(from64(recovery.ciphertext), file.mediaEncryptionInfo));
+  try { return JSON.parse(new TextDecoder().decode(bytes)); } finally { bytes.fill(0); }
+}
+async function confirmFileAdmission(s: Session, file: RecoveryFile) {
+  const granted = await request<{ authorized: boolean; fingerprint: string | null }>(`/crypto/authority/devices/${encodeURIComponent(s.deviceId)}`);
+  current(s);
+  admission(s, granted.authorized && granted.fingerprint === s.machine.identityKeys.ed25519.toBase64());
+  if (file.format === "llmn-recovery-v2" && !s.authorized) {
+    if (!file.enrollmentSeed) throw new Error("文件缺少恢复授权密钥");
+    const fingerprint = s.machine.identityKeys.ed25519.toBase64();
+    const grant = [file.version, s.deviceId, fingerprint];
+    const recoveryProof = unpadded(ed25519.sign(new TextEncoder().encode(statement(s.account, "recover", grant)), from64(file.enrollmentSeed)));
+    await request("/crypto/authority/enroll", "POST", { deviceId: s.deviceId, target: s.deviceId, fingerprint, recoveryVersion: file.version, recoveryProof, proof: await proof(s, "accept", grant) });
+    current(s);
+    admission(s, true);
+  } else {
+    if (!s.authorized) throw new Error("旧历史密钥已导入本机。旧文件不能授权新设备；请由可信设备或经独立身份核验的运维人员核对本机设备指纹后，再次导入旧文件");
+  }
+}
+
+export async function restoreRecoveryFile(file: RecoveryFile) {
+  const s = session(), bundle = await openFile(s, file);
+  const machine = await s.sdk.OlmMachine.initialize(new s.sdk.UserId(matrixUser(s.account)), new s.sdk.DeviceId(crypto.randomUUID()));
+  try {
+    const archive = { ...s, machine };
+    await machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(bundle));
+    const keys = await storedBackup(archive);
+    await readBackup(archive, keys.decryptionKey!, keys.backupVersion!);
+    current(s);
+    const history = await machine.exportRoomKeys(() => true);
+    await s.machine.importExportedRoomKeys(history, () => { });
+  } finally { machine.close(); }
+  current(s);
+  await confirmFileAdmission(s, file);
+  const localKeys = await s.machine.getBackupKeys();
+  if (localKeys.backupVersion && localKeys.decryptionKey && localKeys.backupVersion !== bundle.backup?.backup_version) {
+    const live = await latest<BackupInfo>("/crypto/backup");
+    if (live?.version === localKeys.backupVersion) bundle.backup = { algorithm: backupAlgorithm, key: localKeys.decryptionKey.toBase64(), backup_version: localKeys.backupVersion };
+  }
+  await s.machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(bundle));
   const device = await s.machine.getDevice(new s.sdk.UserId(matrixUser(s.account)), new s.sdk.DeviceId(s.deviceId));
   if (device) await sendOutgoing(s, await device.verify());
-  confirmRecovery();
+  if (file.format === "llmn-recovery-v2") confirmRecovery();
   await syncCrypto();
   return deviceStatus();
 }
@@ -612,32 +806,41 @@ export async function shareConversationHistory(conversation: import("../types").
 }
 
 // The reader has no current room keys or Olm sessions: only the selected recovery bundle and downloaded backup.
-export async function recoveryReader(file: RecoveryFile) {
+export async function recoveryReader(file: RecoveryFile, archivedOnly = false) {
   const s = session();
-  if (file.format !== "llmn-recovery-v1" || file.server !== server || file.accountId !== s.account) throw new Error("恢复文件不属于当前服务器与账号");
-  await syncCrypto();
-  for (let backup = await s.machine.backupRoomKeys(); backup; backup = await s.machine.backupRoomKeys()) await sendOutgoing(s, backup);
-  const recovery = await request<{ version: string; ciphertext: string }>("/crypto/recovery");
-  if (recovery.version !== file.version) throw new Error("恢复文件版本已变化，请选择当前文件");
+  validateFile(s, file);
+  if (!archivedOnly) {
+    await syncCrypto();
+    if (s.liveBackup !== null && s.authorized !== false) {
+      for (let backup = await s.machine.backupRoomKeys(); backup; backup = await s.machine.backupRoomKeys())
+        await sendOutgoing(s, backup);
+    }
+  }
+  const bundle = await openFile(s, file);
   const machine = await s.sdk.OlmMachine.initialize(new s.sdk.UserId(matrixUser(s.account)), new s.sdk.DeviceId(crypto.randomUUID()));
   try {
-    const bytes = s.sdk.Attachment.decrypt(new s.sdk.EncryptedAttachment(from64(recovery.ciphertext), file.mediaEncryptionInfo));
-    try { await machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(JSON.parse(new TextDecoder().decode(bytes)))); } finally { bytes.fill(0); }
-    const keys = await enableStoredBackup({ ...s, machine });
-    const backup = await request<{ rooms: Record<string, { sessions: Record<string, { session_data: { ephemeral: string; mac: string; ciphertext: string } }> }> }>("/crypto/backup/keys");
-    const rooms = new Map<Matrix.RoomId, Map<string, unknown>>();
-    for (const [room, value] of Object.entries(backup.rooms)) {
-      const sessions = new Map<string, unknown>();
-      for (const [id, entry] of Object.entries(value.sessions)) sessions.set(id, JSON.parse(keys.decryptionKey!.decryptV1(entry.session_data.ephemeral, entry.session_data.mac, entry.session_data.ciphertext)));
-      rooms.set(new s.sdk.RoomId(room), sessions);
-    }
-    await machine.importBackedUpRoomKeys(rooms, () => {}, keys.backupVersion!);
+    const archive = { ...s, machine };
+    await machine.importSecretsBundle(s.sdk.SecretsBundle.from_json(bundle));
+    const keys = await storedBackup(archive);
+    await readBackup(archive, keys.decryptionKey!, keys.backupVersion!);
     current(s);
+    const lookedUp = new Set<string>();
     return {
+      check: () => current(s),
       close: () => machine.close(),
       unseal: async (envelope: SignedEnvelope) => {
         current(s);
-        const identity = await s.machine.getIdentity(new s.sdk.UserId(envelope.sender));
+        if (archivedOnly && !lookedUp.has(envelope.sender)) {
+          // Populate this isolated reader's public directory, never its room keys, from the server.
+          // The file's user-signing secret anchors existing contact verifications.
+          const ids = [...new Set([matrixUser(s.account), envelope.sender])], id = crypto.randomUUID();
+          const body = { device_keys: Object.fromEntries(ids.map(user => [user, []])) };
+          const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: id, kind: "keysQuery", body });
+          current(s);
+          await machine.markRequestAsSent(id, s.sdk.RequestType.KeysQuery, JSON.stringify(response));
+          lookedUp.add(envelope.sender);
+        }
+        const identity = await (archivedOnly ? machine : s.machine).getIdentity(new s.sdk.UserId(envelope.sender));
         if (!identity?.isVerified()) throw new Error("历史签名账号主指纹尚未核验");
         verifyEnvelope(envelope, masterFingerprint(identity.masterKey));
         const event = { type: "m.room.encrypted", event_id: envelope.eventId, sender: envelope.sender, origin_server_ts: 0, content: envelope.content };

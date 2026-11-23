@@ -70,6 +70,9 @@ require('fake-indexeddb/auto');
   const backup = await machine.backupRoomKeys();
   assert.ok(backup, 'the fixture must have actual encrypted room-key backup data');
   const backupBody = JSON.parse(backup.body);
+  const originalIdentity=JSON.parse(bootstrap.uploadSigningKeysRequest.body);
+  const archivedEnvelope={...envelope,content:after};
+  archivedEnvelope.signatures=JSON.parse((await machine.sign(canonical.canonicalJson(envelopes.unsignedEnvelope(archivedEnvelope)))).asJSON());
   const bundle = (await machine.exportSecretsBundle()).to_json();
   assert.ok(bundle);
   machine.close();
@@ -83,13 +86,18 @@ require('fake-indexeddb/auto');
   reopened.close();
   key.free();
   const recovery = {}, storage = new Map(), reads = [];
-  let recoveryCiphertext;
+  let recoveryCiphertext;let admitted=false;let targetFingerprint;
   const api = { server: 'https://sdk-recovery.invalid', request: async (path, method, body) => {
     reads.push(path);
+    if(path.startsWith('/crypto/authority/devices/'))return {authorized:admitted,fingerprint:targetFingerprint};
+    path=path.split('?')[0];
     if (path === '/crypto/recovery') return { version: 'recovery-version', ciphertext: recoveryCiphertext };
     if (path === '/crypto/backup') return { version: 'backup-version', algorithm: 'm.megolm_backup.v1.curve25519-aes-sha2', auth_data: { public_key: backupPublic } };
     if (path === '/crypto/backup/keys') return backupBody;
-    if (path === '/crypto/requests') { assert.equal(body.kind, 'signatures'); return {}; }
+    if (path === '/crypto/requests') {
+      if(body.kind==='keysQuery') return {device_keys:{[uid]:{}},master_keys:{[uid]:originalIdentity.master_key},self_signing_keys:{[uid]:originalIdentity.self_signing_key},user_signing_keys:{[uid]:originalIdentity.user_signing_key},failures:{}};
+      assert.equal(body.kind, 'signatures'); return {};
+    }
     throw Error(`unexpected recovery request: ${path}`);
   } };
   const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/engine.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -110,6 +118,15 @@ require('fake-indexeddb/auto');
   const file = recoveryFile(bundle);
   await assert.rejects(recovery.restoreRecoveryFile({ ...file, accountId: 'another-account' }), /不属于/);
   assert.equal(reads.length, 0, 'a wrong-account recovery file must fail before cloud access');
+  const archive=await recovery.recoveryReader(file,true);
+  try {assert.equal((await archive.unseal(archivedEnvelope)).content.text,'second offline message');}
+  finally {archive.close();}
+  assert.equal((await restored.crossSigningStatus()).hasMaster,false,'isolated read-only export does not change the active identity');
+  targetFingerprint=restored.identityKeys.ed25519.toBase64();
+  await assert.rejects(recovery.restoreRecoveryFile(file),/旧文件不能授权/);
+  assert.equal((await restored.crossSigningStatus()).hasMaster,false,'archived v1 cannot issue future identity');
+  assert.equal((await restored.getBackupKeys()).decryptionKey,undefined);
+  admitted=true; // Independent operator enrollment, separate from this file.
   await recovery.restoreRecoveryFile(file);
   const restoredBackup = await restored.getBackupKeys();
   assert.equal(restoredBackup.backupVersion, 'backup-version');

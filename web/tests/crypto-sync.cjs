@@ -5,7 +5,10 @@ function fixture() {
   const storage = new Map(), events = [], calls = [];
   const state = { outgoing: [], received: [], response: { next_batch: '1', llmn_device_lists_version: 'v1', to_device: { events: [] }, device_lists: { changed: [], left: [] }, device_one_time_keys_count: {}, device_unused_fallback_key_types: [] } };
   class Id { constructor(value) { this.value = value; } }
+  storage.set('llmn-crypto-device:'+JSON.stringify(["https://sync.invalid","a"]),JSON.stringify({deviceId:"d",cursor:"0"}));
   const machine = {
+    identityKeys:{ed25519:{toBase64:()=>"local-pinned-key"}},
+    async sign() { return {asJSON:()=>JSON.stringify({"@a:llmn":{"ed25519:d":"signature"}})}; },
     async outgoingRequests() { return state.outgoing; },
     async markRequestAsSent(id) { state.outgoing = state.outgoing.filter(r => r.id !== id); },
     async receiveSyncChanges() { if (state.queryOnReceive) state.outgoing.push({ id: 'query', type: 1, body: '{}' }); return state.received; },
@@ -21,7 +24,7 @@ function fixture() {
     throw new Error('unexpected request ' + path);
   } };
   const exports = {};
-  vm.runInNewContext(source + '\nactive = { account:"a", owner:ownerOf("a"), deviceId:"d", cursor:"0", machine, sdk }; exports.flushForTest = () => flush(active);', { exports, machine, sdk, crypto: require('node:crypto').webcrypto, Event, window: { dispatchEvent: e => events.push(e) }, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, require: name => name === '../api' ? api : {} });
+  vm.runInNewContext(source + '\nactive = { account:"a", owner:ownerOf("a"), deviceId:"d", cursor:"0", machine, sdk }; exports.flushForTest = () => flush(active);', { exports, machine, sdk, crypto: require('node:crypto').webcrypto, Event, CustomEvent, window: { dispatchEvent: e => events.push(e) }, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, require: name => name === '../api' ? api : name==='./canonical' ? {canonicalJson:JSON.stringify} : {} });
   return { exports, state, storage, events, calls };
 }
 (async () => {
@@ -39,14 +42,25 @@ function fixture() {
     await h.exports.syncCrypto();
     assert.equal(h.events.length, 1, change + ' triggers a refresh');
   }
+  const wrongDevice=fixture();
+  Object.assign(wrongDevice.state.response,{llmn_authorized:true,llmn_fingerprint:'other-device-key'});
+  await wrongDevice.exports.syncCrypto();
+  assert.equal(wrongDevice.exports.trustedCryptoDevice('a'),null);
+  assert.equal(wrongDevice.storage.get('llmn-device-admission:'+JSON.stringify(['https://sync.invalid','a'])+':d'),'');
   const authorization = fixture();
   authorization.state.response.to_device.events.push({});
   authorization.state.received = [{ encryptionInfo: { isSenderVerified: () => true, sender: { toString: () => '@a:llmn' }, senderDevice: { toString: () => 'sender' } }, rawEvent: JSON.stringify({ type: 'com.llmn.recovery.v1', sender: '@a:llmn', content: { senderDevice: 'sender', secrets: {}, roomKeys: [] } }) }];
   await authorization.exports.syncCrypto(); assert.equal(authorization.events.length, 1);
-  const history = fixture();
-  history.state.response.to_device.events.push({});
-  history.state.received = [{ encryptionInfo: { isSenderVerified: () => true, sender: { toString: () => '@ai:llmn' } }, rawEvent: JSON.stringify({ type: 'com.llmn.ai-history.v1', sender: '@ai:llmn', content: { aiId: 'ai', keys: [] } }) }];
-  await history.exports.syncCrypto(); assert.equal(history.state.imported, true); assert.equal(history.events.length, 1, 'imported history keys notify');
+  const cid = 'c508c31f-608f-4b19-acd9-24272c416a17';
+  const scoped = { aiId: 'ai', audienceRevision: 'audience', chatRevisions: { [cid]: '3' }, keys: [{ room_id: `!${cid}:llmn` }] };
+  for (const [content, allowed] of [[scoped, true], [{ aiId: 'ai', keys: scoped.keys }, false], [{ ...scoped, keys: [{ room_id: '!resource:llmn' }] }, false]]) {
+    const history = fixture();
+    history.state.response.to_device.events.push({});
+    history.state.received = [{ encryptionInfo: { isSenderVerified: () => true, sender: { toString: () => '@ai:llmn' } }, rawEvent: JSON.stringify({ type: 'com.llmn.ai-history.v1', sender: '@ai:llmn', content }) }];
+    await history.exports.syncCrypto();
+    assert.equal(!!history.state.imported, allowed, 'only keys in the authenticated chat scope may be imported');
+    assert.ok(history.events.length);
+  }
   const queued = fixture();
   queued.storage.set('llmn-crypto-outgoing:' + JSON.stringify(['https://sync.invalid', 'a']), JSON.stringify([{ id: 'persisted', kind: 'signatures', body: {} }]));
   await queued.exports.syncCrypto(); assert.equal(queued.events.length, 1, 'persisted outgoing work counts');

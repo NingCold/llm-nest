@@ -1,7 +1,7 @@
 import "./local-ai-setup.css";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { cryptoDevice, deviceStatus, devices, recoveryConfirmed, trustDevice } from "./crypto/engine";
+import { trustedCryptoDevice, signLocalExportChallenge, deviceStatus, devices, recoveryConfirmed, trustDevice } from "./crypto/engine";
 import { EncryptedResourcePanel } from "./crypto/ResourcePanel";
 
 interface CryptoStatus { deviceId: string | null; fingerprint: string | null; curve: string | null; master: string | null; identityReady: boolean; recoverySaved: boolean; peerTrusted: boolean; ready: boolean }
@@ -23,8 +23,8 @@ export function LocalAiEncryption({ operatorId, aiId, bindingVersion, running, c
     setStatus(value);
   };
   const epoch = useRef(0);
-  const deviceId = cryptoDevice(operatorId);
-  const current = (ticket: number) => ticket === epoch.current && !!deviceId && cryptoDevice(operatorId) === deviceId;
+  const deviceId = trustedCryptoDevice(operatorId);
+  const current = (ticket: number) => ticket === epoch.current && !!deviceId && trustedCryptoDevice(operatorId) === deviceId;
   const args = { aiId, deviceId };
   const read = async (ticket: number) => {
     const value = await invoke<CryptoStatus>("local_agent_crypto_status", args);
@@ -46,6 +46,17 @@ export function LocalAiEncryption({ operatorId, aiId, bindingVersion, running, c
     try { await work(ticket); } catch (e) { if (current(ticket)) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (current(ticket)) setBusy(false); }
   };
+  const exportRecovery = async (ticket: number) => {
+    const challenge = await invoke<string | null>("local_agent_crypto_export_challenge", args);
+    if (!current(ticket)) return;
+    if (!challenge) { setNotice("已取消保存恢复文件。"); return; }
+    const signature = await signLocalExportChallenge(operatorId, challenge);
+    if (!current(ticket)) return;
+    await invoke("local_agent_crypto_export", { ...args, signature });
+    if (!current(ticket)) return;
+    await read(ticket);
+    if (current(ticket)) setNotice("恢复文件已保存，请确认已妥善保管。");
+  };
   if (!deviceId || !recoveryConfirmed(operatorId)) return <p role="status">请先在“我的账号 → 可信设备与恢复”解锁可信设备，并确认真人账号恢复文件已妥善保存，再继续配置 AI。</p>;
   const mutual = !!status?.identityReady && !!status.recoverySaved && !!status.peerTrusted && trusted;
   return <section className="cloud-ai-section">
@@ -57,7 +68,7 @@ export function LocalAiEncryption({ operatorId, aiId, bindingVersion, running, c
       {status && !status.identityReady && <div className="cloud-actions"><button className="social-button secondary" disabled={busy} onClick={() => void act(async ticket => { const value = await invoke<CryptoStatus>("local_agent_crypto_initialize", args); if (current(ticket)) { updateStatus(value); await read(ticket); } })}>准备首次加密身份</button><button className="social-button secondary" disabled={busy} onClick={() => void act(async ticket => { const imported = await invoke<boolean>("local_agent_crypto_recover", args); if (!current(ticket)) return; if (imported) await read(ticket); else setNotice("已取消导入，尚未恢复身份。"); })}>使用恢复文件恢复身份</button></div>}
       {status?.identityReady && <>
         <p>AI 已有独立身份。已有身份不会重新建立；需要迁移时导入原有恢复文件。</p>
-        <button className="social-button secondary" disabled={busy} onClick={() => void act(async ticket => { const exported = await invoke<boolean>("local_agent_crypto_export", args); if (!current(ticket)) return; if (exported) { await read(ticket); if (current(ticket)) setNotice("恢复文件已保存，请确认已妥善保管。"); } else setNotice("已取消保存恢复文件。"); })}>保存 AI 恢复文件</button>
+        <button className="social-button secondary" disabled={busy} onClick={() => void act(exportRecovery)}>保存 AI 恢复文件</button>
         <label className="cloud-check"><input type="checkbox" checked={saved} disabled={!status.recoverySaved || busy} onChange={e => setSaved(e.target.checked)} />我确认 AI 恢复文件已妥善保存</label>
         <details open={!mutual}><summary>核对本机 AI 独立指纹</summary><p>这些指纹直接来自本机 Agent。请核对 AI 账号与设备；确认后，本机真人设备与 AI 将互相信任。</p><p className="account-id">设备：{status.deviceId}</p><p className="account-id">Ed25519：{status.fingerprint}</p><p className="account-id">Curve25519：{status.curve}</p><p className="account-id">账号主指纹：{status.master}</p></details>
         {human && <details open={!mutual}><summary>核对当前真人设备指纹</summary><p>这些指纹来自你当前解锁的设备。</p><p className="account-id">设备：{human.deviceId}</p><p className="account-id">Ed25519：{human.fingerprint}</p><p className="account-id">Curve25519：{human.curve}</p><p className="account-id">账号主指纹：{human.master}</p></details>}

@@ -9,7 +9,7 @@ import { AuthPage } from "./AuthPage";
 import { LockScreen } from "./LockScreen";
 import ChatApp, { type ChatLocation } from "./ChatApp";
 import { CryptoDevices } from "./crypto/Devices";
-import { cryptoDevice, hasCryptoDevice, lockCrypto, prewarmCrypto } from "./crypto/engine";
+import { cryptoDevice, hasCryptoDevice, lockCrypto, prewarmCrypto, trustedCryptoDevice } from "./crypto/engine";
 import { forgetAutoUnlock, pauseAutoUnlock, tryAutoUnlock, unlockManually } from "./crypto/auto-unlock";
 import { request, HttpError, connectServer, server, invalidate } from "./api";
 import type { Account } from "./types";
@@ -30,6 +30,7 @@ export function AccountSession({ account, onLogout, onEndSession }: {
   const automatic = useRef<Promise<boolean> | null>(null);
   const position = useRef<ChatLocation>({ active: "", tab: "messages", accountSection: "profile" });
   const unlocked = !!cryptoDevice(account.id);
+  const trusted = trustedCryptoDevice(account.id);
   useEffect(() => {
     if (!unlocked) return prewarmCrypto(account.id);
   }, [account.id, unlocked]);
@@ -49,15 +50,15 @@ export function AccountSession({ account, onLogout, onEndSession }: {
   };
   const lock = () => { pauseAutoUnlock(account.id); lockCrypto(); setRecovery(false); setError(""); };
   if (checking) return <LockScreen accountName={account.name} busy autoUnlocking error="" onUnlock={() => {}} onRecovery={() => {}} onLogout={() => void act(onLogout)} />;
-  if (recovery) return <main className={`social-shell session-recovery${CUSTOM_WINDOW_CHROME ? " desktop-chrome" : ""}`}>
+  if (recovery || (unlocked && !trusted)) return <main className={`social-shell session-recovery${CUSTOM_WINDOW_CHROME ? " desktop-chrome" : ""}`}>
     <div className="session-recovery-actions">
-      <button className="social-button secondary" onClick={() => setRecovery(false)}><ArrowLeft size={16} />{cryptoDevice(account.id) ? "进入聊天" : "返回解锁"}</button>
+      <button className="social-button secondary" onClick={() => { if (unlocked && !trusted) lock(); else setRecovery(false); }}><ArrowLeft size={16} />{trusted ? "进入聊天" : "返回解锁"}</button>
       <button className="text-button" disabled={busy} onClick={() => void act(onLogout)}>退出登录</button>
     </div>
     {error && <p className="social-error" role="alert">{error}</p>}
     <CryptoDevices accountId={account.id} onLock={lock} />
   </main>;
-  if (!cryptoDevice(account.id) || busy) return <LockScreen accountName={account.name} busy={busy} error={error}
+  if (!trusted || busy) return <LockScreen accountName={account.name} busy={busy} error={error}
     onUnlock={passphrase => void act(() => unlockManually(account.id, passphrase))}
     onRecovery={() => { setError(""); setRecovery(true); }} onLogout={() => void act(onLogout)} />;
   return <ChatApp account={account} location={position.current} rememberLocation={value => { position.current = { ...position.current, ...value }; }}

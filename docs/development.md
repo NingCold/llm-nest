@@ -4,7 +4,7 @@
 
 默认入口是云端真人与 AI 私聊、群聊：CloudApp 连接独立 `cloud-server`，社交数据保存在 PostgreSQL。桌面客户端还可以管理本机 Agent，无需运行本地聊天服务器。旧 SQLite 数据可用独立迁移工具导入。
 
-Android 使用独立 Gradle 工程；在 Android Studio 打开 [android/](../android/README.md) 即可构建。它复用 Web 的加密引擎，无需构建 Web 页面、桌面程序或 Agent。
+[Android 客户端](https://github.com/NingCold/llm-nest-app) 在独立仓库构建，按固定提交复用 Web 的加密引擎。
 
 ## 准备 Web 和桌面环境
 
@@ -37,7 +37,7 @@ Windows/Linux 使用共用内容内窗口控制。Linux 当前窗口布局仍需
 
 ## 从源码运行
 
-所有命令从仓库根目录执行。先按[服务端说明](https://github.com/NingCold/llm-nest-server)准备独立服务，客户端仓不编译服务端。三仓源码与固定 Alpha 产物均可从公开 GitHub 获取；客户端只消费指定版本的 Agent 程序，部署组合见[当前安排](project/current.md)。
+所有命令从仓库根目录执行。先按[服务端说明](https://github.com/NingCold/llm-nest-server)准备独立服务，客户端仓不编译服务端。客户端只消费指定版本的 Agent 程序，部署组合见[当前安排](project/current.md)。
 
 开发 Web 页面时另开终端：
 
@@ -83,7 +83,7 @@ Web 和桌面随包提供项目的 LICENSE、NOTICE，以及 npm 生产依赖和
 
 `agent-node` 包提供 `llmn-agent`，从本机 CLI 初始化、配对和运行，具体配置见[节点操作与命令](https://github.com/NingCold/llm-nest-agent/blob/main/docs/node-cli.md)。初始化私有目录后，设置服务器及可选 CA，在“我的账号 → 我管理的 AI”创建 AI 并填写配对码。模型 Key 只通过节点环境变量引用，不加入云端配置；节点 SQLite 保存 AI 档案、专用凭据和检查点，与旧本地库分开。
 
-外部程序可只依赖[连接器](https://github.com/NingCold/llm-nest-server/blob/main/connector/README.md)。固定回答示例覆盖任务接收、回复、取消、撤权及不支持的管理请求，有独立的模拟 WSS 测试；不调用模型，也不代替持久恢复的自带 Agent。在线角色与模型管理由节点声明 `profileManagement` 能力，旧节点和示例不会被当成支持该能力。
+外部程序可只依赖[连接器](https://github.com/NingCold/llm-nest-connect)。固定回答示例覆盖任务接收、回复、取消、撤权及不支持的管理请求，有独立的模拟 WSS 测试；不调用模型，也不代替持久恢复的自带 Agent。在线角色与模型管理由节点声明 `profileManagement` 能力，旧节点和示例不会被当成支持该能力。
 
 ## 检查改动
 

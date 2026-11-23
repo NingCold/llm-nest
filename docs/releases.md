@@ -4,7 +4,7 @@
 
 本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。
 
-公开客户端为 [0.1.1-alpha.13](https://github.com/NingCold/llm-nest/releases/tag/v0.1.1-alpha.13)，桌面附带 Agent `alpha.13`。当前源码为 `0.1.1-alpha.21`，本机改进版附带 Agent `alpha.14`，尚未公开发布；不要把本地构建或安装当作公开 Release。实际安装与部署组合见[当前安排](project/current.md)，历史检查结果见[验证记录](validation/records.md)。
+当前发布候选为 **0.1.2**。独立安全审查通过后再公开稳定版；当前可下载的版本见[公开发布页](https://github.com/NingCold/llm-nest/releases)。实际安装和部署组合见[当前安排](project/current.md)。
 
 ## 安装包范围
 
@@ -28,22 +28,22 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 | `desktop/package.json` | `version` |
 | `web/package.json` | `version` |
 
-每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.1-alpha.21`，尚未公开发布；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
+每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.2`，尚未公开发布；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
-MSI 另需纯数字的 `bundle.windows.wix.version`，当前为 `0.1.1.21`。前三段与应用基础版本一致，第四段与 `alpha.N` 中的 N 一致，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
+MSI 另需纯数字的 `bundle.windows.wix.version`，候选版为 `0.1.2`。正式编号直接使用三段版本；`alpha.N` 以第四段表示 N，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
 
 客户端、服务端和 Agent 分别维护版本，不再要求三个产品同版。修改相应 Cargo 包版本时同步锁文件。客户端版本与发布标签检查：
 
 ```bash
-python scripts/release.py validate --tag v0.1.1-alpha.21
+python scripts/release.py validate --tag v0.1.2
 python scripts/test_release.py
 ```
 
 示例标签替换为实际版本。确认代码、检查和安装包验收完成后，再在待发布提交上打标签并推送：
 
 ```bash
-git tag -a v0.1.1-alpha.21 -m "LLM Nest 0.1.1-alpha.21"
-git push origin v0.1.1-alpha.21
+git tag -a v0.1.2 -m "LLM Nest 0.1.2"
+git push origin v0.1.2
 ```
 
 修改版本、构建安装包、推送标签和公开 Release 是分别执行的操作。已公开版本需要修复时，发布新版本，保留旧标签和资产。
@@ -51,7 +51,7 @@ git push origin v0.1.1-alpha.21
 ## GitHub 工作流
 
 - [ci.yml](../.github/workflows/ci.yml)：检查 PR、main 提交和手动运行，覆盖 Windows/Linux 的 Rust、前端和离线链路。
-- [release.yml](../.github/workflows/release.yml)：手动运行生成 Actions artifacts，可显式输入已存在且匹配源码版本的 release_tag 创建草稿；必须输入实际已发布 Agent 的固定 HTTPS 清单和版本；不伪造清单或使用浮动版本，附带安装包和 SHA-256 清单。
+- [release.yml](../.github/workflows/release.yml)：手动运行生成 Actions artifacts，可显式输入已存在且匹配源码版本的 release_tag 创建草稿；正式发版输入已公开 Agent 的固定 HTTPS 清单和版本；只构建候选时可改填官方 Agent 主分支成功的 `agent_run` 编号，使用该次构建的程序及声明，不生成公开 Release。
 
 首次使用可在 **Actions → Build installers → Run workflow** 选择分支，下载 `installers-windows-x86_64` 和 `installers-linux-x86_64` 验证。工作流使用临时 `GITHUB_TOKEN`，无需模型 API Key 或个人访问令牌。
 
@@ -129,7 +129,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 ```bash
 pnpm --dir web build
-python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.21 --output /新的web产物目录
+python scripts/package-web.py --dist web/dist --version 0.1.2 --output /新的web产物目录
 ```
 
 将 Web 包及 web-manifest.json 交给独立服务端仓，按[服务端部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)创建构建上下文和镜像。客户端仓不包含服务端准备脚本。保留上一组可回退产物；正式 Agent 下载使用长期可获取的固定 HTTPS 地址，不能依赖临时 CI artifact 或 `latest`。
@@ -140,14 +140,9 @@ python scripts/package-web.py --dist web/dist --version 0.1.1-alpha.21 --output 
 
 发布工作流和 Linux 构建镜像已按固定 SHA-256 安装官方 cargo-about 0.9.3；本地构建须自行准备该版本，可通过 `CARGO_ABOUT` 指定路径。前端许可生成还要求 Corepack 可用，并使用固定 pnpm 11.22.0。Agent 清单必须为目标平台提供 `notices.file`、`notices.sha256`，正式下载另需固定 HTTPS `notices.url`；声明缺失或校验失败时不打包。
 
-Web 包随附 `THIRD_PARTY_NOTICES.txt`、`LICENSE.txt` 和 `NOTICE.txt`。桌面另带目标平台的 Rust、安装器及 Agent 声明；Android APK 同时包含[原生依赖声明](../android/gradle/licenses/README.md)和 Matrix/WASM 声明。依赖升级时按[开发指南](development.md#生成随包声明)更新来源与正文，再检查实际归档。
+Web 包随附 `THIRD_PARTY_NOTICES.txt`、`LICENSE.txt` 和 `NOTICE.txt`。桌面另带目标平台的 Rust、安装器及 Agent 声明；Android APK 同时包含[原生依赖声明](https://github.com/NingCold/llm-nest-app/blob/main/gradle/licenses/README.md)和 Matrix/WASM 声明。依赖升级时按[开发指南](development.md#生成随包声明)更新来源与正文，再检查实际归档。
 
-有两项第三方署名仍待上游确认：
-
-- **Web · `react-remove-scroll-bar 2.3.8`**：npm 包声明 MIT，但没有附全文，对应提交也未公开。随包材料标明所附 MIT 正文来自上游的 2.3.7 源码树；该正文是否适用于 2.3.8，见[上游确认请求](https://github.com/theKashey/react-remove-scroll-bar/issues/96)。
-- **Linux 桌面 · `sigchld 0.2.4`**：发布包和对应源码提交都声明 MIT，但未提供 LICENSE 或版权行。[原生依赖归属说明](../scripts/licenses/README.md)记录了可核实的信息。
-
-发布前应取得这两个版本的上游确认，或改用许可材料完整的依赖版本并验证兼容性。
+Web 固定使用 `react-remove-scroll-bar 2.3.7`，随包文本取自[仅补入 LICENSE 的上游源码变更](https://github.com/theKashey/react-remove-scroll-bar/compare/29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4...8ca9ba5ea52de03308fe8ced94f7b159a44d28ff)。桌面端不再引入未使用的 Shell 插件及其 `sigchld` 依赖。
 
 ## 发布前核对
 

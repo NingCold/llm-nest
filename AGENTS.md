@@ -1,6 +1,6 @@
 # LLM Nest 客户端工作约定
 
-Web 与桌面共用 CloudApp；Android 是[独立原生工程](android/README.md)。跨仓联调先查[版本组合](docs/project/current.md#现在使用的是哪个版本)。
+Web 与桌面共用 CloudApp；Android 是[独立原生工程](https://github.com/NingCold/llm-nest-app)。跨仓联调先查[版本组合](docs/project/current.md#现在使用的是哪个版本)。
 
 ## 协作与提交
 

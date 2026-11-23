@@ -66,22 +66,14 @@ jobs:
           python scripts/test_release.py
           python scripts/test_build_artifacts.py
           node --test desktop/scripts/prepare-agent.test.mjs scripts/web-notices.test.cjs scripts/desktop-notices.test.cjs
-          node scripts/web-notices.cjs target/web-THIRD_PARTY_NOTICES.txt
-
-  android:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Build native Android client, run unit tests and lint
-        working-directory: android
-        run: JAVA_HOME="$JAVA_HOME_21_X64" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24.18.0
-      - name: Check the Android Matrix bridge
+      - name: Build and package the Web client
+        if: runner.os == 'Linux'
         run: |
-          corepack pnpm@11.22.0 --dir web exec tsc -p ../android/crypto/tsconfig.json
-          node android/crypto/test.cjs
+          pnpm --dir web build
+          python scripts/package-web.py --dist web/dist --version "$(node -p "require('./web/package.json').version")" --output web-candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: runner.os == 'Linux' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: web-candidate
+          path: web-candidate/*
+          if-no-files-found: error

@@ -48,3 +48,7 @@ STATE.md
 # Local Python/build helpers
 __pycache__/
 /release-assets/
+
+# Local outputs retained from the former Android checkout.
+/android/.gradle/
+/android/app/build/

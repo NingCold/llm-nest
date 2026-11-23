@@ -1,3 +1,7 @@
 # pnpm 11 构建脚本白名单（原 package.json 的 pnpm 字段已废弃，统一放这里）
 allowBuilds:
   esbuild: true
+
+# Upstream publishes the license for the 2.3.7 source tree.
+overrides:
+  react-remove-scroll-bar: 2.3.7

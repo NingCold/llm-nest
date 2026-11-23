@@ -20,12 +20,13 @@ LLM Nest 处于**邀请制 Alpha 的内网日常试用阶段**。首版要让受
 
 ## Android 客户端
 
-[Android 开发版](../../android/README.md)可登录已有账号，从“通讯录”进入原私聊，或从“消息”打开已加入的群聊，支持文字收发、实时更新、历史、本机文字草稿及加密设备与恢复流程。验收范围见[模拟器与真机记录](../../android/testing.md)。注册、群管理、结构化提及、附件收发和 AI 节点管理仍使用 Web 或桌面，后台不接收实时更新或推送。Android 尚未公开发布或上架，不列入本轮邀请试用。
+[Android 开发版](https://github.com/NingCold/llm-nest-app)可登录已有账号，从“通讯录”进入原私聊，或从“消息”打开已加入的群聊，支持文字收发、实时更新、历史、本机文字草稿及加密设备与恢复流程。验收范围见[模拟器与真机记录](https://github.com/NingCold/llm-nest-app/blob/main/testing.md)。注册、群管理、结构化提及、附件收发和 AI 节点管理仍使用 Web 或桌面，后台不接收实时更新或推送。Android 尚未公开发布或上架，不列入本轮邀请试用。
 
 ## 现在使用的是哪个版本
 
 | 环境 | 客户端 / Web | Agent | 服务端 |
 | --- | --- | --- | --- |
+| 待独立审查的源码候选 | `0.1.2` | `0.1.2` | `0.1.2` |
 | 本机与内网试用 | Windows `alpha.21`；站点 Web `alpha.20` | 桌面附带 `alpha.14` | `alpha.13` |
 | 已公开发布的 Alpha | Windows、Linux 和 Web `alpha.13` | `alpha.13` | `alpha.12` |
 

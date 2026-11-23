@@ -30,8 +30,10 @@ flowchart LR
 
 | 仓库 | 代码入口 |
 | --- | --- |
-| [客户端](../../README.md) | `web/src/cloud` 处理账号、聊天与解密，`web/src/chat` 提供聊天组件和草稿。`desktop/src-tauri` 管理原生窗口、文件、网络和本机 Agent 进程。[Android](../../android/README.md) 原生界面通过同一 HTTPS/SSE 协议连接云端，密文交给随包的共用 Matrix 引擎处理。 |
-| [服务端](https://github.com/NingCold/llm-nest-server) | `server` 提供 HTTPS/SSE、节点通信、PostgreSQL 与附件存储；`connector` 和 `crates/social` 提供独立协议包与共用类型。 |
+| [客户端](../../README.md) | `web/src/cloud` 处理账号、聊天与解密，`web/src/chat` 提供聊天组件和草稿。`desktop/src-tauri` 管理原生窗口、文件、网络和本机 Agent 进程。 |
+| [Android](https://github.com/NingCold/llm-nest-app) | 原生界面通过同一 HTTPS/SSE 协议连接云端，密文交给随包的共用 Matrix 引擎处理。 |
+| [服务端](https://github.com/NingCold/llm-nest-server) | `server` 提供 HTTPS/SSE、节点通信、PostgreSQL 与附件存储；`crates/social` 提供共用类型。 |
+| [连接器](https://github.com/NingCold/llm-nest-connect) | `connector` 提供节点协议、HTTP/WSS 与本机传输。 |
 | [Agent](https://github.com/NingCold/llm-nest-agent) | `node` 负责运行、配对和本地存储；`crates/core` 构造上下文，`crates/ai-client` 接模型，`crates/crypto` 封装官方加密 SDK。 |
 
 服务端不调用模型，桌面使用固定版本的独立 Agent 产物，外部 Agent 可以单独引用连接器。模型配置调整只影响新的运行；更换节点保留 AI 账号、联系人和云端历史。消息被撤回、来源版本变化或成员失去权限后，节点重新检查材料，失效引用不会继续进入模型上下文。
@@ -45,7 +47,7 @@ flowchart LR
 | 离线、取消与恢复 | 云端继续保存合法消息；节点恢复只接取尚未开始且仍有效的任务。已开始的调用可能产生费用，结果未知不自动重做；取消后的旧结果不能提交。 |
 | 部署与接入 | 服务端使用 HTTPS、PostgreSQL 和独立附件目录，数据库与附件成套备份。节点主动连接，不要求用户开放入站端口。内网试用的测试证书和测试收件箱不代替扩大邀请前的证书信任及真实邮件验收。 |
 | 迁移与换节点 | 先备份、预览并保留旧库、账号和历史；换节点重新授权，导入或恢复有效 AI 资料。Key 和节点凭据不进资料包，旧运行不重放，原约定经确认后才启用。详见[迁移指南](https://github.com/NingCold/llm-nest-server/blob/main/docs/migration.md)。 |
-| 独立构建与发布 | 协议由服务端仓维护，消费者固定同一 Git 提交和锁文件；桌面消费带版本、平台和摘要的 Agent，服务端消费带版本和摘要的 Web 包，不从兄弟源码构建。三个产品独立发版，协议与产物依赖先就绪再升级消费者。 |
+| 独立构建与发布 | 各端按连接器仓的同一固定提交消费节点协议并保留锁文件；桌面消费带版本、平台和摘要的 Agent，服务端消费带版本和摘要的 Web 包，不从兄弟源码构建。各仓独立发版，协议与产物依赖先就绪再升级消费者。 |
 
 代码分仓不要求重新注册、配对或生成身份，也不触发数据库结构回退。需要回退时恢复已验证的兼容版本组合，保留资料与上一组可运行产物。构建与发布入口见[开发指南](../development.md)和[发布指南](../releases.md)，拆仓证据与备份位置见[验收记录](../validation/records.md#拆仓第二批验证)。
 

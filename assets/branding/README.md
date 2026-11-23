@@ -8,6 +8,6 @@
 pnpm --dir desktop icons
 ```
 
-脚本会生成桌面使用的 ICO、ICNS 和 PNG，以及网页图标、界面标识和 Android 启动图标素材。首次运行前，需要按[开发指南](../../docs/development.md)安装前端依赖。
+脚本会生成桌面使用的 ICO、ICNS 和 PNG，以及网页图标与界面标识。Android 的启动图标使用生成的 `desktop/src-tauri/icons/128x128@2x.png`；更新品牌时同步到[移动端](https://github.com/NingCold/llm-nest-app/blob/main/app/src/main/res/drawable-nodpi/launcher_tile.png)。首次运行前，需要按[开发指南](../../docs/development.md)安装前端依赖。
 
 生成的桌面图标位于 `desktop/src-tauri/icons`，网页资源位于 `web/public`。界面内的标识会随浅色、深色主题调整颜色。

@@ -1,9 +1,0 @@
-.gradle/
-.kotlin/
-build/
-local.properties
-.idea/
-*.iml
-.cxx/
-captures/
-java_pid*.hprof

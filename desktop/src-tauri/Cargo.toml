@@ -2,7 +2,7 @@
 license.workspace = true
 repository.workspace = true
 name = "tauri-frontend"
-version = "0.1.1-alpha.21"
+version = "0.1.2"
 edition.workspace = true
 default-run = "LLM-Nest"
 
@@ -19,7 +19,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["devtools", "tray-icon"] }
-tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tempfile = "3"
 open = { version = "5", features = ["shellexecute-on-windows"] }

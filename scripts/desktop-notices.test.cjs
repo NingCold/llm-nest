@@ -13,16 +13,6 @@ test('actual placeholder attribution blocks a silently failed cargo-about clarif
   }
 });
 
-test('known sigchld gap is identified as metadata, not an invented copyright holder', () => {
-  const prefix = '='.repeat(72) + '\nMIT License\nUsed by:\nsigchld 0.2.4\nSource: https://static.crates.io/crates/sigchld/sigchld-0.2.4.crate\nRepository: https://github.com/oconnor663/sigchld.rs\n\nMIT License\n\n';
-  const tail = '\n\nPermission body stays unchanged.\r\n' + '='.repeat(100) + '\r\nAppendix';
-  const output = completeRustNotices(prefix + 'Copyright (c) <year> <copyright holders>' + tail);
-  assert.ok(output.startsWith(prefix));
-  assert.ok(output.endsWith(tail));
-  assert.match(output, /not a verified copyright-holder statement/);
-  assert.match(output, /upstream attribution remains unconfirmed/);
-});
-
 test('target attribution includes only its actual fixed-version crate COPYRIGHT files', () => {
   const output = copyrightNotices('utf8_iter 1.0.4\nSource: archive\nRepository: upstream\n');
   assert.match(output, /Copyright Mozilla Foundation/);

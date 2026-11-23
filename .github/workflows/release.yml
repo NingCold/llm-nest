@@ -8,9 +8,13 @@ on:
         type: string
         required: false
       agent_manifest:
-        description: 'Immutable HTTPS manifest URL for separately published Agent'
+        description: 'Fixed HTTPS manifest for a published Agent (or use agent_run for acceptance only)'
         type: string
-        required: true
+        required: false
+      agent_run:
+        description: 'Successful Agent artifacts workflow run on main (candidate builds without a release tag)'
+        type: string
+        required: false
       agent_version:
         description: 'Exact Agent version from manifest'
         type: string
@@ -29,6 +33,9 @@ concurrency:
 
 jobs:
   build:
+    permissions:
+      contents: read
+      actions: read
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
     strategy:
@@ -95,12 +102,29 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo test --workspace --locked
-      - name: Select fixed published Agent manifest
+      - name: Select verified Agent inputs
         env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_RUN: ${{ inputs.agent_run }}
           AGENT_MANIFEST: ${{ inputs.agent_manifest }}
           AGENT_VERSION: ${{ inputs.agent_version }}
         run: |
-          test -n "$AGENT_MANIFEST" && test -n "$AGENT_VERSION"
+          set -euo pipefail
+          [[ "$AGENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          if [[ -n "$AGENT_RUN" ]]; then
+            [[ -z "$RELEASE_TAG" && -z "$AGENT_MANIFEST" && "$AGENT_RUN" =~ ^[0-9]+$ ]]
+            repo=NingCold/llm-nest-agent
+            gh api "repos/$repo/actions/runs/$AGENT_RUN" --jq '[.path,.event,.head_branch,.head_repository.full_name,.conclusion] | @tsv' |
+              grep -Fx $'.github/workflows/release.yml\tworkflow_dispatch\tmain\tNingCold/llm-nest-agent\tsuccess'
+            gh run download "$AGENT_RUN" --repo "$repo" --name agent-release-assets --dir candidate-agent
+            AGENT_MANIFEST="$GITHUB_WORKSPACE/candidate-agent/agent-manifest.json"
+            target='${{ matrix.target }}'
+            suffix=""; if [[ "$RUNNER_OS" == Windows ]]; then suffix=".exe"; fi
+            echo "LLMN_AGENT_FILE=$GITHUB_WORKSPACE/candidate-agent/llmn-agent-$AGENT_VERSION-$target$suffix" >> "$GITHUB_ENV"
+            echo "LLMN_AGENT_NOTICES_FILE=$GITHUB_WORKSPACE/candidate-agent/THIRD_PARTY_NOTICES-$AGENT_VERSION-$target.txt" >> "$GITHUB_ENV"
+          else
+            [[ "$AGENT_MANIFEST" =~ ^https://[^[:space:]]+$ ]]
+          fi
           echo "LLMN_AGENT_VERSION=$AGENT_VERSION" >> "$GITHUB_ENV"
           echo "LLMN_AGENT_TARGET=${{ matrix.target }}" >> "$GITHUB_ENV"
           echo "LLMN_AGENT_MANIFEST=$AGENT_MANIFEST" >> "$GITHUB_ENV"
@@ -202,7 +226,7 @@ jobs:
           set -euo pipefail
           tag="$RELEASE_TAG"
           cat > release-notes.md <<'NOTES'
-          LLM Nest 开发预览版。
+          LLM Nest：真人和 AI 一起私聊、群聊。
 
           安装包和 SHA256SUMS.txt 由同一次构建生成。
           Windows x64：NSIS 安装器与 MSI；Linux x64：Ubuntu 24.04 基线的 deb 包与 AppImage。

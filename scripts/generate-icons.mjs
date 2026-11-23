@@ -31,7 +31,4 @@ for (const name of ["32x32.png", "128x128.png", "128x128@2x.png", "icon.ico", "i
   copyFileSync(join(output, name), join(iconsDir, name))
 }
 copyFileSync(join(output, "32x32.png"), join(publicDir, "icon.png"))
-const androidIcons = join(root, "android/app/src/main/res/drawable-nodpi")
-mkdirSync(androidIcons, { recursive: true })
-copyFileSync(join(output, "128x128@2x.png"), join(androidIcons, "launcher_tile.png"))
-console.log("Updated desktop, Android and web icons from", source)
+console.log("Updated desktop and web icons from", source)

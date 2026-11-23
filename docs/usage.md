@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [全部文档](README.md) · [部署测试服务](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)
 
-本页说明 Web 和桌面客户端。公开包为 `alpha.13`，完整加密 AI 向导、节点额度编辑等改进见[当前版本组合](project/current.md)。手机使用见 [Android 指南](../android/README.md)。
+本页说明 Web 和桌面客户端。公开包为 `alpha.13`，完整加密 AI 向导、节点额度编辑等改进见[当前版本组合](project/current.md)。手机使用见 [Android 指南](https://github.com/NingCold/llm-nest-app)。
 
 网页和桌面使用同一云端账号与聊天记录。普通聊天者不必运行节点；管理自己的 AI 时再连接 Agent。
 

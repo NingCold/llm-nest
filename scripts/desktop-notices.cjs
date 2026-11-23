@@ -2,14 +2,7 @@ const { execFileSync } = require('node:child_process');
 const { readFileSync, writeFileSync, mkdirSync, copyFileSync } = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-// sigchld 0.2.4 declares MIT but ships no license/attribution text, including
-// at its published VCS revision. Disclose that gap instead of inventing an owner.
 function completeRustNotices(text) {
-  const sigchld = /(^={72}\r?\nMIT License\r?\nUsed by:\r?\nsigchld 0\.2\.4\r?\nSource: https:\/\/static\.crates\.io\/crates\/sigchld\/sigchld-0\.2\.4\.crate\r?\nRepository: https:\/\/github\.com\/oconnor663\/sigchld\.rs\r?\n\r?\nMIT License\r?\n\r?\n)Copyright \(c\) <year> <copyright holders>/gm;
-  text = text.replace(sigchld, (_, prefix) => prefix +
-    'License provenance: SPDX MIT declared by sigchld 0.2.4; the permission text below is synthesized by cargo-about.\n' +
-    "Crate author metadata: Jack O'Connor (not a verified copyright-holder statement).\n" +
-    'The published archive and upstream revision 07b95e2fe38b18b376b0f635f2766bf2e641b80b contain no LICENSE or copyright notice; upstream attribution remains unconfirmed.');
   // Apache's standard appendix is a sample, not a missing attribution.
   if (/^Copyright[^\r\n]*(?:<copyright holders>|<owner>|<year>|\[fullname\])[^\r\n]*\r?$/mi.test(text)) {
     throw Error('Unresolved placeholder copyright in desktop Rust notices; review about.toml clarifications');

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict'), fs = require('node:fs'), vm = requ
 class HttpError extends Error { constructor(status) { super(`HTTP ${status}`); this.status = status; } }
 class ConnectionError extends Error {}
 let mode = 'offline', encryptions = 0, puts = [], cloud = [], cipherContent = new Map(), prepared = [];
-const engine = { cryptoDevice: () => 'device', matrixUser: id => `@${id}:llmn`, syncCrypto: async () => { if (mode === 'offline') throw new ConnectionError('offline'); }, seal: async (room, users, type, content, offline) => { prepared.push({ room, offline }); const cipher = `frozen-${++encryptions}`; cipherContent.set(cipher, content); return { device_id: 'device', cipher }; }, prepareEncryption: async (room, users, offline) => { prepared.push({ prepare: true, room, offline }); }, signEnvelope: async envelope => ({ ...envelope, deviceKeys: { ed25519: "ed", curve25519: "curve" }, signatures: {} }), unseal: async envelope => ({ type: 'com.llmn.content.v1', content: cipherContent.get(envelope.content.cipher) }) };
+const engine = { cryptoDevice: () => 'device', matrixUser: id => `@${id}:llmn`, syncCrypto: async () => { if (mode === 'offline') throw new ConnectionError('offline'); }, seal: async (room, users, type, content, offline, required, rotate) => { prepared.push({ room, offline, rotate }); const cipher = `frozen-${++encryptions}`; cipherContent.set(cipher, content); return { device_id: 'device', cipher }; }, signEnvelope: async envelope => ({ ...envelope, deviceKeys: { ed25519: "ed", curve25519: "curve" }, signatures: {} }), unseal: async envelope => ({ type: 'com.llmn.content.v1', content: cipherContent.get(envelope.content.cipher) }) };
 const api = { server: 'https://resources.invalid', HttpError, ConnectionError, request: async (path, method, body) => {
   if (mode === 'offline') throw new ConnectionError('offline');
   if (mode === 'forbidden') throw new HttpError(403);
@@ -30,7 +30,8 @@ function load() { const result = {}; vm.runInNewContext(ts.transpileModule(fs.re
   mode = 'forbidden'; await assert.rejects(resources.loadResources('human', 'ai', 'profile', null), error => error.status === 403, 'revoked permission never falls back to cached plaintext');
   mode = 'conflict'; await resources.saveResource('human', { ...target, expectedRevision: '1' }, { persona: 'preserved conflicting edit' });
   const conflict = (await resources.pendingResources('human'))[0]; assert.ok(conflict.conflict);
-  assert.ok(prepared.some(p => p.prepare && p.offline === false), 'online saves prepare sessions instead of always pretending to be offline');
+  assert.ok(prepared.some(p => p.offline === false), 'online saves prepare sessions instead of always pretending to be offline');
+  assert.ok(prepared.every(p => p.rotate), 'new resource ciphertext never uses a historical outbound session');
   const count = puts.length; await resources.synchronizeResources('human'); assert.equal(puts.length, count, 'conflicts are not silently overwritten or automatically retried');
   assert.equal((await resources.decryptResource({ ...conflict.body, id: conflict.id, revision: '2', applied: null })).persona, 'preserved conflicting edit');
   assert.match(resources.resourceStatus({ revision: '2', tombstone: null, applied: { revision: '1', status: 'applied' } }), /待节点应用/);

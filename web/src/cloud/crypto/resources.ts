@@ -1,5 +1,5 @@
 import { request, server, HttpError, ConnectionError } from "../api";
-import { cryptoDevice, matrixUser, prepareEncryption, seal, unseal, signEnvelope, syncCrypto } from "./engine";
+import { cryptoDevice, matrixUser, seal, unseal, signEnvelope, syncCrypto } from "./engine";
 import type { Sealed } from "./content";
 import type { SourceRevision } from "../types";
 export type ResourceKind = "profile" | "memory" | "summary" | "summarySettings";
@@ -86,14 +86,14 @@ export async function saveResource(account: string, target: { id: string; aiId: 
   let sealed: Sealed | null = null;
   if (!target.tombstone) {
     let offline = false;
-    try { await syncCrypto(); } catch (error) { if (!(error instanceof ConnectionError)) throw error; offline = true; }
-    await prepareEncryption(roomId, target.users, offline, [target.aiId, account]);
-    if (!offline) {
+    let users = target.users;
+    try {
       const current = await request<{ accounts: string[]; revision: string }>(`/crypto/resource-participants?aiId=${target.aiId}&kind=${target.kind}${target.conversationId ? `&conversationId=${target.conversationId}` : ""}`);
       if (current.revision !== target.expectedAudienceRevision) throw new Error("资料授权名单或设备已变化，请重新读取并核对后保存；编辑内容仍保留");
-    }
+      users = current.accounts;
+    } catch (error) { if (!(error instanceof ConnectionError)) throw error; offline = true; }
     const content = { version: 1, server, kind: "resource", conversationId: target.conversationId, messageId: target.id, senderId: account, revision, text: "", replyTo: null, mentions: [], runId: null, sequence: null, scope: resourceScope, id: target.id, expectedRevision: target.expectedRevision, expectedAudienceRevision: target.expectedAudienceRevision, data };
-    const cipher = await seal(roomId, target.users, "com.llmn.content.v1", content, true, [target.aiId, account]);
+    const cipher = await seal(roomId, users, "com.llmn.content.v1", content, offline, [target.aiId, account], true);
     sealed = await signEnvelope({ version: 1, roomId, sender: matrixUser(account), deviceId, eventId: `$${target.id}.${revision}.final`, content: cipher });
   }
   if (owner(account) !== identity || cryptoDevice(account) !== deviceId) throw new Error("加密设备已锁定或账号已切换，未保存此编辑");

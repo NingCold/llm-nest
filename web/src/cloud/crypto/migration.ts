@@ -1,5 +1,5 @@
 import { request, downloadBytes, server, HttpError } from "../api";
-import { cryptoDevice, recoveryConfirmed, recoveryReader, matrixRoom, matrixUser, seal, signEnvelope, encryptAttachment, type RecoveryFile } from "./engine";
+import { cryptoDevice, recoveryConfirmed, recoveryReader, matrixRoom, matrixUser, seal, signEnvelope, signDeviceCommand, encryptAttachment, type RecoveryFile } from "./engine";
 import { projectMessage, projectIntent, type Content } from "./content";
 import { decodeAttachment } from "./attachments";
 import { canonicalJson } from "./canonical";
@@ -75,7 +75,8 @@ export async function beginMigration(account: string, conversation: Conversation
   if (preview.canBegin === false) throw new Error("请先处理预览中的未完成事项，或恢复当前转换");
   if (!/^[a-f0-9]{64}$/.test(backupDigest)) throw new Error("请输入一致备份脚本提供的 SHA-256 摘要");
   const reader = await recoveryReader(file); reader.close();
-  return dispatch(account, conversation.id, { path: "/crypto/history-migrations", method: "POST", body: { requestId: crypto.randomUUID(), deviceId: device(account), conversationId: conversation.id, expectedConversationRevision: preview.conversationRevision, sourceDigest: preview.sourceDigest, backupDigest, recoveryDigest, localPendingResolved: true } });
+  const body = await signDeviceCommand(account, "history.begin", { requestId: crypto.randomUUID(), conversationId: conversation.id, expectedConversationRevision: preview.conversationRevision, sourceDigest: preview.sourceDigest, backupDigest, recoveryDigest, localPendingResolved: true });
+  return dispatch(account, conversation.id, { path: "/crypto/history-migrations", method: "POST", body });
 }
 export async function migrationItems(id: string, after = "0", includeConverted = false) { return request<{ items: MigrationItem[]; next: string; hasMore: boolean }>(`/crypto/history-migrations/${id}/items?after=${encodeURIComponent(after)}&limit=32${includeConverted ? "&includeConverted=true" : ""}`); }
 async function encryptItem(account: string, conversation: Conversation, status: MigrationStatus, item: MigrationItem): Promise<Command> {
@@ -157,5 +158,7 @@ export async function verifyAndFinishMigration(account: string, conversation: Co
     }
   } finally { reader.close(); }
   const verificationDigest = await digestJson({ id: saved.status.id, items: manifest });
-  return dispatch(account, conversation.id, { path: `/crypto/history-migrations/${saved.status.id}/finish`, method: "POST", body: { requestId: crypto.randomUUID(), deviceId: device(account), verificationDigest } });
+  const id = saved.status.id;
+  const body = await signDeviceCommand(account, `history.finish:${id}`, { requestId: crypto.randomUUID(), verificationDigest });
+  return dispatch(account, conversation.id, { path: `/crypto/history-migrations/${id}/finish`, method: "POST", body });
 }

@@ -68,6 +68,11 @@ function subscribeWarnings(h, reports) {
   assert.equal(trusted.state.freed, 1, 'the temporary store handle is released after the machine takes ownership');
   for (const measure of trusted.measurements) { assert.deepEqual(Object.keys(measure).sort(), ['end', 'name', 'start']); assert.ok(measure.end >= measure.start); }
   assert.equal(JSON.parse(trusted.storage.get(trusted.key('a'))).cursor, 'done');
+  const newerCursor = { deviceId: 'local-device', cursor: 'newer-tab' };
+  trusted.storage.set(trusted.key('a'), JSON.stringify(newerCursor));
+  await trusted.exports.deviceStatus();
+  assert.deepEqual(JSON.parse(trusted.storage.get(trusted.key('a'))), newerCursor,
+    'a status read does not overwrite another tab\'s newer sync cursor');
   for (const first of ['registration', 'identity']) {
     const h = fixture(); h.state.registrationGate = deferred(); h.state.identityGate = deferred();
     const opening = h.exports.unlockCrypto('a', 'correct');

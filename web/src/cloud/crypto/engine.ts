@@ -74,6 +74,13 @@ async function signedCommand(s: Session, action: string, body: Record<string, un
   const command = { ...body, deviceId: s.deviceId };
   return { ...command, proof: await proof(s, action, command) };
 }
+export async function signDeviceCommand(accountId: string, action: string, body: Record<string,unknown>) {
+  const s = session();
+  if (s.account !== accountId || trustedCryptoDevice(accountId) !== s.deviceId || (body.deviceId !== undefined && body.deviceId !== s.deviceId)) {
+    throw new Error("当前可信设备与待签署的命令不匹配");
+  }
+  return signedCommand(s, action, body);
+}
 export async function signLocalExportChallenge(accountId: string, value: string) {
   const s = session();
   if (!value.startsWith("llmnest.local-ai.recovery-export.v1\n") || trustedCryptoDevice(accountId) !== s.deviceId) throw new Error("仅可信设备可导出恢复资料");
@@ -171,7 +178,7 @@ async function sendOutgoing(s: Session, outgoing: Matrix.OutgoingRequest) {
   }
   const kinds = ["keysUpload", "keysQuery", "keysClaim", "toDevice", "signatures", "roomMessage", "keysBackup"];
   if (outgoing.type === s.sdk.RequestType.KeysBackup) body.version = (outgoing as Matrix.KeysBackupRequest).version;
-  const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id ?? crypto.randomUUID(), kind: kinds[outgoing.type], body, ...(outgoing.type===s.sdk.RequestType.KeysBackup ? {proof:await proof(s,"keysBackup",body)} : {}) });
+  const response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id ?? crypto.randomUUID(), kind: kinds[outgoing.type], body, ...([s.sdk.RequestType.KeysBackup,s.sdk.RequestType.SignatureUpload].includes(outgoing.type) ? {proof:await proof(s,kinds[outgoing.type],body)} : {}) });
   current(s);
   if (outgoing.id) await s.machine.markRequestAsSent(outgoing.id, outgoing.type, JSON.stringify(response));
   current(s);
@@ -183,7 +190,7 @@ async function flushInner(s: Session) {
   while (queued.length) {
     const outgoing = queued[0];
     let response: unknown;
-    try { response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id, kind: outgoing.kind, body: outgoing.body, ...(outgoing.kind==="signingKeys" ? {proof:await proof(s,"signingKeys",outgoing.body)} : {}) }); }
+    try { response = await request("/crypto/requests", "POST", { deviceId: s.deviceId, requestId: outgoing.id, kind: outgoing.kind, body: outgoing.body, ...(["signingKeys","signatures"].includes(outgoing.kind) ? {proof:await proof(s,outgoing.kind,outgoing.body)} : {}) }); }
     catch (error) {
       if (outgoing.body.llmn_purpose === "conversationHistory" && error instanceof HttpError && [403, 404, 409].includes(error.status)) {
         current(s);
@@ -432,7 +439,7 @@ export async function deviceStatus(measure?: (name: "statusIdentity" | "statusCr
   measure?.("statusOwnDeviceTrust", start);
   const wasTrusted=!!trustedCryptoDevice(s.account);
   s.localVerified = !!identity?.isVerified() && ownsDevice;
-  if (trustedCryptoDevice(s.account)) persistDevice(s);
+  if (replacements.has(s) && trustedCryptoDevice(s.account)) persistDevice(s);
   if(wasTrusted!==!!trustedCryptoDevice(s.account)) changed();
   return { deviceId: s.deviceId, fingerprint: s.machine.identityKeys.ed25519.toBase64(), curve: s.machine.identityKeys.curve25519.toBase64(), master: identity ? masterFingerprint(identity.masterKey) : null, trusted: !!trustedCryptoDevice(s.account), hasRecoverySecrets: cross.hasMaster && cross.hasSelfSigning && cross.hasUserSigning, authorizationAvailable: !!s.authorization };
 }

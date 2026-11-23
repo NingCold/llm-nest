@@ -22,7 +22,7 @@ import "./cloud.css";
 import { localView, prepareLocal, prepareLocalReference, sendLocal, syncLocal, stopLocal, localPage, type LocalView } from "./local-api";
 import { prepareAttachments } from "./crypto/attachments";
 import { searchHistory } from "./crypto/history";
-import { encryptMessage, projectPage, projectSnapshot, enableEncryption } from "./crypto/content";
+import { encryptMessage, pinWindow, projectMessage, projectPage, projectSnapshot, enableEncryption } from "./crypto/content";
 import { consumeCryptoWarning, cryptoDevice, localKeyMessages, receiveLocalKeys } from "./crypto/engine";
 import { synchronizeResources } from "./crypto/resources";
 import { mutateEncrypted } from "./crypto/mutations";
@@ -109,18 +109,18 @@ export default function ChatApp(props: ChatAppProps) {
   localRef.current = localChats;
   const localRouteKey = (id: string) => `llmn-local-chat-route:${JSON.stringify([ownerRef.current, id])}`;
   const savedLocal = (id: string) => IS_DESKTOP && window.localStorage?.getItem(localRouteKey(id)) === "local";
-  const acceptLocal = async (data: LocalView, expectedEpoch = epoch.current, expectedView = view.current, onlyAtBottom = false) => {
+  const acceptLocal = async (data: LocalView, expectedId: string, expectedEpoch = epoch.current, expectedView = view.current, onlyAtBottom = false) => {
     if (expectedEpoch !== epoch.current || ownerRef.current !== `${server}/${data.human.id}`) return;
+    if (data.conversation.id !== expectedId) throw new Error("本机记录不属于所选窗口");
     localRef.current = { ...localRef.current, [data.conversation.id]: data };
     setLocalChats(localRef.current);
     if (activeRef.current === data.conversation.id && expectedView === view.current && (!onlyAtBottom || bottom.current)) {
       const raw = localPage(data);
-      const conversation = snapshotRef.current?.conversations.find(c => c.id === data.conversation.id);
-      let projected = raw;
+      const conversation = windowFor(activeRef.current);
       if (raw.messages.some(m => m.sealed) || conversation?.encryption) {
         await receiveLocalKeys(data.ai.id, data.keyMessages ?? []);
-        projected = await projectPage(raw, conversation);
       }
+      const projected = await projectPage(raw, conversation);
       if (expectedEpoch === epoch.current && expectedView === view.current && activeRef.current === data.conversation.id && (!onlyAtBottom || bottom.current)) {
         localPageRevision.current++;
         localPages.current[data.conversation.id] = projected;
@@ -135,7 +135,7 @@ export default function ChatApp(props: ChatAppProps) {
     let data: LocalView;
     try { data = await localView(id); }
     catch { if (e === epoch.current && v === view.current && revision === localPageRevision.current) markLocalUnavailable(id, true); return false; }
-    await acceptLocal(data, e, v, onlyAtBottom);
+    await acceptLocal(data, id, e, v, onlyAtBottom);
     return true;
   };
   pageRef.current = page;
@@ -199,6 +199,7 @@ export default function ChatApp(props: ChatAppProps) {
         const requestStart = measuring ? performance.now() : 0;
         const raw = await request<Snapshot>("/chat/init");
         const projectionStart = measuring ? performance.now() : 0;
+        if (raw.self.id !== props.account.id) throw new Error("快照与当前账号不符");
         const data = await projectSnapshot(raw);
         cursor = data.cursor;
         if (e !== epoch.current) break;
@@ -229,12 +230,19 @@ export default function ChatApp(props: ChatAppProps) {
     refreshing.current = work;
     return work.promise;
   };
-  const requestPage = async (path: string, current?: () => boolean) => {
+  const windowFor = (id: string) => pinWindow(snapshotRef.current?.conversations.find(c => c.id === id) ?? { id, encryption: null }, props.account.id);
+  const requestPage = async (path: string, id?: string, current?: () => boolean) => {
     const data = await request<Page>(path);
     if (current && !current()) throw new Error("读取历史已取消");
-    const id = path.match(/\/conversations\/([^/]+)\/messages/)?.[1];
-    const conversation = snapshotRef.current?.conversations.find(c => c.id === id);
-    return data.messages?.some(m => m.sealed) || conversation?.encryption ? projectPage(data, conversation) : data;
+    if (id !== undefined) return projectPage(data, windowFor(id));
+    // Global search can span windows, but only those in the current account snapshot.
+    const windows = new Map(snapshotRef.current?.conversations.map(c => [c.id, c]));
+    const messages = await Promise.all(data.messages.map(m => {
+      const conversation = windows.get(m.conversationId);
+      if (!conversation) throw new Error("搜索结果不属于当前账号的聊天窗口");
+      return projectMessage(m, pinWindow(conversation, props.account.id));
+    }));
+    return { ...data, messages };
   };
   const retainUnsynced = (data: Page, previous: Page | null): Page => {
     const ids = new Set(data.messages.map(m => m.id));
@@ -252,7 +260,7 @@ export default function ChatApp(props: ChatAppProps) {
     try {
       const previous = pageRef.current;
       const first = previous?.messages.find(m => !m.local || m.local.synced);
-      const data = await requestPage(`/chat/conversations/${id}/messages${older && first ? `?before=${first.position}` : ""}`);
+      const data = await requestPage(`/chat/conversations/${id}/messages${older && first ? `?before=${first.position}` : ""}`, id, current);
       if (current()) {
         setHistoryError("");
         setPage(old => retainUnsynced(retainUnsynced(older && old ? { ...data, messages: [...data.messages, ...old.messages] } : data, old), localPages.current[id] ?? null));
@@ -290,7 +298,7 @@ export default function ChatApp(props: ChatAppProps) {
       if (!current()) return;
       const data = await requestPage(
         `/chat/conversations/${id}/messages?limit=100${before ? `&before=${before}` : ""}`,
-        current,
+        id, current,
       );
       if (!current()) return;
       latestPosition = data.latestPosition;
@@ -384,7 +392,7 @@ export default function ChatApp(props: ChatAppProps) {
           return;
         }
         if (!cancelled && bottom.current) {
-          try { await acceptLocal(data, e, v, true); }
+          try { await acceptLocal(data, active, e, v, true); }
           catch (error) { if (e === epoch.current && v === view.current) setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`); }
         }
       })().finally(() => { polling = false; });
@@ -613,7 +621,7 @@ export default function ChatApp(props: ChatAppProps) {
             if (!pending.sealed && (pending.images?.length || pending.files?.length)) throw new HttpError(422, "同机附件需要先启用端到端加密");
             const data = await sendLocal(id, pending.requestId, pending.sealed ? "" : pending.text, pending.sealed, pending.messageId, pending.keyMessages, { encryptedAttachments: pending.encryptedAttachments, replyTo: pending.replyTo, reference: pending.reference?.selection, expectedConversationRevision: pending.expectedConversationRevision });
             if (e !== epoch.current) return;
-            try { await acceptLocal(data, e, v); }
+            try { await acceptLocal(data, id, e, v); }
             catch (error) {
               if (e === epoch.current && v === view.current && activeRef.current === id)
                 setHistoryError(`本机聊天记录解密失败：${error instanceof Error ? error.message : String(error)}`);
@@ -771,6 +779,7 @@ export default function ChatApp(props: ChatAppProps) {
         : "";
     const found = await requestPage(
       `/chat/search?query=${encodeURIComponent(query)}${scope === "current" ? `&conversationId=${id}` : ""}${before}`,
+      scope === "current" ? id : undefined,
     );
     if (
       sequence !== searchSeq.current ||
@@ -782,14 +791,14 @@ export default function ChatApp(props: ChatAppProps) {
     setSearchMore(found.hasMore);
     if (!older && !found.messages.length) setNotice("没有找到匹配消息");
   };
-  const locate = async (m: Pick<Message, "id">) => {
+  const locate = async (m: Pick<Message, "id" | "conversationId">) => {
     const sequence = ++searchSeq.current,
       v = view.current;
     const raw = await request<Page & { conversationId: string }>(
       `/chat/messages/${m.id}/context`,
     );
-    const conversation = snapshotRef.current?.conversations.find(c => c.id === raw.conversationId);
-    const decoded = raw.messages.some(m => m.sealed) || conversation?.encryption ? await projectPage(raw, conversation) : raw;
+    if (raw.conversationId !== m.conversationId || !raw.messages.some(row => row.id === m.id)) throw new Error("定位结果与所选消息不符");
+    const decoded = await projectPage(raw, windowFor(m.conversationId));
     const data = { ...raw, ...decoded };
     if (v !== view.current || sequence !== searchSeq.current) return;
     const target = { ...data, hasMore: true };
@@ -903,15 +912,15 @@ export default function ChatApp(props: ChatAppProps) {
         const data = await prepareLocal(active, target.peer.id);
         if (e !== epoch.current) return;
         window.localStorage.setItem(key, "local");
-        await acceptLocal(data, e);
+        await acceptLocal(data, active, e);
       } : undefined}
-      syncLocal={async () => { const e = epoch.current; await acceptLocal(await syncLocal(active), e); }}
-      stopLocal={async () => { const e = epoch.current; await acceptLocal(await stopLocal(active), e); }}
+      syncLocal={async () => { const e = epoch.current; await acceptLocal(await syncLocal(active), active, e); }}
+      stopLocal={async () => { const e = epoch.current; await acceptLocal(await stopLocal(active), active, e); }}
       closeLocal={async () => {
         if (recordRef.current.pending || localRef.current[active]?.running || localRef.current[active]?.syncState !== "synced")
           throw new Error("请先完成本机回复并同步云端，再返回云端发送");
         const e = epoch.current, id = active, key = localRouteKey(active);
-        const data = await requestPage(`/chat/conversations/${id}/messages`);
+        const data = await requestPage(`/chat/conversations/${id}/messages`, id);
         if (e !== epoch.current) return;
         window.localStorage.removeItem(key);
         const next = { ...localRef.current }; delete next[id];

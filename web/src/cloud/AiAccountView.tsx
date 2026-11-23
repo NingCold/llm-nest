@@ -21,7 +21,7 @@ export function AiAccountView({ aiId, operatorId }: { aiId: string; operatorId?:
   const load = async () => {
     const ticket = ++sequence.current;
     setBusy(true); setError(""); setView(null); setPage(null); setActive(""); setPreview(undefined);
-    try { const result = await request<{ account: Account; conversations: Conversation[] }>(root); if (operatorId || result.conversations.some(c => c.encryption || c.lastMessage?.sealed)) result.conversations = await projectConversations(result.conversations, operatorId); if (ticket === sequence.current) setView(result); }
+    try { const result = await request<{ account: Account; conversations: Conversation[] }>(root); result.conversations = await projectConversations(result.conversations, operatorId); if (ticket === sequence.current) setView(result); }
     catch (e) { if (ticket === sequence.current) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (ticket === sequence.current) setBusy(false); }
   };
@@ -33,7 +33,9 @@ export function AiAccountView({ aiId, operatorId }: { aiId: string; operatorId?:
     if (!older) setPage(null);
     try {
       const before = previous?.messages[0]?.position;
-      const result = await projectPage(await request<Page>(`${root}/conversations/${conversationId}/messages${before ? `?before=${before}` : ""}`), view?.conversations.find(c => c.id === conversationId));
+      const conversation = view?.conversations.find(c => c.id === conversationId);
+      if (!conversation) throw new Error("请选择当前账号可查看的窗口");
+      const result = await projectPage(await request<Page>(`${root}/conversations/${conversationId}/messages${before ? `?before=${before}` : ""}`), conversation);
       if (ticket === sequence.current) setPage({ ...result, messages: [...result.messages, ...(previous?.messages ?? [])] });
     } catch (e) {
       if (ticket === sequence.current) { setView(null); setPage(null); setError(e instanceof Error ? e.message : String(e)); }

@@ -4,14 +4,14 @@ import { projectReference } from "./crypto/content";
 import { request } from "./api";
 import type { Account, Conversation, DraftReference, Message, ReferencePreview, ReferenceSelection } from "./types";
 
-export function ReferenceCard({ directId, selection, cursor, stale = false, remove }: { directId: string; selection: ReferenceSelection; cursor: string; stale?: boolean; remove?: () => void }) {
+export function ReferenceCard({ account, directId, selection, cursor, stale = false, remove }: { account: string; directId: string; selection: ReferenceSelection; cursor: string; stale?: boolean; remove?: () => void }) {
   const [open, setOpen] = useState(false);
   const [retry, setRetry] = useState(0);
   const [result, setResult] = useState<{ stamp: string; data?: ReferencePreview; error?: string } | null>(null);
-  const stamp = JSON.stringify([directId, selection, cursor, stale, retry]);
+  const stamp = JSON.stringify([account, directId, selection, cursor, stale, retry]);
   useEffect(() => {
     let active = true;
-    if (open && !stale) void request<ReferencePreview>(`/chat/conversations/${directId}/reference-preview`, "POST", { reference: selection }).then(projectReference).then(
+    if (open && !stale) void request<ReferencePreview>(`/chat/conversations/${directId}/reference-preview`, "POST", { reference: selection }).then(data => projectReference(data, selection, account)).then(
       data => { if (active) setResult({ stamp, data }); },
       error => { if (active) setResult({ stamp, error: error instanceof Error ? error.message : String(error) }); },
     );
@@ -21,7 +21,7 @@ export function ReferenceCard({ directId, selection, cursor, stale = false, remo
   return <div className={`live-reference ${stale ? "stale" : ""}`}><button className="text-button" onClick={() => { setRetry(n => n + 1); setOpen(true); }}>{stale ? "群话题引用已失效" : `群话题引用 · ${selection.sources.length} 条原文`}</button>{remove && <button className="text-button" onClick={remove}>移除引用</button>}<Dialog open={open} onOpenChange={setOpen}><DialogContent className="social-dialog cloud-reference-dialog" aria-describedby={undefined}><DialogTitle>群话题来源</DialogTitle>{stale ? <p role="status">来源或成员权限已变化，请回到群聊重新选择。重新入群不会恢复旧引用。</p> : visible?.error ? <p className="social-error" role="alert">{visible.error}<button className="text-button" onClick={() => setRetry(n => n + 1)}>重新核对来源</button></p> : visible?.data ? <div className="reference-preview"><h3>{visible.data.conversation.name}</h3>{visible.data.messages.map(message => <blockquote key={message.id}><small>{message.senderName} · {new Date(message.createdAt).toLocaleString()}</small><p>{message.text}</p>{message.attachments.map(attachment => <p key={attachment.index}>[{attachment.kind === "image" ? "图片" : "文件"}：{attachment.name || attachment.mime} · {attachment.byteLength} 字节]</p>)}</blockquote>)}</div> : <p role="status">正在核对当前成员和来源版本…</p>}</DialogContent></Dialog></div>;
 }
 
-export function ContinuePrivately({ conversation, message, messages, continueWith }: { conversation: Conversation; message: Message; messages: Message[]; continueWith(ai: Account, reference: DraftReference): Promise<void> }) {
+export function ContinuePrivately({ account, conversation, message, messages, continueWith }: { account: string; conversation: Conversation; message: Message; messages: Message[]; continueWith(ai: Account, reference: DraftReference): Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([message.id]);
   const [aiId, setAiId] = useState("");
@@ -44,7 +44,8 @@ export function ContinuePrivately({ conversation, message, messages, continueWit
       const ticket = ++version.current; setBusy(true); setError(""); setPreview(null);
       try {
         const direct = await request<Conversation>("/chat/direct", "POST", { accountId: ai.id });
-        const data = await projectReference(await request<ReferencePreview>(`/chat/conversations/${direct.id}/reference-preview`, "POST", { reference: { conversationId: conversation.id, sources } }));
+        const selection = { conversationId: conversation.id, sources };
+        const data = await projectReference(await request<ReferencePreview>(`/chat/conversations/${direct.id}/reference-preview`, "POST", { reference: selection }), selection, account);
         if (ticket === version.current) setPreview({ stamp, data });
       } catch (e) { if (ticket === version.current) setError(e instanceof Error ? e.message : String(e)); }
       finally { setBusy(false); }

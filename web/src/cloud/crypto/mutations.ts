@@ -13,7 +13,7 @@ export async function mutateEncrypted(conversation: Conversation, message: Messa
     await record("readwrite", s => s.delete(key)); body = undefined;
   }
   if (body?.sealed && !withdraw) {
-    const frozen = await projectMessage({ ...message, revision: (BigInt(body.expectedRevision) + 1n).toString(), audienceRevision: body.expectedConversationRevision, sealed: body.sealed });
+    const frozen = await projectMessage({ ...message, revision: (BigInt(body.expectedRevision) + 1n).toString(), audienceRevision: body.expectedConversationRevision, sealed: body.sealed }, conversation);
     if (frozen.cryptoError) throw new Error("原加密修改尚未确认且当前无法解密。请解锁后重试，不能用新修改替换原命令。");
     if (text !== frozen.text) throw new Error(`上次修改结果尚未确认，已保留原修改，不能用新输入覆盖。请刷新核对，或使用原修改重试：${frozen.text}`);
   }

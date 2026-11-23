@@ -62,7 +62,7 @@ async function harness(record = { draft, pending: null }, desktop = false, stora
       }
       if (name === "./crypto/resources") return { synchronizeResources: async () => { api.emptySyncs = (api.emptySyncs || 0) + 1; } };
       if (name === "./crypto/attachments") return { prepareAttachments: (images = [], files = []) => ({ descriptors: [...images, ...files].map((a, index) => ({ index, kind: "file", mime: a.mime, byteLength: 1, mediaEncryptionInfo: "sdk-secret" })), encryptedAttachments: [...images, ...files].map((a, index) => ({ index, data: "cipher-only" })) }) };
-      if (name === "./crypto/content") return { encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => api.projectPage ? api.projectPage(p) : p, projectSnapshot: async s => s };
+      if (name === "./crypto/content") return { pinWindow: c => c, projectMessage: async (m, c) => { assert.equal(m.conversationId, c.id); return m; }, encryptMessage: async () => ({ version: 1, ciphertext: `frozen-${++api.encryptions}` }), projectPage: async p => api.projectPage ? api.projectPage(p) : p, projectSnapshot: async s => s };
       if (name === "@/lib/desktop") return { IS_DESKTOP: desktop };
       if (name === "@tauri-apps/api/event") return { listen: async (name, fn) => { listeners[name] = fn; return () => delete listeners[name]; } };
       if (name === "@tauri-apps/api/core") return { invoke: async () => {} };

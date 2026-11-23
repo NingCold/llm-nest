@@ -31,16 +31,16 @@ function load(file, imports) {
   const valid = { ...descriptor };
   for (const name of ["", "  ", "../private", "a\\b", "a:b", "a\u0000b", "a\u0085b", "CON.txt", "a.", "x".repeat(241)]) {
     descriptor = { ...valid, name };
-    assert.match((await projection.projectMessage(projectedMessage)).cryptoError, /文件名或类型/, `reject filename ${JSON.stringify(name)}`);
+    assert.match((await projection.projectMessage(projectedMessage, { id: "group" })).cryptoError, /文件名或类型/, `reject filename ${JSON.stringify(name)}`);
   }
   for (const mime of ["", "x".repeat(256), "é".repeat(128), "text/\nplain", "text/\u0085plain"]) {
     descriptor = { ...valid, mime };
-    assert.match((await projection.projectMessage(projectedMessage)).cryptoError, /文件名或类型/);
+    assert.match((await projection.projectMessage(projectedMessage, { id: "group" })).cryptoError, /文件名或类型/);
   }
   descriptor = { ...valid, byteLength: 0, name: undefined };
-  assert.equal((await projection.projectMessage(projectedMessage)).cryptoError, undefined, "empty unnamed ordinary files remain supported");
+  assert.equal((await projection.projectMessage(projectedMessage, { id: "group" })).cryptoError, undefined, "empty unnamed ordinary files remain supported");
   descriptor = { ...valid, kind: "image", mime: "image/png", byteLength: 0 };
-  assert.match((await projection.projectMessage(projectedMessage)).cryptoError, /格式或大小/, "empty images are rejected at the decrypted metadata boundary");
+  assert.match((await projection.projectMessage(projectedMessage, { id: "group" })).cryptoError, /格式或大小/, "empty images are rejected at the decrypted metadata boundary");
   const calls = [], outputs = [];
   const pages = [{ messages: [{ id: "new", position: "2", text: "latest", attachments: [], senderName: "human", createdAt: "2027-01-02" }], hasMore: true }, { messages: [{ id: "old", position: "1", text: "older", attachments: [], senderName: "human", createdAt: "2027-01-01" }], hasMore: false }];
   const history = load("../src/cloud/crypto/history.ts", { "../api": { request: async path => { calls.push(path); return pages[path.includes("before=") ? 1 : 0]; }, saveBlob: (blob, name) => outputs.push({ blob, name }) }, "./content": { projectPage: async page => page }, "./attachments": attachments, "fflate": require("fflate") });

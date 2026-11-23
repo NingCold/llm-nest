@@ -77,7 +77,7 @@ async function historyCases() {
     h.api.respond = async path => path === '/chat/init' ? { self: me, contacts: [], conversations: [conversation], cursor: '2' } : { messages: [message('old', 1), message('new', 200)], hasMore: false, latestPosition: '200' };
     await h.click('history');
     const delayed = deferred(); let pages = 0, decryptions = 0;
-    h.api.projectPage = async page => { decryptions++; return page; };
+    h.api.projectPage = async page => { decryptions += page.messages.filter(m => m.sealed).length; return page; };
     h.api.respond = async path => {
       if (path === '/chat/init') return { self: me, contacts: [], conversations: [conversation], cursor: '3' };
       if (path.includes('/other/')) return { messages: [], hasMore: false, latestPosition: '0' };

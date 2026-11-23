@@ -80,7 +80,7 @@ interface Props extends ChatConnectionProps {
   selectConversation(id: string): void;
   queryChange(value: string): void;
   search(older: boolean, scope: string): Promise<unknown>;
-  locate(message: Pick<Message, "id">): Promise<unknown>;
+  locate(message: Pick<Message, "id" | "conversationId">): Promise<unknown>;
   act(fn: () => Promise<unknown>): Promise<void>;
   refresh(): Promise<unknown>;
   history(older?: boolean): Promise<unknown>;
@@ -1152,10 +1152,10 @@ export function Workspace(p: Props) {
                               {conversation.encryption && !m.sealed && <small>旧明文记录 · 尚未迁移</small>}
                               {m.historyMigration && <small>迁入旧记录 · 转换者 {m.historyMigration.actorId}（保留原作者记录）</small>}{m.importOrigin && <small title="从旧版聊天记录导入">导入历史</small>}
                             </div>
-                            {m.contextReference && m.status !== "withdrawn" && <ReferenceCard directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
+                            {m.contextReference && m.status !== "withdrawn" && <ReferenceCard account={p.me.id} directId={conversation.id} selection={{ conversationId: m.contextReference.conversationId, sources: m.contextReference.sources }} stale={m.contextReference.stale} cursor={p.snapshot!.cursor} />}
                             {m.status === "committed" && !conversation.readOnly && !p.localSelected && <RememberMessage key={p.me.id} operatorId={p.me.id} conversation={conversation} message={m} cursor={p.snapshot!.cursor} />}
-                            {m.status === "committed" && conversation.kind === "group" && <ContinuePrivately conversation={conversation} message={m} messages={p.page!.messages} continueWith={p.continuePrivately} />}
-                            {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo! }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
+                            {m.status === "committed" && conversation.kind === "group" && <ContinuePrivately account={p.me.id} conversation={conversation} message={m} messages={p.page!.messages} continueWith={p.continuePrivately} />}
+                            {m.replyTo && <button className="text-button" onClick={() => void p.act(() => p.locate({ id: m.replyTo!, conversationId: conversation.id }))}>回复消息 · {replyLabel(m.replyTo)}</button>}
                             {!!m.mentions.length && <div className="cloud-mentions">{m.mentions.map(id => <span key={id}>@{conversation.members.find(member => member.account.id === id)?.account.name || id} </span>)}</div>}
                             {m.status === "committed" && !conversation.readOnly && <button className="text-button" disabled={(!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: m.id } }))}>回复</button>}
                             {p.editing?.id === m.id ? (
@@ -1357,7 +1357,7 @@ export function Workspace(p: Props) {
                           ))}
                         </div>
                       )}
-                      {p.record.draft.reference && <ReferenceCard directId={conversation.id} selection={p.record.draft.reference.selection} cursor={p.snapshot!.cursor} remove={p.draftReady && !p.busy && !p.record.pending ? () => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, reference: null } })) : undefined} />}
+                      {p.record.draft.reference && <ReferenceCard account={p.me.id} directId={conversation.id} selection={p.record.draft.reference.selection} cursor={p.snapshot!.cursor} remove={p.draftReady && !p.busy && !p.record.pending ? () => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, reference: null } })) : undefined} />}
                       {conversation.directBlocked && <p role="status">双方私聊已屏蔽，历史和草稿保留。解除屏蔽后可发送新消息。</p>}
                       {p.record.draft.replyTo && <div className="cloud-reply-draft">回复：{replyLabel(p.record.draft.replyTo)}<button className="text-button" disabled={p.busy || !!p.record.pending || !p.draftReady} onClick={() => void p.act(() => p.save({ ...p.record, draft: { ...p.record.draft, replyTo: null } }))}>取消回复</button></div>}
                       {conversation.kind === "group" && <fieldset className="cloud-mention-picker" disabled={(!!p.localSelected && !conversation.encryption) || !p.draftReady || p.busy || !!p.record.pending || conversation.directBlocked}>

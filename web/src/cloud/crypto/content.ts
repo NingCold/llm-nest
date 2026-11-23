@@ -11,7 +11,12 @@ export async function encryptMessage(conversation: Conversation, sender: string,
   const inner: Content = { version: 1, server, kind: "message", conversationId: conversation.id, messageId, senderId: sender, revision, text, replyTo, mentions, runId: null, sequence: null, conversationRevision: conversation.revision, attachments, reference };
   return signEnvelope({ version: 1, roomId, sender: matrixUser(sender), deviceId, eventId, content: await seal(roomId, conversation.members.map(m => m.account.id), "com.llmn.content.v1", inner, offline, conversation.members.map(m => m.account.id), true) });
 }
-export async function projectMessage(message: Message, conversation?: Pick<Conversation, "encryption">, decrypt = unseal): Promise<Message> {
+type MessageWindow = Pick<Conversation, "id" | "encryption"> & Partial<Pick<Conversation, "kind">>;
+function requireWindow(message: Message, conversation: MessageWindow) {
+  if (message.conversationId !== conversation.id) throw new Error("消息不属于所选窗口");
+}
+export async function projectMessage(message: Message, conversation: MessageWindow, decrypt = unseal): Promise<Message> {
+  requireWindow(message, conversation);
   if (!message.sealed) {
     if (conversation?.encryption && (conversation.encryption.historyComplete || BigInt(message.position) > BigInt(conversation.encryption.activationPosition)) && message.status !== "withdrawn") return { ...message, text: "", attachments: [], cryptoError: "此位置要求密文，但服务器未提供密文；已阻止明文回退" };
     return message;
@@ -39,17 +44,26 @@ export async function projectMessage(message: Message, conversation?: Pick<Conve
     return { ...message, text: "", attachments: [], cryptoError: error instanceof Error ? error.message : "密文暂不可解密" };
   }
 }
-export async function projectPage(page: Page, conversation?: Pick<Conversation, "encryption">): Promise<Page> { return { ...page, messages: await Promise.all(page.messages.map(m => projectMessage(m, conversation))) }; }
+export async function projectPage(page: Page, conversation: MessageWindow): Promise<Page> {
+  page.messages.forEach(m => requireWindow(m, conversation));
+  return { ...page, messages: await Promise.all(page.messages.map(m => projectMessage(m, conversation))) };
+}
+export function pinWindow<T extends MessageWindow>(conversation: T, account: string): T {
+  const key = `llmn-encrypted-window:${JSON.stringify([server, account, conversation.id])}`;
+  const saved = localStorage.getItem(key);
+  const known = saved && JSON.parse(saved) as NonNullable<Conversation["encryption"]>;
+  const incoming = conversation.encryption;
+  if (!incoming) return known ? { ...conversation, encryption: known } : conversation;
+  const historyComplete = !!(incoming.historyComplete || (known && known.historyComplete));
+  const activationPosition = historyComplete ? "0" : known && BigInt(known.activationPosition) < BigInt(incoming.activationPosition) ? known.activationPosition : incoming.activationPosition;
+  const encryption = { ...incoming, activationPosition, historyComplete };
+  const next = JSON.stringify(encryption);
+  if (saved !== next) localStorage.setItem(key, next);
+  return { ...conversation, encryption };
+}
 export async function projectConversations(conversations: Conversation[], account?: string) {
   return Promise.all(conversations.map(async original => {
-    let c = original;
-    if (account) {
-      const key = `llmn-encrypted-window:${JSON.stringify([server, account, c.id])}`, saved = localStorage.getItem(key);
-      const pinned = saved ? JSON.parse(saved) as NonNullable<Conversation["encryption"]> : null;
-      if (pinned && !c.encryption) c = { ...c, encryption: pinned };
-      if (pinned?.historyComplete && c.encryption) c = { ...c, encryption: { ...c.encryption, activationPosition: "0", historyComplete: true } };
-      if (c.encryption) localStorage.setItem(key, JSON.stringify(c.encryption));
-    }
+    const c = account ? pinWindow(original, account) : original;
     return { ...c, lastMessage: c.lastMessage ? await projectMessage(c.lastMessage, c) : null };
   }));
 }
@@ -62,13 +76,21 @@ export async function enableEncryption(conversation: Conversation, account: stri
   return request(`/chat/conversations/${conversation.id}/encryption`, "POST", { deviceId, requestId: crypto.randomUUID(), expectedConversationRevision: conversation.revision });
 }
 
-export async function projectReference(preview: ReferencePreview): Promise<ReferencePreview> {
+export async function projectReference(preview: ReferencePreview, selection: ReferenceSelection, account: string): Promise<ReferencePreview> {
+  if (preview.conversation.id !== selection.conversationId || preview.conversation.kind !== "group") throw new Error("引用不属于所选群聊");
+  const expected = new Map(selection.sources.map(s => [s.messageId, s.revision]));
+  for (const m of preview.messages) {
+    if (!expected.has(m.id) || expected.get(m.id) !== m.revision) throw new Error("引用与所选原文不符");
+    expected.delete(m.id);
+  }
+  if (expected.size) throw new Error("引用缺少所选原文");
+  const conversation = pinWindow(preview.conversation, account);
   const messages = await Promise.all(preview.messages.map(async m => {
-    const result = await projectMessage({ ...m, conversationId: preview.conversation.id, status: "committed", aiResponses: [], contextReference: m.contextReference ?? null }, preview.conversation);
+    const result = await projectMessage({ conversationId: selection.conversationId, ...m, status: "committed", aiResponses: [], contextReference: m.contextReference ?? null }, conversation);
     if (result.cryptoError) throw new Error(result.cryptoError);
     return result;
   }));
-  return { ...preview, messages };
+  return { ...preview, conversation, messages };
 }
 export async function encryptIntent(conversation: Conversation, sender: string, intentId: string, input: { aiId: string; content: string; dueAt: string; expiresAt: string; utcOffsetMinutes: number }) {
   const deviceId = cryptoDevice(sender);

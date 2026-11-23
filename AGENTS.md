@@ -1,48 +1,25 @@
-# AGENTS.md — LLM Nest 客户端
+# LLM Nest 客户端工作约定
 
-本仓维护 `web/` 共用聊天界面、`desktop/` Tauri 客户端和 `android/` 独立原生工程。Android 的构建与检查入口见 `android/README.md`。产品说明见 README，使用见 docs/usage.md，总进度见 docs/project。服务端与连接器由 https://github.com/NingCold/llm-nest-server 维护，Agent 由 https://github.com/NingCold/llm-nest-agent 维护，版本组合见 docs/project/current.md。
+Web 与桌面共用 CloudApp；Android 是[独立原生工程](android/README.md)。跨仓联调先查[版本组合](docs/project/current.md#现在使用的是哪个版本)。
 
-## 工作前先确认
+## 协作与提交
 
-- 读取 `git status --short`，保留用户的未提交修改。不要混入无关生成文件、环境配置或测试数据。
-- 通过实际调用链确认类型、签名和行为；过往报告描述的是当时的版本，不应覆盖当前代码。
-- 修改只落在负责该行为的模块。复用成熟的协议与基础能力；社交用例以新架构约定为准，不为适配旧接口改变领域或生命周期，不为单一前端复制业务逻辑。
-- 避免过分防御性编程：在外部输入、存储事务、权限和模型协议边界校验；内部使用已经成立的类型与不变量。不重复校验、不吞错或静默回退，不为假设性场景提前增加空框架、备用路径和配置开关。
-- 正常验证使用独立临时配置/数据和模拟 provider。真实 API 验收会产生费用，仅在已有明确授权时执行。
-- `config/llmn.toml`、`.env`、用户会话、API Key 不得提交、打包、上传到 CI 或打印到日志。保留环境变量引用，不把它替换为明文。
-- 已授权的操作若因工具或权限限制无法执行，可脚本化的部分应提供脚本和运行方法交给用户；说明影响范围，能预览的先验证预览，不把未执行写成完成。
-- 每批编译结束后，代理主动检查并清理无用产物，不等用户再次提醒。确认没有并行 Cargo/rustc 后，用 `scripts/clean-build-artifacts.py` 先生成完整清单、再逐文件删除，目录确认空后逐个删除并核验；禁止递归删除命令/API。保留可复用的依赖和构建缓存，不用全量 `cargo clean` 代替整理。Windows 普通测试复用 MSVC 的默认 `target/debug`，安装包沿用明确的 release target，避免重复生成另一套 debug。
-- 安装包保留当前和上一可回退版本，不在工作目录复制同一包；服务器只清理本项目已核验的旧镜像及无用构建缓存。备份按实际内容判断，账号、聊天、密钥和恢复材料不能按日期自动删除；新备份不重复包含可再生浏览器缓存。删除被策略拒绝时不换方式绕过，交付已核对的脚本并标明待用户执行。
+- 先看 `git status --short`，保留用户修改。跨机器接续先同步 `main`，不强制覆盖。日常改动直接在 `main` 提交；用户要求或大型实验需隔离时，先说明再建分支。本地提交不包含推送、开 PR 或发布授权；交付时区分提交、推送、合并和安装状态。
+- 可按需使用子代理；主代理负责分工、验收和提交。跨模块先定共享接口；按可体验的结果划定范围和完成条件，新想法进候选清单。
+- 按当前调用链在负责的模块修改，不为兼容旧接口改变生命周期或复制业务逻辑。校验放在外部输入、存储事务、权限和模型协议边界，内部沿用已成立的条件，不吞错或静默回退。
+- 一件事维护一处说明：使用指南写操作，设计文档写契约，项目进度写安排，验收记录写日期、版本、环境、结果与缺口。
 
-## 模型分工约定
+## 客户端契约
 
-- 用户已授权：需求和边界明确的日常功能、局部修复、测试与文档整理，默认委派给 GPT-6.1-Sol 子代理执行，无需逐次询问。
-- 主代理负责明确架构与行为约定、划分互不冲突的修改范围、审核实现和验证结果，并完成文档一致性检查及最终交付。跨模块工作先确定共享契约，再分派实现。
-- 计划按完整可体验的结果安排批次，写明范围和结束条件；前端、后端、验证与文档是批次内的工作，不逐个升级为产品阶段。新想法放入候选清单，不自动延长当前批次或成为下一批；依赖明确且互不冲突的工作可并行。
-- 委派时提供必要的项目背景、约束、文件范围与验收要求；保留用户未提交修改。子代理负责自己范围内的实现与相关检查，统一提交由主代理完成。
-- 委派与审查同样执行上述边界校验和内部不变量约定。
+- Cargo workspace 只含 `desktop/src-tauri`。连接器固定 Git 提交；桌面按版本、平台及 SHA-256 消费独立 Agent，用 `catalog` 取目录、`check` 验配置，不编译 Agent、不读节点 SQLite。协议改动同步 Web 与 Tauri 两条链路，不恢复旧本地 Runtime。
+- 保留[安装标识与图标源](docs/packaging/windows-branding.md)。[本机节点目录](desktop/README.md#从源码运行)按服务器和真人账号隔离；保留目录锁、实例 UUID 和后台托盘行为。
+- [草稿](docs/design/frontend.md#本机未发送草稿)使用 `llm-nest-social-drafts`，按服务器、账号和窗口隔离，默认本机明文。发送前保存完整命令；结果未知只手动重试同一请求。[关闭窗口](docs/design/frontend.md#桌面窗口与关闭)前等待保存，失败则保留窗口；选择转入后台或取消关闭时发出 `desktop-close-retained`。自绘窗口保留透明启动、边框和交互元素不触发拖动的行为。
+- 沿用[消息权限、已读、搜索与附件](docs/design/frontend.md#默认云端页面)及[历史转换规则](docs/usage.md#把旧聊天转为加密记录)。`sealedV1` 使用官方 Matrix SDK，失败不降级为明文。
+- [保持登录与本机解锁](docs/usage.md#注册和登录)分开处理。自动解锁默认关闭；开启需可信设备、已确认保存恢复文件及手动口令验证。Windows 用 DPAPI，Web 用不可导出 AES 密钥；保持登录不授予新设备信任。锁屏先存草稿，再关闭 SDK、卸载聊天与订阅，仅保留账号和导航；Agent 继续运行。暂停跨刷新、重启生效，迟到的解锁结果须复核会话、服务器、账号和设备。退出清除自动解锁材料，保留 SDK 库。
 
-## Git 工作约定
+## 验证与清理
 
-- 普通功能修改、问题修复和文档更新默认直接在 `main` 上开发并提交，不自动新建 `codex/*` 分支。
-- 仅在用户明确要求，或较大的实验性改动确需隔离时新建分支；创建前说明原因。
-- PR 不作为日常默认流程。需要创建时，单独说明用途和目标分支，不把推送分支当作已经合入 `main`。
-- 多台机器接续工作前，确认工作区状态并同步 `main`；保留未提交修改，不能用强制覆盖解决分歧。
-- 汇报时分别说明本地提交、远端推送与合并的实际状态；用户要求提交不等于要求推送、创建 PR 或发布版本。
-
-## 客户端边界和不变量
-
-- 根 Cargo workspace 只含 desktop/src-tauri；连接器使用固定 Git 提交，不引用兄弟仓源码。桌面消费显式版本、平台和 SHA-256 的 Agent 产物，不编译 Agent，不读取节点 SQLite。目录由 Agent catalog 提供，配置由 Agent check 校验。
-- Web 与桌面共用 CloudApp；不得恢复旧本地 Runtime。客户端只实现界面、HTTPS/SSE、原生 IPC、窗口、文件保存和本机 Agent 生命周期。
-- 保留 identifier com.llmnest.tauri、LLM-Nest 二进制、安装识别和 ~/.llmn 及 LLMN_DATA_DIR；保持 desktop-agents 按服务器及真人隔离、目录锁及实例 UUID、后台和托盘行为。
-- 保持草稿 IndexedDB 名 llm-nest-social-drafts、按服务器/账号/窗口隔离，完整命令先落盘再发送；未知结果只手动重试同一请求。关闭先等待草稿确认，失败保持窗口；后台/取消发 desktop-close-retained。
-- 加密使用官方 Matrix SDK，sealedV1 启用后失败不能退明文。登录会话与 SDK 解锁分开，自动解锁默认关闭；可信设备和恢复文件确认及手动口令成功后才允许开启。Windows DPAPI；Web 不可导出 AES 包装；不得因保持登录建立新设备信任。
-- 锁屏先保存草稿，关闭 SDK，卸载聊天 DOM、订阅和状态；保留导航和账号，独立 Agent 继续运行。暂停跨刷新重启，迟到解锁必须复核会话、服务器、账号和设备。退出清理自动材料，不删 SDK 库。默认草稿是本机明文。
-- 保持当前消息权限、读位置、搜索、密文附件和历史转换语义；协议变动同步 Web/Tauri 链路。模型 Key 不进入参数、IPC 读取、DTO 或日志。
-- assets/branding/app-icon.svg 是图标唯一编辑源。Windows/Linux 自绘窗口保持拖动排除交互元素、透明启动与当前边框约定；平台历史不代表新版本实机验收。
-
-## 验证与交付
-
-运行 pnpm --dir web typecheck、pnpm --dir web test、cargo fmt --all -- --check、cargo test -p tauri-frontend --locked、cargo clippy -p tauri-frontend --all-targets --locked，以及 scripts/check-boundaries.py、scripts/test_release.py、scripts/test_build_artifacts.py 和 desktop/scripts/prepare-agent.test.mjs。桌面构建使用 Tauri CLI；不以裸 cargo release 代替安装包验收。正式 Agent 发布前 CI/打包必须显式提供实际产物清单，不能伪造 URL、版本或摘要。
-
-前端代码在 web/src/cloud 和 web/src/chat；桌面原生代码在 desktop/src-tauri。文档直接修订当前说明；使用指南写操作，设计文档写契约，项目进度写安排，验收记录保留日期、版本、环境、结果与缺口。一个话题维护一份主要说明，其余入口引用。最终报告区分本地提交、推送和安装。
+- 按[客户端验证清单](docs/validation/README.md#常用检查命令)运行检查；桌面安装包用 Tauri CLI 构建，正式打包传入实际 Agent 产物清单。测试用临时配置、数据和模拟 provider；真实 API 调用须明确授权。
+- `config/llmn.toml`、`.env`、用户会话、模型 Key 不进提交、安装包、CI 或日志。保留环境变量引用；Key 不出现在命令行、读取配置的 IPC 或 DTO。
+- 每批编译后确认无 Cargo/rustc 运行，按[清理步骤](docs/development.md#检查改动)用 `scripts/clean-build-artifacts.py` 预览完整清单，再逐文件、逐空目录删除并核验。不递归删除，不全量 `cargo clean`。Windows 测试复用 MSVC 默认 `target/debug`，打包使用对应 release target。
+- 安装包保留当前版和上一可回退版，不重复复制。服务器只清理本项目已核验的旧镜像和无用构建缓存；备份不重复收录可再生浏览器缓存，账号、聊天、密钥及恢复材料不按日期删除。操作受限时说明影响；可脚本化的步骤先核对预览，再交付脚本和用法，不绕过限制。

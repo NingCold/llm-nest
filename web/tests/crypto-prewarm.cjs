@@ -6,7 +6,14 @@ const code = ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/cr
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 const requestDone = request => new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-async function until(test) { for (let i = 0; i < 40 && !test(); i++) await tick(); assert.ok(test(), 'asynchronous operation completed'); }
+async function until(test) {
+  // WebCrypto runs off-thread. Event loop turns are not a unit of elapsed time.
+  const deadline = performance.now() + 5000;
+  while (!test()) {
+    assert.ok(performance.now() < deadline, `Timed out waiting for ${test}`);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
 function fixture({ known = true } = {}) {
   const factory = new IDBFactory(), storage = new Map(), measurements = [];
   const api = { server: 'https://warm.invalid', request: () => assert.fail('prewarming must not contact the server') };

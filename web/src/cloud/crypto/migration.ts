@@ -6,10 +6,10 @@ import { canonicalJson } from "./canonical";
 import type { Conversation, Message, ContactIntent, Attachment, HistoryMigration } from "../types";
 
 export interface MigrationPreview { conversationId: string; conversationRevision: string; sourceDigest: string; messageCount: number; contactIntentCount: number; attachmentCount: number; backupRequired: boolean; blockers?: { nodeTasks: number; summaryCalls: number; generatingMessages: number; contactIntents: number }; canBegin?: boolean; activeMigrationId?: string | null }
-export interface MigrationStatus { id: string; conversationId: string; conversationRevision: string; sourceDigest: string; state: "active" | "complete" | "conflicted"; currentConversationRevision?: string; remaining: number; backupDigest: string; recoveryDigest: string; verificationDigest: string | null }
+export interface MigrationStatus { id: string; conversationId: string; conversationRevision: string; sourceDigest: string; state: "active" | "complete" | "conflicted"; currentConversationRevision?: string; remaining: number; backupDigest: string; recoveryDigest: string; verificationDigest: string | null; verificationRecoveryDigests?: string[] | null }
 export interface MigrationItem { kind: "message" | "contactIntent"; id: string; revision: string; sourceDigest: string; converted: boolean; originalAudienceRevision?: string | null; record: Message | ContactIntent }
 interface Command { path: string; method: string; body: Record<string, unknown> }
-export interface MigrationSession { version?: number; status?: MigrationStatus; pending?: Command; rejected?: { command: Command; error: string }[] }
+export interface MigrationSession { version?: number; status?: MigrationStatus; pending?: Command; archivedControls?: Command[]; rejected?: { command: Command; error: string }[] }
 let database: Promise<IDBDatabase> | undefined;
 const key = (account: string, conversation: string) => JSON.stringify([server, account, conversation]);
 function db() { return database ??= new Promise((resolve, reject) => { const r = indexedDB.open("llmn-history-migrations", 1); r.onupgradeneeded = () => r.result.createObjectStore("sessions"); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); }
@@ -39,17 +39,52 @@ export const retryMigration = (account: string, conversation: string) => execute
 export async function confirmMigrationResult(account: string, conversation: string): Promise<MigrationSession> {
   const saved = await migrationSession(account, conversation);
   if (!saved.pending) return saved;
-  const command = saved.pending, parts = command.path.split("/");
-  const operation = parts.length === 3 ? "begin" : parts[4] === "finish" ? `finish:${parts[3]}` : `${parts[3]}:${parts[5]}:${parts[6]}`;
-  const result = await request<{ receipt: { fingerprint: string; migration: MigrationStatus } | null }>(`/crypto/history-migration-receipts/${encodeURIComponent(String(command.body.requestId))}`);
-  if (!result.receipt) throw new Error("尚未找到原请求回执，不能判断是否已提交；原请求仍保留");
-  if (result.receipt.fingerprint !== await digestJson([operation, command.body])) throw new Error("回执与已保存的原请求不一致，未解除待确认状态");
-  const next = { ...saved, status: result.receipt.migration, pending: undefined };
-  await remember(account, conversation, next); return next;
+  return reconcileReceipt(account, conversation, saved, false);
+}
+export function legacyControl(command?: Command) {
+  return !!command && command.method === "POST" && !Object.prototype.hasOwnProperty.call(command.body, "proof") &&
+    (command.path === "/crypto/history-migrations" || /^\/crypto\/history-migrations\/[^/]+\/finish$/.test(command.path));
+}
+export async function reconcileLegacyControl(account: string, conversation: string) {
+  const saved = await migrationSession(account, conversation);
+  if (!legacyControl(saved.pending)) throw new Error("没有待核对的旧版开始或完成请求");
+  return reconcileReceipt(account, conversation, saved, true);
+}
+interface ReceiptResult {
+  receipt: { fingerprint: string; migration: MigrationStatus } | null;
+  unsignedControlFence?: string;
+}
+async function reconcileReceipt(account: string, conversation: string, saved: MigrationSession, allowArchive: boolean) {
+  const command = saved.pending!;
+  const parts = command.path.split("/");
+  const operation = parts.length === 3 ? "begin"
+    : parts[4] === "finish" ? `finish:${parts[3]}` : `${parts[3]}:${parts[5]}:${parts[6]}`;
+  const url = `/crypto/history-migration-receipts/${encodeURIComponent(String(command.body.requestId))}`;
+  const query = allowArchive ? `?legacyConversationId=${encodeURIComponent(conversation)}` : "";
+  const result = await request<ReceiptResult>(url + query);
+  let next: MigrationSession;
+  if (result.receipt) {
+    if (result.receipt.fingerprint !== await digestJson([operation, command.body]) ||
+        result.receipt.migration.conversationId !== conversation) {
+      throw new Error("回执与已保存的原请求不一致，未解除待确认状态");
+    }
+    next = { ...saved, status: result.receipt.migration, pending: undefined };
+  } else {
+    if (!allowArchive || result.unsignedControlFence !== "device-proof-v1")
+      throw new Error("尚未找到原请求回执，不能判断是否已提交；原请求仍保留");
+    const state = await request<{ migration: MigrationStatus | null }>(`/crypto/history-migrations?conversationId=${encodeURIComponent(conversation)}`);
+    next = {
+      ...saved, status: state.migration ?? undefined, pending: undefined,
+      archivedControls: [...(saved.archivedControls ?? []), command]
+    };
+  }
+  await remember(account, conversation, next);
+  return next;
 }
 async function executePending(account: string, conversation: string, first: boolean): Promise<MigrationSession> {
   const saved = await migrationSession(account, conversation);
   if (!saved.pending) return refreshMigration(account, conversation);
+  if (legacyControl(saved.pending)) throw new Error("请先核对并归档旧版转换请求");
   device(account);
   let result: any;
   try { result = await request<any>(saved.pending.path, saved.pending.method, saved.pending.body); }
@@ -57,7 +92,7 @@ async function executePending(account: string, conversation: string, first: bool
     if (error instanceof HttpError && [400, 403, 404, 409, 422].includes(error.status)) {
       let status = saved.status;
       if (!first && status) status = await request<MigrationStatus>(`/crypto/history-migrations/${status.id}`);
-      if (first || status?.state === "conflicted") await remember(account, conversation, { version: saved.version, status, rejected: [...(saved.rejected ?? []), { command: saved.pending, error: error.message }] });
+      if (first || status?.state === "conflicted") await remember(account, conversation, { ...saved, pending:undefined, status, rejected: [...(saved.rejected ?? []), { command: saved.pending, error: error.message }] });
     }
     throw error;
   }
@@ -117,13 +152,31 @@ export async function convertMigrationPage(account: string, conversation: Conver
     if (page.next === after) throw new Error("历史转换分页未前进"); after = page.next;
   }
 }
-export async function verifyAndFinishMigration(account: string, conversation: Conversation, file: RecoveryFile, recoveryDigest: string) {
+export interface RecoverySelection { file: RecoveryFile; digest: string }
+export async function verifyAndFinishMigration(account: string, conversation: Conversation, file: RecoveryFile, recoveryDigest: string, supplement?: RecoverySelection) {
   const saved = await refreshMigration(account, conversation.id);
   if (saved.pending) throw new Error("请先确认原转换请求");
   if (!saved.status || saved.status.remaining !== 0) throw new Error("尚有未转换项目");
   if (saved.status.recoveryDigest !== recoveryDigest) throw new Error("请选择开始转换时核对的恢复文件");
-  const reader = await recoveryReader(file), manifest = [];
+  const original = await recoveryReader(file), manifest = [];
+  let additional: Awaited<ReturnType<typeof recoveryReader>> | undefined;
   try {
+    if (supplement) {
+      if (!original.sealed || supplement.file.format !== "llmn-recovery-v2" || supplement.file.version === file.version ||
+          !/^[a-f0-9]{64}$/.test(supplement.digest) || supplement.digest === recoveryDigest)
+        throw new Error("原备份封存后才可补选不同的当前 v2 恢复文件");
+      const current = await request<{ version: string }>("/crypto/recovery");
+      if (current.version !== supplement.file.version) throw new Error("补充文件不是当前恢复版本");
+      additional = await recoveryReader(supplement.file);
+      if (additional.sealed) throw new Error("补充文件的备份已封存，请选择当前 v2 文件");
+    }
+    const read: typeof original.unseal = async envelope => {
+      try { return await original.unseal(envelope); }
+      catch (error) {
+        if (!additional || !original.lacksSession(error)) throw error;
+        return additional.unseal(envelope);
+      }
+    };
     let after = "0";
     for (;;) {
       const page = await migrationItems(saved.status.id, after, true);
@@ -134,7 +187,7 @@ export async function verifyAndFinishMigration(account: string, conversation: Co
         let originalRecord: Message | ContactIntent = record;
         let plain: Message | ContactIntent = record;
         if (item.kind === "message") {
-          plain = await projectMessage(record as Message, conversation, reader.unseal);
+          plain = await projectMessage(record as Message, conversation, read);
           if (plain.cryptoError) throw new Error(`消息 ${item.id} 独立恢复失败：${plain.cryptoError}`);
           for (const a of (plain as Message).attachments) {
             const cipher = await downloadBytes(`/chat/messages/${item.id}/attachments/${a.index}?revision=${item.revision}`);
@@ -145,7 +198,7 @@ export async function verifyAndFinishMigration(account: string, conversation: Co
           }
           if (convertedHere) originalRecord = { ...record as Message, text: plain.text, attachments: (plain as Message).attachments.map(({ mediaEncryptionInfo: _secret, ...a }) => a), sealed: null, historyMigration: null, audienceRevision: item.originalAudienceRevision ?? null };
         } else {
-          plain = await projectIntent(record as ContactIntent, conversation, reader.unseal);
+          plain = await projectIntent(record as ContactIntent, conversation, read);
           if (plain.cryptoError) throw new Error(`约定 ${item.id} 独立恢复失败：${plain.cryptoError}`);
           if (convertedHere) originalRecord = { ...record as ContactIntent, content: plain.content, sealed: null, historyMigration: null, audienceRevision: item.originalAudienceRevision ?? null };
         }
@@ -156,9 +209,16 @@ export async function verifyAndFinishMigration(account: string, conversation: Co
       if (!page.hasMore) break;
       if (page.next === after) throw new Error("验读分页未前进"); after = page.next;
     }
-  } finally { reader.close(); }
+  } finally {
+    additional?.close();
+    original.close();
+  }
   const verificationDigest = await digestJson({ id: saved.status.id, items: manifest });
   const id = saved.status.id;
-  const body = await signDeviceCommand(account, `history.finish:${id}`, { requestId: crypto.randomUUID(), verificationDigest });
+  const body = await signDeviceCommand(account, `history.finish:${id}`, {
+    requestId: crypto.randomUUID(), verificationDigest,
+    recoveryDigests: supplement ? [recoveryDigest, supplement.digest] : [recoveryDigest],
+    ...(supplement ? { supplementalRecoveryVersion: supplement.file.version } : {})
+  });
   return dispatch(account, conversation.id, { path: `/crypto/history-migrations/${id}/finish`, method: "POST", body });
 }

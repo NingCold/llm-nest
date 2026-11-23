@@ -14,7 +14,8 @@ const main = { backupRoomKeys: async () => null, getIdentity: async () => ({ isV
 const api = { server: 'https://recovery.invalid', request: async path => { reads.push(path); if (path === '/crypto/recovery?version=recovery') return { version: 'recovery', ciphertext: 'YQ==' }; if (path === '/crypto/backup?version=backup') return { version: 'backup', algorithm: 'm.megolm_backup.v1.curve25519-aes-sha2', auth_data: { public_key: 'backup-public' } }; if (path === '/crypto/backup/keys?version=backup') return { rooms: { '!room:llmn': { sessions: { session: { session_data: {} } } } } }; throw Error(path); } };
 const code = ts.transpileModule(fs.readFileSync(require.resolve('../src/cloud/crypto/engine.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 vm.runInNewContext(code + `
-exports.seed = (sdk, machine) => { active = { sdk, machine, account:'human', owner:ownerOf('human'), deviceId:'original', cursor:'0' }; syncCrypto = async () => {}; };`, { exports: recovered, TextEncoder, TextDecoder, Uint8Array, Map, atob, crypto: require('node:crypto').webcrypto, require: name => name === '../api' ? api : name === './envelope' ? { verifyEnvelope: () => effects.push('verify-signature') } : {} });
+exports.prepare = (old, keys) => prepareBackup(active, old, keys);
+exports.seed = (sdk, machine) => { active = { sdk, machine, account:'human', owner:ownerOf('human'), deviceId:'original', cursor:'0' }; syncCrypto = async () => {}; };`, { exports: recovered, TextEncoder, TextDecoder, Uint8Array, Map, atob, crypto: require('node:crypto').webcrypto, require: name => name === '../api' ? api : name === './canonical' ? { canonicalJson: JSON.stringify } : name === './envelope' ? { verifyEnvelope: () => effects.push('verify-signature') } : {} });
 (async () => {
   recovered.seed(sdk, main);
   const file = { format: 'llmn-recovery-v1', server: api.server, accountId: 'human', version: 'recovery', mediaEncryptionInfo: 'local-only' };
@@ -25,5 +26,28 @@ exports.seed = (sdk, machine) => { active = { sdk, machine, account:'human', own
   assert.deepEqual(effects, ['bundle', 'verify-signature', 'temporary-decrypt']);
   assert.deepEqual(reads, ['/crypto/recovery?version=recovery', '/crypto/backup?version=backup', '/crypto/backup/keys?version=backup']);
   reader.close(); assert.ok(closed);
+  // A sealed backup is immutable history. Its key is optional for opening a fresh
+  // generation, but a healthy active generation must never be replaced without it.
+  let minted = 0;
+  sdk.BackupDecryptionKey = { createRandomKey: () => ({ megolmV1PublicKey: { publicKeyBase64: 'fresh-' + (++minted) } }) };
+  main.sign = async () => ({ asJSON: () => '{}' });
+  main.importBackedUpRoomKeys = temporary.importBackedUpRoomKeys;
+  const old = { version: 'backup', auth_data: { public_key: 'backup-public' } };
+  const matching = await temporary.getBackupKeys();
+  const other = { ...matching, backupVersion: 'different' };
+  reads.length = 0;
+  await assert.rejects(recovered.prepare(old, {}), /不会被覆盖/);
+  await assert.rejects(recovered.prepare(old, other), /不会被覆盖/);
+  assert.equal((await recovered.prepare(old, matching)).key, matching.decryptionKey);
+  assert.equal(minted, 0);
+  for (const unavailable of [{}, other]) {
+    const fresh = await recovered.prepare({ ...old, sealed: true }, unavailable);
+    assert.equal(fresh.newBackup.expectedVersion, old.version);
+    assert.notEqual(fresh.newBackup.version, old.version);
+    assert.notEqual(fresh.newBackup.auth_data.public_key, old.auth_data.public_key);
+  }
+  assert.deepEqual(reads, [], 'never fetch the archived keys with a mismatched private key');
+  await recovered.prepare({ ...old, sealed: true }, matching);
+  assert.deepEqual(reads, ['/crypto/backup/keys?version=backup']);
   console.log('PASS: independent recovery creates a new ephemeral SDK instance and imports only recovery bundle plus downloaded backup; active keys cannot satisfy verification');
 })().catch(error => { console.error(error); process.exitCode = 1; });

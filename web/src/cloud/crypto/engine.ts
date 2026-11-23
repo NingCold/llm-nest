@@ -657,7 +657,7 @@ async function storedBackup(s: Session) {
   const info = await request<BackupInfo>(atVersion("/crypto/backup", keys.backupVersion));
   if (info.version !== keys.backupVersion || info.algorithm !== backupAlgorithm || info.auth_data.public_key !== keys.decryptionKey.megolmV1PublicKey.publicKeyBase64)
     throw new Error("云端历史备份与恢复密钥不匹配");
-  return keys;
+  return { decryptionKey:keys.decryptionKey, backupVersion:keys.backupVersion, sealed:info.sealed === true };
 }
 async function readBackup(s: Session, key: Matrix.BackupDecryptionKey, version: string) {
   const backup = await request<{ rooms: Record<string, { sessions: Record<string, { session_data: { ephemeral: string; mac: string; ciphertext: string } }> }> }>(atVersion("/crypto/backup/keys", version));
@@ -678,11 +678,13 @@ async function latest<T>(path: string): Promise<T | null> {
 }
 async function prepareBackup(s: Session, old: BackupInfo | null, existing: Matrix.BackupKeys) {
   const previous = existing.decryptionKey;
-  if (old && (existing.backupVersion !== old.version || previous?.megolmV1PublicKey.publicKeyBase64 !== old.auth_data.public_key)) {
-    throw new Error("请导入当前恢复文件或从持有该备份的可信设备取得授权；现有备份不会被覆盖");
+  const matches = old && existing.backupVersion === old.version &&
+    previous?.megolmV1PublicKey.publicKeyBase64 === old.auth_data.public_key;
+  if (old && !old.sealed) {
+    if (!matches || !previous) throw new Error("请导入当前恢复文件或从持有该备份的可信设备取得授权；现有备份不会被覆盖");
+    return { key: previous, backupVersion: old.version };
   }
-  if (old && !old.sealed && previous) return { key: previous, backupVersion: old.version };
-  if (old && previous) await readBackup(s, previous, old.version);
+  if (old && matches && previous) await readBackup(s, previous, old.version);
   current(s);
 
   const key = s.sdk.BackupDecryptionKey.createRandomKey();
@@ -833,6 +835,9 @@ export async function recoveryReader(file: RecoveryFile, archivedOnly = false) {
     current(s);
     const lookedUp = new Set<string>();
     return {
+      sealed: keys.sealed,
+      lacksSession: (error: unknown) => error instanceof s.sdk.MegolmDecryptionError &&
+        (error.code === s.sdk.DecryptionErrorCode.MissingRoomKey || error.code === s.sdk.DecryptionErrorCode.UnknownMessageIndex),
       check: () => current(s),
       close: () => machine.close(),
       unseal: async (envelope: SignedEnvelope) => {

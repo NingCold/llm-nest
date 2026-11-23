@@ -52,7 +52,7 @@ function fixture(relative, name, props, seeds={}, theme='light', desktop=false) 
       if (resolved) {
         const basename = path.basename(resolved);
         if (basename==='api' || basename==='local-api') return {request:blocked,download:blocked,server:'https://offline.invalid',HttpError:class extends Error{}};
-        if (resolved.includes(path.sep+'crypto'+path.sep) && !['Devices','ResourcePanel','HistoryMigrationPanel'].includes(basename)) return new Proxy({cryptoDevice:()=> 'fixture-device',trustedCryptoDevice:()=> 'fixture-device',hasPendingCryptoDevice:()=>false,hasCryptoDevice:()=>true,recoveryConfirmed:()=>true,resourceStatus:r=>r.applied?.status==='applied'?'已保存 · 节点已应用':'已保存 · 等待节点应用'}, {get:(obj,key)=>obj[key] || blocked});
+        if (resolved.includes(path.sep+'crypto'+path.sep) && !['Devices','ResourcePanel','HistoryMigrationPanel','migration'].includes(basename)) return new Proxy({cryptoDevice:()=> 'fixture-device',trustedCryptoDevice:()=> 'fixture-device',hasPendingCryptoDevice:()=>false,hasCryptoDevice:()=>true,recoveryConfirmed:()=>true,resourceStatus:r=>r.applied?.status==='applied'?'已保存 · 节点已应用':'已保存 · 等待节点应用'}, {get:(obj,key)=>obj[key] || blocked});
         const candidate = ['.tsx','.ts',''].map(ext=>resolved+ext).find(p=>fs.existsSync(p)&&fs.statSync(p).isFile());
         if (!candidate) throw new Error(`Cannot resolve ${spec} from ${key}`);
         return load(candidate);
@@ -123,6 +123,8 @@ const pages = {
   'local-ai-trust':(theme,desktop)=>localAiStage('trust',theme,desktop),
   'local-ai-profile-edit':(theme,desktop)=>localAiStage('profile-edit',theme,desktop),
   'local-ai-waiting':(theme,desktop)=>localAiStage('waiting',theme,desktop),
+  'history-legacy-request':(theme,desktop)=>fixture('cloud/crypto/HistoryMigrationPanel.tsx','HistoryMigrationPanel',{account:me.id,conversation:group,blocked:false,onComplete:noop},{'cloud/crypto/HistoryMigrationPanel.tsx':[[],undefined,{pending:{method:'POST',path:'/crypto/history-migrations',body:{requestId:'saved'}}}]},theme,desktop),
+  'history-backup-rotation':(theme,desktop)=>fixture('cloud/crypto/HistoryMigrationPanel.tsx','HistoryMigrationPanel',{account:me.id,conversation:group,blocked:false,onComplete:noop},{'cloud/crypto/HistoryMigrationPanel.tsx':[[],undefined,{status:{id:'migration',state:'active',remaining:0}},'',{format:'llmn-recovery-v1'}]},theme,desktop),
   'devices':(theme,desktop)=>workspace('account',{...workspaceSeed(null,'crypto'),'cloud/crypto/Devices.tsx':[status,false,'',false,me.id,[],null,false,false,'','','',null,false,0]},theme,desktop),
   'recovery':(theme,desktop)=>fixture('cloud/crypto/Devices.tsx','CryptoDevices',{accountId:me.id},{'cloud/crypto/Devices.tsx':[status,false,'',false,me.id,[],null,false,false,'','','',{format:'fixture'},true,0]},theme,desktop),
   'device-trust':(theme,desktop)=>fixture('cloud/crypto/Devices.tsx','CryptoDevices',{accountId:me.id},{'cloud/crypto/Devices.tsx':[status,false,'',false,me.id,[],{deviceId:'other-'+longId,name:'另一台设备',fingerprint:'ed-'+longId,curve:'curve-'+longId,master:'master-'+longId},false,false,'','','',null,false,0]},theme,desktop),
@@ -149,6 +151,8 @@ fs.cpSync(path.resolve(__dirname,'../public/brand'),path.join(out,'brand'),{recu
 const links=[];
 for (const theme of ['light','dark']) for (const desktop of [false,true]) for (const [name,render] of Object.entries(pages)) {
   let markup=render(theme,desktop);
+  if (name==='history-legacy-request') assert.match(markup,/核对并归档旧版请求/);
+  if (name==='history-backup-rotation') assert.equal((markup.match(/type="file"/g)||[]).length,2,'retain both recovery file selectors');
   if (name==='device-trust') markup=markup.replace('class="crypto-card crypto-other-devices"','class="crypto-card crypto-other-devices" open');
   if (['account','contact','settings','ai-list','devices'].includes(name)) {
     assert.ok(markup.includes('aria-label="主导航"'),`${name}: preview must retain the real workspace navigation`);

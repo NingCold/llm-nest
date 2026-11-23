@@ -1,6 +1,12 @@
 # 集成与版本验收记录
 
-这里保留各次验收使用的版本、环境、结果与未测项目。早期记录中的命令和目录对应当时的仓库结构；现在复验请从[验证指南](README.md)开始。桌面实机结果按平台另记：[Windows](windows.md) · [Linux](linux.md)。当前交付版本见[当前安排](../project/current.md)，未验场景与独立安全审查集中在[待验收清单](../project/backlog.md#待验收)。
+这里保留各次验收使用的版本、环境、结果与未测项目。早期记录中的命令和目录对应当时的仓库结构；现在复验请从[验证指南](README.md)开始。桌面实机结果按平台另记：[Windows](windows.md) · [Linux](linux.md)。当前交付版本见[当前安排](../project/current.md)，仍待实机验证的场景见[待验收清单](../project/backlog.md#待验收)。
+
+## 0.1.2 稳定版
+
+[五仓版本、固定产物与检查](https://github.com/NingCold/llm-nest-server/releases/download/v0.1.2/compatibility-0.1.2.json)对应通过独立安全复审的提交。真实 WebAssembly 与 Rust 加密 SDK 在隔离 PostgreSQL 上完成私聊、群聊、节点交接与设备恢复；撤销后，旧文件能读原历史，不能读新会话。历史转换跨越两代备份时，已用分别保存的两份文件独立读回全部记录。全链路与迁移两项分别调用本机模拟模型 21 次和 0 次。
+
+Android 36 模拟器完成可信换机与密文收发；[Android 本版](https://github.com/NingCold/llm-nest-app/releases/tag/v0.1.2)发布源码。Linux 安装包在隔离环境启动；Windows 检查包结构与安装标识，干净系统安装、系统级 MSI 实装及 GNOME 人工验收仍见[待验收清单](../project/backlog.md#待验收)。
 
 ## 解锁等待优化
 

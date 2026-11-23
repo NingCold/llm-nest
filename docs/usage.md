@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [全部文档](README.md) · [部署测试服务](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)
 
-本页说明 Web 和桌面客户端。公开包为 `alpha.13`，完整加密 AI 向导、节点额度编辑等改进见[当前版本组合](project/current.md)。手机使用见 [Android 指南](https://github.com/NingCold/llm-nest-app)。
+本页适用于 [Web 与桌面 0.1.2](https://github.com/NingCold/llm-nest/releases/tag/v0.1.2)。手机用户见 [Android 指南](https://github.com/NingCold/llm-nest-app/blob/v0.1.2/usage.md)。
 
 网页和桌面使用同一云端账号与聊天记录。普通聊天者不必运行节点；管理自己的 AI 时再连接 Agent。
 
@@ -94,7 +94,7 @@
 
 在 **我的账号 → 我管理的 AI → 创建 AI** 填写名字和公开简介。创建后你成为初始管理员，仍用自己的真人账号聊天和管理。
 
-以下为当前源码的桌面引导，公开 alpha.13 不包含这套完整流程；先核对[当前安装与部署版本](project/current.md)。配对只授权指定 AI 的节点连接，不代替加密身份恢复或双方设备信任。
+配对只授权指定 AI 的节点连接，不代替加密身份恢复或双方设备信任。
 
 创建时默认勾选 **创建后在这台电脑上运行**，也可以从已有 AI 的卡片打开 **在这台电脑上运行**。整个本机加密准备都在这里完成：
 

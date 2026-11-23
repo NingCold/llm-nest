@@ -1,14 +1,14 @@
 # 首版范围与当前安排
 
-LLM Nest 处于**邀请制 Alpha 的内网日常试用阶段**。首版要让受邀的人从网页或桌面加入，在同一个长期私聊或群聊中和真人、AI 保持联系。AI 有自己的账号，由管理员连接的 Agent 运行；普通聊天者不用安装 Agent 或提供模型密钥。
+LLM Nest 首个公开稳定版是 [0.1.2](https://github.com/NingCold/llm-nest/releases/tag/v0.1.2)。内网站点仍使用 Alpha 版本，按邀请进行日常试用。首版要让受邀的人从网页或桌面加入，在同一个长期私聊或群聊中和真人、AI 保持联系。AI 有自己的账号，由管理员连接的 Agent 运行；普通聊天者不用安装 Agent 或提供模型密钥。
 
 ## 首版交付什么
 
 - **加入和聊天。** 凭邀请注册、验证邮箱，在“消息”和“通讯录”中找到对方，发送文字、图片和文件，重开客户端后能继续原来的聊天。
 - **与同一个 AI 长期交流。** 管理员可创建 AI、连接本机或远程节点，调整角色与模型。AI 可以记住明确交代的事，把群里的话题接回私聊，并按群规则接话或在约定时间联系。
-- **保护并延续资料。** 试用站要求新内容端到端加密。可信设备可读回历史；换设备可用已有信任或恢复文件授权。同机文字私聊可在断开云端后继续，重连再同步。
+- **保护并延续资料。** 试用站要求新内容端到端加密。在 0.1.2 中，换机使用可信设备或当前 v2 恢复文件授权；v1 文件仍可读取相应的旧历史。同机文字私聊可在断开云端后继续，重连再同步。
 
-云端聊天与 Agent 接入、同机与加密、三仓拆分均已完成。详见[已有能力](completed.md)；各环境实际验证到哪里见[验收记录](../validation/records.md)。
+Web 与桌面、Android、服务端、Agent 和连接器现由五个仓库分别交付。详见[已有能力](completed.md)；各环境实际验证到哪里见[验收记录](../validation/records.md)。
 
 ## 下一步：让受邀者自己开始聊天
 
@@ -20,14 +20,14 @@ LLM Nest 处于**邀请制 Alpha 的内网日常试用阶段**。首版要让受
 
 ## Android 客户端
 
-[Android 开发版](https://github.com/NingCold/llm-nest-app)可登录已有账号，从“通讯录”进入原私聊，或从“消息”打开已加入的群聊，支持文字收发、实时更新、历史、本机文字草稿及加密设备与恢复流程。验收范围见[模拟器与真机记录](https://github.com/NingCold/llm-nest-app/blob/main/testing.md)。注册、群管理、结构化提及、附件收发和 AI 节点管理仍使用 Web 或桌面，后台不接收实时更新或推送。Android 尚未公开发布或上架，不列入本轮邀请试用。
+[Android 0.1.2](https://github.com/NingCold/llm-nest-app/releases/tag/v0.1.2)可登录已有账号，从“通讯录”进入原私聊，或从“消息”打开已加入的群聊，支持文字收发、实时更新、历史、本机文字草稿及加密设备与恢复流程。验收范围见[模拟器与真机记录](https://github.com/NingCold/llm-nest-app/blob/main/testing.md)。注册、群管理、结构化提及、附件收发和 AI 节点管理仍使用 Web 或桌面，后台不接收实时更新或推送。本版提供源码，签名 APK 后补；尚未上架或列入本轮内网邀请试用。
 
 ## 现在使用的是哪个版本
 
 | 环境 | 客户端 / Web | Agent | 服务端 |
 | --- | --- | --- | --- |
-| 首轮审查要求修复，尚未放行的源码候选 | `0.1.2` | `0.1.2` | `0.1.2` |
+| 公开稳定版 | `0.1.2` | `0.1.2` | `0.1.2` |
 | 本机与内网试用 | Windows `alpha.21`；站点 Web `alpha.20` | 桌面附带 `alpha.14` | `alpha.13` |
-| 已公开发布的 Alpha | Windows、Linux 和 Web `alpha.13` | `alpha.13` | `alpha.12` |
+| 此前的公开 Alpha | Windows、Linux 和 Web `alpha.13` | `alpha.13` | `alpha.12` |
 
-公开安装包和内网试用版有功能差异。例如桌面创建加密 AI 的完整向导在本机试用版可用。
+部署 0.1.2 时，按[兼容组合](https://github.com/NingCold/llm-nest-server/releases/download/v0.1.2/compatibility-0.1.2.json)选择安装包和镜像。从 Alpha 升级前，先备份并阅读[旧设备与恢复文件迁移说明](https://github.com/NingCold/llm-nest-server/blob/v0.1.2/docs/legacy-device-recovery.md)。

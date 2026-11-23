@@ -4,7 +4,7 @@
 
 本页描述仓库的桌面构建与发布流程。当前源码默认连接云端，并携带可选的本机 Agent。云端服务独立部署，见[部署说明](https://github.com/NingCold/llm-nest-server/blob/main/server/deploy/README.md)。
 
-当前发布候选为 **0.1.2**。独立安全审查通过后再公开稳定版；当前可下载的版本见[公开发布页](https://github.com/NingCold/llm-nest/releases)。实际安装和部署组合见[当前安排](project/current.md)。
+[0.1.2 稳定版](https://github.com/NingCold/llm-nest/releases/tag/v0.1.2)提供 Windows、Linux 安装包和 Web 压缩包。实际安装和部署组合见[当前安排](project/current.md)。
 
 ## 安装包范围
 
@@ -28,9 +28,9 @@ Linux 使用 Ubuntu 24.04 作为构建基线。其他发行版仍需验证运行
 | `desktop/package.json` | `version` |
 | `web/package.json` | `version` |
 
-每次向测试者交付新包时递增版本，普通提交无需逐次改版本。当前源码为 `0.1.2`，尚未公开发布；后续预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
+每次向测试者交付新包时递增版本，普通提交无需逐次改版本。预发布可使用 `alpha.N`、`beta.N`、`rc.N`，正式发布时去掉后缀。
 
-MSI 另需纯数字的 `bundle.windows.wix.version`，候选版为 `0.1.2`。正式编号直接使用三段版本；`alpha.N` 以第四段表示 N，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
+MSI 另需纯数字的 `bundle.windows.wix.version`：正式编号使用三段版本；`alpha.N` 以第四段表示 N，发布检查会拒绝遗留的旧构建号。Windows Installer 主要比较前三段，预发布包之间的覆盖安装仍需实测。
 
 客户端、服务端和 Agent 分别维护版本，不再要求三个产品同版。修改相应 Cargo 包版本时同步锁文件。客户端版本与发布标签检查：
 
@@ -65,10 +65,10 @@ git push origin v0.1.2
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-$env:LLMN_AGENT_VERSION = "0.1.1-alpha.13"
+$env:LLMN_AGENT_VERSION = "0.1.2"
 $env:LLMN_AGENT_TARGET = "x86_64-pc-windows-msvc"
 $env:LLMN_AGENT_MANIFEST = (Resolve-Path target/agent-release-artifact/agent-manifest.json).Path
-$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-release-artifact/llmn-agent-0.1.1-alpha.13-x86_64-pc-windows-msvc.exe).Path
+$env:LLMN_AGENT_FILE = (Resolve-Path target/agent-release-artifact/llmn-agent-0.1.2-x86_64-pc-windows-msvc.exe).Path
 $env:LLMN_AGENT_NOTICES_FILE = "<清单 notices.file 对应文本的绝对路径>"
 $env:CARGO_ABOUT = "<已校验的 cargo-about 0.9.3 可执行文件绝对路径>"
 Push-Location desktop

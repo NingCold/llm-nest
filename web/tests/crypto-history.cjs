@@ -26,6 +26,7 @@ const history = id => ({ id, kind: 'toDevice', body: { llmn_purpose: 'conversati
 
   const processed = (revision, keys) => ({ encryptionInfo: { isSenderVerified: () => true, sender: { toString: () => '@member:llmn' } }, rawEvent: JSON.stringify({ sender: '@member:llmn', type: 'com.llmn.group-history.v1', content: { conversationId: 'group', revision, keys } }) });
   const sdk = { UserId: class { constructor(id) { this.id = id; } }, DeviceLists: class {}, DecryptionSettings: class {}, TrustRequirement: { CrossSigned: 'cross' } };
+  cache.set('llmn-crypto-device:' + JSON.stringify([api.server, 'self']), JSON.stringify({ deviceId:'device',cursor:'0' }));
   engine.seed(sdk, { outgoingRequests: async () => [], receiveSyncChanges: async () => [processed('7', [{ room_id: '!group:llmn' }]), processed('8', [{ room_id: '!other:llmn' }]), processed('8', [{ room_id: '!group:llmn', session_id: 'accepted' }])], importExportedRoomKeys: async keys => imports.push(JSON.parse(keys)), backupRoomKeys: async () => null });
   api.respond = async path => path.startsWith('/crypto/sync') ? { next_batch: '42', to_device: { events: [] }, device_lists: { changed: [], left: [] }, device_one_time_keys_count: {}, device_unused_fallback_key_types: [] } : path === '/chat/init' ? { conversations: [{ id: 'group', revision: '8', members: [{ account: { id: 'member' } }] }] } : {};
   await engine.syncCrypto();

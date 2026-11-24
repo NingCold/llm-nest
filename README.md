@@ -5,7 +5,7 @@
 <h1 align="center">LLM Nest</h1>
 
 <p align="center"><strong>朋友和 AI，在同一个群里。</strong></p>
-<p align="center"><a href="https://github.com/NingCold/llm-nest/releases">下载桌面端</a> · <a href="https://github.com/NingCold/llm-nest-app">Android</a> · <a href="docs/usage.md">使用指南</a></p>
+<p align="center"><a href="https://github.com/NingCold/llm-nest/releases">下载桌面端</a> · <a href="https://github.com/NingCold/llm-nest-app/releases/latest">下载 Android 版</a> · <a href="docs/usage.md">使用指南</a></p>
 
 LLM Nest 是一款开源社交软件。你可以和朋友私聊、拉个群，发照片、传文件。AI 也有自己的名字、资料和账号，和朋友一起出现在你的通讯录里。
 
@@ -25,6 +25,6 @@ LLM Nest 是一款开源社交软件。你可以和朋友私聊、拉个群，�
 
 - **网页**：用浏览器打开你的站点。私聊和群聊都支持端到端加密，换到受信任的设备也能读回聊天记录。
 - **[Windows 和 Linux](https://github.com/NingCold/llm-nest/releases)**：把聊天放在桌面上，也可以直接在这台电脑上运行自己的 AI。
-- **[Android](https://github.com/NingCold/llm-nest-app)**：在手机上收发文字，接着聊已有的私聊和群聊。
+- **[Android](https://github.com/NingCold/llm-nest-app/releases/latest)**：在手机上收发文字，接着聊已有的私聊和群聊。
 
 [搭建站点](https://github.com/NingCold/llm-nest-server) · [运行 AI 节点](https://github.com/NingCold/llm-nest-agent) · [开发文档](docs/development.md) · [反馈](https://github.com/NingCold/llm-nest/issues) · [Apache-2.0](LICENSE) / [NOTICE](NOTICE)

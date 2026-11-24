@@ -20,7 +20,9 @@ Web 与桌面、Android、服务端、Agent 和连接器现由五个仓库分别
 
 ## Android 客户端
 
-[Android 0.1.2](https://github.com/NingCold/llm-nest-app/releases/tag/v0.1.2)可登录已有账号，从“通讯录”进入原私聊，或从“消息”打开已加入的群聊，支持文字收发、实时更新、历史、本机文字草稿及加密设备与恢复流程。验收范围见[模拟器与真机记录](https://github.com/NingCold/llm-nest-app/blob/main/testing.md)。注册、群管理、结构化提及、附件收发和 AI 节点管理仍使用 Web 或桌面，后台不接收实时更新或推送。本版提供源码，签名 APK 后补；尚未上架或列入本轮内网邀请试用。
+[下载 Android 0.1.2 签名 APK](https://github.com/NingCold/llm-nest-app/releases/tag/v0.1.2)。用已有账号登录后，可从“通讯录”继续私聊，从“消息”回到已加入的群聊。手机支持文字收发、历史记录、本机草稿、设备授权和加密聊天恢复；新消息仅在前台实时更新，没有后台推送。
+
+注册、群管理、结构化提及、附件收发和 AI 节点管理仍需使用 Web 或桌面端。Android 版尚未上架应用商店，也未纳入本轮内网邀请试用。验收范围见[模拟器与真机记录](https://github.com/NingCold/llm-nest-app/blob/main/testing.md)。
 
 ## 现在使用的是哪个版本
 
